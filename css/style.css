@@ -1,0 +1,1150 @@
+/* ==========================================================================
+   LuminaReader - Hlavní styly rozhraní a design systém
+   ========================================================================== */
+
+:root {
+  /* Barevná paleta pro uživatelské rozhraní */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", Helvetica, Arial, sans-serif;
+  
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+
+  --color-primary: #3b82f6;
+  --color-primary-hover: #2563eb;
+  --color-primary-light: rgba(59, 130, 246, 0.1);
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+
+  /* Výchozí světlý / teplý režim UI */
+  --bg-app: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #ffffff;
+  --bg-hover: #f1f5f9;
+  --border-color: #e2e8f0;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --text-subtle: #94a3b8;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+
+  --header-base-height: 60px;
+  --header-height: calc(var(--header-base-height) + var(--safe-area-top));
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+}
+
+/* Motivy pro celou aplikaci */
+[data-theme="dark"] {
+  --bg-app: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-surface-elevated: #334155;
+  --bg-hover: #273549;
+  --border-color: #334155;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-subtle: #64748b;
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="oled"] {
+  --bg-app: #000000;
+  --bg-surface: #121212;
+  --bg-surface-elevated: #1e1e1e;
+  --bg-hover: #242424;
+  --border-color: #262626;
+  --text-main: #f5f5f5;
+  --text-muted: #a3a3a3;
+  --text-subtle: #737373;
+}
+
+[data-theme="sepia"] {
+  --bg-app: #f4ecd8;
+  --bg-surface: #faf4e6;
+  --bg-surface-elevated: #ede3cb;
+  --bg-hover: #ede3cb;
+  --border-color: #e2d6be;
+  --text-main: #382b20;
+  --text-muted: #796652;
+  --text-subtle: #9c8a75;
+}
+
+[data-theme="warm"] {
+  --bg-app: #fbf0d9;
+  --bg-surface: #fff8e7;
+  --bg-surface-elevated: #f4ebd4;
+  --bg-hover: #ede3cb;
+  --border-color: #e5dbc4;
+  --text-main: #2c2523;
+  --text-muted: #6b5c57;
+  --text-subtle: #93827c;
+}
+
+/* Reset & Základní pravidla */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  min-height: 100vh;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color var(--transition-normal), color var(--transition-normal);
+}
+
+.is-hidden {
+  display: none !important;
+}
+
+/* ==========================================================================
+   Knihovna (Library View)
+   ========================================================================== */
+
+.library-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+}
+
+.library-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2.5rem;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.brand-section {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.brand-icon {
+  font-size: 2.5rem;
+  background: var(--bg-surface);
+  padding: 0.5rem;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
+}
+
+.brand-title {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  background: linear-gradient(135deg, #2563eb, #38bdf8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.brand-tagline {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+.library-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* Tlačítka */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-decoration: none;
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:hover {
+  background-color: var(--bg-hover);
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  background-color: var(--color-primary);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.btn-primary:hover {
+  background-color: var(--color-primary-hover);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+}
+
+.btn-secondary {
+  border-color: var(--border-color);
+}
+
+.btn-icon {
+  padding: 0.65rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  color: var(--text-main);
+}
+
+.btn-icon.active {
+  background-color: var(--color-primary);
+  color: #ffffff;
+  border-color: var(--color-primary);
+}
+
+/* Drop Zone pro nahrávání */
+.drop-zone-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(59, 130, 246, 0.15);
+  backdrop-filter: blur(8px);
+  z-index: 9999;
+  border: 4px dashed var(--color-primary);
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+body.dragging-file .drop-zone-overlay {
+  display: flex;
+}
+
+.drop-zone-content {
+  background: var(--bg-surface);
+  padding: 2.5rem 3.5rem;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  text-align: center;
+}
+
+.drop-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+/* Mřížka knih (Book Grid) */
+.book-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 2rem;
+}
+
+.book-card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+  position: relative;
+}
+
+.book-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--color-primary);
+}
+
+.book-cover-wrapper {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  background: var(--bg-surface-elevated);
+  overflow: hidden;
+}
+
+.book-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s ease;
+}
+
+.book-card:hover .book-cover-img {
+  transform: scale(1.03);
+}
+
+.book-cover-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  text-align: center;
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+  color: #ffffff;
+}
+
+.cover-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.cover-title {
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.book-card-actions {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.book-card:hover .book-card-actions {
+  opacity: 1;
+}
+
+.btn-delete-book {
+  background: rgba(0, 0, 0, 0.65);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius-full);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.btn-delete-book:hover {
+  background: var(--color-danger);
+}
+
+.book-info {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.book-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.book-author {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.book-meta {
+  margin-top: auto;
+}
+
+.book-progress-bar-small {
+  height: 5px;
+  background: var(--border-color);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.book-progress-bar-small .fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+}
+
+.book-meta-text {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-subtle);
+  font-weight: 600;
+}
+
+/* Prázdná knihovna */
+.empty-state {
+  text-align: center;
+  padding: 5rem 1rem;
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  border: 2px dashed var(--border-color);
+}
+
+.empty-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.empty-state h3 {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.empty-state p {
+  color: var(--text-muted);
+  margin-bottom: 1.5rem;
+}
+
+/* ==========================================================================
+   Čtečka (Reader View & Fixed Header)
+   ========================================================================== */
+
+.reader-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-height);
+  background: var(--bg-surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--safe-area-top);
+  padding-bottom: 0;
+  padding-left: max(1rem, var(--safe-area-left));
+  padding-right: max(1rem, var(--safe-area-right));
+  z-index: 1000;
+  box-shadow: var(--shadow-sm);
+  box-sizing: border-box;
+  transition: background-color var(--transition-normal), border-color var(--transition-normal);
+}
+
+.reader-header-left, .reader-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-back-library {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.95rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--border-color);
+  background: var(--bg-surface-elevated);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  min-height: 40px;
+}
+
+.btn-back-library:hover {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  transform: translateX(-2px);
+}
+
+.btn-back-library:active {
+  transform: scale(0.96);
+}
+
+.btn-back-label {
+  display: inline;
+}
+
+@media (max-width: 480px) {
+  .btn-back-label {
+    display: none;
+  }
+}
+
+.reader-header-center {
+  text-align: center;
+  flex: 1;
+  max-width: 550px;
+  overflow: hidden;
+  padding: 0 1rem;
+}
+
+.header-title-wrapper {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-book-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.header-chapter-title {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* WPM a ETR Odznaky v hlavičce */
+.metrics-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.metric-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-full);
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  transition: all var(--transition-fast);
+}
+
+.metric-badge.is-idle {
+  background: var(--bg-hover);
+  color: var(--text-subtle);
+  border-color: var(--border-color);
+}
+
+.badge-secondary {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border-color: var(--border-color);
+}
+
+/* Horní linka průběhu čtení */
+.reading-progress-container {
+  position: fixed;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: transparent;
+  z-index: 999;
+}
+
+.reading-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--color-primary);
+  transition: width 0.15s ease-out;
+}
+
+/* Drawer Backdrop - kliknutí kamkoliv mimo panel zavře panel */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 1040;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.25s ease, visibility 0.25s ease;
+}
+
+.drawer-backdrop.active {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* Postranní panely (Drawers: TOC & Settings) */
+.drawer-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  height: 100%;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  width: 420px;
+  max-width: 90vw;
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-color);
+  box-shadow: -8px 0 35px rgba(0, 0, 0, 0.25);
+  z-index: 1050;
+  transform: translateX(105%);
+  visibility: hidden;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.3s;
+  display: flex;
+  flex-direction: column;
+  padding-top: max(1rem, env(safe-area-inset-top));
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+  padding-right: max(0.5rem, env(safe-area-inset-right));
+}
+
+.drawer-panel.drawer-left {
+  left: 0;
+  right: auto;
+  border-left: none;
+  border-right: 1px solid var(--border-color);
+  box-shadow: 8px 0 35px rgba(0, 0, 0, 0.25);
+  transform: translateX(-105%);
+  padding-left: max(0.5rem, env(safe-area-inset-left));
+}
+
+.drawer-panel.open {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.drawer-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.drawer-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.btn-close-drawer {
+  flex-shrink: 0;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+  width: 44px;
+  height: 44px;
+  font-size: 1.25rem;
+  color: var(--text-main);
+  cursor: pointer;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  touch-action: manipulation;
+}
+
+.btn-close-drawer:hover,
+.btn-close-drawer:active {
+  color: var(--text-main);
+  background: var(--bg-hover);
+  transform: scale(1.05);
+}
+
+.drawer-body {
+  flex: 1 1 auto;
+  min-height: 0; /* Zásadní pro iPad / WebKit: Umožňuje flex-child zmenšit se a scrollovat */
+  height: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch; /* Plynulý dotykový setrvačný posun na iOS Safari */
+  touch-action: pan-y; /* Povolí vertikální posun prstem */
+  overscroll-behavior: contain;
+  padding: 1.5rem;
+}
+
+
+/* Obsah (TOC list) */
+.toc-list {
+  list-style: none;
+}
+
+.toc-item {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  margin-bottom: 0.25rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  transition: background var(--transition-fast);
+}
+
+.toc-item:hover {
+  background: var(--bg-hover);
+}
+
+.toc-item.active {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+/* Skupiny nastavení */
+.settings-group {
+  margin-bottom: 2rem;
+}
+
+.settings-group-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-subtle);
+  margin-bottom: 0.85rem;
+}
+
+.theme-options-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.5rem;
+}
+
+.theme-btn {
+  height: 44px;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--border-color);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.theme-btn.active {
+  border-color: var(--color-primary);
+  transform: scale(1.05);
+}
+
+.theme-btn[data-theme="light"] { background: #ffffff; color: #000; }
+.theme-btn[data-theme="warm"] { background: #fbf0d9; color: #2c2523; }
+.theme-btn[data-theme="sepia"] { background: #f4ecd8; color: #382b20; }
+.theme-btn[data-theme="dark"] { background: #1e293b; color: #fff; }
+.theme-btn[data-theme="oled"] { background: #000000; color: #fff; }
+
+.font-options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.font-btn {
+  padding: 0.65rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface-elevated);
+  color: var(--text-main);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.font-btn.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.slider-setting {
+  margin-bottom: 1.25rem;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.slider-input {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border-color);
+  outline: none;
+  accent-color: var(--color-primary);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  border: 2.5px solid #ffffff;
+  transition: transform 0.1s ease;
+}
+
+.slider-input::-webkit-slider-thumb:active {
+  transform: scale(1.2);
+}
+
+.slider-input::-moz-range-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  border: 2.5px solid #ffffff;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.55rem 0.25rem;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.toggle-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-main);
+  flex: 1;
+  cursor: default;
+}
+
+.switch-control {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 30px;
+  flex-shrink: 0;
+  margin-left: 1rem;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.switch-control:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: 30px;
+}
+
+.switch-track {
+  position: absolute;
+  inset: 0;
+  background-color: var(--border-color);
+  border-radius: 30px;
+  transition: background-color 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease;
+  pointer-events: none;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+/* Zapnutý stav přepínače */
+.switch-control[aria-checked="true"] .switch-track,
+.switch-control.is-checked .switch-track,
+.switch-input:checked + .switch-track {
+  background-color: var(--color-primary);
+}
+
+.switch-control[aria-checked="true"] .switch-track .switch-thumb,
+.switch-control.is-checked .switch-track .switch-thumb,
+.switch-input:checked + .switch-track .switch-thumb {
+  transform: translateX(20px);
+}
+
+/* Zpětná kompatibilita pro původní třídy */
+.toggle-switch-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toggle-switch {
+  width: 44px;
+  height: 24px;
+  accent-color: var(--color-primary);
+}
+
+.ruler-color-options {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.ruler-color-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.ruler-color-btn.active {
+  border-color: var(--text-main);
+  transform: scale(1.1);
+}
+
+.ruler-color-btn[data-ruler-color="amber"] { background: #f59e0b; }
+.ruler-color-btn[data-ruler-color="cyan"] { background: #06b6d4; }
+.ruler-color-btn[data-ruler-color="emerald"] { background: #10b981; }
+.ruler-color-btn[data-ruler-color="lavender"] { background: #a855f7; }
+.ruler-color-btn[data-ruler-color="slate"] { background: #64748b; }
+
+/* ==========================================================================
+   Statistické okno (Modal & Charts)
+   ========================================================================== */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  z-index: 2000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.modal-overlay.open {
+  display: flex;
+}
+
+.modal-content {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-xl);
+  width: 100%;
+  max-width: 680px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalEnter {
+  from { opacity: 0; transform: scale(0.96) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.75rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-body {
+  padding: 1.75rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+@media (min-width: 500px) {
+  .stats-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.stat-card {
+  background: var(--bg-surface-elevated);
+  padding: 1.25rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--color-primary);
+  margin-bottom: 0.25rem;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.chart-section {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.chart-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+
+.chart-empty-state {
+  text-align: center;
+  padding: 2.5rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.chart-empty-state span {
+  font-size: 0.8rem;
+  color: var(--text-subtle);
+  display: block;
+  margin-top: 0.35rem;
+}
+
+/* ==========================================================================
+   Toast Notifikace
+   ========================================================================== */
+
+.toast {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  background: #1e293b;
+  color: #ffffff;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-xl);
+  font-size: 0.9rem;
+  font-weight: 600;
+  z-index: 99999;
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+.toast.is-visible {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+
+.toast.toast-error {
+  background: var(--color-danger);
+}
+
+.toast.toast-success {
+  background: var(--color-success);
+}
+
+/* ==========================================================================
+   Optimalizace pro iPad a tablety (768px - 1366px)
+   ========================================================================== */
+@media (min-width: 768px) and (max-width: 1366px) {
+  :root {
+    --header-base-height: 64px;
+    --header-height: calc(var(--header-base-height) + var(--safe-area-top));
+  }
+
+  .library-container {
+    padding: calc(3.5rem + var(--safe-area-top)) max(2.5rem, var(--safe-area-right)) calc(6rem + var(--safe-area-bottom)) max(2.5rem, var(--safe-area-left));
+  }
+
+  .book-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 2.5rem;
+  }
+
+  .btn {
+    min-height: 48px;
+    font-size: 1rem;
+    padding: 0.75rem 1.4rem;
+  }
+
+  .btn-icon {
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .drawer-panel {
+    width: 440px;
+  }
+
+  .theme-btn {
+    height: 50px;
+    font-size: 0.85rem;
+  }
+
+  .font-btn {
+    padding: 0.9rem 0.5rem;
+    font-size: 0.95rem;
+  }
+
+  .metric-badge {
+    font-size: 0.85rem;
+    padding: 0.35rem 0.75rem;
+  }
+}
