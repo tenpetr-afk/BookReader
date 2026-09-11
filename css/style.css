@@ -1164,8 +1164,17 @@ body.dragging-file .drop-zone-overlay {
   border: none !important;
   outline: none !important;
   box-shadow: none !important;
-  border-radius: 4px 0 0 4px !important;
-  background: rgba(var(--ruler-glow-rgb, 0, 160, 220), 0.28) !important;
+  border-top-left-radius: 4px !important;
+  border-bottom-left-radius: 4px !important;
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  background: linear-gradient(
+    to right,
+    rgba(var(--ruler-glow-rgb, 0, 160, 220), 0.35) 0px,
+    rgba(var(--ruler-glow-rgb, 0, 160, 220), 0.35) var(--active-word-width, 0px),
+    rgba(var(--ruler-glow-rgb, 0, 160, 220), 0.22) calc(var(--active-word-width, 0px) + 12px),
+    rgba(var(--ruler-glow-rgb, 0, 160, 220), 0) 100%
+  ) !important;
   overflow: visible !important;
 }
 
@@ -1176,6 +1185,7 @@ body.dragging-file .drop-zone-overlay {
 .reading-ruler.word-tracking-mode.no-preview.color-lavender,
 .reading-ruler.word-tracking-mode.no-preview.color-slate {
   border-radius: 4px !important;
+  background: rgba(var(--ruler-glow-rgb, 0, 160, 220), 0.35) !important;
 }
 
 .reading-ruler.word-tracking-mode.mode-underline {
@@ -1239,14 +1249,10 @@ body.dragging-file .drop-zone-overlay {
   opacity: 0 !important;
 }
 
-/* 1. Režim Highlight: Plynulé lineární doznívání (fade-out) z 0.18 do 0 bez ohraničení */
+/* 1. Režim Highlight: Integrován do hlavního kontejneru pravítka pomocí asymetrického gradientu */
 .reading-ruler-preview.mode-highlight,
 .reading-ruler-preview:not(.mode-underline):not(.mode-focus) {
-  background: linear-gradient(
-    to right,
-    rgba(var(--ruler-glow-rgb, 0, 160, 220), 0.18) 0%,
-    rgba(var(--ruler-glow-rgb, 0, 160, 220), 0) 100%
-  ) !important;
+  display: none !important;
   border: none !important;
   outline: none !important;
   box-shadow: none !important;

@@ -38,6 +38,8 @@ export class ReadingRuler {
     this.lastPointerY = 200; // Poslední známá Y souřadnice kurzoru
     this.wordLeft = 0;
     this.wordWidth = 100;
+    this.activeWordWidth = 100;
+    this.totalWidth = 100;
     this.previewLeft = 0;
     this.previewWidth = 0;
     this.cachedLines = []; // Seznam řádků na aktuální stránce [{ top, bottom, height, centerY }]
@@ -1006,13 +1008,18 @@ export class ReadingRuler {
   /**
    * Vyhodnotí index řádku podle typu ukazatele:
    * - Pro Apple Pencil (pointerType === 'pen') v režimu sledování myši:
-   *   1. Line Retention Boundary: pravítko zůstává uzamčené na aktivním řádku N,
-   *      dokud e.clientY leží kdekoliv v řádku N, v mezidobí pod řádkem N, nebo v horních 70 % řádku N + 1.
-   *   2. Switching Logic:
-   *      - Přechod dolů (N -> N+1): přeskočí na N + 1 POUZE tehdy, když fyzické e.clientY
-   *        přísně překročí hranici nextLine.top + (nextLine.height * 0.70) (tj. 30 % odspodu).
-   *      - Přechod nahoru: vrátí se okamžitě, jakmile se e.clientY dostane nad currentLine.top.
-   * - Pro myš (pointerType === 'mouse'): standardní přichytávání centrované přímo na 50 % (střed řádku) bez zkreslení.
+   *   1. Calibration Window pro aktivní řádek N:
+   *      - Pravítko je uzamčené na řádku N, pokud se fyzické e.clientY nachází v rozsahu:
+   *        Min Y: lineN.top + (lineN.height * 0.5) (vertikální střed řádku N)
+   *        Max Y: lineNext.top + (lineNext.height * 0.5) (vertikální střed řádku N+1)
+   *      - Včetně inter-line mezery mezi řádky N a N+1.
+   *   2. Přepínací prahy (Switching Thresholds):
+   *      - Pohyb DOLŮ: Přeskok na řádek N+1 nastane POUZE tehdy, když e.clientY překročí střed řádku N+1.
+   *      - Pohyb NAHORU: Návrat na řádek N-1 okamžitě, když e.clientY vystoupá nad střed řádku N.
+   *   3. Ochrana okrajů (First & Last Line Safeguards):
+   *      - Pokud je e.clientY nad středem řádku 0, zůstane uzamčeno na řádku 0.
+   *      - Pokud je e.clientY pod středem posledního řádku, zůstane uzamčeno na posledním řádku.
+   * - Pro myš (pointerType === 'mouse'): standardní přímé přichytávání centrované přímo na kurzor bez zkreslení.
    */
   getHysteresisLineIndex(curY, isPen = false) {
     if (this.cachedLines.length === 0) {
@@ -1020,7 +1027,7 @@ export class ReadingRuler {
     }
     if (this.cachedLines.length === 0) return 0;
 
-    // 3. Pointer Isolation: Pro myš (pointerType === 'mouse') standardní přichytávání centrované přímo na pozici kurzoru bez zkreslení
+    // 4. Pointer Isolation: Pro myš (pointerType === 'mouse') standardní přímé přichytávání bez zkreslení
     if (!isPen || this.followMode !== "mouse") {
       let minDiff = Infinity;
       let closestIdx = 0;
@@ -1035,7 +1042,7 @@ export class ReadingRuler {
       return closestIdx;
     }
 
-    // 1. & 2. Line Retention Boundary a Switching Logic pro Apple Pencil (pointerType === 'pen'):
+    // 1., 2. & 3. Calibration Window & Switching Thresholds pro Apple Pencil (pointerType === 'pen'):
     const currentIdx = this.activeLineIndex;
     const hasActive = currentIdx >= 0 && currentIdx < this.cachedLines.length;
 
@@ -1043,16 +1050,16 @@ export class ReadingRuler {
       const currentLine = this.cachedLines[currentIdx];
       const nextLine = currentIdx < this.cachedLines.length - 1 ? this.cachedLines[currentIdx + 1] : null;
 
-      // Hranice pro přeskok na následující řádek: 70 % hloubky řádku N + 1 (30 % odspodu)
-      const downThreshold = nextLine ? nextLine.top + (nextLine.height * 0.70) : Infinity;
-      // Hranice pro návrat na předchozí řádek: horní hranice aktuálního řádku
-      const upThreshold = currentLine.top;
+      // Hranice pro přeskok dolů na následující řádek: vertikální střed řádku N + 1
+      const downThreshold = nextLine ? (nextLine.top + nextLine.height * 0.5) : Infinity;
+      // Hranice pro návrat nahoru na předchozí řádek: vertikální střed aktuálního řádku N
+      const upThreshold = currentLine.top + currentLine.height * 0.5;
 
       if (curY > downThreshold) {
         let newIdx = currentIdx + 1;
         while (newIdx < this.cachedLines.length - 1) {
           const next = this.cachedLines[newIdx + 1];
-          const nextThreshold = next.top + (next.height * 0.70);
+          const nextThreshold = next.top + (next.height * 0.5);
           if (curY > nextThreshold) {
             newIdx++;
           } else {
@@ -1061,11 +1068,13 @@ export class ReadingRuler {
         }
         return newIdx;
       } else if (curY < upThreshold) {
+        // 3. First Line Safeguard: Pokud je e.clientY nad středem řádku 0, zůstává uzamčeno na řádku 0
         if (currentIdx === 0) return 0;
         let newIdx = currentIdx - 1;
         while (newIdx > 0) {
           const prev = this.cachedLines[newIdx];
-          if (curY < prev.top) {
+          const prevThreshold = prev.top + (prev.height * 0.5);
+          if (curY < prevThreshold) {
             newIdx--;
           } else {
             break;
@@ -1079,7 +1088,7 @@ export class ReadingRuler {
     // Počáteční výběr řádku, pokud ještě není žádný řádek aktivní
     for (let i = 0; i < this.cachedLines.length; i++) {
       const nextLine = i < this.cachedLines.length - 1 ? this.cachedLines[i + 1] : null;
-      const downThreshold = nextLine ? nextLine.top + (nextLine.height * 0.70) : Infinity;
+      const downThreshold = nextLine ? (nextLine.top + nextLine.height * 0.5) : Infinity;
       if (curY <= downThreshold) {
         return i;
       }
@@ -1227,12 +1236,16 @@ export class ReadingRuler {
 
   /**
    * Nastaví geometrii asymetrického čtecího okna pro režim slov:
-   * - Cílové slovo (activeWordIndex): plný kontrast a ohraničení
-   * - Dopředný náhled (previewEl): 1–2 následující slova na témže řádku s parafoveálním podkresem
+   * - Cílové slovo (activeWordWidth): plný kontrast bez vnitřního vyblednutí
+   * - Dopředný náhled: plynulé lineární doznívání pokrývající 1.5–2 následující slova na témže řádku
+   * - Celková šířka (totalWidth) ořezána striktně podle pravého okraje aktuálního řádku
    */
   setWordWindow(wordIndex) {
     if (wordIndex < 0 || wordIndex >= this.cachedWords.length) {
       this.activeWordIndex = -1;
+      this.activeWordWidth = 0;
+      this.totalWidth = 0;
+      this.previewLeft = 0;
       this.previewWidth = 0;
       return;
     }
@@ -1243,7 +1256,8 @@ export class ReadingRuler {
     const padY = 2.5;
 
     this.wordLeft = Math.round(w.left - padX);
-    this.wordWidth = Math.round(w.width + padX * 2);
+    this.activeWordWidth = Math.round(w.width + padX * 2);
+    this.wordWidth = this.activeWordWidth;
 
     if (this.autoHeight) {
       const baseH = Math.round(w.height);
@@ -1257,8 +1271,8 @@ export class ReadingRuler {
     }
     this.currentY = this.targetY;
 
-    // Asymetrické dopředné čtecí okno: 1–2 následující slova na témže řádku
-    let lastPreviewWord = null;
+    // Asymetrické dopředné čtecí okno: 1.5 až 2 následující slova na témže řádku
+    const nextWords = [];
     for (let offset = 1; offset <= 2; offset++) {
       const nextIdx = wordIndex + offset;
       if (nextIdx >= this.cachedWords.length) break;
@@ -1267,14 +1281,38 @@ export class ReadingRuler {
         ? (nw.lineIndex === w.lineIndex)
         : (Math.abs(nw.centerY - w.centerY) <= 8);
       if (!isSameLine || nw.left < w.left) break;
-      lastPreviewWord = nw;
+      nextWords.push(nw);
     }
 
-    if (lastPreviewWord) {
-      this.previewLeft = this.wordLeft + this.wordWidth;
-      const previewRight = Math.round(lastPreviewWord.right + padX);
-      this.previewWidth = Math.max(0, previewRight - this.previewLeft);
+    // Zjištění pravé hranice aktuálního řádku pro striktní ořezání
+    const activeLine = (w.lineIndex != null && w.lineIndex >= 0 && w.lineIndex < this.cachedLines.length)
+      ? this.cachedLines[w.lineIndex]
+      : null;
+    let lineRight = activeLine?.right || null;
+    if (!lineRight) {
+      for (let i = wordIndex; i < this.cachedWords.length; i++) {
+        const cw = this.cachedWords[i];
+        const isSame = (cw.lineIndex != null && w.lineIndex != null)
+          ? (cw.lineIndex === w.lineIndex)
+          : (Math.abs(cw.centerY - w.centerY) <= 8);
+        if (!isSame) break;
+        lineRight = Math.max(lineRight || 0, cw.right);
+      }
+    }
+    const maxBoundary = lineRight ? Math.round(lineRight + padX) : Infinity;
+
+    if (nextWords.length > 0) {
+      // 1. Preview Box Width & Calculation:
+      // total width = activeWordWidth + spacing + width of next 1.5 to 2 words on the same line (clamped strictly to the right boundary of the current line)
+      const lastNextWord = nextWords[nextWords.length - 1];
+      const rawTargetRight = Math.round(lastNextWord.right + padX);
+      const clampedTargetRight = Math.min(rawTargetRight, maxBoundary);
+
+      this.totalWidth = Math.max(this.activeWordWidth, clampedTargetRight - this.wordLeft);
+      this.previewLeft = this.wordLeft + this.activeWordWidth;
+      this.previewWidth = Math.max(0, this.totalWidth - this.activeWordWidth);
     } else {
+      this.totalWidth = this.activeWordWidth;
       this.previewLeft = 0;
       this.previewWidth = 0;
     }
@@ -1545,13 +1583,24 @@ export class ReadingRuler {
 
     if (this.wordTracking) {
       const x = Math.round(this.wordLeft);
+      const isUnderline = this.mode === "underline";
+      const currentWidth = isUnderline ? this.activeWordWidth : this.totalWidth;
+
       this.rulerEl.style.top = "0px";
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "auto";
-      this.rulerEl.style.width = `${Math.round(this.wordWidth)}px`;
+      this.rulerEl.style.width = `${Math.round(currentWidth)}px`;
       this.rulerEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
 
-      if (this.previewEl) {
+      this.rulerEl.style.setProperty("--active-word-width", `${Math.round(this.activeWordWidth)}px`);
+
+      if (this.previewWidth > 0) {
+        this.rulerEl.classList.remove("no-preview");
+      } else {
+        this.rulerEl.classList.add("no-preview");
+      }
+
+      if (isUnderline && this.previewEl) {
         if (this.previewWidth > 0 && this.enabled) {
           const px = Math.round(this.previewLeft);
           this.previewEl.style.display = "block";
@@ -1561,11 +1610,11 @@ export class ReadingRuler {
           this.previewEl.style.height = `${this.height}px`;
           this.previewEl.style.width = `${Math.round(this.previewWidth)}px`;
           this.previewEl.style.transform = `translate3d(${px}px, ${y}px, 0)`;
-          this.rulerEl.classList.remove("no-preview");
         } else {
           this.previewEl.style.display = "none";
-          this.rulerEl.classList.add("no-preview");
         }
+      } else if (this.previewEl) {
+        this.previewEl.style.display = "none";
       }
     } else {
       this.rulerEl.classList.remove("no-preview");
@@ -1591,8 +1640,8 @@ export class ReadingRuler {
       if (this.wordTracking) {
         const leftW = Math.max(0, Math.round(this.wordLeft));
         const effectiveRight = (this.previewWidth > 0)
-          ? Math.round(this.previewLeft + this.previewWidth)
-          : Math.round(this.wordLeft + this.wordWidth);
+          ? Math.round(this.wordLeft + this.totalWidth)
+          : Math.round(this.wordLeft + this.activeWordWidth);
         const rightL = Math.max(0, effectiveRight);
 
         this.maskLeftEl.style.display = "block";
@@ -1637,7 +1686,8 @@ export class ReadingRuler {
     const transitionClass = this.horizontalWordTransition ? "word-transition-active" : "word-transition-snap";
     this.rulerEl.className = `reading-ruler mode-${this.mode} color-${this.color} ${this.enabled ? "is-visible" : "is-hidden"} ${this.wordTracking ? "word-tracking-mode " + transitionClass : ""}`;
     if (this.previewEl) {
-      this.previewEl.className = `reading-ruler-preview mode-${this.mode} color-${this.color} ${this.enabled && this.wordTracking && this.previewWidth > 0 ? "is-visible" : "is-hidden"}`;
+      const isUnderline = this.mode === "underline";
+      this.previewEl.className = `reading-ruler-preview mode-${this.mode} color-${this.color} ${this.enabled && isUnderline && this.wordTracking && this.previewWidth > 0 ? "is-visible" : "is-hidden"}`;
     }
     this.maskTopEl.className = `ruler-mask ruler-mask-top ${isFocus ? "is-visible" : "is-hidden"}`;
     this.maskBottomEl.className = `ruler-mask ruler-mask-bottom ${isFocus ? "is-visible" : "is-hidden"}`;
@@ -1772,6 +1822,7 @@ export class ReadingRuler {
       }
     } else {
       this.previewWidth = 0;
+      this.totalWidth = 0;
       if (this.previewEl) this.previewEl.style.display = "none";
       this.rulerEl.classList.remove("word-tracking-mode");
       this.applyPosition();
@@ -1830,6 +1881,8 @@ export class ReadingRuler {
     this.activeLineIndex = -1;
     this.wordLeft = 0;
     this.wordWidth = 0;
+    this.activeWordWidth = 0;
+    this.totalWidth = 0;
     this.previewLeft = 0;
     this.previewWidth = 0;
     this.isPageTransitioning = true;
