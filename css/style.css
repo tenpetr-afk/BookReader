@@ -1169,3 +1169,69 @@ body.dragging-file .drop-zone-overlay {
 .ruler-mask.word-transition-snap {
   transition: none !important;
 }
+
+/* ==========================================================================
+   Asymetrické čtecí okno pro režim slov (Word-mode Asymmetric Reading Window)
+   - Cílové slovo: plný kontrast a ohraničení (reading-ruler)
+   - Dopředný náhled (parafoveální preview 1–2 následujících slov): zjemněný podkres
+   ========================================================================== */
+.reading-ruler-preview {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 899;
+  display: none;
+  pointer-events: none;
+  box-sizing: border-box;
+  will-change: transform;
+  transform-origin: 0 0;
+  transition: none !important;
+  border-radius: 0 4px 4px 0;
+  overflow: visible !important;
+}
+
+.reading-ruler-preview.is-visible {
+  display: block;
+}
+
+.reading-ruler-preview.is-page-transitioning {
+  display: none !important;
+  opacity: 0 !important;
+}
+
+/* 1. Režim Highlight: Měkký dopředný náhled (~30 % sytosti) s plynulým dozníváním doprava */
+.reading-ruler-preview.mode-highlight {
+  background: linear-gradient(
+    to right,
+    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.14) 0%,
+    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.09) 65%,
+    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0) 100%
+  );
+  box-shadow: inset 0 1px 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.12),
+              inset 0 -1px 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.12);
+  border: none;
+}
+
+/* 2. Režim Underline: Zjemněná linka pod následujícími slovy */
+.reading-ruler-preview.mode-underline {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-bottom: 2px dashed rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.38);
+}
+
+/* 3. Režim Focus: Částečné ztmavení náhledu pro parafoveální vnímání */
+.reading-ruler-preview.mode-focus {
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow: none !important;
+  border: none !important;
+}
+
+/* Paleta barev pro dopředný náhled */
+.reading-ruler-preview.color-amber { --ruler-glow-rgb: 245, 158, 11; }
+.reading-ruler-preview.color-cyan { --ruler-glow-rgb: 6, 182, 212; }
+.reading-ruler-preview.color-emerald { --ruler-glow-rgb: 16, 185, 129; }
+.reading-ruler-preview.color-lavender { --ruler-glow-rgb: 168, 85, 247; }
+.reading-ruler-preview.color-slate { --ruler-glow-rgb: 100, 116, 139; }

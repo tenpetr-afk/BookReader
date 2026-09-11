@@ -38,6 +38,8 @@ export class ReadingRuler {
     this.lastPointerY = 200; // Poslední známá Y souřadnice kurzoru
     this.wordLeft = 0;
     this.wordWidth = 100;
+    this.previewLeft = 0;
+    this.previewWidth = 0;
     this.cachedLines = []; // Seznam řádků na aktuální stránce [{ top, bottom, height, centerY }]
     this.cachedWords = []; // Seznam slov na aktuální stránce [{ text, left, right, top, bottom, width, height, centerX, centerY }]
     this.activeLineIndex = -1;
@@ -109,6 +111,9 @@ export class ReadingRuler {
       this.rulerEl.classList.add("word-transition-snap");
       this.rulerEl.style.setProperty("transition", "none", "important");
     }
+    if (this.previewEl) {
+      this.previewEl.style.setProperty("transition", "none", "important");
+    }
     if (this.maskLeftEl) {
       this.maskLeftEl.classList.remove("word-transition-active");
       this.maskLeftEl.classList.add("word-transition-snap");
@@ -141,10 +146,16 @@ export class ReadingRuler {
     this.maskRightEl = document.createElement("div");
     this.maskRightEl.className = "ruler-mask ruler-mask-right is-hidden";
 
+    this.previewEl = document.createElement("div");
+    this.previewEl.className = `reading-ruler-preview mode-${this.mode} color-${this.color} is-hidden`;
+    this.previewEl.id = "reading-ruler-preview";
+    this.previewEl.setAttribute("aria-hidden", "true");
+
     document.body.appendChild(this.maskTopEl);
     document.body.appendChild(this.maskBottomEl);
     document.body.appendChild(this.maskLeftEl);
     document.body.appendChild(this.maskRightEl);
+    document.body.appendChild(this.previewEl);
     document.body.appendChild(this.rulerEl);
 
     this.updateStyles();
@@ -1161,27 +1172,8 @@ export class ReadingRuler {
           closestIdx = 0;
         }
 
-        this.activeWordIndex = closestIdx;
+        this.setWordWindow(closestIdx);
 
-        // Přesný symetrický padding: 3px po stranách (nezasahuje do sousedních slov), 2.5px vertikálně
-        const padX = 3;
-        const padY = 2.5;
-
-        this.wordLeft = Math.round(closestWord.left - padX);
-        this.wordWidth = Math.round(closestWord.width + padX * 2);
-
-        if (this.autoHeight) {
-          const baseH = Math.round(closestWord.height);
-          this.height = this.mode === "underline" ? Math.max(16, baseH) : Math.round(baseH + padY * 2);
-        }
-
-        if (this.mode === "underline") {
-          this.targetY = Math.round(closestWord.bottom - this.height);
-        } else {
-          this.targetY = Math.round(closestWord.top - padY);
-        }
-
-        this.currentY = this.targetY;
         this.rulerEl.classList.add("word-tracking-mode");
         this.rulerEl.classList.add("is-snapped");
         this.maskTopEl.classList.add("is-snapped");
@@ -1245,6 +1237,61 @@ export class ReadingRuler {
   }
 
   /**
+   * Nastaví geometrii asymetrického čtecího okna pro režim slov:
+   * - Cílové slovo (activeWordIndex): plný kontrast a ohraničení
+   * - Dopředný náhled (previewEl): 1–2 následující slova na témže řádku s parafoveálním podkresem
+   */
+  setWordWindow(wordIndex) {
+    if (wordIndex < 0 || wordIndex >= this.cachedWords.length) {
+      this.activeWordIndex = -1;
+      this.previewWidth = 0;
+      return;
+    }
+
+    this.activeWordIndex = wordIndex;
+    const w = this.cachedWords[wordIndex];
+    const padX = 3;
+    const padY = 2.5;
+
+    this.wordLeft = Math.round(w.left - padX);
+    this.wordWidth = Math.round(w.width + padX * 2);
+
+    if (this.autoHeight) {
+      const baseH = Math.round(w.height);
+      this.height = this.mode === "underline" ? Math.max(16, baseH) : Math.round(baseH + padY * 2);
+    }
+
+    if (this.mode === "underline") {
+      this.targetY = Math.round(w.bottom - this.height);
+    } else {
+      this.targetY = Math.round(w.top - padY);
+    }
+    this.currentY = this.targetY;
+
+    // Asymetrické dopředné čtecí okno: 1–2 následující slova na témže řádku
+    let lastPreviewWord = null;
+    for (let offset = 1; offset <= 2; offset++) {
+      const nextIdx = wordIndex + offset;
+      if (nextIdx >= this.cachedWords.length) break;
+      const nw = this.cachedWords[nextIdx];
+      const isSameLine = (nw.lineIndex != null && w.lineIndex != null)
+        ? (nw.lineIndex === w.lineIndex)
+        : (Math.abs(nw.centerY - w.centerY) <= 8);
+      if (!isSameLine || nw.left < w.left) break;
+      lastPreviewWord = nw;
+    }
+
+    if (lastPreviewWord) {
+      this.previewLeft = Math.round(this.wordLeft + this.wordWidth);
+      const previewRight = Math.round(lastPreviewWord.right + padX);
+      this.previewWidth = Math.max(0, previewRight - this.previewLeft);
+    } else {
+      this.previewLeft = 0;
+      this.previewWidth = 0;
+    }
+  }
+
+  /**
    * Okamžitě usadí a přichytí pravítko na první element (první slovo či řádek) aktuální stránky.
    * Využívá se při aktivaci režimu sledování myši (mouse-follow) nebo při přechodu strany.
    */
@@ -1254,19 +1301,9 @@ export class ReadingRuler {
     if (this.wordTracking) {
       this.refreshWords();
       if (this.cachedWords.length > 0) {
-        this.activeWordIndex = 0;
         if (this.cachedLines.length > 0) this.activeLineIndex = 0;
+        this.setWordWindow(0);
         const w = this.cachedWords[0];
-        const padX = 3;
-        const padY = 2.5;
-        this.wordLeft = Math.round(w.left - padX);
-        this.wordWidth = Math.round(w.width + padX * 2);
-        if (this.autoHeight) {
-          const baseH = Math.round(w.height);
-          this.height = this.mode === "underline" ? Math.max(16, baseH) : Math.round(baseH + padY * 2);
-        }
-        this.targetY = this.mode === "underline" ? Math.round(w.bottom - this.height) : Math.round(w.top - padY);
-        this.currentY = this.targetY;
         this.lastPointerX = w.centerX;
         this.lastPointerY = w.centerY;
         this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
@@ -1419,27 +1456,8 @@ export class ReadingRuler {
         }
 
         newIdx = Math.max(0, Math.min(this.cachedWords.length - 1, newIdx));
-        this.activeWordIndex = newIdx;
+        this.setWordWindow(newIdx);
 
-        const w = this.cachedWords[newIdx];
-        const padX = 3;
-        const padY = 2.5;
-
-        this.wordLeft = Math.round(w.left - padX);
-        this.wordWidth = Math.round(w.width + padX * 2);
-
-        if (this.autoHeight) {
-          const baseH = Math.round(w.height);
-          this.height = this.mode === "underline" ? Math.max(16, baseH) : Math.round(baseH + padY * 2);
-        }
-
-        if (this.mode === "underline") {
-          this.targetY = Math.round(w.bottom - this.height);
-        } else {
-          this.targetY = Math.round(w.top - padY);
-        }
-
-        this.currentY = this.targetY;
         this.rulerEl.classList.add("word-tracking-mode");
         this.rulerEl.classList.add("is-snapped");
         this.maskTopEl.classList.add("is-snapped");
@@ -1543,12 +1561,30 @@ export class ReadingRuler {
       this.rulerEl.style.right = "auto";
       this.rulerEl.style.width = `${Math.round(this.wordWidth)}px`;
       this.rulerEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+
+      if (this.previewEl) {
+        if (this.previewWidth > 0 && this.enabled) {
+          const px = Math.round(this.previewLeft);
+          this.previewEl.style.display = "block";
+          this.previewEl.style.top = "0px";
+          this.previewEl.style.left = "0px";
+          this.previewEl.style.right = "auto";
+          this.previewEl.style.height = `${this.height}px`;
+          this.previewEl.style.width = `${Math.round(this.previewWidth)}px`;
+          this.previewEl.style.transform = `translate3d(${px}px, ${y}px, 0)`;
+        } else {
+          this.previewEl.style.display = "none";
+        }
+      }
     } else {
       this.rulerEl.style.top = `${y}px`;
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "0px";
       this.rulerEl.style.width = "auto";
       this.rulerEl.style.transform = "none";
+      if (this.previewEl) {
+        this.previewEl.style.display = "none";
+      }
     }
 
     if (this.mode === "focus" && this.enabled) {
@@ -1562,7 +1598,10 @@ export class ReadingRuler {
 
       if (this.wordTracking) {
         const leftW = Math.max(0, Math.round(this.wordLeft));
-        const rightL = Math.max(0, Math.round(this.wordLeft + this.wordWidth));
+        const effectiveRight = (this.previewWidth > 0)
+          ? Math.round(this.previewLeft + this.previewWidth)
+          : Math.round(this.wordLeft + this.wordWidth);
+        const rightL = Math.max(0, effectiveRight);
 
         this.maskLeftEl.style.display = "block";
         this.maskLeftEl.style.top = `${y}px`;
@@ -1596,13 +1635,18 @@ export class ReadingRuler {
 
     if (this.wordTracking) {
       this.rulerEl.style.willChange = "transform";
+      if (this.previewEl) this.previewEl.style.willChange = "transform";
     } else {
       this.rulerEl.style.willChange = "auto";
+      if (this.previewEl) this.previewEl.style.willChange = "auto";
     }
 
     const isFocus = this.enabled && this.mode === "focus";
     const transitionClass = this.horizontalWordTransition ? "word-transition-active" : "word-transition-snap";
     this.rulerEl.className = `reading-ruler mode-${this.mode} color-${this.color} ${this.enabled ? "is-visible" : "is-hidden"} ${this.wordTracking ? "word-tracking-mode " + transitionClass : ""}`;
+    if (this.previewEl) {
+      this.previewEl.className = `reading-ruler-preview mode-${this.mode} color-${this.color} ${this.enabled && this.wordTracking && this.previewWidth > 0 ? "is-visible" : "is-hidden"}`;
+    }
     this.maskTopEl.className = `ruler-mask ruler-mask-top ${isFocus ? "is-visible" : "is-hidden"}`;
     this.maskBottomEl.className = `ruler-mask ruler-mask-bottom ${isFocus ? "is-visible" : "is-hidden"}`;
     this.maskLeftEl.className = `ruler-mask ruler-mask-left ${isFocus && this.wordTracking ? "is-visible " + transitionClass : "is-hidden"}`;
@@ -1735,6 +1779,8 @@ export class ReadingRuler {
         this.handlePointerMove(this.lastPointerX, this.lastPointerY);
       }
     } else {
+      this.previewWidth = 0;
+      if (this.previewEl) this.previewEl.style.display = "none";
       this.rulerEl.classList.remove("word-tracking-mode");
       this.applyPosition();
       if (this.followMode === "mouse") {
@@ -1792,10 +1838,13 @@ export class ReadingRuler {
     this.activeLineIndex = -1;
     this.wordLeft = 0;
     this.wordWidth = 0;
+    this.previewLeft = 0;
+    this.previewWidth = 0;
     this.isPageTransitioning = true;
 
     // 2. Vizuální skrytí pravítka během animace přechodu strany (maska zůstává ztmavená, aby nedošlo k probliknutí bílé)
     this.rulerEl?.classList.add("is-page-transitioning");
+    this.previewEl?.classList.add("is-page-transitioning");
 
     const finishPageChange = () => {
       if (!this.isPageTransitioning) return;
@@ -1827,6 +1876,7 @@ export class ReadingRuler {
 
       // Odkrytí pravítka s čistě přepočtenými souřadnicemi
       this.rulerEl?.classList.remove("is-page-transitioning");
+      this.previewEl?.classList.remove("is-page-transitioning");
     };
 
     if (!isPageChanged) {
@@ -1862,6 +1912,7 @@ export class ReadingRuler {
       this._onTransitionEnd = null;
     }
     if (this.rulerEl) this.rulerEl.remove();
+    if (this.previewEl) this.previewEl.remove();
     if (this.maskTopEl) this.maskTopEl.remove();
     if (this.maskBottomEl) this.maskBottomEl.remove();
     if (this.maskLeftEl) this.maskLeftEl.remove();
