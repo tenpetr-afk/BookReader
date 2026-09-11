@@ -1,0 +1,907 @@
+/* ==========================================================================
+   LuminaReader - Stránkovaná typografie knihy a Čtecí pravítko (Reader & Ruler)
+   Optimalizováno pro iPad (Multi-column listování, gesta přejetí, dotykové zóny)
+   ========================================================================== */
+
+:root {
+  --reader-font-size: 19px;
+  --reader-line-height: 1.68;
+  --reader-max-width: 760px;
+  --reader-text-align: justify;
+  --header-base-height: 60px;
+  --header-height: calc(var(--header-base-height) + var(--safe-area-top, 0px));
+  --footer-base-height: 48px;
+  --footer-height: calc(var(--footer-base-height) + var(--safe-area-bottom, 0px));
+  --page-gap: 50px;
+}
+
+/* Písma pro čtení */
+[data-font="georgia"] {
+  --font-book: Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+[data-font="merriweather"] {
+  --font-book: "Merriweather", Georgia, serif;
+}
+
+[data-font="inter"] {
+  --font-book: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+}
+
+[data-font="opendyslexic"] {
+  --font-book: "OpenDyslexic", "Comic Sans MS", "Arial Rounded MT Bold", sans-serif;
+  letter-spacing: 0.05em;
+  word-spacing: 0.12em;
+}
+
+/* ==========================================================================
+   Stránkovaný kontejner (Paged Viewport & Multi-column Stage)
+   ========================================================================== */
+
+.paged-viewport {
+  position: fixed;
+  top: var(--header-height);
+  bottom: var(--footer-height);
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: var(--bg-app);
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y pinch-zoom;
+}
+
+/* Jeviště stránky: přesně ohraničený prostor pro jednu stranu */
+.paged-stage {
+  position: relative;
+  width: min(var(--reader-max-width), calc(100vw - 60px));
+  height: calc(100% - 24px);
+  overflow: hidden;
+  margin: 0 auto;
+}
+
+/* Responzivní přizpůsobení jeviště pro iPad */
+@media (min-width: 768px) {
+  :root {
+    --header-base-height: 64px;
+    --header-height: calc(var(--header-base-height) + var(--safe-area-top, 0px));
+    --footer-base-height: 52px;
+    --footer-height: calc(var(--footer-base-height) + var(--safe-area-bottom, 0px));
+  }
+  .paged-stage {
+    width: min(var(--reader-max-width), calc(100vw - 80px));
+    height: calc(100% - 30px);
+  }
+}
+
+/* Multi-column layout: prohlížeč automaticky rozdělí text kapitoly do stran */
+.paged-content {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  column-width: calc(min(var(--reader-max-width), calc(100vw - 60px)));
+  column-gap: var(--page-gap);
+  column-fill: auto;
+  font-family: var(--font-book, Georgia, serif);
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
+  text-align: var(--reader-text-align);
+  color: var(--text-main);
+  word-break: break-word;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+  transition: transform 0.20s cubic-bezier(0.2, 0.9, 0.3, 1);
+  will-change: transform;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+@media (min-width: 768px) {
+  .paged-content {
+    column-width: calc(min(var(--reader-max-width), calc(100vw - 80px)));
+  }
+}
+
+/* Typografické elementy uvnitř knihy v režimu stran */
+.paged-content h1,
+.paged-content h2,
+.paged-content h3,
+.paged-content h4 {
+  font-family: var(--font-ui);
+  text-align: center;
+  margin-top: 1.5em;
+  margin-bottom: 0.8em;
+  font-weight: 800;
+  line-height: 1.25;
+  color: inherit;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+.paged-content h1 { font-size: 2em; }
+.paged-content h2 { font-size: 1.6em; }
+.paged-content h3 { font-size: 1.25em; }
+
+.paged-content p {
+  margin-bottom: 1.1em;
+  orphans: 2;
+  widows: 2;
+}
+
+.paged-content p.no-indent {
+  text-indent: 0;
+}
+
+.paged-content hr {
+  border: none;
+  height: 1px;
+  background: var(--border-color);
+  margin: 1.5em auto;
+  width: 40%;
+  break-inside: avoid;
+}
+
+.paged-content blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding-left: 1.25em;
+  margin: 1.2em 0;
+  font-style: italic;
+  opacity: 0.9;
+  break-inside: avoid;
+}
+
+/* Obrázky přizpůsobené výšce obrazovky (žádné přetékání mimo stranu!) */
+.paged-content img,
+.paged-content svg {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  margin: 1.2rem auto;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.paged-content .character {
+  font-weight: 700;
+  margin-top: 1.2em;
+  margin-bottom: 0.2em;
+  text-indent: 0;
+  letter-spacing: 0.5px;
+  break-after: avoid;
+}
+
+.paged-content .stage-direction {
+  font-style: italic;
+  opacity: 0.75;
+  margin: 0.5em 0;
+  text-indent: 0;
+}
+
+/* ==========================================================================
+   Dotykové zóny na okrajích pro listování
+   ========================================================================== */
+
+.page-touch-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 15%;
+  max-width: 140px;
+  z-index: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.page-touch-left {
+  left: 0;
+}
+
+.page-touch-right {
+  right: 0;
+}
+
+.touch-zone-hint {
+  font-size: 2.5rem;
+  font-weight: 300;
+  color: var(--text-muted);
+  opacity: 0.25;
+  pointer-events: none;
+  transition: all 0.2s ease;
+}
+
+.page-touch-zone:hover,
+.page-touch-zone:active {
+  opacity: 1;
+}
+
+.page-touch-zone:hover .touch-zone-hint {
+  opacity: 0.7;
+  transform: scale(1.2);
+}
+
+/* ==========================================================================
+   Spodní lišta se stránkami a navigací (Paged Footer Bar)
+   ========================================================================== */
+
+.paged-footer-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--footer-height);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 max(1.25rem, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(1.25rem, env(safe-area-inset-left, 0px));
+  z-index: 1000;
+  box-sizing: border-box;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.03);
+  transition: background-color var(--transition-normal), border-color var(--transition-normal);
+}
+
+/* Ve výchozím stavu je spodní lišta skryta a čtecí plocha sahá až ke spodnímu okraji displeje */
+body:not(.show-footer-bar) .paged-footer-bar {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body:not(.show-footer-bar) .paged-viewport {
+  bottom: var(--safe-area-bottom, 0px);
+}
+
+body.show-footer-bar .paged-footer-bar {
+  display: flex !important;
+}
+
+body.show-footer-bar .paged-viewport {
+  bottom: var(--footer-height);
+}
+
+.btn-page-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface-elevated);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  min-height: 38px;
+}
+
+.btn-page-nav:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn-page-nav:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.paged-footer-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.footer-stat-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.footer-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-subtle);
+  font-weight: 600;
+}
+
+.footer-value {
+  color: var(--text-main);
+  font-weight: 700;
+}
+
+.paged-separator {
+  opacity: 0.35;
+  font-size: 0.75rem;
+}
+
+.paged-chapter-name {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-main);
+}
+
+.paged-percent {
+  color: var(--color-primary);
+}
+
+@media (max-width: 680px) {
+  .paged-footer-info {
+    gap: 0.4rem;
+    font-size: 0.78rem;
+  }
+  .footer-label {
+    display: none; /* Na malých displejích skrýt textové popisky pro úsporu místa */
+  }
+}
+
+/* ==========================================================================
+   ČTECÍ PRAVÍTKO (Reading Ruler) & iPad Touch Controls
+   ========================================================================== */
+
+/* Pravítko a ovladače jsou viditelné VÝHRADNĚ při čtení knihy (nikdy v knihovně) */
+body:not(.in-reader-view) .reading-ruler,
+body:not(.in-reader-view) .ruler-mask,
+body:not(.in-reader-view) .ruler-floating-controls {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
+
+.reading-ruler {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  transition: opacity 0.2s ease, background-color 0.2s ease;
+  display: none;
+  pointer-events: none;
+  box-sizing: border-box;
+  overflow: visible !important;
+}
+
+.reading-ruler.is-visible {
+  display: block;
+}
+
+/* Režim sledování jednotlivých slov – přesné ohraničení slova bez ořezávání sousedních znaků */
+.reading-ruler.word-tracking-mode {
+  left: auto;
+  right: auto;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.55),
+              0 1px 4px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.2);
+  background-color: rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.18);
+  overflow: visible !important;
+  transition: left 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+              width 0.08s ease-out,
+              top 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+              height 0.12s ease-out;
+}
+
+.reading-ruler.word-tracking-mode.mode-underline {
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  box-shadow: none !important;
+}
+
+.reading-ruler.word-tracking-mode.mode-focus {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Magnetická animace při přichycení k řádku */
+.reading-ruler.is-snapped {
+  transition: top 0.08s cubic-bezier(0.2, 0.8, 0.35, 1), height 0.12s ease-out, background-color 0.2s ease;
+}
+
+.ruler-mask.is-snapped {
+  transition: top 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+              height 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+              left 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+              width 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+              opacity 0.2s ease;
+}
+
+/* Okamžité skrytí pravítka během přechodu mezi stranami pro zamezení desynchronizace */
+.reading-ruler.is-page-transitioning {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transition: opacity 0.06s ease-out !important;
+}
+
+/* 1. Režim: Zvýrazňovací proužek (Highlight Strip) – zjemněný feathering bez ostrých hran */
+.reading-ruler.mode-highlight {
+  border-radius: 6px;
+  border: none;
+  overflow: visible !important;
+}
+
+.reading-ruler.mode-highlight.color-amber,
+.reading-ruler.word-tracking-mode.color-amber {
+  --ruler-glow-rgb: 245, 158, 11;
+  background: linear-gradient(to bottom, rgba(245, 158, 11, 0.06) 0%, rgba(245, 158, 11, 0.22) 20%, rgba(245, 158, 11, 0.22) 80%, rgba(245, 158, 11, 0.06) 100%);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.25), inset 0 1px 1.5px rgba(245, 158, 11, 0.35), inset 0 -1px 1.5px rgba(245, 158, 11, 0.35);
+}
+
+.reading-ruler.mode-highlight.color-cyan,
+.reading-ruler.word-tracking-mode.color-cyan {
+  --ruler-glow-rgb: 6, 182, 212;
+  background: linear-gradient(to bottom, rgba(6, 182, 212, 0.06) 0%, rgba(6, 182, 212, 0.22) 20%, rgba(6, 182, 212, 0.22) 80%, rgba(6, 182, 212, 0.06) 100%);
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.25), inset 0 1px 1.5px rgba(6, 182, 212, 0.35), inset 0 -1px 1.5px rgba(6, 182, 212, 0.35);
+}
+
+.reading-ruler.mode-highlight.color-emerald,
+.reading-ruler.word-tracking-mode.color-emerald {
+  --ruler-glow-rgb: 16, 185, 129;
+  background: linear-gradient(to bottom, rgba(16, 185, 129, 0.06) 0%, rgba(16, 185, 129, 0.22) 20%, rgba(16, 185, 129, 0.22) 80%, rgba(16, 185, 129, 0.06) 100%);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.25), inset 0 1px 1.5px rgba(16, 185, 129, 0.35), inset 0 -1px 1.5px rgba(16, 185, 129, 0.35);
+}
+
+.reading-ruler.mode-highlight.color-lavender,
+.reading-ruler.word-tracking-mode.color-lavender {
+  --ruler-glow-rgb: 168, 85, 247;
+  background: linear-gradient(to bottom, rgba(168, 85, 247, 0.06) 0%, rgba(168, 85, 247, 0.22) 20%, rgba(168, 85, 247, 0.22) 80%, rgba(168, 85, 247, 0.06) 100%);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.25), inset 0 1px 1.5px rgba(168, 85, 247, 0.35), inset 0 -1px 1.5px rgba(168, 85, 247, 0.35);
+}
+
+.reading-ruler.mode-highlight.color-slate,
+.reading-ruler.word-tracking-mode.color-slate {
+  --ruler-glow-rgb: 100, 116, 139;
+  background: linear-gradient(to bottom, rgba(100, 116, 139, 0.06) 0%, rgba(100, 116, 139, 0.24) 20%, rgba(100, 116, 139, 0.24) 80%, rgba(100, 116, 139, 0.06) 100%);
+  box-shadow: 0 0 12px rgba(100, 116, 139, 0.25), inset 0 1px 1.5px rgba(100, 116, 139, 0.35), inset 0 -1px 1.5px rgba(100, 116, 139, 0.35);
+}
+
+/* 2. Režim: Vodicí linka (Underline) */
+.reading-ruler.mode-underline {
+  background: transparent !important;
+  border-top: none !important;
+  box-shadow: none !important;
+}
+
+.reading-ruler.mode-underline.color-amber { border-bottom: 3.5px solid #f59e0b; }
+.reading-ruler.mode-underline.color-cyan { border-bottom: 3.5px solid #06b6d4; }
+.reading-ruler.mode-underline.color-emerald { border-bottom: 3.5px solid #10b981; }
+.reading-ruler.mode-underline.color-lavender { border-bottom: 3.5px solid #a855f7; }
+.reading-ruler.mode-underline.color-slate { border-bottom: 3.5px solid #64748b; }
+
+/* 3. Režim: Zaostřovací maska (Focus Window) */
+.reading-ruler.mode-focus {
+  background: transparent;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Masky ztmavující okolní text s měkkým prolnutím hran (Gradient Feathering) */
+.ruler-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  background-color: #000000;
+  pointer-events: none;
+  z-index: 899;
+  display: none;
+  transition: opacity 0.2s ease;
+  box-sizing: border-box;
+}
+
+.ruler-mask.is-visible {
+  display: block;
+}
+
+.ruler-mask-top {
+  top: 0;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+.ruler-mask-bottom {
+  bottom: 0;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+.ruler-mask-left {
+  left: 0;
+  right: auto;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+.ruler-mask-right {
+  right: 0;
+  width: auto;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
+/* ==========================================================================
+   Rychlý konfigurační popover pravítka na horní liště (Quick Popover)
+   ========================================================================== */
+
+.ruler-btn-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 1px;
+  gap: 1px;
+  transition: all var(--transition-fast);
+}
+
+.ruler-btn-group:hover {
+  border-color: var(--color-primary-light, #3b82f6);
+}
+
+.ruler-btn-group.is-active {
+  border-color: var(--color-primary);
+}
+
+.ruler-btn-group .btn-icon {
+  border: none !important;
+  background: transparent !important;
+  border-radius: var(--radius-sm);
+  height: 34px;
+  min-width: 34px;
+  padding: 0 6px;
+  box-shadow: none !important;
+}
+
+.ruler-btn-group .btn-icon#btn-toggle-ruler.active {
+  background: var(--color-primary) !important;
+  color: #ffffff !important;
+}
+
+.ruler-btn-group .btn-ruler-dropdown-arrow {
+  min-width: 20px;
+  padding: 0 4px;
+  color: var(--text-muted);
+  border-left: 1px solid var(--border-color) !important;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.ruler-btn-group .btn-ruler-dropdown-arrow:hover {
+  color: var(--color-primary);
+  background: var(--bg-hover) !important;
+}
+
+
+.ruler-quick-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 320px;
+  max-height: min(580px, calc(100vh - 85px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-surface-elevated);
+  background: rgba(30, 41, 59, 0.95);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg, 16px);
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  padding: 1rem;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  box-sizing: border-box;
+  transform-origin: top right;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ruler-quick-popover::-webkit-scrollbar {
+  width: 5px;
+}
+
+.ruler-quick-popover::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ruler-quick-popover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.ruler-quick-popover.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.95) translateY(-6px);
+  display: none !important;
+}
+
+.popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.popover-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: -0.01em;
+}
+
+.popover-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.popover-section-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.popover-row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.popover-val-badge {
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary);
+  background: var(--bg-hover);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+}
+
+.popover-segmented-control {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--bg-hover);
+  padding: 3px;
+  border-radius: var(--radius-md);
+  gap: 3px;
+  border: 1px solid var(--border-color);
+}
+
+.popover-segmented-control .segment-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.popover-segmented-control .segment-btn.active {
+  background: var(--bg-surface-elevated);
+  color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.popover-slider-wrapper {
+  padding: 0.2rem 0;
+}
+
+.popover-slider-wrapper .slider-input {
+  width: 100%;
+}
+
+.popover-styles-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem;
+}
+
+.popover-style-btn {
+  padding: 0.4rem 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface-elevated);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: center;
+}
+
+.popover-style-btn.active {
+  border-color: var(--color-primary);
+  background: var(--bg-hover);
+  color: var(--color-primary);
+}
+
+.popover-colors-row {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.popover-colors-row .ruler-color-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.popover-colors-row .ruler-color-btn.active {
+  border-color: #ffffff;
+  transform: scale(1.15);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+}
+
+.popover-select {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border-color);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text-main);
+  outline: none;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.popover-toggles-section {
+  gap: 0.55rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border-color);
+}
+
+/* Skrytí systémového kurzoru VÝHRADNĚ při režimu sledování myši se zapnutým pravítkem */
+body.ruler-mouse-follow-active.in-reader-view #paged-viewport,
+body.ruler-mouse-follow-active.in-reader-view #paged-viewport * {
+  cursor: none !important;
+}
+
+/* Ovládací prvky a plochy mimo čtecí plátno mají vždy standardní viditelný kurzor */
+body.ruler-mouse-follow-active .top-navbar,
+body.ruler-mouse-follow-active .top-navbar *,
+body.ruler-mouse-follow-active .paged-footer-bar,
+body.ruler-mouse-follow-active .paged-footer-bar *,
+body.ruler-mouse-follow-active .drawer,
+body.ruler-mouse-follow-active .drawer *,
+body.ruler-mouse-follow-active .modal-overlay,
+body.ruler-mouse-follow-active .modal-overlay *,
+body.ruler-mouse-follow-active .ruler-quick-popover,
+body.ruler-mouse-follow-active .ruler-quick-popover *,
+body.ruler-mouse-follow-active .toast-container,
+body.ruler-mouse-follow-active .toast-container * {
+  cursor: default !important;
+}
+
+body.ruler-mouse-follow-active button,
+body.ruler-mouse-follow-active .btn,
+body.ruler-mouse-follow-active .btn-icon,
+body.ruler-mouse-follow-active a,
+body.ruler-mouse-follow-active input,
+body.ruler-mouse-follow-active select,
+body.ruler-mouse-follow-active .switch,
+body.ruler-mouse-follow-active [role="button"] {
+  cursor: pointer !important;
+}
+
+/* Zamezení nechtěného označování textu při tažení tužkou přes čtecí plochu se zapnutým pravítkem */
+body.ruler-active .reader-content,
+body.ruler-active .paged-viewport {
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+/* Indikátor podržení prstu / Apple Pencil / kurzoru (1,1 sekundy) */
+.ruler-hold-indicator {
+  position: fixed;
+  width: 44px;
+  height: 44px;
+  margin-left: -22px;
+  margin-top: -22px;
+  border-radius: 50%;
+  pointer-events: none !important;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.65);
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+}
+
+.ruler-hold-indicator.is-active {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.ruler-hold-indicator.is-completed {
+  opacity: 0;
+  transform: scale(1.4);
+  transition: opacity 0.28s ease-out, transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ruler-hold-indicator svg {
+  width: 44px;
+  height: 44px;
+  transform: rotate(-90deg);
+}
+
+.ruler-hold-indicator circle.bg {
+  stroke: rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.25);
+  stroke-width: 3.5;
+  fill: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.ruler-hold-indicator circle.progress {
+  stroke: var(--color-primary, #f59e0b);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  fill: none;
+  stroke-dasharray: 100.53;
+  stroke-dashoffset: 100.53;
+}
+
+.ruler-hold-indicator.is-active circle.progress {
+  animation: ruler-hold-fill 1.1s linear forwards;
+}
+
+@keyframes ruler-hold-fill {
+  from {
+    stroke-dashoffset: 100.53;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+body.ruler-holding,
+body.ruler-holding * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+
