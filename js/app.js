@@ -36,6 +36,7 @@ class LuminaApp {
     this.initRuler();
     this.applySettings();
     this.bindEvents();
+    this.initScrubber();
     this.bindKeyboardShortcuts();
 
     // Načíst knihy z IndexedDB
@@ -91,6 +92,17 @@ class LuminaApp {
       etrBadge: document.getElementById("etr-badge"),
       progressBar: document.getElementById("reading-progress-bar"),
       progressText: document.getElementById("reading-progress-text"),
+
+      // Spodní lišta a posuvník (Scrubber)
+      readingScrubber: document.getElementById("reading-scrubber"),
+      scrubberTrack: document.getElementById("scrubber-track"),
+      scrubberProgressFill: document.getElementById("scrubber-progress-fill"),
+      scrubberThumb: document.getElementById("scrubber-thumb"),
+      scrubberTooltip: document.getElementById("scrubber-tooltip"),
+      scrubberChapterTicks: document.getElementById("scrubber-chapter-ticks"),
+      footerTitleText: document.getElementById("footer-title-text"),
+      footerEtrText: document.getElementById("footer-etr-text"),
+      footerEtrSeparator: document.getElementById("footer-etr-separator"),
       
       // Navigace ve čtečce
       btnBackToLibrary: document.getElementById("btn-back-library"),
@@ -171,7 +183,7 @@ class LuminaApp {
   isInteractiveOrUiElement(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      'header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, [role="button"], [role="dialog"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group'
+      'header, nav, footer, .paged-footer-bar, .reading-scrubber, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, [role="button"], [role="dialog"], [role="slider"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group'
     );
   }
 
@@ -515,13 +527,18 @@ class LuminaApp {
 
       // 2. V režimu sledování myši ("mouse") prst nehýbe ani neukotvuje pravítko
       if (this.ruler && this.ruler.enabled && this.ruler.followMode === "mouse") {
+        if (absDeltaX < 15 && absDeltaY < 15 && this.isCenterTap(touchEndX, touchEndY)) {
+          lastTapTime = Date.now();
+          this.toggleReaderChrome();
+          e.preventDefault();
+        }
         return;
       }
 
       // 3. Dotykové zóny pro krokování pravítka v klávesovém režimu (layout zóny)
       // Krokování se spustí pouze při čistém, stacionárním klepnutí (|deltaX| < 10px a |deltaY| < 10px)
       if (this.ruler && this.ruler.enabled && this.ruler.followMode === "keyboard") {
-        if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls"))) {
+        if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar"))) {
           return;
         }
         if (absDeltaX >= 10 || absDeltaY >= 10 || dist >= 10) return;
@@ -543,18 +560,38 @@ class LuminaApp {
         e.preventDefault();
         return;
       }
+
+      // 4. Běžné klepnutí (Tap) když je pravítko vypnuté
+      if (absDeltaX < 15 && absDeltaY < 15) {
+        if (this.isCenterTap(touchEndX, touchEndY)) {
+          lastTapTime = Date.now();
+          this.toggleReaderChrome();
+          e.preventDefault();
+          return;
+        }
+      }
     }, { passive: false });
 
-    // Kliknutí myší na plochu čtečky pro ovládání pravítka
+    // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
     this.dom.pagedViewport.addEventListener("click", (e) => {
       if (this.isUiOrOverlayEvent(e)) return;
-      if (!this.ruler || !this.ruler.enabled) return;
       if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
         return;
       }
-      if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls"))) {
+      if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar"))) {
         return;
       }
+
+      // Klepnutí doprostřed obrazovky přepne zobrazení hlavičky a spodní lišty
+      if (this.isCenterTap(e.clientX, e.clientY)) {
+        if (!this.ruler || !this.ruler.enabled || this.ruler.followMode === "mouse") {
+          lastTapTime = Date.now();
+          this.toggleReaderChrome();
+          return;
+        }
+      }
+
+      if (!this.ruler || !this.ruler.enabled) return;
       if (this.ruler.followMode === "mouse") {
         return;
       }
@@ -632,6 +669,7 @@ class LuminaApp {
     // Izolace událostí pro lišty, panely nastavení a modální okna proti nechtěnému otáčení stránek
     const uiContainers = [
       document.getElementById("reader-header"),
+      document.getElementById("paged-footer-bar"),
       document.querySelector(".library-header"),
       document.querySelector(".top-navbar"),
       document.getElementById("settings-drawer"),
@@ -1559,6 +1597,7 @@ class LuminaApp {
     if (this.dom.progressText) this.dom.progressText.textContent = `${overallProgress}%`;
 
     this.updateEtrBadge();
+    this.updateScrubberUI();
   }
 
 
@@ -1653,6 +1692,7 @@ class LuminaApp {
     this.closeStatsModal();
     document.body.classList.remove("immersive-reading");
     document.body.classList.remove("in-reader-view");
+    document.body.classList.remove("reader-chrome-hidden");
     this.dom.viewReader.classList.add("is-hidden");
     this.dom.viewLibrary.classList.remove("is-hidden");
     this.ruler.setEnabled(false);
@@ -1665,10 +1705,14 @@ class LuminaApp {
     this.dom.viewLibrary.classList.add("is-hidden");
     this.dom.viewReader.classList.remove("is-hidden");
     document.body.classList.add("in-reader-view");
+    document.body.classList.add("show-footer-bar");
+    document.body.classList.remove("reader-chrome-hidden");
     if (this.settings.ruler.enabled) {
       this.ruler.setEnabled(true);
     }
     this.updateTouchZonesUI();
+    this.renderScrubberTicks();
+    this.updateScrubberUI();
   }
 
   toggleDrawer(name) {
@@ -1725,6 +1769,281 @@ class LuminaApp {
     setTimeout(() => {
       toast.classList.remove("is-visible");
     }, 3200);
+  }
+
+  isCenterTap(clientX, clientY) {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (clientY < 65 || clientY > h - 70) return false;
+    return clientX >= w * 0.20 && clientX <= w * 0.80;
+  }
+
+  toggleReaderChrome(force) {
+    const isHidden = document.body.classList.contains("reader-chrome-hidden");
+    const willHide = (force !== undefined) ? !force : !isHidden;
+    document.body.classList.toggle("reader-chrome-hidden", willHide);
+  }
+
+  getBookMetrics() {
+    const totalChapters = this.currentParser?.spine?.length || 1;
+    const currChapterPage = this.currentPageIndex + 1;
+    const totalChapterPages = Math.max(1, this.totalPagesInChapter || 1);
+
+    const chapterPageCounts = [];
+    const chapterStarts = [];
+    let beforePages = 0;
+    let allPages = 0;
+
+    const hasWordCounts = !!(this.bookWordCounts?.chapterWords?.length);
+    const currentChapterWords = hasWordCounts ? (this.bookWordCounts.chapterWords[this.currentChapterIndex] || 250) : 250;
+    const wordsPerPage = Math.max(1, Math.round(currentChapterWords / totalChapterPages));
+
+    for (let i = 0; i < totalChapters; i++) {
+      let chPages = totalChapterPages;
+      if (hasWordCounts) {
+        const chWords = this.bookWordCounts.chapterWords[i] || 250;
+        chPages = (i === this.currentChapterIndex) ? totalChapterPages : Math.max(1, Math.round(chWords / wordsPerPage));
+      }
+      chapterPageCounts.push(chPages);
+      chapterStarts.push(allPages + 1);
+      if (i < this.currentChapterIndex) {
+        beforePages += chPages;
+      }
+      allPages += chPages;
+    }
+
+    const currBookPage = Math.max(1, beforePages + currChapterPage);
+    const totalBookPages = Math.max(1, allPages);
+
+    return {
+      currBookPage,
+      totalBookPages,
+      chapterStarts,
+      chapterPageCounts,
+      totalChapters
+    };
+  }
+
+  resolveBookPage(targetBookPage) {
+    const metrics = this.getBookMetrics();
+    const clamped = Math.max(1, Math.min(metrics.totalBookPages, Math.round(targetBookPage)));
+    let chapterIndex = 0;
+    let pageInChapter = 0;
+
+    for (let i = metrics.chapterStarts.length - 1; i >= 0; i--) {
+      if (clamped >= metrics.chapterStarts[i]) {
+        chapterIndex = i;
+        pageInChapter = clamped - metrics.chapterStarts[i];
+        break;
+      }
+    }
+
+    let chapterTitle = "";
+    if (this.currentParser?.spine && this.currentParser.spine[chapterIndex]) {
+      const sp = this.currentParser.spine[chapterIndex];
+      chapterTitle = sp.title || `Kapitola ${chapterIndex + 1}`;
+    } else {
+      chapterTitle = `Kapitola ${chapterIndex + 1}`;
+    }
+
+    return {
+      targetBookPage: clamped,
+      chapterIndex,
+      pageInChapter,
+      chapterTitle,
+      totalBookPages: metrics.totalBookPages
+    };
+  }
+
+  async goToBookPage(targetBookPage) {
+    const resolved = this.resolveBookPage(targetBookPage);
+    if (resolved.chapterIndex === this.currentChapterIndex) {
+      this.goToPage(resolved.pageInChapter);
+    } else {
+      await tracker.flushSession();
+      this.currentChapterIndex = resolved.chapterIndex;
+      await this.loadCurrentChapter(resolved.pageInChapter);
+    }
+  }
+
+  renderScrubberTicks() {
+    if (!this.dom.scrubberChapterTicks) return;
+    this.dom.scrubberChapterTicks.innerHTML = "";
+    const metrics = this.getBookMetrics();
+    if (metrics.totalChapters <= 1 || metrics.totalBookPages <= 1) return;
+
+    const frag = document.createDocumentFragment();
+    for (let i = 1; i < metrics.totalChapters; i++) {
+      const startPage = metrics.chapterStarts[i];
+      const percent = ((startPage - 1) / metrics.totalBookPages) * 100;
+      if (percent > 0.5 && percent < 99.5) {
+        const tick = document.createElement("div");
+        tick.className = "scrubber-tick";
+        tick.style.left = `${percent.toFixed(2)}%`;
+        frag.appendChild(tick);
+      }
+    }
+    this.dom.scrubberChapterTicks.appendChild(frag);
+  }
+
+  updateScrubberUI(customPercent = null, customTooltip = null) {
+    const metrics = this.getBookMetrics();
+    const percent = customPercent !== null ? customPercent : (metrics.totalBookPages > 0 ? (metrics.currBookPage / metrics.totalBookPages) * 100 : 0);
+    const clampedPercent = Math.max(0, Math.min(100, percent));
+
+    if (this.dom.scrubberProgressFill) {
+      this.dom.scrubberProgressFill.style.width = `${clampedPercent}%`;
+    }
+    if (this.dom.scrubberThumb) {
+      this.dom.scrubberThumb.style.left = `${clampedPercent}%`;
+      this.dom.scrubberThumb.setAttribute("aria-valuemin", "1");
+      this.dom.scrubberThumb.setAttribute("aria-valuemax", String(metrics.totalBookPages));
+      this.dom.scrubberThumb.setAttribute("aria-valuenow", String(metrics.currBookPage));
+    }
+    if (this.dom.scrubberTooltip) {
+      if (customTooltip) {
+        this.dom.scrubberTooltip.textContent = customTooltip;
+      }
+      this.dom.scrubberTooltip.style.left = `${clampedPercent}%`;
+    }
+    if (this.dom.footerTitleText) {
+      const currentChapterTitle = (this.currentParser?.spine && this.currentParser.spine[this.currentChapterIndex]?.title)
+        || this.currentBook?.title
+        || `Kapitola ${this.currentChapterIndex + 1}`;
+      this.dom.footerTitleText.textContent = currentChapterTitle;
+      if (this.dom.pagedFooterBar) {
+        this.dom.pagedFooterBar.setAttribute("title", currentChapterTitle);
+      }
+    }
+    if (this.dom.footerEtrText) {
+      if (tracker.currentChapterWords) {
+        const remainingWords = Math.round(tracker.currentChapterWords * (1 - tracker.currentScrollPercent));
+        const minutesLeft = tracker.getEstimatedMinutesRemaining(remainingWords);
+        this.dom.footerEtrText.textContent = `Zbývá ${minutesLeft} min`;
+        this.dom.footerEtrText.style.display = "inline";
+        if (this.dom.footerEtrSeparator) this.dom.footerEtrSeparator.style.display = "inline";
+      } else {
+        this.dom.footerEtrText.style.display = "none";
+        if (this.dom.footerEtrSeparator) this.dom.footerEtrSeparator.style.display = "none";
+      }
+    }
+  }
+
+  initScrubber() {
+    const scrubber = this.dom.readingScrubber;
+    if (!scrubber) return;
+
+    let isScrubbing = false;
+    let pendingTargetPage = null;
+    let throttleTimer = null;
+
+    const getRatioFromEvent = (e) => {
+      const track = this.dom.scrubberTrack || scrubber;
+      const rect = track.getBoundingClientRect();
+      if (rect.width <= 0) return 0;
+      const clientX = e.clientX ?? (e.touches && e.touches[0]?.clientX) ?? 0;
+      const x = clientX - rect.left;
+      return Math.max(0, Math.min(1, x / rect.width));
+    };
+
+    const updateOnDrag = (e) => {
+      const ratio = getRatioFromEvent(e);
+      const metrics = this.getBookMetrics();
+      const targetPage = Math.max(1, Math.min(metrics.totalBookPages, Math.round(ratio * metrics.totalBookPages)));
+      pendingTargetPage = targetPage;
+
+      const resolved = this.resolveBookPage(targetPage);
+      const tooltipText = `Strana ${resolved.targetBookPage} / ${resolved.chapterTitle}`;
+      const percent = ratio * 100;
+
+      this.updateScrubberUI(percent, tooltipText);
+
+      // Pokud se posouváme v rámci aktuální kapitoly, plynule aktualizujeme stránku
+      if (resolved.chapterIndex === this.currentChapterIndex) {
+        if (!throttleTimer) {
+          throttleTimer = setTimeout(() => {
+            throttleTimer = null;
+            if (isScrubbing && resolved.chapterIndex === this.currentChapterIndex) {
+              this.goToPage(resolved.pageInChapter);
+            }
+          }, 60);
+        }
+      }
+    };
+
+    const onPointerDown = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+
+      isScrubbing = true;
+      scrubber.classList.add("is-dragging");
+
+      try {
+        scrubber.setPointerCapture(e.pointerId);
+      } catch (err) {}
+
+      updateOnDrag(e);
+    };
+
+    const onPointerMove = (e) => {
+      if (!isScrubbing) return;
+      e.stopPropagation();
+      e.preventDefault();
+      updateOnDrag(e);
+    };
+
+    const onPointerUp = async (e) => {
+      if (!isScrubbing) return;
+      isScrubbing = false;
+      scrubber.classList.remove("is-dragging");
+
+      try {
+        scrubber.releasePointerCapture(e.pointerId);
+      } catch (err) {}
+
+      e.stopPropagation();
+      e.preventDefault();
+
+      if (throttleTimer) {
+        clearTimeout(throttleTimer);
+        throttleTimer = null;
+      }
+
+      if (pendingTargetPage !== null) {
+        const pageToNav = pendingTargetPage;
+        pendingTargetPage = null;
+        await this.goToBookPage(pageToNav);
+      }
+    };
+
+    scrubber.addEventListener("pointerdown", onPointerDown);
+    scrubber.addEventListener("pointermove", onPointerMove);
+    scrubber.addEventListener("pointerup", onPointerUp);
+    scrubber.addEventListener("pointercancel", onPointerUp);
+
+    // Klávesové ovládání při fokusu běžce
+    if (this.dom.scrubberThumb) {
+      this.dom.scrubberThumb.addEventListener("keydown", async (e) => {
+        const metrics = this.getBookMetrics();
+        if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+          e.preventDefault();
+          e.stopPropagation();
+          await this.goToBookPage(metrics.currBookPage + 1);
+        } else if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+          e.preventDefault();
+          e.stopPropagation();
+          await this.goToBookPage(metrics.currBookPage - 1);
+        }
+      });
+    }
+
+    // Klepnutí na název kapitoly vlevo otevře obsah knihy
+    if (this.dom.footerTitleText) {
+      this.dom.footerTitleText.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.toggleDrawer("toc");
+      });
+    }
   }
 
   blobToDataUrl(blob) {

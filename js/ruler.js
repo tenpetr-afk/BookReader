@@ -733,6 +733,8 @@ export class ReadingRuler {
     }
 
     const stageRect = stage.getBoundingClientRect();
+    this.stageLeft = Math.round(stageRect.left);
+    this.stageWidth = Math.round(stageRect.width);
     const stageLeft = stageRect.left;
     const stageRight = stageRect.right;
     const stageTop = stageRect.top;
@@ -773,24 +775,6 @@ export class ReadingRuler {
       } catch (err) {}
     }
 
-    if (rawLines.length === 0) {
-      const style = window.getComputedStyle(content);
-      const computedLh = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.65) || 32;
-      const startY = Math.max(70, stageTop + 20);
-      const count = Math.max(3, Math.floor((stageRect.height - 40) / computedLh));
-      for (let i = 0; i < count; i++) {
-        const top = startY + i * computedLh;
-        rawLines.push({
-          top: top,
-          bottom: top + computedLh,
-          left: stageLeft + 20,
-          right: stageRight - 20,
-          height: computedLh,
-          centerY: top + computedLh / 2
-        });
-      }
-    }
-
     rawLines.sort((a, b) => a.centerY - b.centerY);
 
     const clustered = [];
@@ -813,6 +797,60 @@ export class ReadingRuler {
     }
 
     this.cachedLines = clustered;
+
+    if (this.cachedLines.length > 0) {
+      let minLeft = Infinity;
+      let maxRight = -Infinity;
+      let maxLineWidth = 0;
+
+      for (const line of this.cachedLines) {
+        if (line.left != null && line.left < minLeft) {
+          minLeft = line.left;
+        }
+        if (line.right != null && line.right > maxRight) {
+          maxRight = line.right;
+        }
+        if (line.left != null && line.right != null) {
+          const w = line.right - line.left;
+          if (w > maxLineWidth) maxLineWidth = w;
+        }
+      }
+
+      if (minLeft < Infinity && maxRight > -Infinity) {
+        const standardLineWidth = Math.max(maxLineWidth, maxRight - minLeft);
+        const colLeft = minLeft;
+        const colRight = Math.max(maxRight, minLeft + standardLineWidth);
+
+        const stageLeftBound = stageRect ? stageRect.left : 0;
+        const stageRightBound = stageRect ? stageRect.right : window.innerWidth;
+
+        // 1. Consistent Full-Column Horizontal Span:
+        // - left: Left margin / start of the text column (aligned with leftmost character of normal lines) minus 6px padding.
+        // - width: Full width of the standard text block / column (matching rightmost edge of standard full-length lines) plus 12px padding.
+        // - Do NOT bleed beyond the text container into the global page margins or screen edges.
+        let desiredLeft = colLeft - 6;
+        let desiredRight = colRight + 6;
+
+        desiredLeft = Math.max(stageLeftBound, desiredLeft);
+        desiredRight = Math.min(stageRightBound, desiredRight);
+
+        const computedLeft = Math.round(desiredLeft);
+        const computedWidth = Math.round(Math.max(0, desiredRight - desiredLeft));
+
+        if (standardLineWidth > 200) {
+          this.textBlockLeft = computedLeft;
+          this.textBlockWidth = computedWidth;
+          this.lastKnownColumnLeft = computedLeft;
+          this.lastKnownColumnWidth = computedWidth;
+        } else if (this.lastKnownColumnWidth) {
+          this.textBlockLeft = this.lastKnownColumnLeft != null ? this.lastKnownColumnLeft : computedLeft;
+          this.textBlockWidth = this.lastKnownColumnWidth;
+        } else {
+          this.textBlockLeft = computedLeft;
+          this.textBlockWidth = computedWidth;
+        }
+      }
+    }
 
     if (this.autoHeight && this.cachedLines.length > 0) {
       const medianLine = this.cachedLines[Math.floor(this.cachedLines.length / 2)];
@@ -957,36 +995,28 @@ export class ReadingRuler {
   }
 
   computeLineGeometry(lineIdx) {
-    if (lineIdx < 0 || lineIdx >= this.cachedLines.length) return null;
-    const line = this.cachedLines[lineIdx];
-    let height = this.manualHeight;
-    let targetY = line.top;
+    if (!this.cachedLines || this.cachedLines.length === 0) return null;
+    const clampedIdx = Math.max(0, Math.min(this.cachedLines.length - 1, lineIdx));
+    const line = this.cachedLines[clampedIdx];
 
-    if (this.autoHeight) {
-      const baseH = Math.round(line.height);
-      if (this.mode === "focus") {
-        let focusTop = line.top;
-        let focusBottom = line.bottom;
-        if (lineIdx > 0 && this.cachedLines[lineIdx - 1]) {
-          const prevBottom = this.cachedLines[lineIdx - 1].bottom;
-          focusTop = Math.max(prevBottom + 1, Math.min(line.top, (prevBottom + line.top) / 2));
-        } else {
-          focusTop = line.top - 2;
-        }
-        if (lineIdx < this.cachedLines.length - 1 && this.cachedLines[lineIdx + 1]) {
-          const nextTop = this.cachedLines[lineIdx + 1].top;
-          focusBottom = Math.min(nextTop - 1, Math.max(line.bottom, (line.bottom + nextTop) / 2));
-        } else {
-          focusBottom = line.bottom + 2;
-        }
-        targetY = Math.round(focusTop);
-        height = Math.round(focusBottom - focusTop);
-      } else {
-        // Highlight mode
-        height = Math.max(26, baseH + 8);
-        targetY = line.top - 4;
-      }
-    } else {
+    // Výchozí vertikální offset +4px nad a +4px pod detekovaným řádkem (výška = lineRect.height + 8px)
+    let top = line.top - 4;
+    let bottom = line.bottom + 4;
+
+    // Zajistit, aby offset +4px nezpůsobil překryv se sousedními řádky
+    if (clampedIdx > 0 && this.cachedLines[clampedIdx - 1]) {
+      const prevBottom = this.cachedLines[clampedIdx - 1].bottom;
+      top = Math.max(prevBottom, top);
+    }
+    if (clampedIdx < this.cachedLines.length - 1 && this.cachedLines[clampedIdx + 1]) {
+      const nextTop = this.cachedLines[clampedIdx + 1].top;
+      bottom = Math.min(nextTop, bottom);
+    }
+
+    let targetY = Math.round(top);
+    let height = Math.max(Math.round(line.height), Math.round(bottom - top));
+
+    if (!this.autoHeight) {
       height = this.manualHeight;
       targetY = Math.round(line.centerY - height / 2);
     }
@@ -997,11 +1027,7 @@ export class ReadingRuler {
   updateEffectiveHeight(lineHeight) {
     if (this.autoHeight) {
       const baseH = Math.round(lineHeight || 32);
-      if (this.mode === "focus") {
-        this.height = baseH;
-      } else {
-        this.height = Math.max(26, baseH + 8);
-      }
+      this.height = baseH + 8;
     } else {
       this.height = this.manualHeight;
     }
@@ -1030,6 +1056,18 @@ export class ReadingRuler {
     }
     if (this.cachedLines.length === 0) return 0;
 
+    const lastIdx = this.cachedLines.length - 1;
+    const firstLine = this.cachedLines[0];
+    const lastLine = this.cachedLines[lastIdx];
+
+    // Ochrana prázdných ploch: nad prvním řádkem zůstat na řádku 0, pod posledním na posledním řádku
+    if (curY <= firstLine.top) {
+      return 0;
+    }
+    if (curY >= lastLine.bottom) {
+      return lastIdx;
+    }
+
     // 4. Pointer Isolation: Pro myš (pointerType === 'mouse') standardní přímé přichytávání bez zkreslení
     if (!isPen || this.followMode !== "mouse") {
       let minDiff = Infinity;
@@ -1042,61 +1080,47 @@ export class ReadingRuler {
           closestIdx = i;
         }
       }
-      return closestIdx;
+      return Math.max(0, Math.min(lastIdx, closestIdx));
     }
 
     // 1., 2. & 3. Calibration Window & Switching Thresholds pro Apple Pencil (pointerType === 'pen'):
-    const currentIdx = this.activeLineIndex;
-    const hasActive = currentIdx >= 0 && currentIdx < this.cachedLines.length;
+    const currentIdx = Math.max(0, Math.min(lastIdx, this.activeLineIndex >= 0 ? this.activeLineIndex : 0));
+    const currentLine = this.cachedLines[currentIdx];
+    const nextLine = currentIdx < lastIdx ? this.cachedLines[currentIdx + 1] : null;
 
-    if (hasActive) {
-      const currentLine = this.cachedLines[currentIdx];
-      const nextLine = currentIdx < this.cachedLines.length - 1 ? this.cachedLines[currentIdx + 1] : null;
+    // Hranice pro přeskok dolů na následující řádek: vertikální střed řádku N + 1
+    const downThreshold = nextLine ? (nextLine.top + nextLine.height * 0.5) : Infinity;
+    // Hranice pro návrat nahoru na předchozí řádek: vertikální střed aktuálního řádku N
+    const upThreshold = currentLine.top + currentLine.height * 0.5;
 
-      // Hranice pro přeskok dolů na následující řádek: vertikální střed řádku N + 1
-      const downThreshold = nextLine ? (nextLine.top + nextLine.height * 0.5) : Infinity;
-      // Hranice pro návrat nahoru na předchozí řádek: vertikální střed aktuálního řádku N
-      const upThreshold = currentLine.top + currentLine.height * 0.5;
-
-      if (curY > downThreshold) {
-        let newIdx = currentIdx + 1;
-        while (newIdx < this.cachedLines.length - 1) {
-          const next = this.cachedLines[newIdx + 1];
-          const nextThreshold = next.top + (next.height * 0.5);
-          if (curY > nextThreshold) {
-            newIdx++;
-          } else {
-            break;
-          }
+    if (curY > downThreshold) {
+      let newIdx = currentIdx + 1;
+      while (newIdx < lastIdx) {
+        const next = this.cachedLines[newIdx + 1];
+        const nextThreshold = next.top + (next.height * 0.5);
+        if (curY > nextThreshold) {
+          newIdx++;
+        } else {
+          break;
         }
-        return newIdx;
-      } else if (curY < upThreshold) {
-        // 3. First Line Safeguard: Pokud je e.clientY nad středem řádku 0, zůstává uzamčeno na řádku 0
-        if (currentIdx === 0) return 0;
-        let newIdx = currentIdx - 1;
-        while (newIdx > 0) {
-          const prev = this.cachedLines[newIdx];
-          const prevThreshold = prev.top + (prev.height * 0.5);
-          if (curY < prevThreshold) {
-            newIdx--;
-          } else {
-            break;
-          }
+      }
+      return Math.min(lastIdx, newIdx);
+    } else if (curY < upThreshold) {
+      // 3. First Line Safeguard: Pokud je e.clientY nad středem řádku 0, zůstává uzamčeno na řádku 0
+      if (currentIdx === 0) return 0;
+      let newIdx = currentIdx - 1;
+      while (newIdx > 0) {
+        const prev = this.cachedLines[newIdx];
+        const prevThreshold = prev.top + (prev.height * 0.5);
+        if (curY < prevThreshold) {
+          newIdx--;
+        } else {
+          break;
         }
-        return newIdx;
       }
-      return currentIdx;
+      return Math.max(0, newIdx);
     }
-
-    // Počáteční výběr řádku, pokud ještě není žádný řádek aktivní
-    for (let i = 0; i < this.cachedLines.length; i++) {
-      const nextLine = i < this.cachedLines.length - 1 ? this.cachedLines[i + 1] : null;
-      const downThreshold = nextLine ? (nextLine.top + nextLine.height * 0.5) : Infinity;
-      if (curY <= downThreshold) {
-        return i;
-      }
-    }
-    return this.cachedLines.length - 1;
+    return currentIdx;
   }
 
   /**
@@ -1190,7 +1214,7 @@ export class ReadingRuler {
     this.rulerEl.classList.remove("word-tracking-mode");
 
     if (this.cachedLines.length > 0) {
-      const closestIdx = this.getHysteresisLineIndex(curY, isPen);
+      const closestIdx = Math.max(0, Math.min(this.cachedLines.length - 1, this.getHysteresisLineIndex(curY, isPen)));
       this.activeLineIndex = closestIdx;
       const closestLine = this.cachedLines[closestIdx];
 
@@ -1208,22 +1232,20 @@ export class ReadingRuler {
         this.activeWordIndex = closestWordIdx;
       }
 
-      if (this.snapToLines) {
-        const geom = this.computeLineGeometry(closestIdx);
-        if (geom) {
-          this.height = geom.height;
-          this.targetY = geom.targetY;
-        }
-
-        this.currentY = this.targetY;
-        this.rulerEl.classList.add("is-snapped");
-        this.maskTopEl.classList.add("is-snapped");
-        this.maskBottomEl.classList.add("is-snapped");
-        this.maskLeftEl.classList.add("is-snapped");
-        this.maskRightEl.classList.add("is-snapped");
-        this.applyPosition();
-        return;
+      const geom = this.computeLineGeometry(closestIdx);
+      if (geom) {
+        this.height = geom.height;
+        this.targetY = geom.targetY;
       }
+
+      this.currentY = this.targetY;
+      this.rulerEl.classList.add("is-snapped");
+      this.maskTopEl.classList.add("is-snapped");
+      this.maskBottomEl.classList.add("is-snapped");
+      this.maskLeftEl.classList.add("is-snapped");
+      this.maskRightEl.classList.add("is-snapped");
+      this.applyPosition();
+      return;
     }
 
     this.rulerEl.classList.remove("is-snapped");
@@ -1231,10 +1253,6 @@ export class ReadingRuler {
     this.maskBottomEl.classList.remove("is-snapped");
     this.maskLeftEl.classList.remove("is-snapped");
     this.maskRightEl.classList.remove("is-snapped");
-
-    const maxY = window.innerHeight - this.height - 20;
-    this.targetY = Math.max(60, Math.min(maxY, curY - this.height / 2));
-    this.requestRender();
   }
 
   /**
@@ -1545,19 +1563,16 @@ export class ReadingRuler {
       this.maskLeftEl.classList.add("is-snapped");
       this.maskRightEl.classList.add("is-snapped");
       this.applyPosition();
-    } else {
-      const step = Math.round(this.height * 0.75) * direction;
-      this.moveBy(step);
+    } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0) {
+      this.onBoundary(direction > 0 ? 1 : -1);
     }
   }
 
   moveBy(deltaY) {
     this.disableWordTransition();
-    this.targetY += deltaY;
-    const maxY = window.innerHeight - this.height - 40;
-    this.targetY = Math.max(65, Math.min(maxY, this.targetY));
-    this.currentY = this.targetY;
-    this.applyPosition();
+    if (this.cachedLines.length > 0) {
+      this.stepLine(deltaY > 0 ? 1 : -1);
+    }
   }
 
   requestRender() {
@@ -1597,10 +1612,35 @@ export class ReadingRuler {
       }
     } else {
       this.rulerEl.classList.remove("no-preview");
+      let colLeft = this.textBlockLeft;
+      let colWidth = this.textBlockWidth;
+
+      if (colLeft == null || colWidth == null || colWidth <= 0) {
+        if (this.lastKnownColumnLeft != null && this.lastKnownColumnWidth != null && this.lastKnownColumnWidth > 0) {
+          colLeft = this.lastKnownColumnLeft;
+          colWidth = this.lastKnownColumnWidth;
+        } else if (this.stageLeft != null && this.stageWidth != null && this.stageWidth > 0) {
+          colLeft = this.stageLeft;
+          colWidth = this.stageWidth;
+        } else {
+          const stage = document.getElementById("paged-stage") || this.container || document.getElementById("reader-content");
+          if (stage) {
+            const sRect = stage.getBoundingClientRect();
+            colLeft = Math.round(sRect.left);
+            colWidth = Math.round(sRect.width);
+            this.stageLeft = colLeft;
+            this.stageWidth = colWidth;
+          } else {
+            colLeft = 0;
+            colWidth = window.innerWidth;
+          }
+        }
+      }
+
       this.rulerEl.style.top = `${y}px`;
-      this.rulerEl.style.left = "0px";
-      this.rulerEl.style.right = "0px";
-      this.rulerEl.style.width = "auto";
+      this.rulerEl.style.left = `${colLeft}px`;
+      this.rulerEl.style.right = "auto";
+      this.rulerEl.style.width = `${colWidth}px`;
       this.rulerEl.style.transform = "none";
     }
 

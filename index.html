@@ -231,34 +231,30 @@
       </div>
     </main>
 
-    <!-- Spodní lišta s informacemi o straně a tlačítky listování -->
-    <footer class="paged-footer-bar" id="paged-footer-bar">
-      <button id="btn-page-prev" class="btn-page-nav" title="Předchozí strana (nebo tah doprava)">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
-        <span>Předchozí</span>
-      </button>
-
-      <div class="paged-footer-info" id="paged-footer-info">
-        <span class="footer-stat-item" title="Stránka v aktuální kapitole">
-          <span class="footer-label">Kapitola:</span>
-          <span id="chapter-page-counter" class="footer-value page-counter-text">strana 1 z 1</span>
-        </span>
-        <span class="paged-separator">•</span>
-        <span class="footer-stat-item" title="Aktuální strana a celkový počet stran v knize">
-          <span class="footer-label">Kniha celkem:</span>
-          <span id="book-page-counter" class="footer-value">strana 1 z 1</span>
-        </span>
-        <span class="paged-separator">•</span>
-        <span class="footer-stat-item" title="Celkový postup čtení v knize">
-          <span class="footer-label">Postup:</span>
-          <span id="reading-progress-text" class="paged-percent footer-value">0%</span>
-        </span>
+    <!-- Spodní lišta s posuvníkem čtení a informacemi (Scrubber Bar) -->
+    <footer class="paged-footer-bar" id="paged-footer-bar" role="region" aria-label="Průběh čtení">
+      <div class="footer-left-item" id="footer-book-title" title="Aktuální kapitola">
+        <span class="footer-title-text" id="footer-title-text">Kapitola</span>
       </div>
 
-      <button id="btn-page-next" class="btn-page-nav" title="Další strana (nebo tah doleva)">
-        <span>Další</span>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
-      </button>
+      <div class="footer-center-item">
+        <div class="reading-scrubber" id="reading-scrubber">
+          <div class="scrubber-tooltip" id="scrubber-tooltip">Strana 1 / Kapitola 1</div>
+          <div class="scrubber-track" id="scrubber-track">
+            <div class="scrubber-chapter-ticks" id="scrubber-chapter-ticks"></div>
+            <div class="scrubber-progress-fill" id="scrubber-progress-fill"></div>
+            <div class="scrubber-thumb" id="scrubber-thumb" tabindex="0" role="slider" aria-label="Pozice čtení" aria-valuemin="1" aria-valuemax="100" aria-valuenow="1"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-right-item" id="footer-progress-metrics">
+        <span id="footer-etr-text" class="footer-etr-text"></span>
+        <span class="footer-metric-separator" id="footer-etr-separator" style="display: none;">•</span>
+        <span id="book-page-counter" class="footer-value">strana 1 z 1</span>
+        <span class="footer-metric-separator">•</span>
+        <span id="reading-progress-text" class="paged-percent footer-value">0%</span>
+      </div>
     </footer>
 
   </div>

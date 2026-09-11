@@ -1216,3 +1216,266 @@ body.dragging-file .drop-zone-overlay {
 .reading-ruler.color-emerald { --ruler-glow-rgb: 16, 185, 129; }
 .reading-ruler.color-lavender { --ruler-glow-rgb: 168, 85, 247; }
 .reading-ruler.color-slate { --ruler-glow-rgb: 100, 116, 139; }
+
+/* Řádkový režim: přesné ohraničení přes celou šířku čtecího sloupce */
+.reading-ruler:not(.word-tracking-mode) {
+  right: auto;
+  border-radius: 6px !important;
+  box-sizing: border-box;
+}
+
+/* ==========================================================================
+   SPODNÍ LIŠTA S POSUVNÍKEM ČTENÍ (E-READER PROGRESS SCRUBBER BAR)
+   ========================================================================== */
+
+.reader-header {
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+              opacity 0.24s ease,
+              background-color var(--transition-normal),
+              border-color var(--transition-normal);
+}
+
+body.in-reader-view .paged-footer-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: auto;
+  min-height: 52px;
+  background: rgba(18, 18, 18, 0.85) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 8px max(1.25rem, env(safe-area-inset-right, 1.25rem)) max(12px, env(safe-area-inset-bottom, 12px)) max(1.25rem, env(safe-area-inset-left, 1.25rem)) !important;
+  z-index: 1000;
+  box-sizing: border-box;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.35);
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+              opacity 0.24s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Synchronizované skrývání / zobrazování lišt (UI Chrome) */
+body.in-reader-view.reader-chrome-hidden .reader-header {
+  transform: translateY(-100%) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
+  transform: translateY(100%) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Položka vlevo: Název knihy / kapitoly */
+.footer-left-item {
+  flex: 0 1 220px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.footer-title-text {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-muted, #94a3b8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+  transition: color 0.15s ease;
+}
+
+.footer-left-item:hover .footer-title-text {
+  color: var(--text-main, #f8fafc);
+}
+
+/* Položka uprostřed: Interaktivní posuvník (Scrubber) */
+.footer-center-item {
+  flex: 1 1 auto;
+  max-width: 720px;
+  min-width: 140px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.reading-scrubber {
+  position: relative;
+  width: 100%;
+  padding: 14px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.scrubber-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+  overflow: visible;
+}
+
+/* Značky kapitol (Tick marks) */
+.scrubber-chapter-ticks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.scrubber-tick {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 1px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/* Vyplněný postup */
+.scrubber-progress-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0%;
+  background: #38bdf8;
+  border-radius: 9999px;
+  pointer-events: none;
+  transition: width 0.05s linear;
+}
+
+.reading-scrubber.is-dragging .scrubber-progress-fill {
+  transition: none;
+}
+
+/* Běžec (Thumb) */
+.scrubber-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #38bdf8;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.6), 0 2px 5px rgba(0, 0, 0, 0.4);
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+}
+
+/* Pohodlný dotykový cíl (minimum 28x28px hit area) */
+.scrubber-thumb::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 38px;
+  height: 38px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+
+.reading-scrubber:hover .scrubber-thumb,
+.reading-scrubber.is-dragging .scrubber-thumb,
+.scrubber-thumb:focus-visible {
+  transform: translate(-50%, -50%) scale(1.25);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.85), 0 3px 8px rgba(0, 0, 0, 0.6);
+  cursor: grabbing;
+}
+
+/* Plovoucí tooltip nad běžcem */
+.scrubber-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 0%;
+  transform: translate(-50%, -10px);
+  background: rgba(24, 24, 27, 0.95);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: #f8fafc;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 5px 11px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease, transform 0.1s ease-out;
+  z-index: 1010;
+}
+
+.scrubber-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: rgba(24, 24, 27, 0.95);
+}
+
+.reading-scrubber.is-dragging .scrubber-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Položka vpravo: Metriky postupu */
+.footer-right-item {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-muted, #94a3b8);
+  white-space: nowrap;
+}
+
+.footer-metric-separator {
+  color: rgba(255, 255, 255, 0.25);
+  font-size: 0.75rem;
+}
+
+.footer-value {
+  color: var(--text-main, #e2e8f0);
+}
+
+.footer-etr-text {
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+/* Responzivní přizpůsobení pro menší displeje */
+@media (max-width: 680px) {
+  .footer-left-item {
+    display: none;
+  }
+  body.in-reader-view .paged-footer-bar {
+    gap: 0.75rem;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+}
