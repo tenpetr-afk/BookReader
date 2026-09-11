@@ -1150,7 +1150,7 @@ body.dragging-file .drop-zone-overlay {
 }
 
 /* ==========================================================================
-   Plynulý horizontální přechod pravítka na úrovni slov (word-level ruler)
+   Okamžitá odezva pravítka na úrovni slov (word-level ruler) – nulová latence
    ========================================================================== */
 .reading-ruler.word-tracking-mode {
   will-change: transform;
@@ -1158,24 +1158,14 @@ body.dragging-file .drop-zone-overlay {
   transition: none !important;
 }
 
-.reading-ruler.word-tracking-mode.word-transition-active {
-  will-change: transform;
-  transition: transform 75ms cubic-bezier(0, 0, 0.2, 1), width 75ms cubic-bezier(0, 0, 0.2, 1) !important;
-}
-
+.reading-ruler.word-tracking-mode.word-transition-active,
 .reading-ruler.word-tracking-mode.word-transition-snap {
   will-change: transform;
   transition: none !important;
 }
 
-.ruler-mask.word-transition-active.ruler-mask-left {
-  transition: width 75ms cubic-bezier(0, 0, 0.2, 1) !important;
-}
-
-.ruler-mask.word-transition-active.ruler-mask-right {
-  transition: left 75ms cubic-bezier(0, 0, 0.2, 1) !important;
-}
-
+.ruler-mask.word-transition-active.ruler-mask-left,
+.ruler-mask.word-transition-active.ruler-mask-right,
 .ruler-mask.word-transition-snap {
   transition: none !important;
 }
