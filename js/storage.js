@@ -212,6 +212,8 @@ export class StorageManager {
         if (merged.ruler.followMode !== "keyboard") {
           merged.ruler.followMode = "mouse";
         }
+        merged.ruler.snapToLines = true;
+        merged.ruler.autoHeight = true;
         return merged;
       }
     } catch (e) {
@@ -222,6 +224,10 @@ export class StorageManager {
 
   saveSettings(settings) {
     try {
+      if (settings?.ruler) {
+        settings.ruler.snapToLines = true;
+        settings.ruler.autoHeight = true;
+      }
       localStorage.setItem("luminareader_settings", JSON.stringify(settings));
     } catch (e) {
       console.warn("Chyba při ukládání nastavení do localStorage:", e);

@@ -160,21 +160,7 @@
               </div>
             </div>
 
-            <!-- Přepínače funkcí -->
-            <div class="popover-section popover-toggles-section">
-              <div class="toggle-row">
-                <span class="toggle-title">Magnetická přilnavost k řádkům</span>
-                <button type="button" role="switch" id="popover-ruler-snap-toggle" class="switch-control" aria-checked="true" aria-label="Magnetická přilnavost k řádkům">
-                  <span class="switch-track"><span class="switch-thumb"></span></span>
-                </button>
-              </div>
-              <div class="toggle-row">
-                <span class="toggle-title">Automatická výška dle řádku</span>
-                <button type="button" role="switch" id="popover-ruler-auto-height-toggle" class="switch-control" aria-checked="true" aria-label="Automatická výška dle řádku">
-                  <span class="switch-track"><span class="switch-thumb"></span></span>
-                </button>
-              </div>
-            </div>
+
 
             <!-- Výška / tloušťka pravítka -->
             <div class="popover-section" id="popover-setting-ruler-height-container">
@@ -296,7 +282,7 @@
   <!-- =========================================================================
        4. POSTRANNÍ PANEL: NASTAVENÍ (SETTINGS DRAWER)
        ========================================================================= -->
-  <aside id="settings-drawer" class="drawer-panel" aria-label="Nastavení čtení">
+  <aside id="settings-drawer" class="drawer-panel settings-modal" aria-label="Nastavení čtení">
     <div class="drawer-header">
       <h2 class="drawer-title">Nastavení zobrazení</h2>
       <button id="btn-close-settings" class="btn-close-drawer" aria-label="Zavřít nastavení">✕</button>
@@ -402,23 +388,11 @@
           </div>
         </div>
 
-        <!-- Funkce pravítka: Magnetická přilnavost, Sledování slov a Automatická výška -->
+        <!-- Funkce pravítka: Sledování slov -->
         <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
-          <div class="toggle-row">
-            <span class="toggle-title">Magnetická přilnavost k řádkům</span>
-            <button type="button" role="switch" id="ruler-snap-setting" class="switch-control" aria-checked="true" aria-label="Magnetická přilnavost k řádkům">
-              <span class="switch-track"><span class="switch-thumb"></span></span>
-            </button>
-          </div>
           <div class="toggle-row">
             <span class="toggle-title">Sledování jednotlivých slov</span>
             <button type="button" role="switch" id="ruler-word-tracking-setting" class="switch-control" aria-checked="false" aria-label="Sledování jednotlivých slov">
-              <span class="switch-track"><span class="switch-thumb"></span></span>
-            </button>
-          </div>
-          <div class="toggle-row">
-            <span class="toggle-title">Automatická výška dle řádku</span>
-            <button type="button" role="switch" id="ruler-auto-height-setting" class="switch-control" aria-checked="true" aria-label="Automatická výška dle řádku">
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </button>
           </div>
@@ -456,7 +430,7 @@
   <!-- =========================================================================
        5. MODÁLNÍ OKNO: STATISTIKY A DASHBOARD
        ========================================================================= -->
-  <div id="stats-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="stats-modal-title">
+  <div id="stats-modal" class="modal-overlay stats-modal" role="dialog" aria-modal="true" aria-labelledby="stats-modal-title">
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="stats-modal-title" class="drawer-title">📊 Statistiky a rychlost čtení</h2>

@@ -162,7 +162,7 @@ export class ReadingRuler {
   isUiControl(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      "button, a, input, select, textarea, [role='button'], .btn, .btn-icon, .drawer-panel, .drawer, .modal-dialog, .modal-overlay, .paged-footer-bar, .reader-header, .top-navbar, .ruler-quick-popover, .ruler-floating-controls"
+      "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], .btn, .btn-icon, .drawer-panel, .drawer, .modal-dialog, .modal-overlay, .paged-footer-bar, .reader-header, .top-navbar, .ruler-quick-popover, .ruler-floating-controls"
     );
   }
 
@@ -380,8 +380,10 @@ export class ReadingRuler {
     // 1. POINTER EVENTS: Sjednocené sledování pro prst, Apple Pencil i myš
     const onPointerDown = (e) => {
       if (!this.enabled) return;
-      if (this.isUiControl(e.target)) return;
-      if (!this.isPointerInStage(e.clientX, e.clientY)) return;
+      if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
+        this.holdStartTime = 0;
+        return;
+      }
 
       // Pro myš na PC vyžadujeme výhradně stisknuté levé tlačítko (button === 0)
       if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -443,6 +445,16 @@ export class ReadingRuler {
           this.isPenTouching = false;
           this.dragCooldownEndTime = Date.now() + 350;
         }
+        return;
+      }
+
+      if (this.isUiControl(e.target) || !this.holdStartTime) {
+        if (this.isHoldActive) this.cancelHold(false);
+        this.holdStartTime = 0;
+        this.isDraggingRuler = false;
+        this.isPenTouching = false;
+        this.activePointerId = null;
+        this.activePointerType = null;
         return;
       }
 
@@ -517,8 +529,11 @@ export class ReadingRuler {
     // 2. TOUCH EVENTS (WebKit Safari fallback pro starší zařízení)
     const onTouchStart = (e) => {
       if (!this.enabled) return;
-      if (this.isUiControl(e.target)) return;
       const touch = e.touches[0];
+      if (this.isUiControl(e.target) || !touch || !this.isPointerInStage(touch.clientX, touch.clientY)) {
+        this.holdStartTime = 0;
+        return;
+      }
       const isStylus = Array.from(e.touches).some(t => t.touchType === "stylus");
       if (isStylus) {
         this.lastPenTime = Date.now();
@@ -566,6 +581,12 @@ export class ReadingRuler {
 
     const onTouchEnd = (e) => {
       if (this.followMode === "mouse") return;
+
+      if (this.isUiControl(e.target) || !this.holdStartTime) {
+        if (this.isHoldActive) this.cancelHold(false);
+        this.holdStartTime = 0;
+        return;
+      }
 
       const touch = e.changedTouches && e.changedTouches[0];
       const clientX = touch ? touch.clientX : this.holdStartX;
@@ -1733,7 +1754,7 @@ export class ReadingRuler {
   }
 
   setAutoHeight(enabled) {
-    this.autoHeight = !!enabled;
+    this.autoHeight = true;
     if (this.snapToLines && this.cachedLines.length > 0 && this.activeLineIndex >= 0) {
       const geom = this.computeLineGeometry(this.activeLineIndex);
       if (geom) {
@@ -1749,23 +1770,12 @@ export class ReadingRuler {
 
   setSnapToLines(enabled) {
     this.disableWordTransition();
-    this.snapToLines = !!enabled;
-    if (this.snapToLines) {
-      this.refreshLines();
-      if (this.followMode === "mouse") {
-        this.snapToFirstElement();
-      } else if (this.cachedLines.length > 0) {
-        this.stepLine(0);
-      }
-    } else {
-      this.rulerEl.classList.remove("is-snapped");
-      this.maskTopEl.classList.remove("is-snapped");
-      this.maskBottomEl.classList.remove("is-snapped");
-      this.maskLeftEl.classList.remove("is-snapped");
-      this.maskRightEl.classList.remove("is-snapped");
-      if (this.followMode === "mouse") {
-        this.snapToFirstElement();
-      }
+    this.snapToLines = true;
+    this.refreshLines();
+    if (this.followMode === "mouse") {
+      this.snapToFirstElement();
+    } else if (this.cachedLines.length > 0) {
+      this.stepLine(0);
     }
   }
 
