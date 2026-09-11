@@ -1006,12 +1006,13 @@ export class ReadingRuler {
   /**
    * Vyhodnotí index řádku podle typu ukazatele:
    * - Pro Apple Pencil (pointerType === 'pen') v režimu sledování myši:
-   *   1. Dynamic Offset: vertikální posun vzhůru o -1.6 * lineRect.height (fallback: -52px)
-   *      aplikovaný na e.clientY (hrot pera je 1.5–2 řádky pod aktivním řádkem).
-   *   2. Retention & Hysteresis: pravítko zůstává uzamčené na aktivním řádku, dokud posunutá
-   *      souřadnice nepřekročí spodní hranici cílové zóny aktivního řádku (downThreshold).
-   *      Při pohybu nahoru přeskočí okamžitě, jakmile se posunutá souřadnice dostane nad horní hranici aktuálního řádku.
-   * - Pro myš (pointerType === 'mouse'): offset 0 a standardní přichytávání centrované přímo na kurzor bez zkreslení.
+   *   1. Line Retention Boundary: pravítko zůstává uzamčené na aktivním řádku N,
+   *      dokud e.clientY leží kdekoliv v řádku N, v mezidobí pod řádkem N, nebo v horních 70 % řádku N + 1.
+   *   2. Switching Logic:
+   *      - Přechod dolů (N -> N+1): přeskočí na N + 1 POUZE tehdy, když fyzické e.clientY
+   *        přísně překročí hranici nextLine.top + (nextLine.height * 0.70) (tj. 30 % odspodu).
+   *      - Přechod nahoru: vrátí se okamžitě, jakmile se e.clientY dostane nad currentLine.top.
+   * - Pro myš (pointerType === 'mouse'): standardní přichytávání centrované přímo na 50 % (střed řádku) bez zkreslení.
    */
   getHysteresisLineIndex(curY, isPen = false) {
     if (this.cachedLines.length === 0) {
@@ -1019,7 +1020,7 @@ export class ReadingRuler {
     }
     if (this.cachedLines.length === 0) return 0;
 
-    // 3. Mouse Isolation: Pro myš (pointerType === 'mouse') standardní přichytávání centrované přímo na pozici kurzoru bez zkreslení
+    // 3. Pointer Isolation: Pro myš (pointerType === 'mouse') standardní přichytávání centrované přímo na pozici kurzoru bez zkreslení
     if (!isPen || this.followMode !== "mouse") {
       let minDiff = Infinity;
       let closestIdx = 0;
@@ -1034,7 +1035,7 @@ export class ReadingRuler {
       return closestIdx;
     }
 
-    // 2. Retention & Hysteresis pro Apple Pencil (pointerType === 'pen'):
+    // 1. & 2. Line Retention Boundary a Switching Logic pro Apple Pencil (pointerType === 'pen'):
     const currentIdx = this.activeLineIndex;
     const hasActive = currentIdx >= 0 && currentIdx < this.cachedLines.length;
 
@@ -1042,8 +1043,8 @@ export class ReadingRuler {
       const currentLine = this.cachedLines[currentIdx];
       const nextLine = currentIdx < this.cachedLines.length - 1 ? this.cachedLines[currentIdx + 1] : null;
 
-      // Hranice pro přeskok na následující řádek: spodní hranice cílové zóny aktivního řádku
-      const downThreshold = nextLine ? Math.max(currentLine.bottom, nextLine.top) : Infinity;
+      // Hranice pro přeskok na následující řádek: 70 % hloubky řádku N + 1 (30 % odspodu)
+      const downThreshold = nextLine ? nextLine.top + (nextLine.height * 0.70) : Infinity;
       // Hranice pro návrat na předchozí řádek: horní hranice aktuálního řádku
       const upThreshold = currentLine.top;
 
@@ -1051,8 +1052,8 @@ export class ReadingRuler {
         let newIdx = currentIdx + 1;
         while (newIdx < this.cachedLines.length - 1) {
           const next = this.cachedLines[newIdx + 1];
-          const nextBottom = Math.max(this.cachedLines[newIdx].bottom, next.top);
-          if (curY > nextBottom) {
+          const nextThreshold = next.top + (next.height * 0.70);
+          if (curY > nextThreshold) {
             newIdx++;
           } else {
             break;
@@ -1078,7 +1079,7 @@ export class ReadingRuler {
     // Počáteční výběr řádku, pokud ještě není žádný řádek aktivní
     for (let i = 0; i < this.cachedLines.length; i++) {
       const nextLine = i < this.cachedLines.length - 1 ? this.cachedLines[i + 1] : null;
-      const downThreshold = nextLine ? Math.max(this.cachedLines[i].bottom, nextLine.top) : Infinity;
+      const downThreshold = nextLine ? nextLine.top + (nextLine.height * 0.70) : Infinity;
       if (curY <= downThreshold) {
         return i;
       }
@@ -1123,20 +1124,8 @@ export class ReadingRuler {
       this.refreshLines();
     }
 
-    // 1. Dynamic Offset: výpočet výšky řádku z bounding client rectu aktivního řádku (lineRect.height).
-    // Pro Apple Pencil aplikujeme vertikální posun vzhůru o -1.6 * lineRect.height (fallback: -52px) na e.clientY.
-    // Pro myš (pointerType === 'mouse') je offset striktně 0 bez zkreslení přichytávání.
-    const activeLine = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
-      ? this.cachedLines[this.activeLineIndex]
-      : (this.cachedLines[0] || null);
-    const lineRectHeight = activeLine?.height || null;
-
-    const stylusOffsetY = (this.followMode === "mouse" && isPen)
-      ? (lineRectHeight ? -Math.round(1.6 * lineRectHeight) : -52)
-      : 0;
-
     const curX = this.lastPointerX;
-    const curY = this.lastPointerY + stylusOffsetY;
+    const curY = this.lastPointerY;
 
     // --- REŽIM SLEDOVÁNÍ SLOV (Word-level Tracking) ---
     if (this.wordTracking) {
