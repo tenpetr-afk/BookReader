@@ -405,13 +405,6 @@ body:not(.in-reader-view) .ruler-floating-controls {
               height 0.12s ease-out;
 }
 
-.reading-ruler.word-tracking-mode.mode-underline {
-  border-top: none !important;
-  border-left: none !important;
-  border-right: none !important;
-  box-shadow: none !important;
-}
-
 .reading-ruler.word-tracking-mode.mode-focus {
   border: none !important;
   box-shadow: none !important;
@@ -479,20 +472,7 @@ body:not(.in-reader-view) .ruler-floating-controls {
   box-shadow: 0 0 12px rgba(100, 116, 139, 0.25), inset 0 1px 1.5px rgba(100, 116, 139, 0.35), inset 0 -1px 1.5px rgba(100, 116, 139, 0.35);
 }
 
-/* 2. Režim: Vodicí linka (Underline) */
-.reading-ruler.mode-underline {
-  background: transparent !important;
-  border-top: none !important;
-  box-shadow: none !important;
-}
-
-.reading-ruler.mode-underline.color-amber { border-bottom: 3.5px solid #f59e0b; }
-.reading-ruler.mode-underline.color-cyan { border-bottom: 3.5px solid #06b6d4; }
-.reading-ruler.mode-underline.color-emerald { border-bottom: 3.5px solid #10b981; }
-.reading-ruler.mode-underline.color-lavender { border-bottom: 3.5px solid #a855f7; }
-.reading-ruler.mode-underline.color-slate { border-bottom: 3.5px solid #64748b; }
-
-/* 3. Režim: Zaostřovací maska (Focus Window) */
+/* 2. Režim: Zaostřovací maska (Focus Window) */
 .reading-ruler.mode-focus {
   background: transparent;
   border: none !important;
@@ -540,6 +520,10 @@ body:not(.in-reader-view) .ruler-floating-controls {
   width: auto;
   mask-image: none;
   -webkit-mask-image: none;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
 }
 
 /* ==========================================================================
@@ -728,7 +712,7 @@ body:not(.in-reader-view) .ruler-floating-controls {
 
 .popover-styles-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 0.35rem;
 }
 

@@ -21,7 +21,7 @@ export class ReadingRuler {
 
     // Nastavení
     this.enabled = false;
-    this.mode = "highlight"; // "highlight" | "focus" | "underline"
+    this.mode = "highlight"; // "highlight" | "focus"
     this.manualHeight = 48; // px (při vypnutém autoHeight)
     this.height = 36; // aktuální efektivní výška
     this.autoHeight = true; // Automatická výška podle velikosti řádku
@@ -113,9 +113,6 @@ export class ReadingRuler {
       this.rulerEl.classList.add("word-transition-snap");
       this.rulerEl.style.setProperty("transition", "none", "important");
     }
-    if (this.previewEl) {
-      this.previewEl.style.setProperty("transition", "none", "important");
-    }
     if (this.maskLeftEl) {
       this.maskLeftEl.classList.remove("word-transition-active");
       this.maskLeftEl.classList.add("word-transition-snap");
@@ -148,16 +145,10 @@ export class ReadingRuler {
     this.maskRightEl = document.createElement("div");
     this.maskRightEl.className = "ruler-mask ruler-mask-right is-hidden";
 
-    this.previewEl = document.createElement("div");
-    this.previewEl.className = `reading-ruler-preview mode-${this.mode} color-${this.color} is-hidden`;
-    this.previewEl.id = "reading-ruler-preview";
-    this.previewEl.setAttribute("aria-hidden", "true");
-
     document.body.appendChild(this.maskTopEl);
     document.body.appendChild(this.maskBottomEl);
     document.body.appendChild(this.maskLeftEl);
     document.body.appendChild(this.maskRightEl);
-    document.body.appendChild(this.previewEl);
     document.body.appendChild(this.rulerEl);
 
     this.updateStyles();
@@ -952,10 +943,7 @@ export class ReadingRuler {
 
     if (this.autoHeight) {
       const baseH = Math.round(line.height);
-      if (this.mode === "underline") {
-        height = Math.max(16, baseH);
-        targetY = line.bottom - height;
-      } else if (this.mode === "focus") {
+      if (this.mode === "focus") {
         let focusTop = line.top;
         let focusBottom = line.bottom;
         if (lineIdx > 0 && this.cachedLines[lineIdx - 1]) {
@@ -979,11 +967,7 @@ export class ReadingRuler {
       }
     } else {
       height = this.manualHeight;
-      if (this.mode === "underline") {
-        targetY = line.bottom - height;
-      } else {
-        targetY = Math.round(line.centerY - height / 2);
-      }
+      targetY = Math.round(line.centerY - height / 2);
     }
 
     return { height, targetY };
@@ -992,9 +976,7 @@ export class ReadingRuler {
   updateEffectiveHeight(lineHeight) {
     if (this.autoHeight) {
       const baseH = Math.round(lineHeight || 32);
-      if (this.mode === "underline") {
-        this.height = Math.max(16, baseH);
-      } else if (this.mode === "focus") {
+      if (this.mode === "focus") {
         this.height = baseH;
       } else {
         this.height = Math.max(26, baseH + 8);
@@ -1261,14 +1243,10 @@ export class ReadingRuler {
 
     if (this.autoHeight) {
       const baseH = Math.round(w.height);
-      this.height = this.mode === "underline" ? Math.max(16, baseH) : Math.round(baseH + padY * 2);
+      this.height = Math.round(baseH + padY * 2);
     }
 
-    if (this.mode === "underline") {
-      this.targetY = Math.round(w.bottom - this.height);
-    } else {
-      this.targetY = Math.round(w.top - padY);
-    }
+    this.targetY = Math.round(w.top - padY);
     this.currentY = this.targetY;
 
     // Asymetrické dopředné čtecí okno: 1.5 až 2 následující slova na témže řádku
@@ -1583,13 +1561,10 @@ export class ReadingRuler {
 
     if (this.wordTracking) {
       const x = Math.round(this.wordLeft);
-      const isUnderline = this.mode === "underline";
-      const currentWidth = isUnderline ? this.activeWordWidth : this.totalWidth;
-
       this.rulerEl.style.top = "0px";
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "auto";
-      this.rulerEl.style.width = `${Math.round(currentWidth)}px`;
+      this.rulerEl.style.width = `${Math.round(this.totalWidth)}px`;
       this.rulerEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
 
       this.rulerEl.style.setProperty("--active-word-width", `${Math.round(this.activeWordWidth)}px`);
@@ -1599,23 +1574,6 @@ export class ReadingRuler {
       } else {
         this.rulerEl.classList.add("no-preview");
       }
-
-      if (isUnderline && this.previewEl) {
-        if (this.previewWidth > 0 && this.enabled) {
-          const px = Math.round(this.previewLeft);
-          this.previewEl.style.display = "block";
-          this.previewEl.style.top = "0px";
-          this.previewEl.style.left = "0px";
-          this.previewEl.style.right = "auto";
-          this.previewEl.style.height = `${this.height}px`;
-          this.previewEl.style.width = `${Math.round(this.previewWidth)}px`;
-          this.previewEl.style.transform = `translate3d(${px}px, ${y}px, 0)`;
-        } else {
-          this.previewEl.style.display = "none";
-        }
-      } else if (this.previewEl) {
-        this.previewEl.style.display = "none";
-      }
     } else {
       this.rulerEl.classList.remove("no-preview");
       this.rulerEl.style.top = `${y}px`;
@@ -1623,9 +1581,6 @@ export class ReadingRuler {
       this.rulerEl.style.right = "0px";
       this.rulerEl.style.width = "auto";
       this.rulerEl.style.transform = "none";
-      if (this.previewEl) {
-        this.previewEl.style.display = "none";
-      }
     }
 
     if (this.mode === "focus" && this.enabled) {
@@ -1639,10 +1594,7 @@ export class ReadingRuler {
 
       if (this.wordTracking) {
         const leftW = Math.max(0, Math.round(this.wordLeft));
-        const effectiveRight = (this.previewWidth > 0)
-          ? Math.round(this.wordLeft + this.totalWidth)
-          : Math.round(this.wordLeft + this.activeWordWidth);
-        const rightL = Math.max(0, effectiveRight);
+        const rightL = Math.max(0, Math.round(this.wordLeft + this.activeWordWidth));
 
         this.maskLeftEl.style.display = "block";
         this.maskLeftEl.style.top = `${y}px`;
@@ -1659,15 +1611,29 @@ export class ReadingRuler {
         this.maskRightEl.style.right = "0px";
         this.maskRightEl.style.width = "auto";
         this.maskRightEl.style.opacity = this.dimOpacity;
+
+        if (this.previewWidth > 0) {
+          const pw = Math.round(this.previewWidth);
+          const maskGrad = `linear-gradient(to right, transparent 0px, #000000 ${pw}px, #000000 100%)`;
+          this.maskRightEl.style.webkitMaskImage = maskGrad;
+          this.maskRightEl.style.maskImage = maskGrad;
+        } else {
+          this.maskRightEl.style.webkitMaskImage = "none";
+          this.maskRightEl.style.maskImage = "none";
+        }
       } else {
         this.maskLeftEl.style.display = "none";
         this.maskRightEl.style.display = "none";
+        this.maskRightEl.style.webkitMaskImage = "none";
+        this.maskRightEl.style.maskImage = "none";
       }
     } else {
       this.maskTopEl.style.display = "none";
       this.maskBottomEl.style.display = "none";
       this.maskLeftEl.style.display = "none";
       this.maskRightEl.style.display = "none";
+      this.maskRightEl.style.webkitMaskImage = "none";
+      this.maskRightEl.style.maskImage = "none";
     }
   }
 
@@ -1676,19 +1642,13 @@ export class ReadingRuler {
 
     if (this.wordTracking) {
       this.rulerEl.style.willChange = "transform";
-      if (this.previewEl) this.previewEl.style.willChange = "transform";
     } else {
       this.rulerEl.style.willChange = "auto";
-      if (this.previewEl) this.previewEl.style.willChange = "auto";
     }
 
     const isFocus = this.enabled && this.mode === "focus";
     const transitionClass = this.horizontalWordTransition ? "word-transition-active" : "word-transition-snap";
     this.rulerEl.className = `reading-ruler mode-${this.mode} color-${this.color} ${this.enabled ? "is-visible" : "is-hidden"} ${this.wordTracking ? "word-tracking-mode " + transitionClass : ""}`;
-    if (this.previewEl) {
-      const isUnderline = this.mode === "underline";
-      this.previewEl.className = `reading-ruler-preview mode-${this.mode} color-${this.color} ${this.enabled && isUnderline && this.wordTracking && this.previewWidth > 0 ? "is-visible" : "is-hidden"}`;
-    }
     this.maskTopEl.className = `ruler-mask ruler-mask-top ${isFocus ? "is-visible" : "is-hidden"}`;
     this.maskBottomEl.className = `ruler-mask ruler-mask-bottom ${isFocus ? "is-visible" : "is-hidden"}`;
     this.maskLeftEl.className = `ruler-mask ruler-mask-left ${isFocus && this.wordTracking ? "is-visible " + transitionClass : "is-hidden"}`;
@@ -1744,7 +1704,7 @@ export class ReadingRuler {
   }
 
   setMode(mode) {
-    if (["highlight", "focus", "underline"].includes(mode)) {
+    if (["highlight", "focus"].includes(mode)) {
       this.mode = mode;
       this.updateEffectiveHeight();
       this.updateStyles();
@@ -1823,7 +1783,6 @@ export class ReadingRuler {
     } else {
       this.previewWidth = 0;
       this.totalWidth = 0;
-      if (this.previewEl) this.previewEl.style.display = "none";
       this.rulerEl.classList.remove("word-tracking-mode");
       this.applyPosition();
       if (this.followMode === "mouse") {
@@ -1889,7 +1848,6 @@ export class ReadingRuler {
 
     // 2. Vizuální skrytí pravítka během animace přechodu strany (maska zůstává ztmavená, aby nedošlo k probliknutí bílé)
     this.rulerEl?.classList.add("is-page-transitioning");
-    this.previewEl?.classList.add("is-page-transitioning");
 
     const finishPageChange = () => {
       if (!this.isPageTransitioning) return;
@@ -1921,7 +1879,6 @@ export class ReadingRuler {
 
       // Odkrytí pravítka s čistě přepočtenými souřadnicemi
       this.rulerEl?.classList.remove("is-page-transitioning");
-      this.previewEl?.classList.remove("is-page-transitioning");
     };
 
     if (!isPageChanged) {
@@ -1957,7 +1914,6 @@ export class ReadingRuler {
       this._onTransitionEnd = null;
     }
     if (this.rulerEl) this.rulerEl.remove();
-    if (this.previewEl) this.previewEl.remove();
     if (this.maskTopEl) this.maskTopEl.remove();
     if (this.maskBottomEl) this.maskBottomEl.remove();
     if (this.maskLeftEl) this.maskLeftEl.remove();

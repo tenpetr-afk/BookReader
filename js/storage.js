@@ -186,7 +186,7 @@ export class StorageManager {
       showFooterBar: false, // skrytí spodní lišty čtečky
       ruler: {
         enabled: false,
-        mode: "highlight", // highlight, focus, underline
+        mode: "highlight", // highlight, focus
         height: 48, // px
         autoHeight: true, // Automatická výška podle velikosti řádku
         snapToLines: true, // Magnetická přilnavost k jednotlivým řádkům
@@ -206,6 +206,9 @@ export class StorageManager {
           ...parsed,
           ruler: { ...defaults.ruler, ...(parsed.ruler || {}) }
         };
+        if (merged.ruler.mode === "underline") {
+          merged.ruler.mode = "highlight";
+        }
         if (merged.ruler.followMode !== "keyboard") {
           merged.ruler.followMode = "mouse";
         }
