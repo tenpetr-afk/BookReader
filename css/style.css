@@ -1153,23 +1153,27 @@ body.dragging-file .drop-zone-overlay {
    Plynulý horizontální přechod pravítka na úrovni slov (word-level ruler)
    ========================================================================== */
 .reading-ruler.word-tracking-mode {
+  will-change: transform;
+  transform-origin: 0 0;
   transition: none !important;
 }
 
 .reading-ruler.word-tracking-mode.word-transition-active {
-  transition: left 120ms cubic-bezier(0.25, 1, 0.5, 1), width 120ms cubic-bezier(0.25, 1, 0.5, 1) !important;
+  will-change: transform;
+  transition: transform 75ms cubic-bezier(0, 0, 0.2, 1), width 75ms cubic-bezier(0, 0, 0.2, 1) !important;
 }
 
 .reading-ruler.word-tracking-mode.word-transition-snap {
+  will-change: transform;
   transition: none !important;
 }
 
 .ruler-mask.word-transition-active.ruler-mask-left {
-  transition: width 120ms cubic-bezier(0.25, 1, 0.5, 1) !important;
+  transition: width 75ms cubic-bezier(0, 0, 0.2, 1) !important;
 }
 
 .ruler-mask.word-transition-active.ruler-mask-right {
-  transition: left 120ms cubic-bezier(0.25, 1, 0.5, 1) !important;
+  transition: left 75ms cubic-bezier(0, 0, 0.2, 1) !important;
 }
 
 .ruler-mask.word-transition-snap {

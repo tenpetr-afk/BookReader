@@ -73,10 +73,13 @@ export class ReadingRuler {
     this.wasHoldAborted = false;
     this.holdIndicatorEl = null;
     this.lastTapStepTime = 0;
+    this.lastTouchTapTime = 0;
     this.lastSwipeTime = 0;
     this.onBoundary = null;
     this.onSwipe = null;
     this.horizontalWordTransition = false;
+    this.isWordTransitioning = false;
+    this.wordTransitionTimer = null;
 
     this.createDomElements();
     this.attachEvents();
@@ -97,19 +100,19 @@ export class ReadingRuler {
       this.rulerEl.classList.add("word-transition-active");
       this.rulerEl.style.setProperty(
         "transition",
-        "left 120ms cubic-bezier(0.25, 1, 0.5, 1), width 120ms cubic-bezier(0.25, 1, 0.5, 1)",
+        "transform 75ms cubic-bezier(0, 0, 0.2, 1), width 75ms cubic-bezier(0, 0, 0.2, 1)",
         "important"
       );
     }
     if (this.maskLeftEl) {
       this.maskLeftEl.classList.remove("word-transition-snap");
       this.maskLeftEl.classList.add("word-transition-active");
-      this.maskLeftEl.style.setProperty("transition", "width 120ms cubic-bezier(0.25, 1, 0.5, 1)", "important");
+      this.maskLeftEl.style.setProperty("transition", "width 75ms cubic-bezier(0, 0, 0.2, 1)", "important");
     }
     if (this.maskRightEl) {
       this.maskRightEl.classList.remove("word-transition-snap");
       this.maskRightEl.classList.add("word-transition-active");
-      this.maskRightEl.style.setProperty("transition", "left 120ms cubic-bezier(0.25, 1, 0.5, 1)", "important");
+      this.maskRightEl.style.setProperty("transition", "left 75ms cubic-bezier(0, 0, 0.2, 1)", "important");
     }
     if (this.maskTopEl) this.maskTopEl.style.setProperty("transition", "none", "important");
     if (this.maskBottomEl) this.maskBottomEl.style.setProperty("transition", "none", "important");
@@ -117,6 +120,11 @@ export class ReadingRuler {
 
   disableWordTransition() {
     this.horizontalWordTransition = false;
+    if (this.wordTransitionTimer) {
+      clearTimeout(this.wordTransitionTimer);
+      this.wordTransitionTimer = null;
+    }
+    this.isWordTransitioning = false;
     if (this.rulerEl) {
       this.rulerEl.classList.remove("word-transition-active");
       this.rulerEl.classList.add("word-transition-snap");
@@ -1362,10 +1370,18 @@ export class ReadingRuler {
     if (this.isHoldTriggered) return false;
 
     const now = Date.now();
-    if (now - this.lastTapStepTime < 280) {
-      return false; // Ochrana proti vícenásobnému krokování ze souběžných událostí
+    // Ochrana proti syntetickému clicku po dotyku (iOS Safari generuje click cca 300ms po touchend)
+    if (pointerType === "mouse" && now - (this.lastTouchTapTime || 0) < 450) {
+      return false;
+    }
+    // Ochrana proti duplikaci ze souběžných událostí v rámci téhož gesta (pointerup + touchend < 45ms)
+    if (now - this.lastTapStepTime < 45) {
+      return false;
     }
 
+    if (pointerType === "touch") {
+      this.lastTouchTapTime = now;
+    }
     this.cancelHold(false);
     this.lastTapStepTime = now;
 
@@ -1384,6 +1400,19 @@ export class ReadingRuler {
     this.cancelHold();
 
     if (this.wordTracking) {
+      // 2. Chaining / Rapid consecutive taps: pokud probíhá přechod z předchozího klepnutí, okamžitě jej zrušíme a resetujeme
+      if (this.isWordTransitioning) {
+        if (this.wordTransitionTimer) {
+          clearTimeout(this.wordTransitionTimer);
+          this.wordTransitionTimer = null;
+        }
+        this.isWordTransitioning = false;
+        this.disableWordTransition();
+        if (this.rulerEl) {
+          void this.rulerEl.offsetWidth;
+        }
+      }
+
       if (this.cachedWords.length === 0) {
         this.refreshWords();
       }
@@ -1457,12 +1486,15 @@ export class ReadingRuler {
         if (isSameLine) {
           this.enableWordTransition();
           this.applyPosition();
+          this.isWordTransitioning = true;
+          if (this.wordTransitionTimer) clearTimeout(this.wordTransitionTimer);
+          this.wordTransitionTimer = setTimeout(() => {
+            this.isWordTransitioning = false;
+            this.wordTransitionTimer = null;
+          }, 85);
         } else {
           this.disableWordTransition();
           this.applyPosition();
-          if (this.rulerEl) {
-            void this.rulerEl.offsetWidth;
-          }
           this.horizontalWordTransition = true;
           requestAnimationFrame(() => {
             if (this.enabled && this.wordTracking && this.horizontalWordTransition && this.followMode !== "mouse") {
@@ -1555,17 +1587,21 @@ export class ReadingRuler {
     if (!this.rulerEl) return;
 
     const y = Math.round(this.currentY);
-    this.rulerEl.style.top = `${y}px`;
     this.rulerEl.style.height = `${this.height}px`;
 
     if (this.wordTracking) {
-      this.rulerEl.style.left = `${Math.round(this.wordLeft)}px`;
-      this.rulerEl.style.width = `${Math.round(this.wordWidth)}px`;
+      const x = Math.round(this.wordLeft);
+      this.rulerEl.style.top = "0px";
+      this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "auto";
+      this.rulerEl.style.width = `${Math.round(this.wordWidth)}px`;
+      this.rulerEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
     } else {
+      this.rulerEl.style.top = `${y}px`;
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "0px";
       this.rulerEl.style.width = "auto";
+      this.rulerEl.style.transform = "none";
     }
 
     if (this.mode === "focus" && this.enabled) {
@@ -1610,6 +1646,12 @@ export class ReadingRuler {
 
   updateStyles() {
     if (!this.rulerEl) return;
+
+    if (this.wordTracking) {
+      this.rulerEl.style.willChange = "transform";
+    } else {
+      this.rulerEl.style.willChange = "auto";
+    }
 
     const isFocus = this.enabled && this.mode === "focus";
     const transitionClass = this.horizontalWordTransition ? "word-transition-active" : "word-transition-snap";
@@ -1778,6 +1820,11 @@ export class ReadingRuler {
   onPageChange(direction = 0, isPageChanged = true) {
     if (!this.enabled) return;
     this.disableWordTransition();
+    if (this.wordTransitionTimer) {
+      clearTimeout(this.wordTransitionTimer);
+      this.wordTransitionTimer = null;
+    }
+    this.isWordTransitioning = false;
 
     this.cancelHold();
 
@@ -1816,11 +1863,9 @@ export class ReadingRuler {
         this._onTransitionEnd = null;
       }
 
-      // Přepočet přesných rozměrů a ohraničení z nového statického DOMu
+      // Přepočet přesných rozměrů a ohraničení z nového statického DOMu (uložení slov do paměti pro nulový reflow při klepnutí)
       this.refreshLines();
-      if (this.wordTracking) {
-        this.refreshWords();
-      }
+      this.refreshWords();
 
       // Usazení pravítka na nové stránce
       if (this.followMode === "mouse") {
@@ -1855,6 +1900,11 @@ export class ReadingRuler {
   }
 
   destroy() {
+    if (this.wordTransitionTimer) {
+      clearTimeout(this.wordTransitionTimer);
+      this.wordTransitionTimer = null;
+    }
+    this.isWordTransitioning = false;
     if (this.pageChangeTimer) {
       clearTimeout(this.pageChangeTimer);
       this.pageChangeTimer = null;
