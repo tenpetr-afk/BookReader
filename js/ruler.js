@@ -1282,7 +1282,7 @@ export class ReadingRuler {
     }
 
     if (lastPreviewWord) {
-      this.previewLeft = Math.round(this.wordLeft + this.wordWidth);
+      this.previewLeft = this.wordLeft + this.wordWidth;
       const previewRight = Math.round(lastPreviewWord.right + padX);
       this.previewWidth = Math.max(0, previewRight - this.previewLeft);
     } else {
@@ -1572,11 +1572,14 @@ export class ReadingRuler {
           this.previewEl.style.height = `${this.height}px`;
           this.previewEl.style.width = `${Math.round(this.previewWidth)}px`;
           this.previewEl.style.transform = `translate3d(${px}px, ${y}px, 0)`;
+          this.rulerEl.classList.remove("no-preview");
         } else {
           this.previewEl.style.display = "none";
+          this.rulerEl.classList.add("no-preview");
         }
       }
     } else {
+      this.rulerEl.classList.remove("no-preview");
       this.rulerEl.style.top = `${y}px`;
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "0px";
