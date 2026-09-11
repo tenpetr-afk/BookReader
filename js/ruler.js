@@ -230,9 +230,11 @@ export class ReadingRuler {
   /**
    * Plynulá aktualizace pozice pravítka synchronizovaná s obnovovací frekvencí displeje (120Hz ProMotion)
    */
-  schedulePointerUpdate(clientX, clientY) {
+  schedulePointerUpdate(clientX, clientY, pointerType = "mouse") {
     this.pendingPointerX = clientX;
     this.pendingPointerY = clientY;
+    this.pendingPointerType = pointerType;
+    this.activePointerType = pointerType;
     if (this.isPageTransitioning) {
       this.lastPointerX = clientX;
       this.lastPointerY = clientY;
@@ -243,7 +245,7 @@ export class ReadingRuler {
       requestAnimationFrame(() => {
         this.rafPointerPending = false;
         if (this.enabled && !this.isPageTransitioning) {
-          this.handlePointerMove(this.pendingPointerX, this.pendingPointerY);
+          this.handlePointerMove(this.pendingPointerX, this.pendingPointerY, this.pendingPointerType);
         }
       });
     }
@@ -402,7 +404,8 @@ export class ReadingRuler {
       if (this.followMode === "mouse") {
         if (e.pointerType === "touch") return;
         if (e.pointerType === "mouse" || e.pointerType === "pen") {
-          this.schedulePointerUpdate(e.clientX, e.clientY);
+          this.activePointerType = e.pointerType;
+          this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
         }
         return;
       }
@@ -433,7 +436,8 @@ export class ReadingRuler {
         if (e.pointerType === "touch") return;
         if ((e.pointerType === "mouse" || e.pointerType === "pen") && !this.isDraggingRuler) {
           if (!this.isUiControl(e.target) && this.isPointerInStage(e.clientX, e.clientY)) {
-            this.schedulePointerUpdate(e.clientX, e.clientY);
+            this.activePointerType = e.pointerType;
+            this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
           }
         }
         return;
@@ -530,7 +534,8 @@ export class ReadingRuler {
       }
       if (this.followMode === "mouse") {
         if (isStylus && touch && this.isPointerInStage(touch.clientX, touch.clientY)) {
-          this.schedulePointerUpdate(touch.clientX, touch.clientY);
+          this.activePointerType = "pen";
+          this.schedulePointerUpdate(touch.clientX, touch.clientY, "pen");
         }
         return;
       }
@@ -551,7 +556,8 @@ export class ReadingRuler {
         if (isStylus && !this.isDraggingRuler) {
           const stylusTouch = Array.from(e.touches).find(t => t.touchType === "stylus");
           if (stylusTouch && !this.isUiControl(e.target) && this.isPointerInStage(stylusTouch.clientX, stylusTouch.clientY)) {
-            this.schedulePointerUpdate(stylusTouch.clientX, stylusTouch.clientY);
+            this.activePointerType = "pen";
+            this.schedulePointerUpdate(stylusTouch.clientX, stylusTouch.clientY, "pen");
           }
         }
         return;
@@ -632,7 +638,8 @@ export class ReadingRuler {
         return;
       }
       if (this.followMode === "mouse") {
-        this.schedulePointerUpdate(e.clientX, e.clientY);
+        this.activePointerType = "mouse";
+        this.schedulePointerUpdate(e.clientX, e.clientY, "mouse");
       }
     }, { passive: true });
 
@@ -999,9 +1006,70 @@ export class ReadingRuler {
   }
 
   /**
+   * Vyhodnotí index řádku s hysterezí proti chvění (Sticky Line Hysteresis).
+   * Ponechá aktuální řádek, dokud posunutá souřadnice nepronikne alespoň ze 40 %
+   * do rámečku sousedního řádku (směrem dolů nebo nahoru).
+   */
+  getHysteresisLineIndex(curY) {
+    if (this.cachedLines.length === 0) {
+      this.refreshLines();
+    }
+    if (this.cachedLines.length === 0) return 0;
+
+    const currentIdx = this.activeLineIndex;
+    const hasActive = currentIdx >= 0 && currentIdx < this.cachedLines.length;
+
+    if (hasActive) {
+      const nextLine = currentIdx < this.cachedLines.length - 1 ? this.cachedLines[currentIdx + 1] : null;
+      const prevLine = currentIdx > 0 ? this.cachedLines[currentIdx - 1] : null;
+
+      // Hranice pro přepnutí: alespoň 40 % proniknutí do rámečku sousedního řádku
+      const downThreshold = nextLine ? (nextLine.top + 0.40 * nextLine.height) : Infinity;
+      const upThreshold = prevLine ? (prevLine.bottom - 0.40 * prevLine.height) : -Infinity;
+
+      if (curY > downThreshold) {
+        let newIdx = currentIdx + 1;
+        while (newIdx < this.cachedLines.length - 1) {
+          const next = this.cachedLines[newIdx + 1];
+          if (curY >= next.top + 0.40 * next.height) {
+            newIdx++;
+          } else {
+            break;
+          }
+        }
+        return newIdx;
+      } else if (curY < upThreshold) {
+        let newIdx = currentIdx - 1;
+        while (newIdx > 0) {
+          const prev = this.cachedLines[newIdx - 1];
+          if (curY <= prev.bottom - 0.40 * prev.height) {
+            newIdx--;
+          } else {
+            break;
+          }
+        }
+        return newIdx;
+      }
+      return currentIdx;
+    }
+
+    let minDiff = Infinity;
+    let closestIdx = 0;
+    for (let i = 0; i < this.cachedLines.length; i++) {
+      const line = this.cachedLines[i];
+      const diff = Math.abs(curY - line.centerY);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestIdx = i;
+      }
+    }
+    return closestIdx;
+  }
+
+  /**
    * Zpracuje pohyb ukazatele (myši nebo prstu)
    */
-  handlePointerMove(clientX, clientY) {
+  handlePointerMove(clientX, clientY, pointerType = null) {
     if (!this.enabled || this.isPageTransitioning) return;
     this.disableWordTransition();
 
@@ -1025,8 +1093,29 @@ export class ReadingRuler {
       this.lastValidPointerY = clientY;
     }
 
+    const pType = pointerType || this.activePointerType || (Date.now() - this.lastPenTime < 500 ? "pen" : "mouse");
+    if (pointerType) {
+      this.activePointerType = pointerType;
+    }
+    const isPen = pType === "pen";
+
+    if (this.cachedLines.length === 0) {
+      this.refreshLines();
+    }
+
+    const currentLineHeight = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
+      ? this.cachedLines[this.activeLineIndex].height
+      : (this.cachedLines[0]?.height || this.height || 36);
+
+    // 1. Stylus-Specific Target Offset:
+    // V režimu sledování myši pro Apple Pencil (pointerType === 'pen') aplikujeme vertikální posun vzhůru
+    // (-0.55 * current line height, cca -18px až -22px). Pro myš (pointerType === 'mouse') je offset striktně 0.
+    const stylusOffsetY = (this.followMode === "mouse" && isPen)
+      ? -Math.round(currentLineHeight * 0.55 || 20)
+      : 0;
+
     const curX = this.lastPointerX;
-    const curY = this.lastPointerY;
+    const curY = this.lastPointerY + stylusOffsetY;
 
     // --- REŽIM SLEDOVÁNÍ SLOV (Word-level Tracking) ---
     if (this.wordTracking) {
@@ -1035,18 +1124,21 @@ export class ReadingRuler {
       }
 
       if (this.cachedWords.length > 0) {
-        let closestWord = this.cachedWords[0];
+        const targetLineIdx = this.getHysteresisLineIndex(curY);
+        this.activeLineIndex = targetLineIdx;
+
+        let closestWord = null;
+        let closestIdx = -1;
         let minDiff = Infinity;
-        let closestIdx = 0;
 
-        // Posun o 8px nahoru pro přirozené vedení čtení zespodu (vodítko nezakrývá písmena)
-        const effectiveY = curY - 8;
-
+        // Přednostně vyhledáme slovo na aktuálním hysterezním řádku
         for (let i = 0; i < this.cachedWords.length; i++) {
           const w = this.cachedWords[i];
-          const dy = effectiveY < w.top ? w.top - effectiveY : effectiveY > w.bottom ? effectiveY - w.bottom : 0;
+          const isLineMatch = (w.lineIndex != null && w.lineIndex === targetLineIdx);
+          const dy = curY < w.top ? w.top - curY : curY > w.bottom ? curY - w.bottom : 0;
           const dx = curX < w.left ? w.left - curX : curX > w.right ? curX - w.right : 0;
-          const dist = dy * 2.8 + dx; // Důraz na shodu v řádku
+          const linePenalty = isLineMatch ? 0 : 100;
+          const dist = dy * 3 + dx + linePenalty;
           if (dist < minDiff) {
             minDiff = dist;
             closestWord = w;
@@ -1054,24 +1146,12 @@ export class ReadingRuler {
           }
         }
 
+        if (!closestWord && this.cachedWords.length > 0) {
+          closestWord = this.cachedWords[0];
+          closestIdx = 0;
+        }
+
         this.activeWordIndex = closestIdx;
-        if (this.cachedLines.length === 0) {
-          this.refreshLines();
-        }
-        if (this.cachedLines.length > 0) {
-          let closestLineIdx = 0;
-          let minLineDiff = Infinity;
-          for (let j = 0; j < this.cachedLines.length; j++) {
-            const lDiff = Math.abs(closestWord.centerY - this.cachedLines[j].centerY);
-            if (lDiff < minLineDiff) {
-              minLineDiff = lDiff;
-              closestLineIdx = j;
-            }
-          }
-          this.activeLineIndex = closestLineIdx;
-        } else {
-          this.activeLineIndex = 0;
-        }
 
         // Přesný symetrický padding: 3px po stranách (nezasahuje do sousedních slov), 2.5px vertikálně
         const padX = 3;
@@ -1106,26 +1186,12 @@ export class ReadingRuler {
     // --- STANDARDNÍ ŘÁDKOVÝ REŽIM ---
     this.rulerEl.classList.remove("word-tracking-mode");
 
-    if (this.cachedLines.length === 0) {
-      this.refreshLines();
-    }
-
     if (this.cachedLines.length > 0) {
-      let closestLine = this.cachedLines[0];
-      let minDiff = Infinity;
-      let closestIdx = 0;
-
-      for (let i = 0; i < this.cachedLines.length; i++) {
-        const line = this.cachedLines[i];
-        const diff = Math.abs(curY - line.centerY);
-        if (diff < minDiff) {
-          minDiff = diff;
-          closestLine = line;
-          closestIdx = i;
-        }
-      }
-
+      // 2. Sticky Line Hysteresis: vyhodnocení aktivního řádku s 40% tolerancí proniknutí
+      const closestIdx = this.getHysteresisLineIndex(curY);
       this.activeLineIndex = closestIdx;
+      const closestLine = this.cachedLines[closestIdx];
+
       if (this.cachedWords.length > 0) {
         let closestWordIdx = 0;
         let minWordDiff = Infinity;
