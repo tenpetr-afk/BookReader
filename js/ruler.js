@@ -1006,32 +1006,56 @@ export class ReadingRuler {
   }
 
   /**
-   * Vyhodnotí index řádku s hysterezí proti chvění (Sticky Line Hysteresis).
-   * Ponechá aktuální řádek, dokud posunutá souřadnice nepronikne alespoň ze 40 %
-   * do rámečku sousedního řádku (směrem dolů nebo nahoru).
+   * Vyhodnotí index řádku podle typu ukazatele:
+   * - Pro Apple Pencil (pointerType === 'pen') v režimu sledování myši:
+   *   1. Physical Line Retention: ponechá pravítko uzamčené na aktuálním řádku,
+   *      dokud hrot Apple Pencil zůstává kdekoliv v aktuálním řádku PLUS v horní
+   *      polovině (0 % až 50 %) bezprostředně následujícího řádku.
+   *   2. Threshold Trigger: přeskok na další řádek se spustí POUZE tehdy, když fyzická
+   *      souřadnice hrotu e.clientY striktně překročí 50 % výšky (vertikální střed) následujícího řádku.
+   *      Při pohybu nahoru zpět na předchozí řádek přeskočí okamžitě, jakmile hrot překročí horní hranici aktuálního řádku.
+   * - Pro myš (pointerType === 'mouse'): standardní přichytávání centrované přímo na pozici kurzoru.
    */
-  getHysteresisLineIndex(curY) {
+  getHysteresisLineIndex(curY, isPen = false) {
     if (this.cachedLines.length === 0) {
       this.refreshLines();
     }
     if (this.cachedLines.length === 0) return 0;
 
+    // 3. Pointer Isolation: Pro myš (pointerType === 'mouse') standardní přichytávání centrované přímo na pozici kurzoru
+    if (!isPen || this.followMode !== "mouse") {
+      let minDiff = Infinity;
+      let closestIdx = 0;
+      for (let i = 0; i < this.cachedLines.length; i++) {
+        const line = this.cachedLines[i];
+        const diff = Math.abs(curY - line.centerY);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIdx = i;
+        }
+      }
+      return closestIdx;
+    }
+
+    // 1. & 2. Kalibrace prahu pro Apple Pencil (pointerType === 'pen'):
     const currentIdx = this.activeLineIndex;
     const hasActive = currentIdx >= 0 && currentIdx < this.cachedLines.length;
 
     if (hasActive) {
+      const currentLine = this.cachedLines[currentIdx];
       const nextLine = currentIdx < this.cachedLines.length - 1 ? this.cachedLines[currentIdx + 1] : null;
-      const prevLine = currentIdx > 0 ? this.cachedLines[currentIdx - 1] : null;
 
-      // Hranice pro přepnutí: alespoň 40 % proniknutí do rámečku sousedního řádku
-      const downThreshold = nextLine ? (nextLine.top + 0.40 * nextLine.height) : Infinity;
-      const upThreshold = prevLine ? (prevLine.bottom - 0.40 * prevLine.height) : -Infinity;
+      // Hranice pro přeskok na následující řádek: striktně více než 50 % výšky (vertikální střed) následujícího řádku
+      const downThreshold = nextLine ? (nextLine.top + 0.50 * nextLine.height) : Infinity;
+      // Hranice pro návrat na předchozí řádek: horní hranice aktuálního řádku
+      const upThreshold = currentLine.top;
 
       if (curY > downThreshold) {
         let newIdx = currentIdx + 1;
         while (newIdx < this.cachedLines.length - 1) {
           const next = this.cachedLines[newIdx + 1];
-          if (curY >= next.top + 0.40 * next.height) {
+          const nextMid = next.top + 0.50 * next.height;
+          if (curY > nextMid) {
             newIdx++;
           } else {
             break;
@@ -1039,10 +1063,11 @@ export class ReadingRuler {
         }
         return newIdx;
       } else if (curY < upThreshold) {
+        if (currentIdx === 0) return 0;
         let newIdx = currentIdx - 1;
         while (newIdx > 0) {
-          const prev = this.cachedLines[newIdx - 1];
-          if (curY <= prev.bottom - 0.40 * prev.height) {
+          const prev = this.cachedLines[newIdx];
+          if (curY < prev.top) {
             newIdx--;
           } else {
             break;
@@ -1053,17 +1078,15 @@ export class ReadingRuler {
       return currentIdx;
     }
 
-    let minDiff = Infinity;
-    let closestIdx = 0;
+    // Počáteční výběr řádku, pokud ještě není žádný řádek aktivní
     for (let i = 0; i < this.cachedLines.length; i++) {
-      const line = this.cachedLines[i];
-      const diff = Math.abs(curY - line.centerY);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closestIdx = i;
+      const nextLine = i < this.cachedLines.length - 1 ? this.cachedLines[i + 1] : null;
+      const downThreshold = nextLine ? (nextLine.top + 0.50 * nextLine.height) : Infinity;
+      if (curY <= downThreshold) {
+        return i;
       }
     }
-    return closestIdx;
+    return this.cachedLines.length - 1;
   }
 
   /**
@@ -1103,19 +1126,8 @@ export class ReadingRuler {
       this.refreshLines();
     }
 
-    const currentLineHeight = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
-      ? this.cachedLines[this.activeLineIndex].height
-      : (this.cachedLines[0]?.height || this.height || 36);
-
-    // 1. Stylus-Specific Target Offset:
-    // V režimu sledování myši pro Apple Pencil (pointerType === 'pen') aplikujeme vertikální posun vzhůru
-    // (-0.55 * current line height, cca -18px až -22px). Pro myš (pointerType === 'mouse') je offset striktně 0.
-    const stylusOffsetY = (this.followMode === "mouse" && isPen)
-      ? -Math.round(currentLineHeight * 0.55 || 20)
-      : 0;
-
     const curX = this.lastPointerX;
-    const curY = this.lastPointerY + stylusOffsetY;
+    const curY = this.lastPointerY;
 
     // --- REŽIM SLEDOVÁNÍ SLOV (Word-level Tracking) ---
     if (this.wordTracking) {
@@ -1124,7 +1136,7 @@ export class ReadingRuler {
       }
 
       if (this.cachedWords.length > 0) {
-        const targetLineIdx = this.getHysteresisLineIndex(curY);
+        const targetLineIdx = this.getHysteresisLineIndex(curY, isPen);
         this.activeLineIndex = targetLineIdx;
 
         let closestWord = null;
@@ -1187,8 +1199,7 @@ export class ReadingRuler {
     this.rulerEl.classList.remove("word-tracking-mode");
 
     if (this.cachedLines.length > 0) {
-      // 2. Sticky Line Hysteresis: vyhodnocení aktivního řádku s 40% tolerancí proniknutí
-      const closestIdx = this.getHysteresisLineIndex(curY);
+      const closestIdx = this.getHysteresisLineIndex(curY, isPen);
       this.activeLineIndex = closestIdx;
       const closestLine = this.cachedLines[closestIdx];
 
