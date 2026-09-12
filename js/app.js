@@ -26,6 +26,10 @@ class LuminaApp {
     this.PAGE_TURN_COOLDOWN = 60; // ms
     this.saveProgressTimer = null;
 
+    // Ochrana proti syntetickým gestům po přechodu strany na iPadu
+    this.isNavigatingPage = false;
+    this.navigatingPageTimer = null;
+
     // DOM elementy
     this.dom = {};
   }
@@ -417,6 +421,10 @@ class LuminaApp {
     this.dom.zoneTouchPrev.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.isUiOrOverlayEvent(e)) return;
+      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) {
+        e.preventDefault();
+        return;
+      }
       if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
         this.ruler.stepLine(-1, true);
         return;
@@ -449,6 +457,10 @@ class LuminaApp {
     this.dom.zoneTouchNext.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.isUiOrOverlayEvent(e)) return;
+      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) {
+        e.preventDefault();
+        return;
+      }
       if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
         this.ruler.stepLine(1, true);
         return;
@@ -489,6 +501,10 @@ class LuminaApp {
         isSwiping = false;
         return;
       }
+      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) {
+        isSwiping = false;
+        return;
+      }
       if (e.touches.length !== 1) {
         isSwiping = false;
         return;
@@ -506,6 +522,10 @@ class LuminaApp {
 
     this.dom.pagedViewport.addEventListener("touchend", (e) => {
       if (this.isUiOrOverlayEvent(e)) {
+        isSwiping = false;
+        return;
+      }
+      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) {
         isSwiping = false;
         return;
       }
@@ -596,6 +616,7 @@ class LuminaApp {
     // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
     this.dom.pagedViewport.addEventListener("click", (e) => {
       if (this.isUiOrOverlayEvent(e)) return;
+      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) return;
       if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
         return;
       }
@@ -1608,9 +1629,18 @@ class LuminaApp {
       ? explicitDirection
       : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
 
+    // Post-navigation zámek pro debouncing syntetických gest a eventů na iPadu (WebKit)
+    this.isNavigatingPage = true;
+    if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
+    this.navigatingPageTimer = setTimeout(() => {
+      this.isNavigatingPage = false;
+      this.navigatingPageTimer = null;
+    }, 150);
+
     if (this.dom.readerContent) {
       this.dom.readerContent.style.transition = "none";
       this.dom.readerContent.style.transform = `translateX(-${offset}px)`;
+      void this.dom.readerContent.offsetHeight; // Vynucení reflow pro synchronní a přesné měření textových uzlů pravítkem
     }
 
     // Měření postupu
