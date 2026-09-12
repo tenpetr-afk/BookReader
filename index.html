@@ -196,6 +196,11 @@
         </div>
 
 
+        <!-- Hledání v knize -->
+        <button id="btn-toggle-search" class="btn-icon" title="Hledat v knize (klávesa F)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+
         <!-- Statistiky -->
         <button id="btn-toggle-stats" class="btn-icon" title="Statistiky čtení (klávesa S)">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
@@ -317,37 +322,10 @@
         <input type="range" id="slider-font-size" class="slider-input" min="14" max="32" value="19" />
       </div>
 
-      <!-- Výška řádku -->
-      <div class="slider-setting">
-        <div class="slider-label">
-          <span>Řádkování</span>
-          <span id="val-line-height">1.65</span>
-        </div>
-        <input type="range" id="slider-line-height" class="slider-input" min="1.3" max="2.4" step="0.05" value="1.65" />
-      </div>
-
-      <!-- Šířka textu -->
-      <div class="slider-setting">
-        <div class="slider-label">
-          <span>Šířka stránky</span>
-          <span id="val-content-width">720px</span>
-        </div>
-        <input type="range" id="slider-content-width" class="slider-input" min="500" max="1000" step="20" value="720" />
-      </div>
-
-      <!-- Zarovnání -->
-      <div class="settings-group">
-        <div class="settings-group-title">Zarovnání textu</div>
-        <div style="display: flex; gap: 0.5rem;">
-          <button id="btn-align-justify" class="btn btn-secondary" style="flex: 1;">Do bloku</button>
-          <button id="btn-align-left" class="btn btn-secondary" style="flex: 1;">Vlevo</button>
-        </div>
-      </div>
-
-      <!-- Spodní lišta se stránkami (ve výchozím stavu skryto) -->
+      <!-- Spodní lišta s postupem čtení -->
       <div class="toggle-row" style="margin-top: 1.25rem; margin-bottom: 0.5rem;">
-        <span class="toggle-title">Zobrazit spodní lištu s čísly stran</span>
-        <button type="button" role="switch" id="setting-show-footer" class="switch-control" aria-checked="false" aria-label="Zobrazit spodní lištu">
+        <span class="toggle-title">Zobrazit postup čtení</span>
+        <button type="button" role="switch" id="setting-show-footer" class="switch-control" aria-checked="false" aria-label="Zobrazit postup čtení">
           <span class="switch-track"><span class="switch-thumb"></span></span>
         </button>
       </div>
@@ -424,7 +402,33 @@
   </aside>
 
   <!-- =========================================================================
-       5. MODÁLNÍ OKNO: STATISTIKY A DASHBOARD
+       5. POSTRANNÍ PANEL: HLEDÁNÍ V KNIZE (SEARCH DRAWER)
+       ========================================================================= -->
+  <aside id="search-drawer" class="drawer-panel" aria-label="Hledání v knize">
+    <div class="drawer-header">
+      <h2 class="drawer-title">Hledat v knize</h2>
+      <button id="btn-close-search" class="btn-close-drawer" aria-label="Zavřít hledání">✕</button>
+    </div>
+    <div class="drawer-body search-drawer-body">
+      <div class="search-input-wrapper">
+        <svg class="search-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" id="input-book-search" class="search-input" placeholder="Hledat text v knize..." autocomplete="off" spellcheck="false" />
+        <button id="btn-clear-search" class="btn-clear-search is-hidden" aria-label="Vymazat hledání">✕</button>
+      </div>
+      <div id="search-results-info" class="search-results-info is-hidden"></div>
+      <div id="search-results-list" class="search-results-list">
+        <div class="search-empty-state">
+          <div class="search-empty-icon">🔍</div>
+          <p>Zadejte hledaný výraz...</p>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- =========================================================================
+       6. MODÁLNÍ OKNO: STATISTIKY A DASHBOARD
        ========================================================================= -->
   <div id="stats-modal" class="modal-overlay stats-modal" role="dialog" aria-modal="true" aria-labelledby="stats-modal-title">
     <div class="modal-content">

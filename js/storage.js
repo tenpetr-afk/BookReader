@@ -183,7 +183,7 @@ export class StorageManager {
       contentWidth: 720, // px
       textAlign: "justify", // left, justify
       readingMode: "scroll", // scroll, paginated
-      showFooterBar: false, // skrytí spodní lišty čtečky
+      showFooterBar: true, // zobrazení spodní lišty čtečky (postup čtení, výchozí zapnuto)
       ruler: {
         enabled: false,
         mode: "highlight", // highlight, focus
@@ -206,6 +206,9 @@ export class StorageManager {
           ...parsed,
           ruler: { ...defaults.ruler, ...(parsed.ruler || {}) }
         };
+        if (parsed.showFooterBar === undefined) {
+          merged.showFooterBar = true;
+        }
         if (merged.ruler.mode === "underline") {
           merged.ruler.mode = "highlight";
         }
