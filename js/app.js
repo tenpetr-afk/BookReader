@@ -27,6 +27,7 @@ class LuminaApp {
     this.saveProgressTimer = null;
 
     // Ochrana proti syntetickým gestům po přechodu strany na iPadu
+    this.isNavigating = false;
     this.isNavigatingPage = false;
     this.navigatingPageTimer = null;
 
@@ -421,7 +422,7 @@ class LuminaApp {
     this.dom.zoneTouchPrev.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) {
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
         e.preventDefault();
         return;
       }
@@ -457,7 +458,7 @@ class LuminaApp {
     this.dom.zoneTouchNext.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) {
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
         e.preventDefault();
         return;
       }
@@ -501,7 +502,7 @@ class LuminaApp {
         isSwiping = false;
         return;
       }
-      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) {
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
         isSwiping = false;
         return;
       }
@@ -525,7 +526,7 @@ class LuminaApp {
         isSwiping = false;
         return;
       }
-      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) {
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
         isSwiping = false;
         return;
       }
@@ -616,7 +617,7 @@ class LuminaApp {
     // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
     this.dom.pagedViewport.addEventListener("click", (e) => {
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigatingPage || this.ruler?.isNavigatingPage) return;
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) return;
       if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
         return;
       }
@@ -660,6 +661,7 @@ class LuminaApp {
 
     this.dom.pagedViewport.addEventListener("wheel", (e) => {
       if (this.isAnyModalOrMenuOpen()) return;
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) return;
       this.ruler?.cancelHold();
       const absX = Math.abs(e.deltaX);
       const absY = Math.abs(e.deltaY);
@@ -1172,6 +1174,15 @@ class LuminaApp {
       if (this.isAnyModalOrMenuOpen()) return;
 
       if (isReader) {
+        if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
+          const navKeys = ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "PageDown", "PageUp", " ", "Spacebar"];
+          if (navKeys.includes(e.key) || e.code === "Space") {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+        }
+
         this.ruler?.cancelHold();
         // Pokud má prohlížečový focus jakékoliv tlačítko, uvolníme focus (blur),
         // aby stisk Mezerníku neaktivoval toto tlačítko namísto posunu pravítka.
@@ -1551,6 +1562,15 @@ class LuminaApp {
   async loadCurrentChapter(targetPage = 0) {
     if (!this.currentParser) return;
 
+    this.isNavigating = true;
+    if (this.ruler) {
+      this.ruler.isNavigating = true;
+      if (targetPage !== "last") {
+        this.ruler.activeLineIndex = 0;
+        this.ruler.activeWordIndex = 0;
+      }
+    }
+
     try {
       const chapter = await this.currentParser.loadChapter(this.currentChapterIndex);
       if (this.dom.chapterTitleEl) this.dom.chapterTitleEl.textContent = chapter.title;
@@ -1585,6 +1605,8 @@ class LuminaApp {
         this.goToPage(0, 1);
       }
     } catch (e) {
+      this.isNavigating = false;
+      if (this.ruler) this.ruler.isNavigating = false;
       console.error("Chyba při načítání kapitoly:", e);
       this.showToast(`Chyba při načítání kapitoly: ${e.message}`, "error");
 
@@ -1630,10 +1652,24 @@ class LuminaApp {
       : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
 
     // Post-navigation zámek pro debouncing syntetických gest a eventů na iPadu (WebKit)
+    this.isNavigating = true;
     this.isNavigatingPage = true;
+    if (this.ruler) {
+      this.ruler.isNavigating = true;
+      this.ruler.isNavigatingPage = true;
+      if (direction >= 0) {
+        this.ruler.activeLineIndex = 0;
+        this.ruler.activeWordIndex = 0;
+      }
+    }
     if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
     this.navigatingPageTimer = setTimeout(() => {
+      this.isNavigating = false;
       this.isNavigatingPage = false;
+      if (this.ruler) {
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+      }
       this.navigatingPageTimer = null;
     }, 150);
 
@@ -1667,8 +1703,16 @@ class LuminaApp {
 
   nextPage() {
     const now = Date.now();
+    if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) return;
     if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
     this.lastPageTurnTime = now;
+
+    this.isNavigating = true;
+    if (this.ruler) {
+      this.ruler.isNavigating = true;
+      this.ruler.activeLineIndex = 0;
+      this.ruler.activeWordIndex = 0;
+    }
 
     if (this.currentPageIndex < this.totalPagesInChapter - 1) {
       this.goToPage(this.currentPageIndex + 1, 1);
@@ -1676,20 +1720,31 @@ class LuminaApp {
       // Plynulý přechod na další kapitolu!
       this.navigateChapter(1, 0);
     } else {
+      this.isNavigating = false;
+      if (this.ruler) this.ruler.isNavigating = false;
       this.showToast("Dočetli jste knihu až do konce! 🎉", "success");
     }
   }
 
   prevPage() {
     const now = Date.now();
+    if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) return;
     if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
     this.lastPageTurnTime = now;
+
+    this.isNavigating = true;
+    if (this.ruler) {
+      this.ruler.isNavigating = true;
+    }
 
     if (this.currentPageIndex > 0) {
       this.goToPage(this.currentPageIndex - 1, -1);
     } else if (this.currentChapterIndex > 0) {
       // Plynulý přechod na konec předchozí kapitoly!
       this.navigateChapter(-1, "last");
+    } else {
+      this.isNavigating = false;
+      if (this.ruler) this.ruler.isNavigating = false;
     }
   }
 

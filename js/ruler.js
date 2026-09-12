@@ -52,6 +52,7 @@ export class ReadingRuler {
     this.animFrameId = null;
     this.isDragging = false;
     this.isPageTransitioning = false;
+    this.isNavigating = false;
     this.isNavigatingPage = false;
     this.navigatingPageTimer = null;
     this.navigatingPageLockoutEndTime = 0;
@@ -195,7 +196,7 @@ export class ReadingRuler {
    */
   isInteracting() {
     if (!this.enabled) return false;
-    if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return true;
+    if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return true;
     if (this.isDraggingRuler || this.isPenTouching) return true;
     if (this.isHoldTriggered || this.wasHoldAborted) return true;
     if (Date.now() < this.dragCooldownEndTime) return true;
@@ -229,7 +230,7 @@ export class ReadingRuler {
    * Plynulá aktualizace pozice pravítka synchronizovaná s obnovovací frekvencí displeje (120Hz ProMotion)
    */
   schedulePointerUpdate(clientX, clientY, pointerType = "mouse") {
-    if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isPageTransitioning) {
+    if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isPageTransitioning) {
       return;
     }
     this.pendingPointerX = clientX;
@@ -294,7 +295,7 @@ export class ReadingRuler {
   }
 
   startHold(clientX, clientY, pointerType = "touch") {
-    if (!this.enabled || this.isPageTransitioning || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     if (!this.isPointerInStage(clientX, clientY)) return;
     if (this.followMode === "mouse") return;
 
@@ -384,7 +385,7 @@ export class ReadingRuler {
   attachEvents() {
     // 1. POINTER EVENTS: Sjednocené sledování pro prst, Apple Pencil i myš
     const onPointerDown = (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
       if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
         this.holdStartTime = 0;
         return;
@@ -395,25 +396,28 @@ export class ReadingRuler {
 
       if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
+        this.isPenTouching = true;
         this.savePenDetails(e);
       }
 
-      // V režimu sledování myši: Apple Pencil a myš sledují v reálném čase, prst vůbec nehýbe pravítkem
       if (this.followMode === "mouse") {
         if (e.pointerType === "touch") return;
-        if (e.pointerType === "mouse" || e.pointerType === "pen") {
-          this.activePointerType = e.pointerType;
-          this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
-        }
+        this.activePointerId = e.pointerId;
+        this.activePointerType = e.pointerType;
+        this.handlePointerMove(e.clientX, e.clientY, e.pointerType);
         return;
       }
 
-      // Zahájit 1,1s podržení pro přemístění pravítka
-      this.startHold(e.clientX, e.clientY, e.pointerType || "mouse");
+      // Klávesový režim (keyboard)
+      if (e.pointerType === "pen") {
+        this.startHold(e.clientX, e.clientY, "pen");
+      } else if (e.pointerType === "touch" || e.pointerType === "mouse") {
+        this.startHold(e.clientX, e.clientY, e.pointerType);
+      }
     };
 
     const onPointerMove = (e) => {
-      if (!this.enabled || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+      if (!this.enabled || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
 
       if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
@@ -443,7 +447,7 @@ export class ReadingRuler {
     };
 
     const onPointerUp = (e) => {
-      if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
         this.cancelHold(false);
         this.isDraggingRuler = false;
         this.isPenTouching = false;
@@ -563,7 +567,7 @@ export class ReadingRuler {
     };
 
     const onTouchMove = (e) => {
-      if (!this.enabled || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+      if (!this.enabled || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
       const isStylus = Array.from(e.touches).some(t => t.touchType === "stylus");
       if (isStylus) {
         this.lastPenTime = Date.now();
@@ -592,7 +596,7 @@ export class ReadingRuler {
     };
 
     const onTouchEnd = (e) => {
-      if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
         this.cancelHold(false);
         this.isDraggingRuler = false;
         this.isPenTouching = false;
@@ -664,7 +668,7 @@ export class ReadingRuler {
     // 3. MOUSEMOVE fallback (pro prohlížeče bez PointerEvents)
     window.addEventListener("mousemove", (e) => {
       if (window.PointerEvent) return;
-      if (!this.enabled || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isDraggingRuler || this.isPenTouching) return;
+      if (!this.enabled || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isDraggingRuler || this.isPenTouching) return;
       if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
         return;
       }
@@ -687,7 +691,7 @@ export class ReadingRuler {
     // Zachycení kliknutí pro zabránění nežádoucího resetu nebo odskoku pravítka po dokončení podržení či jeho zrušení
     window.addEventListener("click", (e) => {
       if (!this.enabled) return;
-      if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
         e.stopPropagation();
         e.stopImmediatePropagation();
         return;
@@ -724,6 +728,13 @@ export class ReadingRuler {
       if (!this.enabled) return;
       this.cancelHold();
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+
+      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+        if (["j", "J", "k", "K"].includes(e.key)) {
+          e.preventDefault();
+          return;
+        }
+      }
 
       if (e.key === "j" || e.key === "J") {
         e.preventDefault();
@@ -1113,7 +1124,7 @@ export class ReadingRuler {
    * - Pro myš (pointerType === 'mouse'): standardní přímé přichytávání centrované přímo na kurzor bez zkreslení.
    */
   getHysteresisLineIndex(curY, isPen = false) {
-    if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+    if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
       return this.activeLineIndex >= 0 ? this.activeLineIndex : 0;
     }
     if (this.cachedLines.length === 0) {
@@ -1192,7 +1203,7 @@ export class ReadingRuler {
    * Zpracuje pohyb ukazatele (myši nebo prstu)
    */
   handlePointerMove(clientX, clientY, pointerType = null) {
-    if (!this.enabled || this.isPageTransitioning || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     this.disableWordTransition();
 
     // Displacement / Delta Threshold Sanity Check:
@@ -1435,17 +1446,23 @@ export class ReadingRuler {
     if (this.navigatingPageTimer) {
       clearTimeout(this.navigatingPageTimer);
     }
+    this.isNavigating = true;
     this.isNavigatingPage = true;
     this.navigatingPageLockoutEndTime = Date.now() + 150;
     this.navigatingPageTimer = setTimeout(() => {
+      this.isNavigating = false;
       this.isNavigatingPage = false;
       this.navigatingPageTimer = null;
     }, 150);
 
+    const isBackward = direction < 0;
+    if (!isBackward) {
+      this.activeLineIndex = 0;
+      this.activeWordIndex = 0;
+    }
+
     this.refreshLines();
     this.refreshWords();
-
-    const isBackward = direction < 0;
 
     if (this.wordTracking) {
       if (this.cachedWords.length > 0) {
@@ -1600,7 +1617,7 @@ export class ReadingRuler {
    */
   stepLine(direction, force = false) {
     // Pokud probíhá přechod strany, aktivní tažení nebo dobíhá lockout přechodu strany, ignorovat krokování
-    if (!this.enabled || this.isPageTransitioning || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     if (!force && this.isInteracting()) return;
     this.cancelHold();
 
@@ -1632,11 +1649,19 @@ export class ReadingRuler {
           const curIdx = this.activeWordIndex;
           if (direction > 0 && curIdx >= this.cachedWords.length - 1) {
             if (this.onBoundary) {
+              this.activeWordIndex = 0;
+              this.activeLineIndex = 0;
+              this.isNavigating = true;
+              this.isNavigatingPage = true;
+              this.navigatingPageLockoutEndTime = Date.now() + 150;
               this.onBoundary(1);
               return;
             }
           } else if (direction < 0 && curIdx <= 0) {
             if (this.onBoundary) {
+              this.isNavigating = true;
+              this.isNavigatingPage = true;
+              this.navigatingPageLockoutEndTime = Date.now() + 150;
               this.onBoundary(-1);
               return;
             }
@@ -1680,11 +1705,19 @@ export class ReadingRuler {
         const curIdx = this.activeLineIndex;
         if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
           if (this.onBoundary) {
+            this.activeLineIndex = 0;
+            this.activeWordIndex = 0;
+            this.isNavigating = true;
+            this.isNavigatingPage = true;
+            this.navigatingPageLockoutEndTime = Date.now() + 150;
             this.onBoundary(1);
             return;
           }
         } else if (direction < 0 && curIdx <= 0) {
           if (this.onBoundary) {
+            this.isNavigating = true;
+            this.isNavigatingPage = true;
+            this.navigatingPageLockoutEndTime = Date.now() + 150;
             this.onBoundary(-1);
             return;
           }
@@ -1709,7 +1742,15 @@ export class ReadingRuler {
       this.maskRightEl.classList.add("is-snapped");
       this.applyPosition();
     } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0) {
+      if (direction > 0) {
+        this.activeLineIndex = 0;
+        this.activeWordIndex = 0;
+      }
+      this.isNavigating = true;
+      this.isNavigatingPage = true;
+      this.navigatingPageLockoutEndTime = Date.now() + 150;
       this.onBoundary(direction > 0 ? 1 : -1);
+      return;
     }
   }
 
@@ -2040,6 +2081,7 @@ export class ReadingRuler {
       clearTimeout(this.navigatingPageTimer);
       this.navigatingPageTimer = null;
     }
+    this.isNavigating = false;
     this.isNavigatingPage = false;
     if (this.wordTransitionTimer) {
       clearTimeout(this.wordTransitionTimer);
