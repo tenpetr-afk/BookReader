@@ -1217,11 +1217,12 @@ body.dragging-file .drop-zone-overlay {
 .reading-ruler.color-lavender { --ruler-glow-rgb: 168, 85, 247; }
 .reading-ruler.color-slate { --ruler-glow-rgb: 100, 116, 139; }
 
-/* Řádkový režim: přesné ohraničení přes celou šířku čtecího sloupce */
+/* Řádkový režim: přesné ohraničení přes celou šířku čtecího sloupce s jednotným odsazením */
 .reading-ruler:not(.word-tracking-mode) {
   right: auto;
   border-radius: 6px !important;
   box-sizing: border-box;
+  overflow: visible !important;
 }
 
 /* ==========================================================================

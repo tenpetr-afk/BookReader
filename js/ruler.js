@@ -9,6 +9,8 @@
  * - Plovoucí ovládací panel pro krokování po řádcích/slovech a automatické tempo
  */
 
+export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i horizontální odsazení v řádkovém režimu
+
 export class ReadingRuler {
   constructor(containerElement) {
     this.container = containerElement;
@@ -22,6 +24,7 @@ export class ReadingRuler {
     // Nastavení
     this.enabled = false;
     this.mode = "highlight"; // "highlight" | "focus"
+    this.rulerPadding = RULER_PADDING;
     this.manualHeight = 48; // px (při vypnutém autoHeight)
     this.height = 36; // aktuální efektivní výška
     this.autoHeight = true; // Automatická výška podle velikosti řádku
@@ -821,18 +824,18 @@ export class ReadingRuler {
         const colLeft = minLeft;
         const colRight = Math.max(maxRight, minLeft + standardLineWidth);
 
-        const stageLeftBound = stageRect ? stageRect.left : 0;
-        const stageRightBound = stageRect ? stageRect.right : window.innerWidth;
+        // 1. Uniformní horizontální odsazení RULER_PADDING na obou stranách sloupce textu:
+        // - left: levý okraj textu posunutý o RULER_PADDING doleva (první znak není nalepený na hraně pravítka)
+        // - width: plná šířka sloupce textu rozšířená o (2 * RULER_PADDING) pro symetrické odsazení
+        let desiredLeft = colLeft - RULER_PADDING;
+        let desiredRight = colRight + RULER_PADDING;
 
-        // 1. Consistent Full-Column Horizontal Span:
-        // - left: Left margin / start of the text column (aligned with leftmost character of normal lines) minus 6px padding.
-        // - width: Full width of the standard text block / column (matching rightmost edge of standard full-length lines) plus 12px padding.
-        // - Do NOT bleed beyond the text container into the global page margins or screen edges.
-        let desiredLeft = colLeft - 6;
-        let desiredRight = colRight + 6;
+        // Ochrana proti přetečení mimo viditelný viewport se zachováním plného odsazení textu
+        const minScreenBound = 0;
+        const maxScreenBound = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 99999);
 
-        desiredLeft = Math.max(stageLeftBound, desiredLeft);
-        desiredRight = Math.min(stageRightBound, desiredRight);
+        desiredLeft = Math.max(minScreenBound, desiredLeft);
+        desiredRight = Math.min(maxScreenBound, desiredRight);
 
         const computedLeft = Math.round(desiredLeft);
         const computedWidth = Math.round(Math.max(0, desiredRight - desiredLeft));
@@ -845,6 +848,13 @@ export class ReadingRuler {
         } else if (this.lastKnownColumnWidth) {
           this.textBlockLeft = this.lastKnownColumnLeft != null ? this.lastKnownColumnLeft : computedLeft;
           this.textBlockWidth = this.lastKnownColumnWidth;
+        } else if (stageRect && stageRect.width > 200) {
+          const sLeft = Math.max(minScreenBound, Math.round(stageRect.left - RULER_PADDING));
+          const sWidth = Math.round(stageRect.width + (2 * RULER_PADDING));
+          this.textBlockLeft = sLeft;
+          this.textBlockWidth = sWidth;
+          this.lastKnownColumnLeft = sLeft;
+          this.lastKnownColumnWidth = sWidth;
         } else {
           this.textBlockLeft = computedLeft;
           this.textBlockWidth = computedWidth;
@@ -999,11 +1009,11 @@ export class ReadingRuler {
     const clampedIdx = Math.max(0, Math.min(this.cachedLines.length - 1, lineIdx));
     const line = this.cachedLines[clampedIdx];
 
-    // Výchozí vertikální offset +4px nad a +4px pod detekovaným řádkem (výška = lineRect.height + 8px)
-    let top = line.top - 4;
-    let bottom = line.bottom + 4;
+    // Jednotný vertikální offset RULER_PADDING nad i pod detekovaným řádkem (výška = lineRect.height + 2 * RULER_PADDING)
+    let top = line.top - RULER_PADDING;
+    let bottom = line.bottom + RULER_PADDING;
 
-    // Zajistit, aby offset +4px nezpůsobil překryv se sousedními řádky
+    // Zajistit, aby offset nezpůsobil překryv se sousedními řádky textu
     if (clampedIdx > 0 && this.cachedLines[clampedIdx - 1]) {
       const prevBottom = this.cachedLines[clampedIdx - 1].bottom;
       top = Math.max(prevBottom, top);
@@ -1027,7 +1037,7 @@ export class ReadingRuler {
   updateEffectiveHeight(lineHeight) {
     if (this.autoHeight) {
       const baseH = Math.round(lineHeight || 32);
-      this.height = baseH + 8;
+      this.height = baseH + (2 * RULER_PADDING);
     } else {
       this.height = this.manualHeight;
     }
@@ -1620,16 +1630,16 @@ export class ReadingRuler {
           colLeft = this.lastKnownColumnLeft;
           colWidth = this.lastKnownColumnWidth;
         } else if (this.stageLeft != null && this.stageWidth != null && this.stageWidth > 0) {
-          colLeft = this.stageLeft;
-          colWidth = this.stageWidth;
+          colLeft = Math.max(0, this.stageLeft - RULER_PADDING);
+          colWidth = this.stageWidth + (2 * RULER_PADDING);
         } else {
           const stage = document.getElementById("paged-stage") || this.container || document.getElementById("reader-content");
           if (stage) {
             const sRect = stage.getBoundingClientRect();
-            colLeft = Math.round(sRect.left);
-            colWidth = Math.round(sRect.width);
-            this.stageLeft = colLeft;
-            this.stageWidth = colWidth;
+            colLeft = Math.max(0, Math.round(sRect.left - RULER_PADDING));
+            colWidth = Math.round(sRect.width + (2 * RULER_PADDING));
+            this.stageLeft = Math.round(sRect.left);
+            this.stageWidth = Math.round(sRect.width);
           } else {
             colLeft = 0;
             colWidth = window.innerWidth;
