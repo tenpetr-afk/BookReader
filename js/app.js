@@ -23,7 +23,7 @@ class LuminaApp {
 
     // Ochrana proti přeskakování stránek při gestech (vždy jen 1 strana na jedno gesto)
     this.lastPageTurnTime = 0;
-    this.PAGE_TURN_COOLDOWN = 300; // ms
+    this.PAGE_TURN_COOLDOWN = 60; // ms
     this.saveProgressTimer = null;
 
     // DOM elementy
@@ -1417,29 +1417,21 @@ class LuminaApp {
       // Zvýraznění aktivní kapitoly v obsahu
       this.highlightActiveTocItem();
 
-      // Reset transformace před měřením
-      this.dom.readerContent.style.transform = "translateX(0px)";
+      // Reset transformace před měřením a okamžité změření rozložení
+      if (this.dom.readerContent) {
+        this.dom.readerContent.style.transition = "none";
+        this.dom.readerContent.style.transform = "translateX(0px)";
+      }
 
-      // Počkáme na layout
-      requestAnimationFrame(() => {
-        this.recalcPages();
+      this.recalcPages();
 
-        if (targetPage === "last") {
-          this.goToPage(this.totalPagesInChapter - 1, -1);
-        } else if (typeof targetPage === "number") {
-          this.goToPage(Math.min(targetPage, this.totalPagesInChapter - 1), targetPage > 0 ? 1 : 0);
-        } else {
-          this.goToPage(0, 1);
-        }
-
-        // Znovu přepočítat po krátké prodlevě pro jistotu (načtení obrázků apod.)
-        setTimeout(() => {
-          this.recalcPages();
-          if (targetPage === "last") {
-            this.goToPage(this.totalPagesInChapter - 1, -1);
-          }
-        }, 120);
-      });
+      if (targetPage === "last") {
+        this.goToPage(this.totalPagesInChapter - 1, -1);
+      } else if (typeof targetPage === "number") {
+        this.goToPage(Math.min(targetPage, this.totalPagesInChapter - 1), targetPage > 0 ? 1 : 0);
+      } else {
+        this.goToPage(0, 1);
+      }
     } catch (e) {
       console.error("Chyba při načítání kapitoly:", e);
       this.showToast(`Chyba při načítání kapitoly: ${e.message}`, "error");
@@ -1485,7 +1477,10 @@ class LuminaApp {
       ? explicitDirection
       : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
 
-    this.dom.readerContent.style.transform = `translateX(-${offset}px)`;
+    if (this.dom.readerContent) {
+      this.dom.readerContent.style.transition = "none";
+      this.dom.readerContent.style.transform = `translateX(-${offset}px)`;
+    }
 
     // Měření postupu
     const pageProgress = (this.currentPageIndex + 1) / this.totalPagesInChapter;

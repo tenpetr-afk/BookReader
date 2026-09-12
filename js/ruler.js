@@ -1375,9 +1375,9 @@ export class ReadingRuler {
    */
   resetPositionForPage(direction = 1) {
     this.disableWordTransition();
+    this.setNoTransition(true);
     this.refreshLines();
     this.refreshWords();
-    this.setNoTransition(true);
 
     const isBackward = direction < 0;
 
@@ -1934,7 +1934,8 @@ export class ReadingRuler {
 
 
   /**
-   * Vyvolá se při přechodu na jinou stránku nebo kapitolu
+   * Vyvolá se při přechodu na jinou stránku nebo kapitolu.
+   * Okamžitě a synchronně usadí pravítko na cílový řádek bez jakéhokoliv časovače či prodlevy.
    */
   onPageChange(direction = 0, isPageChanged = true) {
     if (!this.enabled) return;
@@ -1944,7 +1945,6 @@ export class ReadingRuler {
       this.wordTransitionTimer = null;
     }
     this.isWordTransitioning = false;
-
     this.cancelHold();
 
     if (this.pageChangeTimer) {
@@ -1957,57 +1957,11 @@ export class ReadingRuler {
       this._onTransitionEnd = null;
     }
 
-    // 1. Okamžitá invalidace všech uložených pozic a rozměrů slov/řádků
-    this.cachedWords = [];
-    this.cachedLines = [];
-    this.activeWordIndex = -1;
-    this.activeLineIndex = -1;
-    this.wordLeft = 0;
-    this.wordWidth = 0;
-    this.activeWordWidth = 0;
-    this.totalWidth = 0;
-    this.previewLeft = 0;
-    this.previewWidth = 0;
-    this.isPageTransitioning = true;
+    this.isPageTransitioning = false;
+    this.rulerEl?.classList.remove("is-page-transitioning");
 
-    // 2. Vizuální skrytí pravítka během animace přechodu strany (maska zůstává ztmavená, aby nedošlo k probliknutí bílé)
-    this.rulerEl?.classList.add("is-page-transitioning");
-
-    const finishPageChange = () => {
-      if (!this.isPageTransitioning) return;
-      this.disableWordTransition();
-      this.isPageTransitioning = false;
-      if (this.pageChangeTimer) {
-        clearTimeout(this.pageChangeTimer);
-        this.pageChangeTimer = null;
-      }
-      if (content && this._onTransitionEnd) {
-        content.removeEventListener("transitionend", this._onTransitionEnd);
-        this._onTransitionEnd = null;
-      }
-
-      // Usazení pravítka na nové stránce podle směru přechodu
-      this.resetPositionForPage(direction);
-
-      // Odkrytí pravítka s čistě přepočtenými souřadnicemi
-      this.rulerEl?.classList.remove("is-page-transitioning");
-    };
-
-    if (!isPageChanged) {
-      requestAnimationFrame(finishPageChange);
-      return;
-    }
-
-    if (content) {
-      this._onTransitionEnd = (e) => {
-        if (e.target === content && e.propertyName === "transform") {
-          finishPageChange();
-        }
-      };
-      content.addEventListener("transitionend", this._onTransitionEnd, { once: true });
-    }
-    // Pojistný časovač pro případ, že se transitionend nevyvolá (délka CSS přechodu je 200ms)
-    this.pageChangeTimer = setTimeout(finishPageChange, 230);
+    // Okamžité synchronní usazení pravítka na nové stránce podle směru listování
+    this.resetPositionForPage(direction);
   }
 
   destroy() {
