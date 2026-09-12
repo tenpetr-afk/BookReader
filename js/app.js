@@ -23,8 +23,13 @@ class LuminaApp {
 
     // Ochrana proti přeskakování stránek při gestech (vždy jen 1 strana na jedno gesto)
     this.lastPageTurnTime = 0;
-    this.PAGE_TURN_COOLDOWN = 300; // ms
+    this.PAGE_TURN_COOLDOWN = 60; // ms
     this.saveProgressTimer = null;
+
+    // Ochrana proti syntetickým gestům po přechodu strany na iPadu
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
+    this.navigatingPageTimer = null;
 
     // DOM elementy
     this.dom = {};
@@ -175,6 +180,15 @@ class LuminaApp {
 
       settingShowFooter: document.getElementById("setting-show-footer"),
 
+      // Vyhledávání v knize
+      btnToggleSearch: document.getElementById("btn-toggle-search"),
+      searchDrawer: document.getElementById("search-drawer"),
+      btnCloseSearch: document.getElementById("btn-close-search"),
+      inputBookSearch: document.getElementById("input-book-search"),
+      btnClearSearch: document.getElementById("btn-clear-search"),
+      searchResultsInfo: document.getElementById("search-results-info"),
+      searchResultsList: document.getElementById("search-results-list"),
+
       // Notifikace / Toast
       toast: document.getElementById("toast-notification")
     };
@@ -183,13 +197,14 @@ class LuminaApp {
   isInteractiveOrUiElement(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      'header, nav, footer, .paged-footer-bar, .reading-scrubber, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, [role="button"], [role="dialog"], [role="slider"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group'
+      'header, nav, footer, .paged-footer-bar, .reading-scrubber, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, [role="button"], [role="dialog"], [role="slider"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group, #btn-toggle-ruler, #btn-ruler-quick-menu'
     );
   }
 
   isAnyModalOrMenuOpen() {
     if (this.dom.settingsDrawer?.classList.contains("open")) return true;
     if (this.dom.tocDrawer?.classList.contains("open")) return true;
+    if (this.dom.searchDrawer?.classList.contains("open")) return true;
     if (this.dom.statsModal?.classList.contains("open")) return true;
     if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) return true;
     return false;
@@ -245,17 +260,25 @@ class LuminaApp {
     el.checked = isChecked;
     el.setAttribute("aria-checked", String(isChecked));
     el.classList.toggle("is-checked", isChecked);
+    el.classList.toggle("active", isChecked);
   }
 
   applySettings() {
     const s = this.settings;
     document.documentElement.setAttribute("data-theme", s.theme);
+    ["theme-light", "theme-warm", "theme-sepia", "theme-dark", "theme-oled"].forEach(t => {
+      document.documentElement.classList.remove(t);
+      document.body.classList.remove(t);
+    });
+    document.documentElement.classList.add(`theme-${s.theme}`);
+    document.body.classList.add(`theme-${s.theme}`);
+
     document.documentElement.setAttribute("data-font", s.fontFamily);
 
     document.documentElement.style.setProperty("--reader-font-size", `${s.fontSize}px`);
-    document.documentElement.style.setProperty("--reader-line-height", s.lineHeight);
-    document.documentElement.style.setProperty("--reader-max-width", `${s.contentWidth}px`);
-    document.documentElement.style.setProperty("--reader-text-align", s.textAlign);
+    document.documentElement.style.setProperty("--reader-line-height", s.lineHeight || 1.65);
+    document.documentElement.style.setProperty("--reader-max-width", `${s.contentWidth || 720}px`);
+    document.documentElement.style.setProperty("--reader-text-align", s.textAlign || "justify");
 
     // Synchronizace formulářů v nastavení
     if (this.dom.sliderFontSize) {
@@ -302,16 +325,16 @@ class LuminaApp {
       btn.classList.toggle("active", btn.dataset.rulerColor === s.ruler.color);
     });
 
-    // Zobrazení spodní lišty čtečky
-    const showFooter = this.settings.showFooterBar ?? false;
+    // Zobrazení spodní lišty čtečky (postup čtení)
+    const showFooter = this.settings.showFooterBar !== false;
     document.body.classList.toggle("show-footer-bar", showFooter);
     if (this.dom.settingShowFooter) {
-      this.dom.settingShowFooter.checked = showFooter;
+      this.setSwitchState(this.dom.settingShowFooter, showFooter);
     }
 
     // Synchronizace rychlého popoveru pravítka
     if (this.dom.popoverRulerToggle) {
-      this.dom.popoverRulerToggle.checked = s.ruler.enabled;
+      this.setSwitchState(this.dom.popoverRulerToggle, s.ruler.enabled);
     }
     if (this.dom.popoverModeLine && this.dom.popoverModeWord) {
       this.dom.popoverModeLine.classList.toggle("active", !s.ruler.wordTracking);
@@ -399,6 +422,10 @@ class LuminaApp {
     this.dom.zoneTouchPrev.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.isUiOrOverlayEvent(e)) return;
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
+        e.preventDefault();
+        return;
+      }
       if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
         this.ruler.stepLine(-1, true);
         return;
@@ -431,6 +458,10 @@ class LuminaApp {
     this.dom.zoneTouchNext.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.isUiOrOverlayEvent(e)) return;
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
+        e.preventDefault();
+        return;
+      }
       if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
         this.ruler.stepLine(1, true);
         return;
@@ -471,6 +502,10 @@ class LuminaApp {
         isSwiping = false;
         return;
       }
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
+        isSwiping = false;
+        return;
+      }
       if (e.touches.length !== 1) {
         isSwiping = false;
         return;
@@ -488,6 +523,10 @@ class LuminaApp {
 
     this.dom.pagedViewport.addEventListener("touchend", (e) => {
       if (this.isUiOrOverlayEvent(e)) {
+        isSwiping = false;
+        return;
+      }
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
         isSwiping = false;
         return;
       }
@@ -538,7 +577,7 @@ class LuminaApp {
       // 3. Dotykové zóny pro krokování pravítka v klávesovém režimu (layout zóny)
       // Krokování se spustí pouze při čistém, stacionárním klepnutí (|deltaX| < 10px a |deltaY| < 10px)
       if (this.ruler && this.ruler.enabled && this.ruler.followMode === "keyboard") {
-        if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar"))) {
+        if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
           return;
         }
         if (absDeltaX >= 10 || absDeltaY >= 10 || dist >= 10) return;
@@ -563,6 +602,9 @@ class LuminaApp {
 
       // 4. Běžné klepnutí (Tap) když je pravítko vypnuté
       if (absDeltaX < 15 && absDeltaY < 15) {
+        if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+          return;
+        }
         if (this.isCenterTap(touchEndX, touchEndY)) {
           lastTapTime = Date.now();
           this.toggleReaderChrome();
@@ -575,10 +617,11 @@ class LuminaApp {
     // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
     this.dom.pagedViewport.addEventListener("click", (e) => {
       if (this.isUiOrOverlayEvent(e)) return;
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) return;
       if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
         return;
       }
-      if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar"))) {
+      if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
         return;
       }
 
@@ -618,6 +661,7 @@ class LuminaApp {
 
     this.dom.pagedViewport.addEventListener("wheel", (e) => {
       if (this.isAnyModalOrMenuOpen()) return;
+      if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) return;
       this.ruler?.cancelHold();
       const absX = Math.abs(e.deltaX);
       const absY = Math.abs(e.deltaY);
@@ -674,9 +718,11 @@ class LuminaApp {
       document.querySelector(".top-navbar"),
       document.getElementById("settings-drawer"),
       document.getElementById("toc-drawer"),
+      document.getElementById("search-drawer"),
       document.getElementById("drawer-backdrop"),
       document.getElementById("stats-modal"),
       document.querySelector(".modal-content"),
+      document.getElementById("ruler-btn-group"),
       document.getElementById("ruler-quick-popover")
     ].filter(Boolean);
 
@@ -700,6 +746,7 @@ class LuminaApp {
       this.dom.drawerBackdrop.addEventListener("click", () => {
         this.closeDrawer("toc");
         this.closeDrawer("settings");
+        this.closeDrawer("search");
       });
     }
 
@@ -717,6 +764,35 @@ class LuminaApp {
     this.dom.btnToggleSettings.addEventListener("click", () => this.toggleDrawer("settings"));
     this.dom.btnCloseSettings.addEventListener("click", () => this.closeDrawer("settings"));
 
+    if (this.dom.btnToggleSearch) {
+      this.dom.btnToggleSearch.addEventListener("click", () => this.toggleDrawer("search"));
+    }
+    if (this.dom.btnCloseSearch) {
+      this.dom.btnCloseSearch.addEventListener("click", () => this.closeDrawer("search"));
+    }
+    if (this.dom.btnClearSearch) {
+      this.dom.btnClearSearch.addEventListener("click", () => this.clearSearch());
+    }
+    if (this.dom.inputBookSearch) {
+      this.dom.inputBookSearch.addEventListener("input", () => this.handleSearchInput());
+      this.dom.inputBookSearch.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this.executeSearch();
+        }
+      });
+    }
+    if (this.dom.searchResultsList) {
+      this.dom.searchResultsList.addEventListener("click", (e) => {
+        const item = e.target.closest(".search-result-item");
+        if (item) {
+          const chIdx = parseInt(item.dataset.chapter, 10);
+          const q = item.dataset.query || "";
+          this.navigateToSearchResult(chIdx, q);
+        }
+      });
+    }
+
     this.dom.btnToggleStats.addEventListener("click", () => this.openStatsModal());
     this.dom.btnCloseStats.addEventListener("click", () => this.closeStatsModal());
     this.dom.statsModal.addEventListener("click", (e) => {
@@ -725,15 +801,32 @@ class LuminaApp {
 
     // Pravítko toggle tlačítko v hlavičce
     if (this.dom.btnToggleRuler) {
-      this.dom.btnToggleRuler.addEventListener("click", () => {
+      ["pointerdown", "touchstart"].forEach((evt) => {
+        this.dom.btnToggleRuler.addEventListener(evt, (e) => {
+          e.stopPropagation();
+        }, { passive: true });
+      });
+      this.dom.btnToggleRuler.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
         this.toggleRuler();
       });
     }
 
     // Rychlé nastavení pravítka v hlavičce (Popover)
     if (this.dom.btnRulerQuickMenu && this.dom.rulerQuickPopover) {
+      ["pointerdown", "touchstart"].forEach((evt) => {
+        this.dom.btnRulerQuickMenu.addEventListener(evt, (e) => {
+          e.stopPropagation();
+        }, { passive: true });
+        this.dom.rulerQuickPopover.addEventListener(evt, (e) => {
+          e.stopPropagation();
+        }, { passive: true });
+      });
+
       this.dom.btnRulerQuickMenu.addEventListener("click", (e) => {
         e.stopPropagation();
+        e.preventDefault();
         const isHidden = this.dom.rulerQuickPopover.classList.contains("is-hidden");
         if (isHidden) {
           this.dom.rulerQuickPopover.classList.remove("is-hidden");
@@ -759,43 +852,45 @@ class LuminaApp {
     });
 
     if (this.dom.popoverRulerToggle) {
-      this.dom.popoverRulerToggle.addEventListener("change", (e) => {
-        const nextVal = e.target.checked;
+      this.dom.popoverRulerToggle.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const nextVal = !this.settings.ruler.enabled;
         this.settings.ruler.enabled = nextVal;
         const isInReader = !this.dom.viewReader.classList.contains("is-hidden");
         this.ruler.setEnabled(isInReader && nextVal);
-        this.setSwitchState(this.dom.rulerToggle, nextVal);
         this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       });
     }
 
     if (this.dom.popoverModeLine) {
-      this.dom.popoverModeLine.addEventListener("click", () => {
+      this.dom.popoverModeLine.addEventListener("click", (e) => {
+        e.stopPropagation();
         this.settings.ruler.wordTracking = false;
         this.ruler.setWordTracking(false);
-        this.setSwitchState(this.dom.rulerWordTrackingSetting, false);
-        this.applySettings();
+        this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       });
     }
 
     if (this.dom.popoverModeWord) {
-      this.dom.popoverModeWord.addEventListener("click", () => {
+      this.dom.popoverModeWord.addEventListener("click", (e) => {
+        e.stopPropagation();
         this.settings.ruler.wordTracking = true;
         this.ruler.setWordTracking(true);
-        this.setSwitchState(this.dom.rulerWordTrackingSetting, true);
-        this.applySettings();
+        this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       });
     }
 
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
           this.settings.ruler.mode = btn.dataset.rulerStyle;
           this.ruler.setMode(this.settings.ruler.mode);
-          this.applySettings();
+          this.updateRulerToggleButtonUI();
           storage.saveSettings(this.settings);
         });
       });
@@ -803,10 +898,11 @@ class LuminaApp {
 
     if (this.dom.popoverColorButtons) {
       this.dom.popoverColorButtons.forEach(btn => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
           this.settings.ruler.color = btn.dataset.rulerColor;
           this.ruler.setColor(this.settings.ruler.color);
-          this.applySettings();
+          this.updateRulerToggleButtonUI();
           storage.saveSettings(this.settings);
         });
       });
@@ -815,6 +911,7 @@ class LuminaApp {
     // Popover rozšířené nastavení: Výška / tloušťka pravítka
     if (this.dom.popoverSliderRulerHeight) {
       this.dom.popoverSliderRulerHeight.addEventListener("input", (e) => {
+        e.stopPropagation();
         const val = parseInt(e.target.value, 10);
         this.settings.ruler.height = val;
         this.ruler.setHeight(val);
@@ -826,6 +923,7 @@ class LuminaApp {
     // Popover rozšířené nastavení: Intenzita ztmavení okolí
     if (this.dom.popoverSliderRulerOpacity) {
       this.dom.popoverSliderRulerOpacity.addEventListener("input", (e) => {
+        e.stopPropagation();
         const val = parseInt(e.target.value, 10);
         this.settings.ruler.dimOpacity = val / 100;
         this.ruler.setDimOpacity(this.settings.ruler.dimOpacity);
@@ -839,6 +937,7 @@ class LuminaApp {
     // Popover rozšířené nastavení: Způsob pohybu
     if (this.dom.popoverRulerFollowSelect) {
       this.dom.popoverRulerFollowSelect.addEventListener("change", (e) => {
+        e.stopPropagation();
         const val = e.target.value;
         this.settings.ruler.followMode = val;
         this.ruler.setFollowMode(val);
@@ -871,29 +970,37 @@ class LuminaApp {
       storage.saveSettings(this.settings);
     });
 
-    this.dom.sliderLineHeight.addEventListener("input", (e) => {
-      this.settings.lineHeight = parseFloat(e.target.value);
-      this.applySettings();
-      storage.saveSettings(this.settings);
-    });
+    if (this.dom.sliderLineHeight) {
+      this.dom.sliderLineHeight.addEventListener("input", (e) => {
+        this.settings.lineHeight = parseFloat(e.target.value);
+        this.applySettings();
+        storage.saveSettings(this.settings);
+      });
+    }
 
-    this.dom.sliderContentWidth.addEventListener("input", (e) => {
-      this.settings.contentWidth = parseInt(e.target.value, 10);
-      this.applySettings();
-      storage.saveSettings(this.settings);
-    });
+    if (this.dom.sliderContentWidth) {
+      this.dom.sliderContentWidth.addEventListener("input", (e) => {
+        this.settings.contentWidth = parseInt(e.target.value, 10);
+        this.applySettings();
+        storage.saveSettings(this.settings);
+      });
+    }
 
-    this.dom.btnAlignLeft.addEventListener("click", () => {
-      this.settings.textAlign = "left";
-      this.applySettings();
-      storage.saveSettings(this.settings);
-    });
+    if (this.dom.btnAlignLeft) {
+      this.dom.btnAlignLeft.addEventListener("click", () => {
+        this.settings.textAlign = "left";
+        this.applySettings();
+        storage.saveSettings(this.settings);
+      });
+    }
 
-    this.dom.btnAlignJustify.addEventListener("click", () => {
-      this.settings.textAlign = "justify";
-      this.applySettings();
-      storage.saveSettings(this.settings);
-    });
+    if (this.dom.btnAlignJustify) {
+      this.dom.btnAlignJustify.addEventListener("click", () => {
+        this.settings.textAlign = "justify";
+        this.applySettings();
+        storage.saveSettings(this.settings);
+      });
+    }
 
     // Pravítko nastavení události - tlačítkové přepínače (Switch buttons)
     if (this.dom.rulerToggle) {
@@ -964,17 +1071,19 @@ class LuminaApp {
       storage.saveSettings(this.settings);
     });
 
-    // Přepínač zobrazení spodní lišty s čísly stran
+    // Přepínač zobrazení spodní lišty s postupem čtení
     if (this.dom.settingShowFooter) {
-      this.dom.settingShowFooter.addEventListener("change", (e) => {
-        const val = e.target.checked;
+      this.dom.settingShowFooter.addEventListener("click", () => {
+        const val = !this.settings.showFooterBar;
         this.settings.showFooterBar = val;
+        this.setSwitchState(this.dom.settingShowFooter, val);
         document.body.classList.toggle("show-footer-bar", val);
         storage.saveSettings(this.settings);
         if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
           requestAnimationFrame(() => {
             this.recalcPages();
             this.goToPage(this.currentPageIndex);
+            this.updateScrubberUI();
           });
         }
       });
@@ -1001,6 +1110,22 @@ class LuminaApp {
 
   bindKeyboardShortcuts() {
     window.addEventListener("keydown", (e) => {
+      const isReader = this.currentBook && !this.dom.viewReader.classList.contains("is-hidden");
+
+      if (e.key === "Escape") {
+        if (this.dom.searchDrawer && this.dom.searchDrawer.classList.contains("open")) {
+          e.preventDefault();
+          this.closeDrawer("search");
+          return;
+        }
+      }
+
+      if (isReader && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        this.toggleDrawer("search");
+        return;
+      }
+
       // 1. Guard proti psaní do formulářových polí, textarey, vyhledávání apod.
       const activeEl = document.activeElement;
       const activeTag = activeEl?.tagName;
@@ -1023,8 +1148,6 @@ class LuminaApp {
         return;
       }
 
-      const isReader = this.currentBook && !this.dom.viewReader.classList.contains("is-hidden");
-
       if (e.key === "Escape") {
         let closedPopover = false;
         if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
@@ -1037,6 +1160,8 @@ class LuminaApp {
           this.closeDrawer("toc");
         } else if (this.dom.settingsDrawer.classList.contains("open")) {
           this.closeDrawer("settings");
+        } else if (this.dom.searchDrawer && this.dom.searchDrawer.classList.contains("open")) {
+          this.closeDrawer("search");
         } else if (this.dom.statsModal.classList.contains("open")) {
           this.closeStatsModal();
         } else if (isReader) {
@@ -1049,6 +1174,15 @@ class LuminaApp {
       if (this.isAnyModalOrMenuOpen()) return;
 
       if (isReader) {
+        if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) {
+          const navKeys = ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "PageDown", "PageUp", " ", "Spacebar"];
+          if (navKeys.includes(e.key) || e.code === "Space") {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+        }
+
         this.ruler?.cancelHold();
         // Pokud má prohlížečový focus jakékoliv tlačítko, uvolníme focus (blur),
         // aby stisk Mezerníku neaktivoval toto tlačítko namísto posunu pravítka.
@@ -1109,6 +1243,8 @@ class LuminaApp {
           this.openStatsModal();
         } else if (e.key === "r" || e.key === "R") {
           this.toggleRuler();
+        } else if (e.key === "f" || e.key === "F") {
+          this.toggleDrawer("search");
         }
       }
     });
@@ -1121,7 +1257,6 @@ class LuminaApp {
     this.settings.ruler.enabled = !this.settings.ruler.enabled;
     this.ruler.setEnabled(this.settings.ruler.enabled);
     this.updateRulerToggleButtonUI();
-    this.applySettings();
     storage.saveSettings(this.settings);
     this.showToast(this.settings.ruler.enabled ? "Pravítko zapnuto (klávesa R)" : "Pravítko vypnuto", "info");
   }
@@ -1168,8 +1303,34 @@ class LuminaApp {
     const isEnabled = !!this.settings.ruler.enabled;
     if (this.dom.btnToggleRuler) this.dom.btnToggleRuler.classList.toggle("active", isEnabled);
     if (this.dom.rulerBtnGroup) this.dom.rulerBtnGroup.classList.toggle("is-active", isEnabled);
-    if (this.dom.popoverRulerToggle) this.dom.popoverRulerToggle.checked = isEnabled;
+    if (this.dom.popoverRulerToggle) this.setSwitchState(this.dom.popoverRulerToggle, isEnabled);
     if (this.dom.rulerToggle) this.setSwitchState(this.dom.rulerToggle, isEnabled);
+    if (this.dom.rulerWordTrackingSetting) this.setSwitchState(this.dom.rulerWordTrackingSetting, !!this.settings.ruler.wordTracking);
+
+    if (this.dom.popoverModeLine && this.dom.popoverModeWord) {
+      this.dom.popoverModeLine.classList.toggle("active", !this.settings.ruler.wordTracking);
+      this.dom.popoverModeWord.classList.toggle("active", !!this.settings.ruler.wordTracking);
+    }
+    if (this.dom.popoverStyleButtons) {
+      this.dom.popoverStyleButtons.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.rulerStyle === this.settings.ruler.mode);
+      });
+    }
+    if (this.dom.popoverColorButtons) {
+      this.dom.popoverColorButtons.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.rulerColor === this.settings.ruler.color);
+      });
+    }
+    if (this.dom.rulerModeSelects) {
+      this.dom.rulerModeSelects.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.rulerMode === this.settings.ruler.mode);
+      });
+    }
+    if (this.dom.rulerColorSelects) {
+      this.dom.rulerColorSelects.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.rulerColor === this.settings.ruler.color);
+      });
+    }
     this.updateTouchZonesUI();
   }
 
@@ -1372,6 +1533,8 @@ class LuminaApp {
 
     try {
       this.currentBook = book;
+      this.searchIndexCache = new Map();
+      this.clearSearch();
       storage.setLastActiveBookId(book.id);
       this.currentParser = await EpubParser.parse(book.fileData);
 
@@ -1399,6 +1562,15 @@ class LuminaApp {
   async loadCurrentChapter(targetPage = 0) {
     if (!this.currentParser) return;
 
+    this.isNavigating = true;
+    if (this.ruler) {
+      this.ruler.isNavigating = true;
+      if (targetPage !== "last") {
+        this.ruler.activeLineIndex = 0;
+        this.ruler.activeWordIndex = 0;
+      }
+    }
+
     try {
       const chapter = await this.currentParser.loadChapter(this.currentChapterIndex);
       if (this.dom.chapterTitleEl) this.dom.chapterTitleEl.textContent = chapter.title;
@@ -1417,30 +1589,24 @@ class LuminaApp {
       // Zvýraznění aktivní kapitoly v obsahu
       this.highlightActiveTocItem();
 
-      // Reset transformace před měřením
-      this.dom.readerContent.style.transform = "translateX(0px)";
+      // Reset transformace před měřením a okamžité změření rozložení
+      if (this.dom.readerContent) {
+        this.dom.readerContent.style.transition = "none";
+        this.dom.readerContent.style.transform = "translateX(0px)";
+      }
 
-      // Počkáme na layout
-      requestAnimationFrame(() => {
-        this.recalcPages();
+      this.recalcPages();
 
-        if (targetPage === "last") {
-          this.goToPage(this.totalPagesInChapter - 1, -1);
-        } else if (typeof targetPage === "number") {
-          this.goToPage(Math.min(targetPage, this.totalPagesInChapter - 1), targetPage > 0 ? 1 : 0);
-        } else {
-          this.goToPage(0, 1);
-        }
-
-        // Znovu přepočítat po krátké prodlevě pro jistotu (načtení obrázků apod.)
-        setTimeout(() => {
-          this.recalcPages();
-          if (targetPage === "last") {
-            this.goToPage(this.totalPagesInChapter - 1, -1);
-          }
-        }, 120);
-      });
+      if (targetPage === "last") {
+        this.goToPage(this.totalPagesInChapter - 1, -1);
+      } else if (typeof targetPage === "number") {
+        this.goToPage(Math.min(targetPage, this.totalPagesInChapter - 1), targetPage > 0 ? 1 : 0);
+      } else {
+        this.goToPage(0, 1);
+      }
     } catch (e) {
+      this.isNavigating = false;
+      if (this.ruler) this.ruler.isNavigating = false;
       console.error("Chyba při načítání kapitoly:", e);
       this.showToast(`Chyba při načítání kapitoly: ${e.message}`, "error");
 
@@ -1485,7 +1651,33 @@ class LuminaApp {
       ? explicitDirection
       : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
 
-    this.dom.readerContent.style.transform = `translateX(-${offset}px)`;
+    // Post-navigation zámek pro debouncing syntetických gest a eventů na iPadu (WebKit)
+    this.isNavigating = true;
+    this.isNavigatingPage = true;
+    if (this.ruler) {
+      this.ruler.isNavigating = true;
+      this.ruler.isNavigatingPage = true;
+      if (direction >= 0) {
+        this.ruler.activeLineIndex = 0;
+        this.ruler.activeWordIndex = 0;
+      }
+    }
+    if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
+    this.navigatingPageTimer = setTimeout(() => {
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      if (this.ruler) {
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+      }
+      this.navigatingPageTimer = null;
+    }, 150);
+
+    if (this.dom.readerContent) {
+      this.dom.readerContent.style.transition = "none";
+      this.dom.readerContent.style.transform = `translateX(-${offset}px)`;
+      void this.dom.readerContent.offsetHeight; // Vynucení reflow pro synchronní a přesné měření textových uzlů pravítkem
+    }
 
     // Měření postupu
     const pageProgress = (this.currentPageIndex + 1) / this.totalPagesInChapter;
@@ -1511,8 +1703,16 @@ class LuminaApp {
 
   nextPage() {
     const now = Date.now();
+    if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) return;
     if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
     this.lastPageTurnTime = now;
+
+    this.isNavigating = true;
+    if (this.ruler) {
+      this.ruler.isNavigating = true;
+      this.ruler.activeLineIndex = 0;
+      this.ruler.activeWordIndex = 0;
+    }
 
     if (this.currentPageIndex < this.totalPagesInChapter - 1) {
       this.goToPage(this.currentPageIndex + 1, 1);
@@ -1520,20 +1720,31 @@ class LuminaApp {
       // Plynulý přechod na další kapitolu!
       this.navigateChapter(1, 0);
     } else {
+      this.isNavigating = false;
+      if (this.ruler) this.ruler.isNavigating = false;
       this.showToast("Dočetli jste knihu až do konce! 🎉", "success");
     }
   }
 
   prevPage() {
     const now = Date.now();
+    if (this.isNavigating || this.isNavigatingPage || this.ruler?.isNavigating || this.ruler?.isNavigatingPage) return;
     if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
     this.lastPageTurnTime = now;
+
+    this.isNavigating = true;
+    if (this.ruler) {
+      this.ruler.isNavigating = true;
+    }
 
     if (this.currentPageIndex > 0) {
       this.goToPage(this.currentPageIndex - 1, -1);
     } else if (this.currentChapterIndex > 0) {
       // Plynulý přechod na konec předchozí kapitoly!
       this.navigateChapter(-1, "last");
+    } else {
+      this.isNavigating = false;
+      if (this.ruler) this.ruler.isNavigating = false;
     }
   }
 
@@ -1707,7 +1918,7 @@ class LuminaApp {
     this.dom.viewLibrary.classList.add("is-hidden");
     this.dom.viewReader.classList.remove("is-hidden");
     document.body.classList.add("in-reader-view");
-    document.body.classList.add("show-footer-bar");
+    document.body.classList.toggle("show-footer-bar", this.settings.showFooterBar !== false);
     document.body.classList.remove("reader-chrome-hidden");
     if (this.settings.ruler.enabled) {
       this.ruler.setEnabled(true);
@@ -1719,18 +1930,34 @@ class LuminaApp {
 
   toggleDrawer(name) {
     if (name === "toc") {
-      const willOpen = !this.dom.tocDrawer.classList.contains("open");
-      this.dom.tocDrawer.classList.toggle("open", willOpen);
-      this.dom.settingsDrawer.classList.remove("open");
+      const willOpen = !this.dom.tocDrawer?.classList.contains("open");
+      this.dom.tocDrawer?.classList.toggle("open", willOpen);
+      this.dom.settingsDrawer?.classList.remove("open");
+      this.dom.searchDrawer?.classList.remove("open");
       if (this.dom.drawerBackdrop) {
         this.dom.drawerBackdrop.classList.toggle("active", willOpen);
       }
     } else if (name === "settings") {
-      const willOpen = !this.dom.settingsDrawer.classList.contains("open");
-      this.dom.settingsDrawer.classList.toggle("open", willOpen);
-      this.dom.tocDrawer.classList.remove("open");
+      const willOpen = !this.dom.settingsDrawer?.classList.contains("open");
+      this.dom.settingsDrawer?.classList.toggle("open", willOpen);
+      this.dom.tocDrawer?.classList.remove("open");
+      this.dom.searchDrawer?.classList.remove("open");
       if (this.dom.drawerBackdrop) {
         this.dom.drawerBackdrop.classList.toggle("active", willOpen);
+      }
+    } else if (name === "search") {
+      const willOpen = !this.dom.searchDrawer?.classList.contains("open");
+      this.dom.searchDrawer?.classList.toggle("open", willOpen);
+      this.dom.tocDrawer?.classList.remove("open");
+      this.dom.settingsDrawer?.classList.remove("open");
+      if (this.dom.drawerBackdrop) {
+        this.dom.drawerBackdrop.classList.toggle("active", willOpen);
+      }
+      if (willOpen && this.dom.inputBookSearch) {
+        setTimeout(() => {
+          this.dom.inputBookSearch.focus();
+          this.dom.inputBookSearch.select();
+        }, 120);
       }
     }
   }
@@ -1738,10 +1965,243 @@ class LuminaApp {
   closeDrawer(name) {
     if (name === "toc" && this.dom.tocDrawer) this.dom.tocDrawer.classList.remove("open");
     if (name === "settings" && this.dom.settingsDrawer) this.dom.settingsDrawer.classList.remove("open");
+    if (name === "search" && this.dom.searchDrawer) this.dom.searchDrawer.classList.remove("open");
     const isAnyOpen = (this.dom.tocDrawer && this.dom.tocDrawer.classList.contains("open")) ||
-                      (this.dom.settingsDrawer && this.dom.settingsDrawer.classList.contains("open"));
+                      (this.dom.settingsDrawer && this.dom.settingsDrawer.classList.contains("open")) ||
+                      (this.dom.searchDrawer && this.dom.searchDrawer.classList.contains("open"));
     if (this.dom.drawerBackdrop) {
       this.dom.drawerBackdrop.classList.toggle("active", isAnyOpen);
+    }
+  }
+
+  // --- VYHLEDÁVÁNÍ V KNIZE ---
+
+  handleSearchInput() {
+    const query = this.dom.inputBookSearch ? this.dom.inputBookSearch.value : "";
+    if (this.dom.btnClearSearch) {
+      this.dom.btnClearSearch.classList.toggle("is-hidden", !query.trim());
+    }
+    if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
+    this.searchDebounceTimer = setTimeout(() => {
+      this.executeSearch();
+    }, 280);
+  }
+
+  clearSearch() {
+    if (this.dom.inputBookSearch) {
+      this.dom.inputBookSearch.value = "";
+      this.dom.inputBookSearch.focus();
+    }
+    if (this.dom.btnClearSearch) {
+      this.dom.btnClearSearch.classList.add("is-hidden");
+    }
+    if (this.dom.searchResultsInfo) {
+      this.dom.searchResultsInfo.classList.add("is-hidden");
+      this.dom.searchResultsInfo.textContent = "";
+    }
+    if (this.dom.searchResultsList) {
+      this.dom.searchResultsList.innerHTML = `
+        <div class="search-empty-state">
+          <div class="search-empty-icon">🔍</div>
+          <p>Zadejte hledaný výraz...</p>
+        </div>
+      `;
+    }
+  }
+
+  async getChapterSearchData(index) {
+    if (!this.searchIndexCache) this.searchIndexCache = new Map();
+    if (this.searchIndexCache.has(index)) {
+      return this.searchIndexCache.get(index);
+    }
+    if (!this.currentParser || !this.currentParser.spine || !this.currentParser.spine[index]) {
+      return null;
+    }
+    const spineEntry = this.currentParser.spine[index];
+    try {
+      const rawHtml = await this.currentParser.archive.getFileAsText(spineEntry.fullPath);
+      const doc = new DOMParser().parseFromString(rawHtml, "text/html");
+      const body = doc.body || doc.documentElement;
+      const text = (body ? body.textContent || "" : "").replace(/\s+/g, " ").trim();
+
+      let title = `Kapitola ${index + 1}`;
+      const h = body.querySelector("h1, h2, h3");
+      if (h && h.textContent.trim()) {
+        title = h.textContent.trim();
+      } else if (this.currentParser.toc) {
+        const cleanPath = spineEntry.fullPath.split("#")[0].split("?")[0];
+        const matched = this.currentParser.toc.find(t => {
+          if (!t || !t.fullHref) return false;
+          return t.fullHref.split("#")[0].split("?")[0] === cleanPath;
+        });
+        if (matched) title = matched.title;
+      }
+      const data = { index, title, text };
+      this.searchIndexCache.set(index, data);
+      return data;
+    } catch (e) {
+      console.warn("Chyba při čtení textu kapitoly pro vyhledávání:", e);
+      return null;
+    }
+  }
+
+  async executeSearch() {
+    if (!this.currentParser || !this.currentParser.spine) return;
+    const query = this.dom.inputBookSearch ? this.dom.inputBookSearch.value.trim() : "";
+
+    if (!query || query.length < 2) {
+      if (this.dom.searchResultsInfo) this.dom.searchResultsInfo.classList.add("is-hidden");
+      if (this.dom.searchResultsList) {
+        this.dom.searchResultsList.innerHTML = `
+          <div class="search-empty-state">
+            <div class="search-empty-icon">🔍</div>
+            <p>Zadejte alespoň 2 znaky pro vyhledávání...</p>
+          </div>
+        `;
+      }
+      return;
+    }
+
+    if (this.dom.searchResultsInfo) {
+      this.dom.searchResultsInfo.classList.remove("is-hidden");
+      this.dom.searchResultsInfo.textContent = "Hledám...";
+    }
+    if (this.dom.searchResultsList) {
+      this.dom.searchResultsList.innerHTML = `
+        <div class="search-empty-state">
+          <p>Prohledávám knihu...</p>
+        </div>
+      `;
+    }
+
+    const lowerQuery = query.toLowerCase();
+    const escapeHtml = (str) => str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const matches = [];
+    const MAX_MATCHES = 60;
+
+    for (let i = 0; i < this.currentParser.spine.length; i++) {
+      if (matches.length >= MAX_MATCHES) break;
+      const chapterData = await this.getChapterSearchData(i);
+      if (!chapterData || !chapterData.text) continue;
+
+      const lowerText = chapterData.text.toLowerCase();
+      let startIdx = 0;
+
+      while (startIdx < lowerText.length && matches.length < MAX_MATCHES) {
+        const foundPos = lowerText.indexOf(lowerQuery, startIdx);
+        if (foundPos === -1) break;
+
+        const snippetStart = Math.max(0, foundPos - 40);
+        const snippetEnd = Math.min(chapterData.text.length, foundPos + query.length + 50);
+        let before = chapterData.text.substring(snippetStart, foundPos);
+        let match = chapterData.text.substring(foundPos, foundPos + query.length);
+        let after = chapterData.text.substring(foundPos + query.length, snippetEnd);
+
+        if (snippetStart > 0) before = "…" + before;
+        if (snippetEnd < chapterData.text.length) after = after + "…";
+
+        const snippetHtml = `${escapeHtml(before)}<mark>${escapeHtml(match)}</mark>${escapeHtml(after)}`;
+
+        matches.push({
+          chapterIndex: i,
+          chapterTitle: chapterData.title,
+          snippetHtml,
+          query
+        });
+
+        startIdx = foundPos + Math.max(1, query.length);
+      }
+    }
+
+    this.renderSearchResults(matches, query);
+  }
+
+  renderSearchResults(matches, query) {
+    const escapeHtml = (str) => str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    if (!this.dom.searchResultsList) return;
+
+    if (!matches || matches.length === 0) {
+      if (this.dom.searchResultsInfo) {
+        this.dom.searchResultsInfo.classList.add("is-hidden");
+      }
+      this.dom.searchResultsList.innerHTML = `
+        <div class="search-empty-state">
+          <div class="search-empty-icon">❌</div>
+          <p>Nebyly nalezeny žádné výsledky pro „${escapeHtml(query)}“</p>
+        </div>
+      `;
+      return;
+    }
+
+    if (this.dom.searchResultsInfo) {
+      this.dom.searchResultsInfo.classList.remove("is-hidden");
+      const count = matches.length;
+      const label = count === 1 ? "1 výskyt" : (count >= 2 && count <= 4 ? `${count} výskyty` : `${count} výskytů`);
+      this.dom.searchResultsInfo.textContent = `Nalezeno: ${label}`;
+    }
+
+    let html = "";
+    matches.forEach(m => {
+      html += `
+        <div class="search-result-item" data-chapter="${m.chapterIndex}" data-query="${escapeHtml(m.query)}">
+          <div class="search-res-chapter">${escapeHtml(m.chapterTitle)}</div>
+          <div class="search-res-snippet">${m.snippetHtml}</div>
+        </div>
+      `;
+    });
+    this.dom.searchResultsList.innerHTML = html;
+  }
+
+  async navigateToSearchResult(chapterIndex, matchQuery) {
+    this.closeDrawer("search");
+    if (this.currentChapterIndex !== chapterIndex) {
+      await tracker.flushSession();
+      this.currentChapterIndex = chapterIndex;
+      await this.loadCurrentChapter(0);
+    }
+    if (matchQuery) {
+      this.locateAndScrollToSearchQuery(matchQuery);
+    }
+  }
+
+  locateAndScrollToSearchQuery(query) {
+    if (!query || !this.dom.readerContent || !this.dom.pagedStage) return;
+    const stageWidth = this.dom.pagedStage.clientWidth || 700;
+    const stageRect = this.dom.pagedStage.getBoundingClientRect();
+    const gap = this.pageGap || 50;
+    const lowerQ = query.toLowerCase();
+
+    // Vyhledání textového uzlu v načtené kapitole
+    const walker = document.createTreeWalker(this.dom.readerContent, NodeFilter.SHOW_TEXT, null, false);
+    let node;
+    let foundParent = null;
+
+    while (node = walker.nextNode()) {
+      if (node.textContent.toLowerCase().includes(lowerQ)) {
+        foundParent = node.parentElement;
+        break;
+      }
+    }
+
+    if (!foundParent) {
+      const candidates = this.dom.readerContent.querySelectorAll("p, div, h1, h2, h3, h4, h5, h6, li, span");
+      for (const el of candidates) {
+        if (el.textContent.toLowerCase().includes(lowerQ)) {
+          foundParent = el;
+          break;
+        }
+      }
+    }
+
+    if (foundParent) {
+      const rect = foundParent.getBoundingClientRect();
+      const currentOffset = this.currentPageIndex * (stageWidth + gap);
+      const relativeX = (rect.left - stageRect.left) + currentOffset;
+      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / (stageWidth + gap))));
+
+      this.goToPage(targetPage);
+      foundParent.classList.add("search-highlight-flash");
+      setTimeout(() => foundParent.classList.remove("search-highlight-flash"), 2200);
     }
   }
 
