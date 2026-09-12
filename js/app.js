@@ -1425,18 +1425,18 @@ class LuminaApp {
         this.recalcPages();
 
         if (targetPage === "last") {
-          this.goToPage(this.totalPagesInChapter - 1);
+          this.goToPage(this.totalPagesInChapter - 1, -1);
         } else if (typeof targetPage === "number") {
-          this.goToPage(Math.min(targetPage, this.totalPagesInChapter - 1));
+          this.goToPage(Math.min(targetPage, this.totalPagesInChapter - 1), targetPage > 0 ? 1 : 0);
         } else {
-          this.goToPage(0);
+          this.goToPage(0, 1);
         }
 
         // Znovu přepočítat po krátké prodlevě pro jistotu (načtení obrázků apod.)
         setTimeout(() => {
           this.recalcPages();
           if (targetPage === "last") {
-            this.goToPage(this.totalPagesInChapter - 1);
+            this.goToPage(this.totalPagesInChapter - 1, -1);
           }
         }, 120);
       });
@@ -1474,14 +1474,16 @@ class LuminaApp {
     this.updatePageUI();
   }
 
-  goToPage(pageIndex) {
+  goToPage(pageIndex, explicitDirection = null) {
     const oldIndex = this.currentPageIndex;
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
     const stageWidth = this.dom.pagedStage.clientWidth || 700;
     const offset = this.currentPageIndex * (stageWidth + this.pageGap);
 
-    const isPageChanged = oldIndex !== this.currentPageIndex;
-    const direction = this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0);
+    const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
+    const direction = explicitDirection !== null
+      ? explicitDirection
+      : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
 
     this.dom.readerContent.style.transform = `translateX(-${offset}px)`;
 
@@ -1513,7 +1515,7 @@ class LuminaApp {
     this.lastPageTurnTime = now;
 
     if (this.currentPageIndex < this.totalPagesInChapter - 1) {
-      this.goToPage(this.currentPageIndex + 1);
+      this.goToPage(this.currentPageIndex + 1, 1);
     } else if (this.currentChapterIndex < this.currentParser.spine.length - 1) {
       // Plynulý přechod na další kapitolu!
       this.navigateChapter(1, 0);
@@ -1528,7 +1530,7 @@ class LuminaApp {
     this.lastPageTurnTime = now;
 
     if (this.currentPageIndex > 0) {
-      this.goToPage(this.currentPageIndex - 1);
+      this.goToPage(this.currentPageIndex - 1, -1);
     } else if (this.currentChapterIndex > 0) {
       // Plynulý přechod na konec předchozí kapitoly!
       this.navigateChapter(-1, "last");

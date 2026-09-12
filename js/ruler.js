@@ -1350,54 +1350,118 @@ export class ReadingRuler {
    * Využívá se při aktivaci režimu sledování myši (mouse-follow) nebo při přechodu strany.
    */
   snapToFirstElement() {
+    this.resetPositionForPage(1);
+  }
+
+  /**
+   * Dočasně potlačí veškeré CSS přechody (transition: none) pro okamžité usazení bez animací.
+   */
+  setNoTransition(noTrans = true) {
+    const elements = [this.rulerEl, this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl];
+    for (const el of elements) {
+      if (!el) continue;
+      if (noTrans) {
+        el.style.setProperty("transition", "none", "important");
+      } else {
+        el.style.removeProperty("transition");
+      }
+    }
+  }
+
+  /**
+   * Resetuje pozici a indexy pravítka při přechodu na novou stránku podle směru listování:
+   * - direction >= 0 (vpřed / nová kapitola): přichytí na první řádek / první slovo (index 0)
+   * - direction < 0 (vzad / konec kapitoly): přichytí na poslední řádek / poslední slovo
+   */
+  resetPositionForPage(direction = 1) {
     this.disableWordTransition();
     this.refreshLines();
+    this.refreshWords();
+    this.setNoTransition(true);
+
+    const isBackward = direction < 0;
+
     if (this.wordTracking) {
-      this.refreshWords();
       if (this.cachedWords.length > 0) {
-        if (this.cachedLines.length > 0) this.activeLineIndex = 0;
-        this.setWordWindow(0);
-        const w = this.cachedWords[0];
-        this.lastPointerX = w.centerX;
-        this.lastPointerY = w.centerY;
+        const targetWordIdx = isBackward ? this.cachedWords.length - 1 : 0;
+        this.activeWordIndex = targetWordIdx;
+        const targetWord = this.cachedWords[targetWordIdx];
+
+        if (targetWord && targetWord.lineIndex != null) {
+          this.activeLineIndex = targetWord.lineIndex;
+        } else if (this.cachedLines.length > 0) {
+          this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
+        }
+
+        this.setWordWindow(targetWordIdx);
+        this.lastPointerX = targetWord.centerX;
+        this.lastPointerY = targetWord.centerY;
+
         this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
         this.maskTopEl.classList.add("is-snapped");
         this.maskBottomEl.classList.add("is-snapped");
         this.maskLeftEl.classList.add("is-snapped");
         this.maskRightEl.classList.add("is-snapped");
         this.applyPosition();
-        return;
+      }
+    } else {
+      if (this.cachedLines.length > 0) {
+        const targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
+        this.activeLineIndex = targetLineIdx;
+
+        if (this.cachedWords.length > 0) {
+          if (isBackward) {
+            let lastWordIdx = this.cachedWords.length - 1;
+            for (let i = this.cachedWords.length - 1; i >= 0; i--) {
+              if (this.cachedWords[i].lineIndex === targetLineIdx) {
+                lastWordIdx = i;
+                break;
+              }
+            }
+            this.activeWordIndex = lastWordIdx;
+          } else {
+            this.activeWordIndex = 0;
+          }
+        }
+
+        this.rulerEl.classList.remove("word-tracking-mode");
+        const geom = this.computeLineGeometry(targetLineIdx);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+          this.currentY = this.targetY;
+        }
+
+        const line = this.cachedLines[targetLineIdx];
+        this.lastPointerX = line.left != null ? line.left : 100;
+        this.lastPointerY = line.centerY;
+
+        this.rulerEl.classList.add("is-snapped");
+        this.maskTopEl.classList.add("is-snapped");
+        this.maskBottomEl.classList.add("is-snapped");
+        this.maskLeftEl.classList.add("is-snapped");
+        this.maskRightEl.classList.add("is-snapped");
+        this.applyPosition();
       }
     }
 
-    if (this.cachedLines.length > 0) {
-      this.activeLineIndex = 0;
-      if (this.cachedWords.length > 0) this.activeWordIndex = 0;
-      this.rulerEl.classList.remove("word-tracking-mode");
-      const geom = this.computeLineGeometry(0);
-      if (geom) {
-        this.height = geom.height;
-        this.targetY = geom.targetY;
-        this.currentY = this.targetY;
-      }
-      this.lastPointerX = this.cachedLines[0].left != null ? this.cachedLines[0].left : 100;
-      this.lastPointerY = this.cachedLines[0].centerY;
-      this.rulerEl.classList.add("is-snapped");
-      this.maskTopEl.classList.add("is-snapped");
-      this.maskBottomEl.classList.add("is-snapped");
-      this.maskLeftEl.classList.add("is-snapped");
-      this.maskRightEl.classList.add("is-snapped");
-      this.applyPosition();
-    } else {
+    if (this.cachedLines.length === 0) {
       requestAnimationFrame(() => {
-        if (this.enabled && this.followMode === "mouse" && this.cachedLines.length === 0) {
+        if (this.enabled && this.cachedLines.length === 0) {
           this.refreshLines();
+          this.refreshWords();
           if (this.cachedLines.length > 0) {
-            this.snapToFirstElement();
+            this.resetPositionForPage(direction);
           }
         }
       });
     }
+
+    if (this.rulerEl) void this.rulerEl.offsetHeight;
+
+    requestAnimationFrame(() => {
+      this.setNoTransition(false);
+    });
   }
 
   getReaderContainer() {
@@ -1922,20 +1986,8 @@ export class ReadingRuler {
         this._onTransitionEnd = null;
       }
 
-      // Přepočet přesných rozměrů a ohraničení z nového statického DOMu (uložení slov do paměti pro nulový reflow při klepnutí)
-      this.refreshLines();
-      this.refreshWords();
-
-      // Usazení pravítka na nové stránce
-      if (this.followMode === "mouse") {
-        this.snapToFirstElement();
-      } else if (this.wordTracking && this.cachedWords.length > 0) {
-        this.activeWordIndex = direction < 0 ? this.cachedWords.length - 1 : 0;
-        this.stepLine(0);
-      } else if (this.snapToLines && this.cachedLines.length > 0) {
-        this.activeLineIndex = direction < 0 ? this.cachedLines.length - 1 : 0;
-        this.stepLine(0);
-      }
+      // Usazení pravítka na nové stránce podle směru přechodu
+      this.resetPositionForPage(direction);
 
       // Odkrytí pravítka s čistě přepočtenými souřadnicemi
       this.rulerEl?.classList.remove("is-page-transitioning");
