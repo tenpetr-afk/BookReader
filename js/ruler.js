@@ -52,6 +52,10 @@ export class ReadingRuler {
     this.animFrameId = null;
     this.isDragging = false;
     this.isPageTransitioning = false;
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
+    this.navigatingPageTimer = null;
+    this.navigatingPageLockoutEndTime = 0;
     this.pageChangeTimer = null;
     this._onTransitionEnd = null;
 
@@ -87,9 +91,43 @@ export class ReadingRuler {
     this.horizontalWordTransition = false;
     this.isWordTransitioning = false;
     this.wordTransitionTimer = null;
+    this.suppressLineAdvancement = false;
+    this.pageTurnTimestamp = 0;
+    this.suppressTimer = null;
+    this.pageChangeRafId = null;
+    this.isLineLocked = false;
+    this.lineLockTimer = null;
 
     this.createDomElements();
     this.attachEvents();
+  }
+
+  lockAdvancement(duration = 350) {
+    this.pageTurnTimestamp = performance.now();
+    this.suppressLineAdvancement = true;
+    if (this.suppressTimer) clearTimeout(this.suppressTimer);
+    this.suppressTimer = setTimeout(() => {
+      this.suppressLineAdvancement = false;
+      this.suppressTimer = null;
+    }, duration);
+  }
+
+  isLastLine() {
+    if (!this.enabled) return false;
+    if (this.wordTracking) {
+      if (this.cachedWords.length === 0) return false;
+      return this.activeWordIndex >= this.cachedWords.length - 1;
+    }
+    if (this.cachedLines.length === 0) return false;
+    return this.activeLineIndex >= this.cachedLines.length - 1;
+  }
+
+  stepRuler(delta, force = false) {
+    return this.stepLine(delta, force);
+  }
+
+  detectLines() {
+    return this.refreshLines();
   }
 
   get rulerMode() {
@@ -165,7 +203,7 @@ export class ReadingRuler {
   isUiControl(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], .btn, .btn-icon, .drawer-panel, .drawer, .modal-dialog, .modal-overlay, .paged-footer-bar, .reader-header, .top-navbar, .ruler-quick-popover, .ruler-floating-controls"
+      "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], [role='slider'], .btn, .btn-icon, .drawer-panel, .drawer, .modal-dialog, .modal-overlay, .paged-footer-bar, .reading-scrubber, .reader-header, .top-navbar, .ruler-btn-group, #btn-toggle-ruler, #btn-ruler-quick-menu, .ruler-quick-popover, .ruler-floating-controls"
     );
   }
 
@@ -225,20 +263,18 @@ export class ReadingRuler {
    * Plynulá aktualizace pozice pravítka synchronizovaná s obnovovací frekvencí displeje (120Hz ProMotion)
    */
   schedulePointerUpdate(clientX, clientY, pointerType = "mouse") {
+    if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isPageTransitioning) {
+      return;
+    }
     this.pendingPointerX = clientX;
     this.pendingPointerY = clientY;
     this.pendingPointerType = pointerType;
     this.activePointerType = pointerType;
-    if (this.isPageTransitioning) {
-      this.lastPointerX = clientX;
-      this.lastPointerY = clientY;
-      return;
-    }
     if (!this.rafPointerPending) {
       this.rafPointerPending = true;
       requestAnimationFrame(() => {
         this.rafPointerPending = false;
-        if (this.enabled && !this.isPageTransitioning) {
+        if (this.enabled && !this.isLineLocked && !this.isPageTransitioning) {
           this.handlePointerMove(this.pendingPointerX, this.pendingPointerY, this.pendingPointerType);
         }
       });
@@ -292,7 +328,7 @@ export class ReadingRuler {
   }
 
   startHold(clientX, clientY, pointerType = "touch") {
-    if (!this.enabled || this.isPageTransitioning) return;
+    if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     if (!this.isPointerInStage(clientX, clientY)) return;
     if (this.followMode === "mouse") return;
 
@@ -382,36 +418,40 @@ export class ReadingRuler {
   attachEvents() {
     // 1. POINTER EVENTS: Sjednocené sledování pro prst, Apple Pencil i myš
     const onPointerDown = (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
       if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
         this.holdStartTime = 0;
         return;
       }
+      if (e.target?.closest && e.target.closest("img, svg, figure, picture, canvas, hr")) return;
 
       // Pro myš na PC vyžadujeme výhradně stisknuté levé tlačítko (button === 0)
       if (e.pointerType === "mouse" && e.button !== 0) return;
 
       if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
+        this.isPenTouching = true;
         this.savePenDetails(e);
       }
 
-      // V režimu sledování myši: Apple Pencil a myš sledují v reálném čase, prst vůbec nehýbe pravítkem
       if (this.followMode === "mouse") {
         if (e.pointerType === "touch") return;
-        if (e.pointerType === "mouse" || e.pointerType === "pen") {
-          this.activePointerType = e.pointerType;
-          this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
-        }
+        this.activePointerId = e.pointerId;
+        this.activePointerType = e.pointerType;
+        this.handlePointerMove(e.clientX, e.clientY, e.pointerType);
         return;
       }
 
-      // Zahájit 1,1s podržení pro přemístění pravítka
-      this.startHold(e.clientX, e.clientY, e.pointerType || "mouse");
+      // Klávesový režim (keyboard)
+      if (e.pointerType === "pen") {
+        this.startHold(e.clientX, e.clientY, "pen");
+      } else if (e.pointerType === "touch" || e.pointerType === "mouse") {
+        this.startHold(e.clientX, e.clientY, e.pointerType);
+      }
     };
 
     const onPointerMove = (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
 
       if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
@@ -441,6 +481,13 @@ export class ReadingRuler {
     };
 
     const onPointerUp = (e) => {
+      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+        this.cancelHold(false);
+        this.isDraggingRuler = false;
+        this.isPenTouching = false;
+        return;
+      }
+
       if (this.followMode === "mouse") {
         if (e.pointerType === "touch") return;
         if (e.pointerType === "pen") {
@@ -531,12 +578,13 @@ export class ReadingRuler {
 
     // 2. TOUCH EVENTS (WebKit Safari fallback pro starší zařízení)
     const onTouchStart = (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled || this.isLineLocked) return;
       const touch = e.touches[0];
       if (this.isUiControl(e.target) || !touch || !this.isPointerInStage(touch.clientX, touch.clientY)) {
         this.holdStartTime = 0;
         return;
       }
+      if (e.target?.closest && e.target.closest("img, svg, figure, picture, canvas, hr")) return;
       const isStylus = Array.from(e.touches).some(t => t.touchType === "stylus");
       if (isStylus) {
         this.lastPenTime = Date.now();
@@ -554,7 +602,7 @@ export class ReadingRuler {
     };
 
     const onTouchMove = (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
       const isStylus = Array.from(e.touches).some(t => t.touchType === "stylus");
       if (isStylus) {
         this.lastPenTime = Date.now();
@@ -583,6 +631,13 @@ export class ReadingRuler {
     };
 
     const onTouchEnd = (e) => {
+      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+        this.cancelHold(false);
+        this.isDraggingRuler = false;
+        this.isPenTouching = false;
+        return;
+      }
+
       if (this.followMode === "mouse") return;
 
       if (this.isUiControl(e.target) || !this.holdStartTime) {
@@ -648,7 +703,7 @@ export class ReadingRuler {
     // 3. MOUSEMOVE fallback (pro prohlížeče bez PointerEvents)
     window.addEventListener("mousemove", (e) => {
       if (window.PointerEvent) return;
-      if (!this.enabled || this.isDraggingRuler || this.isPenTouching) return;
+      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isDraggingRuler || this.isPenTouching) return;
       if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
         return;
       }
@@ -668,9 +723,21 @@ export class ReadingRuler {
       }
     });
 
+    // Ignorování kolečka myši a gest touchpadu během uzamčení řádků
+    window.addEventListener("wheel", (e) => {
+      if (!this.enabled || this.isLineLocked) {
+        return;
+      }
+    }, { passive: true });
+
     // Zachycení kliknutí pro zabránění nežádoucího resetu nebo odskoku pravítka po dokončení podržení či jeho zrušení
     window.addEventListener("click", (e) => {
       if (!this.enabled) return;
+      if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        return;
+      }
       if (this.isUiControl(e.target)) return;
       if (!this.isPointerInStage(e.clientX, e.clientY)) return;
 
@@ -704,6 +771,13 @@ export class ReadingRuler {
       this.cancelHold();
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
 
+      if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+        if (["j", "J", "k", "K", "ArrowDown", "ArrowUp", " "].includes(e.key) || e.code === "Space") {
+          e.preventDefault();
+          return;
+        }
+      }
+
       if (e.key === "j" || e.key === "J") {
         e.preventDefault();
         this.stepLine(1, true);
@@ -727,281 +801,336 @@ export class ReadingRuler {
    * Zmapuje přesné obdélníky všech viditelných řádků textu na aktuální stránce.
    * Využívá Range.prototype.getClientRects() nad textovými uzly.
    */
-  refreshLines() {
-    const stage = this.container || document.getElementById("paged-stage");
-    const content = document.getElementById("reader-content");
-    if (!stage || !content) {
-      this.cachedLines = [];
-      return;
-    }
+  /**
+   * Bezpečná detekce řádků textu chráněná proti pádu (try-catch) a zacyklení.
+   * Využívá standardní dotaz nad kandidátními elementy bez rekurzivního průchodu DOMem.
+   */
+  detectLines() {
+    try {
+      const stage = this.container || document.getElementById("paged-stage");
+      const content = document.getElementById("reader-content");
+      if (!stage || !content) {
+        this.cachedLines = [];
+        return [];
+      }
 
-    const stageRect = stage.getBoundingClientRect();
-    this.stageLeft = Math.round(stageRect.left);
-    this.stageWidth = Math.round(stageRect.width);
-    const stageLeft = stageRect.left;
-    const stageRight = stageRect.right;
-    const stageTop = stageRect.top;
-    const stageBottom = stageRect.bottom;
+      const stageRect = stage.getBoundingClientRect();
+      this.stageLeft = Math.round(stageRect.left);
+      this.stageWidth = Math.round(stageRect.width);
+      const stageLeft = stageRect.left;
+      const stageRight = stageRect.right;
+      const stageTop = stageRect.top;
+      const stageBottom = stageRect.bottom;
 
-    const rawLines = [];
-    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
-    let node;
-    const range = document.createRange();
+      // Cílíme výhradně na elementy, které jsou viditelné a obsahují neprázdný text
+      const candidateElements = content.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6, li, blockquote');
+      const validLines = [];
 
-    while ((node = walker.nextNode())) {
-      const text = node.textContent;
-      if (!text || !text.trim()) continue;
+      candidateElements.forEach(el => {
+        // Explicitně přeskočit obrázky, svg a prázdné elementy
+        if (el.closest('svg, figure, picture') || el.tagName === 'IMG' || el.tagName === 'HR' || el.tagName === 'CANVAS') return;
+        if (!el.textContent || el.textContent.trim().length === 0) return;
 
-      try {
-        range.selectNodeContents(node);
-        const rects = range.getClientRects();
-        for (let i = 0; i < rects.length; i++) {
-          const r = rects[i];
-          if (
-            r.right > stageLeft + 15 &&
-            r.left < stageRight - 15 &&
-            r.bottom > stageTop - 25 &&
-            r.top < stageBottom + 25 &&
-            r.height >= 10 &&
-            r.width >= 10
-          ) {
-            rawLines.push({
-              top: r.top,
-              bottom: r.bottom,
-              left: r.left,
-              right: r.right,
-              height: r.height,
-              centerY: r.top + r.height / 2
-            });
+        // Přeskočit vnořené inline elementy, pokud je již zachycen jejich nadřazený blok
+        if (el.tagName === 'SPAN' && el.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote')) return;
+
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          // Bezpečně extrahovat nebo seskupit ohraničení řádků
+          try {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const rects = range.getClientRects();
+            if (rects && rects.length > 0) {
+              for (let i = 0; i < rects.length; i++) {
+                const r = rects[i];
+                if (
+                  r.right > stageLeft + 5 &&
+                  r.left < stageRight - 5 &&
+                  r.bottom > stageTop + 2 &&
+                  r.top < stageBottom - 2 &&
+                  r.height >= 8 &&
+                  r.width >= 8
+                ) {
+                  validLines.push({
+                    el,
+                    rect: r,
+                    top: r.top,
+                    bottom: r.bottom,
+                    left: r.left,
+                    right: r.right,
+                    height: r.height,
+                    centerY: r.top + r.height / 2,
+                    hasText: true
+                  });
+                }
+              }
+            } else if (
+              rect.right > stageLeft + 5 &&
+              rect.left < stageRight - 5 &&
+              rect.bottom > stageTop + 2 &&
+              rect.top < stageBottom - 2 &&
+              rect.height >= 8 &&
+              rect.width >= 8
+            ) {
+              validLines.push({
+                el,
+                rect,
+                top: rect.top,
+                bottom: rect.bottom,
+                left: rect.left,
+                right: rect.right,
+                height: rect.height,
+                centerY: rect.top + rect.height / 2,
+                hasText: true
+              });
+            }
+          } catch (e) {
+            if (
+              rect.right > stageLeft + 5 &&
+              rect.left < stageRight - 5 &&
+              rect.bottom > stageTop + 2 &&
+              rect.top < stageBottom - 2 &&
+              rect.height >= 8 &&
+              rect.width >= 8
+            ) {
+              validLines.push({
+                el,
+                rect,
+                top: rect.top,
+                bottom: rect.bottom,
+                left: rect.left,
+                right: rect.right,
+                height: rect.height,
+                centerY: rect.top + rect.height / 2,
+                hasText: true
+              });
+            }
           }
         }
-      } catch (err) {}
-    }
+      });
 
-    rawLines.sort((a, b) => a.centerY - b.centerY);
+      validLines.sort((a, b) => a.centerY - b.centerY);
 
-    const clustered = [];
-    for (const r of rawLines) {
-      if (clustered.length === 0) {
-        clustered.push({ ...r });
-      } else {
-        const prev = clustered[clustered.length - 1];
-        if (Math.abs(r.centerY - prev.centerY) < 8) {
-          prev.top = Math.min(prev.top, r.top);
-          prev.bottom = Math.max(prev.bottom, r.bottom);
-          prev.left = Math.min(prev.left ?? r.left, r.left);
-          prev.right = Math.max(prev.right ?? r.right, r.right);
-          prev.height = prev.bottom - prev.top;
-          prev.centerY = prev.top + prev.height / 2;
-        } else {
+      const clustered = [];
+      for (const r of validLines) {
+        if (clustered.length === 0) {
           clustered.push({ ...r });
-        }
-      }
-    }
-
-    this.cachedLines = clustered;
-
-    if (this.cachedLines.length > 0) {
-      let minLeft = Infinity;
-      let maxRight = -Infinity;
-      let maxLineWidth = 0;
-
-      for (const line of this.cachedLines) {
-        if (line.left != null && line.left < minLeft) {
-          minLeft = line.left;
-        }
-        if (line.right != null && line.right > maxRight) {
-          maxRight = line.right;
-        }
-        if (line.left != null && line.right != null) {
-          const w = line.right - line.left;
-          if (w > maxLineWidth) maxLineWidth = w;
-        }
-      }
-
-      if (minLeft < Infinity && maxRight > -Infinity) {
-        const standardLineWidth = Math.max(maxLineWidth, maxRight - minLeft);
-        const colLeft = minLeft;
-        const colRight = Math.max(maxRight, minLeft + standardLineWidth);
-
-        // 1. Uniformní horizontální odsazení RULER_PADDING na obou stranách sloupce textu:
-        // - left: levý okraj textu posunutý o RULER_PADDING doleva (první znak není nalepený na hraně pravítka)
-        // - width: plná šířka sloupce textu rozšířená o (2 * RULER_PADDING) pro symetrické odsazení
-        let desiredLeft = colLeft - RULER_PADDING;
-        let desiredRight = colRight + RULER_PADDING;
-
-        // Ochrana proti přetečení mimo viditelný viewport se zachováním plného odsazení textu
-        const minScreenBound = 0;
-        const maxScreenBound = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 99999);
-
-        desiredLeft = Math.max(minScreenBound, desiredLeft);
-        desiredRight = Math.min(maxScreenBound, desiredRight);
-
-        const computedLeft = Math.round(desiredLeft);
-        const computedWidth = Math.round(Math.max(0, desiredRight - desiredLeft));
-
-        if (standardLineWidth > 200) {
-          this.textBlockLeft = computedLeft;
-          this.textBlockWidth = computedWidth;
-          this.lastKnownColumnLeft = computedLeft;
-          this.lastKnownColumnWidth = computedWidth;
-        } else if (this.lastKnownColumnWidth) {
-          this.textBlockLeft = this.lastKnownColumnLeft != null ? this.lastKnownColumnLeft : computedLeft;
-          this.textBlockWidth = this.lastKnownColumnWidth;
-        } else if (stageRect && stageRect.width > 200) {
-          const sLeft = Math.max(minScreenBound, Math.round(stageRect.left - RULER_PADDING));
-          const sWidth = Math.round(stageRect.width + (2 * RULER_PADDING));
-          this.textBlockLeft = sLeft;
-          this.textBlockWidth = sWidth;
-          this.lastKnownColumnLeft = sLeft;
-          this.lastKnownColumnWidth = sWidth;
         } else {
-          this.textBlockLeft = computedLeft;
-          this.textBlockWidth = computedWidth;
+          const prev = clustered[clustered.length - 1];
+          if (Math.abs(r.centerY - prev.centerY) < 8 || (Math.max(r.top, prev.top) < Math.min(r.bottom, prev.bottom) - 3)) {
+            prev.top = Math.min(prev.top, r.top);
+            prev.bottom = Math.max(prev.bottom, r.bottom);
+            prev.left = Math.min(prev.left ?? r.left, r.left);
+            prev.right = Math.max(prev.right ?? r.right, r.right);
+            prev.height = prev.bottom - prev.top;
+            prev.centerY = prev.top + prev.height / 2;
+          } else {
+            clustered.push({ ...r });
+          }
         }
       }
-    }
 
-    if (this.autoHeight && this.cachedLines.length > 0) {
-      const medianLine = this.cachedLines[Math.floor(this.cachedLines.length / 2)];
-      this.updateEffectiveHeight(medianLine.height);
+      this.cachedLines = clustered.filter(l => l.hasText && l.height >= 8 && (l.right - l.left) >= 8);
+
+      if (this.cachedLines.length > 0) {
+        let minLeft = Infinity;
+        let maxRight = -Infinity;
+        let maxLineWidth = 0;
+
+        for (const line of this.cachedLines) {
+          if (line.left != null && line.left < minLeft) {
+            minLeft = line.left;
+          }
+          if (line.right != null && line.right > maxRight) {
+            maxRight = line.right;
+          }
+          if (line.left != null && line.right != null) {
+            const w = line.right - line.left;
+            if (w > maxLineWidth) maxLineWidth = w;
+          }
+        }
+
+        if (minLeft < Infinity && maxRight > -Infinity) {
+          const standardLineWidth = Math.max(maxLineWidth, maxRight - minLeft);
+          const colLeft = minLeft;
+          const colRight = Math.max(maxRight, minLeft + standardLineWidth);
+
+          let desiredLeft = colLeft - RULER_PADDING;
+          let desiredRight = colRight + RULER_PADDING;
+
+          const minScreenBound = 0;
+          const maxScreenBound = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 99999);
+
+          desiredLeft = Math.max(minScreenBound, desiredLeft);
+          desiredRight = Math.min(maxScreenBound, desiredRight);
+
+          const computedLeft = Math.round(desiredLeft);
+          const computedWidth = Math.round(Math.max(0, desiredRight - desiredLeft));
+
+          if (standardLineWidth > 200) {
+            this.textBlockLeft = computedLeft;
+            this.textBlockWidth = computedWidth;
+            this.lastKnownColumnLeft = computedLeft;
+            this.lastKnownColumnWidth = computedWidth;
+          } else if (this.lastKnownColumnWidth) {
+            this.textBlockLeft = this.lastKnownColumnLeft != null ? this.lastKnownColumnLeft : computedLeft;
+            this.textBlockWidth = this.lastKnownColumnWidth;
+          } else if (stageRect && stageRect.width > 200) {
+            const sLeft = Math.max(minScreenBound, Math.round(stageRect.left - RULER_PADDING));
+            const sWidth = Math.round(stageRect.width + (2 * RULER_PADDING));
+            this.textBlockLeft = sLeft;
+            this.textBlockWidth = sWidth;
+            this.lastKnownColumnLeft = sLeft;
+            this.lastKnownColumnWidth = sWidth;
+          } else {
+            this.textBlockLeft = computedLeft;
+            this.textBlockWidth = computedWidth;
+          }
+        }
+      }
+
+      if (this.autoHeight && this.cachedLines.length > 0) {
+        const medianLine = this.cachedLines[Math.floor(this.cachedLines.length / 2)];
+        const baseH = Math.round(medianLine.height || 32);
+        this.height = baseH + (2 * RULER_PADDING);
+      }
+
+      return this.cachedLines;
+    } catch (err) {
+      console.error("[ReadingRuler] Error in detectLines:", err);
+      this.cachedLines = [];
+      return [];
     }
+  }
+
+  refreshLines() {
+    return this.detectLines();
   }
 
   /**
    * Zmapuje přesné obdélníky všech viditelných slov na aktuální stránce.
    */
   refreshWords() {
-    const stage = this.container || document.getElementById("paged-stage");
-    const content = document.getElementById("reader-content");
-    if (!stage || !content) {
-      this.cachedWords = [];
-      return;
-    }
+    try {
+      const stage = this.container || document.getElementById("paged-stage");
+      const content = document.getElementById("reader-content");
+      if (!stage || !content) {
+        this.cachedWords = [];
+        return [];
+      }
 
-    const stageRect = stage.getBoundingClientRect();
-    const stageLeft = stageRect.left;
-    const stageRight = stageRect.right;
-    const stageTop = stageRect.top;
-    const stageBottom = stageRect.bottom;
+      const stageRect = stage.getBoundingClientRect();
+      const stageLeft = stageRect.left;
+      const stageRight = stageRect.right;
+      const stageTop = stageRect.top;
+      const stageBottom = stageRect.bottom;
 
-    const words = [];
-    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
-    let node;
-    const range = document.createRange();
-    // Podpora všech unicode mezer, nezlomitelných mezer i neviditelných dělicích znaků
-    const wordRegex = /[^\s\u00A0\u1680\u2000-\u200B\u2028\u2029\u202F\u205F\u3000\uFEFF\u00AD]+/g;
+      const words = [];
+      const candidateElements = content.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6, li, blockquote');
+      const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u00AD\u2060]+/g;
+      const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
 
-    while ((node = walker.nextNode())) {
-      const text = node.textContent;
-      if (!text || !text.trim()) continue;
+      candidateElements.forEach(el => {
+        if (el.closest('svg, figure, picture') || el.tagName === 'IMG' || el.tagName === 'HR' || el.tagName === 'CANVAS') return;
+        if (!el.textContent || el.textContent.trim().length === 0) return;
+        if (el.tagName === 'SPAN' && el.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote')) return;
 
-      let match;
-      wordRegex.lastIndex = 0;
-      while ((match = wordRegex.exec(text)) !== null) {
-        const start = match.index;
-        const end = start + match[0].length;
-        try {
-          range.setStart(node, start);
-          range.setEnd(node, end);
-          const clientRects = range.getClientRects();
-          if (!clientRects || clientRects.length === 0) continue;
+        const elRect = el.getBoundingClientRect();
+        if (elRect.width <= 0 || elRect.height <= 0) return;
+        if (elRect.right < stageLeft - 10 || elRect.left > stageRight + 10) return;
 
-          // Pokud je slovo na jednom řádku (standardní případ), použijeme přesný getBoundingClientRect()
-          if (clientRects.length === 1) {
-            const bRect = range.getBoundingClientRect();
-            if (
-              bRect.right > stageLeft + 5 &&
-              bRect.left < stageRight - 5 &&
-              bRect.bottom > stageTop - 25 &&
-              bRect.top < stageBottom + 25 &&
-              bRect.width >= 2 &&
-              bRect.width < stageRect.width * 0.85 &&
-              bRect.height >= 8 &&
-              bRect.height <= 65
-            ) {
-              words.push({
-                text: match[0],
-                left: bRect.left,
-                right: bRect.right,
-                top: bRect.top,
-                bottom: bRect.bottom,
-                width: bRect.width,
-                height: bRect.height,
-                centerX: bRect.left + bRect.width / 2,
-                centerY: bRect.top + bRect.height / 2
-              });
-            }
-          } else {
-            // Zalomené slovo na více řádcích
-            for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
-              const rect = clientRects[rIdx];
+        for (let c = 0; c < el.childNodes.length; c++) {
+          const node = el.childNodes[c];
+          if (node.nodeType !== Node.TEXT_NODE) continue;
+          const text = node.textContent;
+          if (!text || !text.trim()) continue;
+
+          let match;
+          wordRegex.lastIndex = 0;
+          while ((match = wordRegex.exec(text)) !== null) {
+            const rawToken = match[0];
+            const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
+            if (!cleanToken) continue;
+
+            const start = match.index;
+            const end = start + rawToken.length;
+            try {
+              const range = document.createRange();
+              range.setStart(node, start);
+              range.setEnd(node, end);
+              const bRect = range.getBoundingClientRect();
               if (
-                rect.right > stageLeft + 5 &&
-                rect.left < stageRight - 5 &&
-                rect.bottom > stageTop - 25 &&
-                rect.top < stageBottom + 25 &&
-                rect.width >= 2 &&
-                rect.width < stageRect.width * 0.85 &&
-                rect.height >= 8 &&
-                rect.height <= 65
+                bRect.right > stageLeft + 5 &&
+                bRect.left < stageRight - 5 &&
+                bRect.bottom > stageTop + 2 &&
+                bRect.top < stageBottom - 2 &&
+                bRect.width >= 3 &&
+                bRect.width < stageRect.width * 0.85 &&
+                bRect.height >= 8 &&
+                bRect.height <= 65
               ) {
                 words.push({
-                  text: match[0],
-                  left: rect.left,
-                  right: rect.right,
-                  top: rect.top,
-                  bottom: rect.bottom,
-                  width: rect.width,
-                  height: rect.height,
-                  centerX: rect.left + rect.width / 2,
-                  centerY: rect.top + rect.height / 2
+                  text: cleanToken,
+                  left: bRect.left,
+                  right: bRect.right,
+                  top: bRect.top,
+                  bottom: bRect.bottom,
+                  width: bRect.width,
+                  height: bRect.height,
+                  centerX: bRect.left + bRect.width / 2,
+                  centerY: bRect.top + bRect.height / 2
                 });
               }
+            } catch (e) {}
+          }
+        }
+      });
+
+      // Seřadíme čtecím pořadím: shora dolů (tolerance 8px pro tentýž řádek), a zleva doprava
+      words.sort((a, b) => {
+        if (Math.abs(a.centerY - b.centerY) > 8) {
+          return a.centerY - b.centerY;
+        }
+        return a.left - b.left;
+      });
+
+      if (this.cachedLines.length === 0) {
+        this.detectLines();
+      }
+
+      if (this.cachedLines.length > 0) {
+        for (const w of words) {
+          let bestIdx = 0;
+          let minDiff = Infinity;
+          for (let j = 0; j < this.cachedLines.length; j++) {
+            const diff = Math.abs(w.centerY - this.cachedLines[j].centerY);
+            if (diff < minDiff) {
+              minDiff = diff;
+              bestIdx = j;
             }
           }
-        } catch (e) {}
-      }
-    }
-
-    // Seřadíme čtecím pořadím: shora dolů (tolerance 8px pro tentýž řádek), a zleva doprava
-    words.sort((a, b) => {
-      if (Math.abs(a.centerY - b.centerY) > 8) {
-        return a.centerY - b.centerY;
-      }
-      return a.left - b.left;
-    });
-
-    if (this.cachedLines.length === 0) {
-      this.refreshLines();
-    }
-
-    if (this.cachedLines.length > 0) {
-      for (const w of words) {
-        let bestIdx = 0;
-        let minDiff = Infinity;
-        for (let j = 0; j < this.cachedLines.length; j++) {
-          const diff = Math.abs(w.centerY - this.cachedLines[j].centerY);
-          if (diff < minDiff) {
-            minDiff = diff;
-            bestIdx = j;
+          w.lineIndex = bestIdx;
+        }
+      } else {
+        let currentLine = 0;
+        let lastCenterY = null;
+        for (const w of words) {
+          if (lastCenterY !== null && Math.abs(w.centerY - lastCenterY) > 8) {
+            currentLine++;
           }
+          w.lineIndex = currentLine;
+          lastCenterY = w.centerY;
         }
-        w.lineIndex = bestIdx;
       }
-    } else {
-      let currentLine = 0;
-      let lastCenterY = null;
-      for (const w of words) {
-        if (lastCenterY !== null && Math.abs(w.centerY - lastCenterY) > 8) {
-          currentLine++;
-        }
-        w.lineIndex = currentLine;
-        lastCenterY = w.centerY;
-      }
-    }
 
-    this.cachedWords = words;
+      this.cachedWords = words;
+      return this.cachedWords;
+    } catch (err) {
+      console.error("[ReadingRuler] Error in refreshWords:", err);
+      this.cachedWords = [];
+      return [];
+    }
   }
 
   computeLineGeometry(lineIdx) {
@@ -1061,6 +1190,9 @@ export class ReadingRuler {
    * - Pro myš (pointerType === 'mouse'): standardní přímé přichytávání centrované přímo na kurzor bez zkreslení.
    */
   getHysteresisLineIndex(curY, isPen = false) {
+    if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+      return this.activeLineIndex >= 0 ? this.activeLineIndex : 0;
+    }
     if (this.cachedLines.length === 0) {
       this.refreshLines();
     }
@@ -1137,7 +1269,7 @@ export class ReadingRuler {
    * Zpracuje pohyb ukazatele (myši nebo prstu)
    */
   handlePointerMove(clientX, clientY, pointerType = null) {
-    if (!this.enabled || this.isPageTransitioning) return;
+    if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     this.disableWordTransition();
 
     // Displacement / Delta Threshold Sanity Check:
@@ -1361,6 +1493,7 @@ export class ReadingRuler {
     for (const el of elements) {
       if (!el) continue;
       if (noTrans) {
+        el.style.transition = "none";
         el.style.setProperty("transition", "none", "important");
       } else {
         el.style.removeProperty("transition");
@@ -1375,92 +1508,139 @@ export class ReadingRuler {
    */
   resetPositionForPage(direction = 1) {
     this.disableWordTransition();
-    this.refreshLines();
-    this.refreshWords();
     this.setNoTransition(true);
+    if (this.rulerEl) {
+      this.rulerEl.style.transition = "none";
+    }
+
+    if (this.lineLockTimer) {
+      clearTimeout(this.lineLockTimer);
+      this.lineLockTimer = null;
+    }
+    this.isLineLocked = true;
+
+    if (this.navigatingPageTimer) {
+      clearTimeout(this.navigatingPageTimer);
+    }
+    this.isNavigating = true;
+    this.isNavigatingPage = true;
+    this.navigatingPageLockoutEndTime = Date.now() + 250;
+    this.navigatingPageTimer = setTimeout(() => {
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.navigatingPageTimer = null;
+    }, 250);
 
     const isBackward = direction < 0;
+    if (!isBackward) {
+      this.activeLineIndex = 0;
+      this.activeWordIndex = 0;
+    }
 
-    if (this.wordTracking) {
-      if (this.cachedWords.length > 0) {
-        const targetWordIdx = isBackward ? this.cachedWords.length - 1 : 0;
-        this.activeWordIndex = targetWordIdx;
-        const targetWord = this.cachedWords[targetWordIdx];
+    if (this.pageChangeRafId) {
+      cancelAnimationFrame(this.pageChangeRafId);
+      this.pageChangeRafId = null;
+    }
 
-        if (targetWord && targetWord.lineIndex != null) {
-          this.activeLineIndex = targetWord.lineIndex;
-        } else if (this.cachedLines.length > 0) {
-          this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
-        }
-
-        this.setWordWindow(targetWordIdx);
-        this.lastPointerX = targetWord.centerX;
-        this.lastPointerY = targetWord.centerY;
-
-        this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
-        this.maskTopEl.classList.add("is-snapped");
-        this.maskBottomEl.classList.add("is-snapped");
-        this.maskLeftEl.classList.add("is-snapped");
-        this.maskRightEl.classList.add("is-snapped");
-        this.applyPosition();
+    this.pageChangeRafId = requestAnimationFrame(() => {
+      this.pageChangeRafId = null;
+      if (!this.enabled) {
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+        this.isLineLocked = false;
+        return;
       }
-    } else {
-      if (this.cachedLines.length > 0) {
-        const targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
-        this.activeLineIndex = targetLineIdx;
 
-        if (this.cachedWords.length > 0) {
-          if (isBackward) {
-            let lastWordIdx = this.cachedWords.length - 1;
-            for (let i = this.cachedWords.length - 1; i >= 0; i--) {
-              if (this.cachedWords[i].lineIndex === targetLineIdx) {
-                lastWordIdx = i;
-                break;
-              }
+      try {
+        this.refreshLines();
+        this.refreshWords();
+
+        if (this.wordTracking) {
+          if (this.cachedWords.length > 0) {
+            const targetWordIdx = isBackward ? this.cachedWords.length - 1 : 0;
+            this.activeWordIndex = targetWordIdx;
+            const targetWord = this.cachedWords[targetWordIdx];
+
+            if (targetWord && targetWord.lineIndex != null) {
+              this.activeLineIndex = targetWord.lineIndex;
+            } else if (this.cachedLines.length > 0) {
+              this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
             }
-            this.activeWordIndex = lastWordIdx;
-          } else {
-            this.activeWordIndex = 0;
+
+            this.setWordWindow(targetWordIdx);
+            this.lastPointerX = targetWord.centerX;
+            this.lastPointerY = targetWord.centerY;
+            this.lastValidPointerX = targetWord.centerX;
+            this.lastValidPointerY = targetWord.centerY;
+
+            this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
+            this.maskTopEl.classList.add("is-snapped");
+            this.maskBottomEl.classList.add("is-snapped");
+            this.maskLeftEl.classList.add("is-snapped");
+            this.maskRightEl.classList.add("is-snapped");
+            this.applyPosition();
           }
-        }
-
-        this.rulerEl.classList.remove("word-tracking-mode");
-        const geom = this.computeLineGeometry(targetLineIdx);
-        if (geom) {
-          this.height = geom.height;
-          this.targetY = geom.targetY;
-          this.currentY = this.targetY;
-        }
-
-        const line = this.cachedLines[targetLineIdx];
-        this.lastPointerX = line.left != null ? line.left : 100;
-        this.lastPointerY = line.centerY;
-
-        this.rulerEl.classList.add("is-snapped");
-        this.maskTopEl.classList.add("is-snapped");
-        this.maskBottomEl.classList.add("is-snapped");
-        this.maskLeftEl.classList.add("is-snapped");
-        this.maskRightEl.classList.add("is-snapped");
-        this.applyPosition();
-      }
-    }
-
-    if (this.cachedLines.length === 0) {
-      requestAnimationFrame(() => {
-        if (this.enabled && this.cachedLines.length === 0) {
-          this.refreshLines();
-          this.refreshWords();
+        } else {
           if (this.cachedLines.length > 0) {
-            this.resetPositionForPage(direction);
+            const targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
+            this.activeLineIndex = targetLineIdx;
+
+            if (this.cachedWords.length > 0) {
+              if (isBackward) {
+                let lastWordIdx = this.cachedWords.length - 1;
+                for (let i = this.cachedWords.length - 1; i >= 0; i--) {
+                  if (this.cachedWords[i].lineIndex === targetLineIdx) {
+                    lastWordIdx = i;
+                    break;
+                  }
+                }
+                this.activeWordIndex = lastWordIdx;
+              } else {
+                this.activeWordIndex = 0;
+              }
+            } else {
+              this.activeWordIndex = 0;
+            }
+
+            this.rulerEl.classList.remove("word-tracking-mode");
+            const geom = this.computeLineGeometry(targetLineIdx);
+            if (geom) {
+              this.height = geom.height;
+              this.targetY = geom.targetY;
+              this.currentY = this.targetY;
+            }
+
+            const line = this.cachedLines[targetLineIdx];
+            this.lastPointerX = line.left != null ? line.left : 100;
+            this.lastPointerY = line.centerY;
+            this.lastValidPointerX = this.lastPointerX;
+            this.lastValidPointerY = this.lastPointerY;
+
+            this.rulerEl.classList.add("is-snapped");
+            this.maskTopEl.classList.add("is-snapped");
+            this.maskBottomEl.classList.add("is-snapped");
+            this.maskLeftEl.classList.add("is-snapped");
+            this.maskRightEl.classList.add("is-snapped");
+            this.applyPosition();
           }
         }
+      } catch (err) {
+        console.error("[ReadingRuler] Error in resetPositionForPage:", err);
+      } finally {
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+        if (this.lineLockTimer) {
+          clearTimeout(this.lineLockTimer);
+        }
+        this.lineLockTimer = setTimeout(() => {
+          this.isLineLocked = false;
+          this.lineLockTimer = null;
+        }, 250);
+      }
+
+      requestAnimationFrame(() => {
+        this.setNoTransition(false);
       });
-    }
-
-    if (this.rulerEl) void this.rulerEl.offsetHeight;
-
-    requestAnimationFrame(() => {
-      this.setNoTransition(false);
     });
   }
 
@@ -1498,7 +1678,8 @@ export class ReadingRuler {
    * - Ignoruje při pohybu > 10px nebo pokud je aktivní / dokončené podržení (long-press).
    */
   handleTap(clientX, clientY, pointerType = "touch", movementDelta = 0) {
-    if (!this.enabled || this.followMode !== "keyboard") return false;
+    if (!this.enabled || this.isLineLocked || this.followMode !== "keyboard") return false;
+    if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return false;
     if (pointerType !== "touch" && pointerType !== "mouse") return false;
     if (movementDelta > 10) return false;
     if (this.isHoldTriggered) return false;
@@ -1528,8 +1709,11 @@ export class ReadingRuler {
    * Posun o jeden řádek nebo slovo (krokování tlačítky na iPadu či šipkami)
    */
   stepLine(direction, force = false) {
-    // Pokud probíhá přechod strany, aktivní tažení nebo ještě neuběhl cooldown po uvolnění, ignorovat krokování (pokud není vynuceno klávesnicí)
-    if (!this.enabled || this.isPageTransitioning) return;
+    // Pokud probíhá přechod strany, aktivní tažení nebo dobíhá lockout přechodu strany, ignorovat krokování
+    if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (direction > 0 && (this.suppressLineAdvancement || (performance.now() - this.pageTurnTimestamp < 350))) {
+      return;
+    }
     if (!force && this.isInteracting()) return;
     this.cancelHold();
 
@@ -1561,6 +1745,7 @@ export class ReadingRuler {
           const curIdx = this.activeWordIndex;
           if (direction > 0 && curIdx >= this.cachedWords.length - 1) {
             if (this.onBoundary) {
+              this.lockAdvancement(350);
               this.onBoundary(1);
               return;
             }
@@ -1591,11 +1776,12 @@ export class ReadingRuler {
 
     this.disableWordTransition();
 
+    // --- STANDARDNÍ REŽIM ŘÁDKŮ (Line-level mode) ---
     if (this.cachedLines.length === 0) {
       this.refreshLines();
     }
 
-    if (this.snapToLines && this.cachedLines.length > 0) {
+    if (this.cachedLines.length > 0) {
       let newIdx;
       if (this.activeLineIndex < 0) {
         if (direction > 0) {
@@ -1609,6 +1795,7 @@ export class ReadingRuler {
         const curIdx = this.activeLineIndex;
         if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
           if (this.onBoundary) {
+            this.lockAdvancement(350);
             this.onBoundary(1);
             return;
           }
@@ -1624,25 +1811,38 @@ export class ReadingRuler {
       newIdx = Math.max(0, Math.min(this.cachedLines.length - 1, newIdx));
       this.activeLineIndex = newIdx;
 
+      this.rulerEl.classList.remove("word-tracking-mode");
       const geom = this.computeLineGeometry(newIdx);
       if (geom) {
         this.height = geom.height;
         this.targetY = geom.targetY;
+        this.currentY = this.targetY;
       }
 
-      this.currentY = this.targetY;
+      const line = this.cachedLines[newIdx];
+      this.lastPointerX = line.left != null ? line.left : 100;
+      this.lastPointerY = line.centerY;
+      this.lastValidPointerX = this.lastPointerX;
+      this.lastValidPointerY = this.lastPointerY;
+
       this.rulerEl.classList.add("is-snapped");
       this.maskTopEl.classList.add("is-snapped");
       this.maskBottomEl.classList.add("is-snapped");
       this.maskLeftEl.classList.add("is-snapped");
       this.maskRightEl.classList.add("is-snapped");
       this.applyPosition();
+      return;
     } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0) {
+      if (direction > 0) {
+        this.lockAdvancement(350);
+      }
       this.onBoundary(direction > 0 ? 1 : -1);
+      return;
     }
   }
 
   moveBy(deltaY) {
+    if (this.isLineLocked) return;
     this.disableWordTransition();
     if (this.cachedLines.length > 0) {
       this.stepLine(deltaY > 0 ? 1 : -1);
@@ -1934,17 +2134,18 @@ export class ReadingRuler {
 
 
   /**
-   * Vyvolá se při přechodu na jinou stránku nebo kapitolu
+   * Vyvolá se při přechodu na jinou stránku nebo kapitolu.
+   * Okamžitě a synchronně usadí pravítko na cílový řádek bez jakéhokoliv časovače či prodlevy.
    */
   onPageChange(direction = 0, isPageChanged = true) {
     if (!this.enabled) return;
+    this.isLineLocked = true;
     this.disableWordTransition();
     if (this.wordTransitionTimer) {
       clearTimeout(this.wordTransitionTimer);
       this.wordTransitionTimer = null;
     }
     this.isWordTransitioning = false;
-
     this.cancelHold();
 
     if (this.pageChangeTimer) {
@@ -1957,60 +2158,34 @@ export class ReadingRuler {
       this._onTransitionEnd = null;
     }
 
-    // 1. Okamžitá invalidace všech uložených pozic a rozměrů slov/řádků
-    this.cachedWords = [];
-    this.cachedLines = [];
-    this.activeWordIndex = -1;
-    this.activeLineIndex = -1;
-    this.wordLeft = 0;
-    this.wordWidth = 0;
-    this.activeWordWidth = 0;
-    this.totalWidth = 0;
-    this.previewLeft = 0;
-    this.previewWidth = 0;
-    this.isPageTransitioning = true;
+    this.isPageTransitioning = false;
+    this.rulerEl?.classList.remove("is-page-transitioning");
 
-    // 2. Vizuální skrytí pravítka během animace přechodu strany (maska zůstává ztmavená, aby nedošlo k probliknutí bílé)
-    this.rulerEl?.classList.add("is-page-transitioning");
-
-    const finishPageChange = () => {
-      if (!this.isPageTransitioning) return;
-      this.disableWordTransition();
-      this.isPageTransitioning = false;
-      if (this.pageChangeTimer) {
-        clearTimeout(this.pageChangeTimer);
-        this.pageChangeTimer = null;
-      }
-      if (content && this._onTransitionEnd) {
-        content.removeEventListener("transitionend", this._onTransitionEnd);
-        this._onTransitionEnd = null;
-      }
-
-      // Usazení pravítka na nové stránce podle směru přechodu
-      this.resetPositionForPage(direction);
-
-      // Odkrytí pravítka s čistě přepočtenými souřadnicemi
-      this.rulerEl?.classList.remove("is-page-transitioning");
-    };
-
-    if (!isPageChanged) {
-      requestAnimationFrame(finishPageChange);
-      return;
-    }
-
-    if (content) {
-      this._onTransitionEnd = (e) => {
-        if (e.target === content && e.propertyName === "transform") {
-          finishPageChange();
-        }
-      };
-      content.addEventListener("transitionend", this._onTransitionEnd, { once: true });
-    }
-    // Pojistný časovač pro případ, že se transitionend nevyvolá (délka CSS přechodu je 200ms)
-    this.pageChangeTimer = setTimeout(finishPageChange, 230);
+    // Okamžité synchronní usazení pravítka na nové stránce podle směru listování
+    this.resetPositionForPage(direction);
   }
 
   destroy() {
+    if (this.lineLockTimer) {
+      clearTimeout(this.lineLockTimer);
+      this.lineLockTimer = null;
+    }
+    this.isLineLocked = false;
+    if (this.suppressTimer) {
+      clearTimeout(this.suppressTimer);
+      this.suppressTimer = null;
+    }
+    this.suppressLineAdvancement = false;
+    if (this.pageChangeRafId) {
+      cancelAnimationFrame(this.pageChangeRafId);
+      this.pageChangeRafId = null;
+    }
+    if (this.navigatingPageTimer) {
+      clearTimeout(this.navigatingPageTimer);
+      this.navigatingPageTimer = null;
+    }
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
     if (this.wordTransitionTimer) {
       clearTimeout(this.wordTransitionTimer);
       this.wordTransitionTimer = null;

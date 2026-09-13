@@ -22,9 +22,13 @@
   --bg-app: #f8fafc;
   --bg-surface: #ffffff;
   --bg-surface-elevated: #ffffff;
+  --bg-modal: #ffffff;
+  --bg-secondary: #f1f5f9;
   --bg-hover: #f1f5f9;
   --border-color: #e2e8f0;
   --text-main: #0f172a;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
   --text-muted: #64748b;
   --text-subtle: #94a3b8;
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
@@ -44,48 +48,84 @@
 }
 
 /* Motivy pro celou aplikaci */
-[data-theme="dark"] {
+[data-theme="light"],
+.theme-light {
+  --bg-app: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #ffffff;
+  --bg-modal: #ffffff;
+  --bg-secondary: #f1f5f9;
+  --bg-hover: #f1f5f9;
+  --border-color: #e2e8f0;
+  --text-main: #0f172a;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --text-muted: #64748b;
+  --text-subtle: #94a3b8;
+}
+
+[data-theme="dark"],
+.theme-dark {
   --bg-app: #0f172a;
   --bg-surface: #1e293b;
   --bg-surface-elevated: #334155;
+  --bg-modal: #1e293b;
+  --bg-secondary: #334155;
   --bg-hover: #273549;
   --border-color: #334155;
   --text-main: #f8fafc;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
   --text-muted: #94a3b8;
   --text-subtle: #64748b;
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
   --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
 }
 
-[data-theme="oled"] {
+[data-theme="oled"],
+.theme-oled {
   --bg-app: #000000;
   --bg-surface: #121212;
   --bg-surface-elevated: #1e1e1e;
+  --bg-modal: #121212;
+  --bg-secondary: #1e1e1e;
   --bg-hover: #242424;
   --border-color: #262626;
   --text-main: #f5f5f5;
+  --text-primary: #f5f5f5;
+  --text-secondary: #a3a3a3;
   --text-muted: #a3a3a3;
   --text-subtle: #737373;
 }
 
-[data-theme="sepia"] {
+[data-theme="sepia"],
+.theme-sepia {
   --bg-app: #f4ecd8;
   --bg-surface: #faf4e6;
   --bg-surface-elevated: #ede3cb;
+  --bg-modal: #faf4e6;
+  --bg-secondary: #ede3cb;
   --bg-hover: #ede3cb;
   --border-color: #e2d6be;
   --text-main: #382b20;
+  --text-primary: #382b20;
+  --text-secondary: #796652;
   --text-muted: #796652;
   --text-subtle: #9c8a75;
 }
 
-[data-theme="warm"] {
+[data-theme="warm"],
+.theme-warm {
   --bg-app: #fbf0d9;
   --bg-surface: #fff8e7;
   --bg-surface-elevated: #f4ebd4;
+  --bg-modal: #fff8e7;
+  --bg-secondary: #f4ebd4;
   --bg-hover: #ede3cb;
   --border-color: #e5dbc4;
   --text-main: #2c2523;
+  --text-primary: #2c2523;
+  --text-secondary: #6b5c57;
   --text-muted: #6b5c57;
   --text-subtle: #93827c;
 }
@@ -706,6 +746,158 @@ body.dragging-file .drop-zone-overlay {
   font-weight: 700;
 }
 
+/* ==========================================================================
+   Vyhledávání v knize (Search Drawer)
+   ========================================================================== */
+.search-drawer-body {
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 1.5rem;
+  gap: 1rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.search-input-icon {
+  position: absolute;
+  left: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  padding: 12px 38px 12px 42px;
+  font-size: 0.95rem;
+  font-family: var(--font-ui);
+  background: var(--bg-surface-elevated, var(--bg-modal));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-main);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-sizing: border-box;
+}
+
+.search-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.btn-clear-search {
+  position: absolute;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  transition: color var(--transition-fast);
+}
+
+.btn-clear-search:hover {
+  color: var(--text-main);
+}
+
+.search-results-info {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 0 0.25rem;
+  flex-shrink: 0;
+}
+
+.search-results-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.search-result-item {
+  padding: 0.85rem 1rem;
+  background: var(--bg-surface-elevated, var(--bg-modal));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.search-result-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--color-primary);
+}
+
+.search-res-chapter {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.35rem;
+}
+
+.search-res-snippet {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-main);
+}
+
+.search-res-snippet mark {
+  background: rgba(245, 158, 11, 0.35);
+  color: inherit;
+  font-weight: 600;
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.search-empty-state {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.search-empty-icon {
+  font-size: 2.2rem;
+  opacity: 0.7;
+}
+
+.search-highlight-flash {
+  animation: searchFlash 2.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes searchFlash {
+  0% {
+    background-color: rgba(245, 158, 11, 0.65);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
 /* Skupiny nastavení */
 .settings-group {
   margin-bottom: 2rem;
@@ -1234,6 +1426,14 @@ body.dragging-file .drop-zone-overlay {
               opacity 0.24s ease,
               background-color var(--transition-normal),
               border-color var(--transition-normal);
+}
+
+/* Postup čtení: ve výchozím stavu nebo při vypnutí v nastavení je spodní lišta zcela skryta */
+body:not(.show-footer-bar) .paged-footer-bar,
+body.in-reader-view:not(.show-footer-bar) .paged-footer-bar {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 body.in-reader-view .paged-footer-bar {
