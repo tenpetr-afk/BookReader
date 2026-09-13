@@ -91,9 +91,37 @@ export class ReadingRuler {
     this.horizontalWordTransition = false;
     this.isWordTransitioning = false;
     this.wordTransitionTimer = null;
+    this.suppressLineAdvancement = false;
+    this.pageTurnTimestamp = 0;
+    this.suppressTimer = null;
+    this.pageChangeRafId = null;
 
     this.createDomElements();
     this.attachEvents();
+  }
+
+  lockAdvancement(duration = 350) {
+    this.pageTurnTimestamp = performance.now();
+    this.suppressLineAdvancement = true;
+    if (this.suppressTimer) clearTimeout(this.suppressTimer);
+    this.suppressTimer = setTimeout(() => {
+      this.suppressLineAdvancement = false;
+      this.suppressTimer = null;
+    }, duration);
+  }
+
+  isLastLine() {
+    if (!this.enabled) return false;
+    if (this.wordTracking) {
+      if (this.cachedWords.length === 0) return false;
+      return this.activeWordIndex >= this.cachedWords.length - 1;
+    }
+    if (this.cachedLines.length === 0) return false;
+    return this.activeLineIndex >= this.cachedLines.length - 1;
+  }
+
+  stepRuler(delta, force = false) {
+    return this.stepLine(delta, force);
   }
 
   get rulerMode() {
@@ -1426,6 +1454,7 @@ export class ReadingRuler {
     for (const el of elements) {
       if (!el) continue;
       if (noTrans) {
+        el.style.transition = "none";
         el.style.setProperty("transition", "none", "important");
       } else {
         el.style.removeProperty("transition");
@@ -1441,6 +1470,9 @@ export class ReadingRuler {
   resetPositionForPage(direction = 1) {
     this.disableWordTransition();
     this.setNoTransition(true);
+    if (this.rulerEl) {
+      this.rulerEl.style.transition = "none";
+    }
 
     if (this.navigatingPageTimer) {
       clearTimeout(this.navigatingPageTimer);
@@ -1460,101 +1492,113 @@ export class ReadingRuler {
       this.activeWordIndex = 0;
     }
 
-    try {
-      this.refreshLines();
-      this.refreshWords();
+    if (this.pageChangeRafId) {
+      cancelAnimationFrame(this.pageChangeRafId);
+      this.pageChangeRafId = null;
+    }
 
-      if (this.wordTracking) {
-        if (this.cachedWords.length > 0) {
-          const targetWordIdx = isBackward ? this.cachedWords.length - 1 : 0;
-          this.activeWordIndex = targetWordIdx;
-          const targetWord = this.cachedWords[targetWordIdx];
+    this.pageChangeRafId = requestAnimationFrame(() => {
+      this.pageChangeRafId = null;
+      if (!this.enabled) {
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+        return;
+      }
 
-          if (targetWord && targetWord.lineIndex != null) {
-            this.activeLineIndex = targetWord.lineIndex;
-          } else if (this.cachedLines.length > 0) {
-            this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
-          }
+      try {
+        this.refreshLines();
+        this.refreshWords();
 
-          this.setWordWindow(targetWordIdx);
-          this.lastPointerX = targetWord.centerX;
-          this.lastPointerY = targetWord.centerY;
-          this.lastValidPointerX = targetWord.centerX;
-          this.lastValidPointerY = targetWord.centerY;
-
-          this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
-          this.maskTopEl.classList.add("is-snapped");
-          this.maskBottomEl.classList.add("is-snapped");
-          this.maskLeftEl.classList.add("is-snapped");
-          this.maskRightEl.classList.add("is-snapped");
-          this.applyPosition();
-        }
-      } else {
-        if (this.cachedLines.length > 0) {
-          const targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
-          this.activeLineIndex = targetLineIdx;
-
+        if (this.wordTracking) {
           if (this.cachedWords.length > 0) {
-            if (isBackward) {
-              let lastWordIdx = this.cachedWords.length - 1;
-              for (let i = this.cachedWords.length - 1; i >= 0; i--) {
-                if (this.cachedWords[i].lineIndex === targetLineIdx) {
-                  lastWordIdx = i;
-                  break;
+            const targetWordIdx = isBackward ? this.cachedWords.length - 1 : 0;
+            this.activeWordIndex = targetWordIdx;
+            const targetWord = this.cachedWords[targetWordIdx];
+
+            if (targetWord && targetWord.lineIndex != null) {
+              this.activeLineIndex = targetWord.lineIndex;
+            } else if (this.cachedLines.length > 0) {
+              this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
+            }
+
+            this.setWordWindow(targetWordIdx);
+            this.lastPointerX = targetWord.centerX;
+            this.lastPointerY = targetWord.centerY;
+            this.lastValidPointerX = targetWord.centerX;
+            this.lastValidPointerY = targetWord.centerY;
+
+            this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
+            this.maskTopEl.classList.add("is-snapped");
+            this.maskBottomEl.classList.add("is-snapped");
+            this.maskLeftEl.classList.add("is-snapped");
+            this.maskRightEl.classList.add("is-snapped");
+            this.applyPosition();
+          }
+        } else {
+          if (this.cachedLines.length > 0) {
+            const targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
+            this.activeLineIndex = targetLineIdx;
+
+            if (this.cachedWords.length > 0) {
+              if (isBackward) {
+                let lastWordIdx = this.cachedWords.length - 1;
+                for (let i = this.cachedWords.length - 1; i >= 0; i--) {
+                  if (this.cachedWords[i].lineIndex === targetLineIdx) {
+                    lastWordIdx = i;
+                    break;
+                  }
                 }
+                this.activeWordIndex = lastWordIdx;
+              } else {
+                this.activeWordIndex = 0;
               }
-              this.activeWordIndex = lastWordIdx;
             } else {
               this.activeWordIndex = 0;
             }
-          } else {
-            this.activeWordIndex = 0;
-          }
 
-          this.rulerEl.classList.remove("word-tracking-mode");
-          const geom = this.computeLineGeometry(targetLineIdx);
-          if (geom) {
-            this.height = geom.height;
-            this.targetY = geom.targetY;
-            this.currentY = this.targetY;
-          }
-
-          const line = this.cachedLines[targetLineIdx];
-          this.lastPointerX = line.left != null ? line.left : 100;
-          this.lastPointerY = line.centerY;
-          this.lastValidPointerX = this.lastPointerX;
-          this.lastValidPointerY = this.lastPointerY;
-
-          this.rulerEl.classList.add("is-snapped");
-          this.maskTopEl.classList.add("is-snapped");
-          this.maskBottomEl.classList.add("is-snapped");
-          this.maskLeftEl.classList.add("is-snapped");
-          this.maskRightEl.classList.add("is-snapped");
-          this.applyPosition();
-        }
-      }
-
-      if (this.cachedLines.length === 0) {
-        requestAnimationFrame(() => {
-          if (this.enabled && this.cachedLines.length === 0) {
-            this.refreshLines();
-            this.refreshWords();
-            if (this.cachedLines.length > 0) {
-              this.resetPositionForPage(direction);
+            this.rulerEl.classList.remove("word-tracking-mode");
+            const geom = this.computeLineGeometry(targetLineIdx);
+            if (geom) {
+              this.height = geom.height;
+              this.targetY = geom.targetY;
+              this.currentY = this.targetY;
             }
-          }
-        });
-      }
 
-      if (this.rulerEl) void this.rulerEl.offsetHeight;
+            const line = this.cachedLines[targetLineIdx];
+            this.lastPointerX = line.left != null ? line.left : 100;
+            this.lastPointerY = line.centerY;
+            this.lastValidPointerX = this.lastPointerX;
+            this.lastValidPointerY = this.lastPointerY;
+
+            this.rulerEl.classList.add("is-snapped");
+            this.maskTopEl.classList.add("is-snapped");
+            this.maskBottomEl.classList.add("is-snapped");
+            this.maskLeftEl.classList.add("is-snapped");
+            this.maskRightEl.classList.add("is-snapped");
+            this.applyPosition();
+          }
+        }
+
+        if (this.cachedLines.length === 0) {
+          requestAnimationFrame(() => {
+            if (this.enabled && this.cachedLines.length === 0) {
+              this.refreshLines();
+              this.refreshWords();
+              if (this.cachedLines.length > 0) {
+                this.resetPositionForPage(direction);
+              }
+            }
+          });
+        }
+      } finally {
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+      }
 
       requestAnimationFrame(() => {
         this.setNoTransition(false);
       });
-    } finally {
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-    }
+    });
   }
 
   getReaderContainer() {
@@ -1624,6 +1668,9 @@ export class ReadingRuler {
   stepLine(direction, force = false) {
     // Pokud probíhá přechod strany, aktivní tažení nebo dobíhá lockout přechodu strany, ignorovat krokování
     if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (direction > 0 && (this.suppressLineAdvancement || (performance.now() - this.pageTurnTimestamp < 350))) {
+      return;
+    }
     if (!force && this.isInteracting()) return;
     this.cancelHold();
 
@@ -1655,6 +1702,7 @@ export class ReadingRuler {
           const curIdx = this.activeWordIndex;
           if (direction > 0 && curIdx >= this.cachedWords.length - 1) {
             if (this.onBoundary) {
+              this.lockAdvancement(350);
               this.onBoundary(1);
               return;
             }
@@ -1703,6 +1751,7 @@ export class ReadingRuler {
         const curIdx = this.activeLineIndex;
         if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
           if (this.onBoundary) {
+            this.lockAdvancement(350);
             this.onBoundary(1);
             return;
           }
@@ -1732,6 +1781,9 @@ export class ReadingRuler {
       this.maskRightEl.classList.add("is-snapped");
       this.applyPosition();
     } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0) {
+      if (direction > 0) {
+        this.lockAdvancement(350);
+      }
       this.onBoundary(direction > 0 ? 1 : -1);
       return;
     }
@@ -2060,6 +2112,15 @@ export class ReadingRuler {
   }
 
   destroy() {
+    if (this.suppressTimer) {
+      clearTimeout(this.suppressTimer);
+      this.suppressTimer = null;
+    }
+    this.suppressLineAdvancement = false;
+    if (this.pageChangeRafId) {
+      cancelAnimationFrame(this.pageChangeRafId);
+      this.pageChangeRafId = null;
+    }
     if (this.navigatingPageTimer) {
       clearTimeout(this.navigatingPageTimer);
       this.navigatingPageTimer = null;

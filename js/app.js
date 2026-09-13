@@ -223,6 +223,9 @@ class LuminaApp {
     this.ruler.onBoundary = (dir) => {
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
+        if (this.ruler) {
+          this.ruler.lockAdvancement(350);
+        }
         this.nextPage();
       } else if (dir < 0) {
         this.prevPage();
@@ -1182,14 +1185,23 @@ class LuminaApp {
           }
         }
 
+        const isLastLine = this.ruler?.isLastLine();
+
         // 1. OBRACENÍ STRAN (Page Turns): Šipka vpravo / Šipka vlevo / PageUp / PageDown
         if (e.key === "ArrowRight" || e.key === "PageDown") {
           e.preventDefault();
+          e.stopImmediatePropagation();
+          if (activeEl && activeEl !== document.body && activeEl.blur) activeEl.blur();
+          if (this.ruler) {
+            this.ruler.lockAdvancement(350);
+          }
           this.nextPage();
           return;
         }
         if (e.key === "ArrowLeft" || e.key === "PageUp") {
           e.preventDefault();
+          e.stopImmediatePropagation();
+          if (activeEl && activeEl !== document.body && activeEl.blur) activeEl.blur();
           this.prevPage();
           return;
         }
@@ -1197,6 +1209,17 @@ class LuminaApp {
         // 2. KROKOVÁNÍ PRAVÍTKA: Mezerník a Šipka dolů (vpřed +1), Šipka nahoru (vzad -1)
         // Pokud pravítko není zapnuto, automaticky jej aktivujeme a ihned posuneme
         if (e.code === "Space" || e.key === " " || e.key === "Spacebar" || e.key === "ArrowDown") {
+          if (isLastLine) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (activeEl && activeEl !== document.body && activeEl.blur) activeEl.blur();
+            if (this.ruler) {
+              this.ruler.lockAdvancement(350);
+            }
+            this.nextPage();
+            return;
+          }
+
           e.preventDefault();
           if (this.ruler) {
             if (!this.ruler.enabled) {
@@ -1678,7 +1701,6 @@ class LuminaApp {
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transition = "none";
         this.dom.readerContent.style.transform = `translateX(-${offset}px)`;
-        void this.dom.readerContent.offsetHeight; // Vynucení reflow pro synchronní a přesné měření textových uzlů pravítkem
       }
 
       // Měření postupu
@@ -1726,6 +1748,11 @@ class LuminaApp {
     this.lastPageTurnTime = now;
 
     this.isNavigating = true;
+    if (this.ruler) {
+      this.ruler.lockAdvancement(350);
+      this.ruler.activeLineIndex = 0;
+      this.ruler.activeWordIndex = 0;
+    }
 
     try {
       if (this.currentPageIndex < this.totalPagesInChapter - 1) {
@@ -1758,6 +1785,9 @@ class LuminaApp {
     this.lastPageTurnTime = now;
 
     this.isNavigating = true;
+    if (this.ruler) {
+      this.ruler.lockAdvancement(350);
+    }
 
     try {
       if (this.currentPageIndex > 0) {
