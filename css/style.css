@@ -186,6 +186,13 @@ body {
   border: 1px solid var(--border-color);
 }
 
+.brand-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 .brand-title {
   font-size: 2rem;
   font-weight: 800;
@@ -193,6 +200,21 @@ body {
   background: linear-gradient(135deg, #2563eb, #38bdf8);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+}
+
+.app-version-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  letter-spacing: 0.02em;
+  user-select: none;
+  vertical-align: middle;
 }
 
 .brand-tagline {

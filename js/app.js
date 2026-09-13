@@ -10,6 +10,8 @@ import { tracker, ReadingTracker } from "./tracker.js";
 import { ReadingRuler } from "./ruler.js";
 import { StatsCharts } from "./charts.js";
 
+export const APP_VERSION = "v1.21.0";
+
 class LuminaApp {
   constructor() {
     this.currentBook = null;
@@ -40,6 +42,10 @@ class LuminaApp {
   async init() {
     document.body.classList.remove("in-reader-view");
     this.cacheDom();
+    const versionEl = this.dom.versionBadge || document.getElementById("app-version-badge");
+    if (versionEl) {
+      versionEl.textContent = APP_VERSION;
+    }
     this.initRuler();
     this.applySettings();
     this.bindEvents();
@@ -78,6 +84,7 @@ class LuminaApp {
       btnToggleSettingsLib: document.getElementById("btn-toggle-settings-lib"),
       btnToggleStatsLib: document.getElementById("btn-toggle-stats-lib"),
       drawerBackdrop: document.getElementById("drawer-backdrop"),
+      versionBadge: document.getElementById("app-version-badge"),
 
       // Stránkovaná čtečka
       readerHeader: document.getElementById("reader-header"),
