@@ -328,10 +328,16 @@ class LuminaApp {
     });
 
     // Zobrazení spodní lišty čtečky (postup čtení)
-    const showFooter = this.settings.showFooterBar !== false;
-    document.body.classList.toggle("show-footer-bar", showFooter);
+    const showProgressBar = localStorage.getItem('showProgressBar') !== null
+      ? localStorage.getItem('showProgressBar') === 'true'
+      : true; // MUST default to true for new domains/first visits
+    this.settings.showFooterBar = showProgressBar;
+    this.settings.showProgressBar = showProgressBar;
+
+    document.body.classList.toggle("show-footer-bar", showProgressBar);
+    document.body.classList.toggle("hide-footer-bar", !showProgressBar);
     if (this.dom.settingShowFooter) {
-      this.setSwitchState(this.dom.settingShowFooter, showFooter);
+      this.setSwitchState(this.dom.settingShowFooter, showProgressBar);
     }
 
     // Synchronizace rychlého popoveru pravítka
@@ -1066,10 +1072,16 @@ class LuminaApp {
     // Přepínač zobrazení spodní lišty s postupem čtení
     if (this.dom.settingShowFooter) {
       this.dom.settingShowFooter.addEventListener("click", () => {
-        const val = !this.settings.showFooterBar;
+        const currentVal = localStorage.getItem('showProgressBar') !== null
+          ? localStorage.getItem('showProgressBar') === 'true'
+          : ((this.settings.showProgressBar !== undefined ? this.settings.showProgressBar : this.settings.showFooterBar) !== false);
+        const val = !currentVal;
         this.settings.showFooterBar = val;
+        this.settings.showProgressBar = val;
+        localStorage.setItem('showProgressBar', String(val));
         this.setSwitchState(this.dom.settingShowFooter, val);
         document.body.classList.toggle("show-footer-bar", val);
+        document.body.classList.toggle("hide-footer-bar", !val);
         storage.saveSettings(this.settings);
         if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
           requestAnimationFrame(() => {
@@ -2092,8 +2104,13 @@ class LuminaApp {
     this.closeDrawer("settings");
     this.dom.viewLibrary.classList.add("is-hidden");
     this.dom.viewReader.classList.remove("is-hidden");
-    document.body.classList.add("in-reader-view");
-    document.body.classList.toggle("show-footer-bar", this.settings.showFooterBar !== false);
+    const showProgressBar = localStorage.getItem('showProgressBar') !== null
+      ? localStorage.getItem('showProgressBar') === 'true'
+      : (this.settings.showProgressBar !== undefined ? this.settings.showProgressBar : (this.settings.showFooterBar !== false));
+    this.settings.showFooterBar = showProgressBar;
+    this.settings.showProgressBar = showProgressBar;
+    document.body.classList.toggle("show-footer-bar", showProgressBar);
+    document.body.classList.toggle("hide-footer-bar", !showProgressBar);
     document.body.classList.remove("reader-chrome-hidden");
     if (this.settings.ruler.enabled) {
       this.ruler.setEnabled(true);

@@ -1428,7 +1428,8 @@ body.dragging-file .drop-zone-overlay {
               border-color var(--transition-normal);
 }
 
-/* Postup čtení: ve výchozím stavu nebo při vypnutí v nastavení je spodní lišta zcela skryta */
+/* Postup čtení: při explicitním vypnutí v nastavení je spodní lišta zcela skryta */
+body.hide-footer-bar .paged-footer-bar,
 body:not(.show-footer-bar) .paged-footer-bar,
 body.in-reader-view:not(.show-footer-bar) .paged-footer-bar {
   display: none !important;
