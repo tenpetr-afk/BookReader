@@ -380,16 +380,16 @@ body:not(.in-reader-view) .ruler-floating-controls {
   position: fixed;
   left: 0;
   right: 0;
-  z-index: 900;
+  z-index: 9999 !important;
   transition: opacity 0.2s ease, background-color 0.2s ease;
   display: none;
-  pointer-events: none;
+  pointer-events: none !important;
   box-sizing: border-box;
   overflow: visible !important;
 }
 
 .reading-ruler.is-visible {
-  display: block;
+  display: block !important;
 }
 
 /* Režim sledování jednotlivých slov – přesné ohraničení slova bez ořezávání sousedních znaků */
@@ -487,15 +487,15 @@ body:not(.in-reader-view) .ruler-floating-controls {
   left: 0;
   right: 0;
   background-color: #000000;
-  pointer-events: none;
-  z-index: 899;
+  pointer-events: none !important;
+  z-index: 9998 !important;
   display: none;
   transition: opacity 0.2s ease;
   box-sizing: border-box;
 }
 
 .ruler-mask.is-visible {
-  display: block;
+  display: block !important;
 }
 
 .ruler-mask-top {
