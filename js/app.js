@@ -29,7 +29,9 @@ class LuminaApp {
     // Ochrana proti syntetickým gestům po přechodu strany na iPadu
     this.isNavigating = false;
     this.isNavigatingPage = false;
+    this.isLineLocked = false;
     this.navigatingPageTimer = null;
+    this._navSafetyTimer = null;
 
     // DOM elementy
     this.dom = {};
@@ -223,15 +225,8 @@ class LuminaApp {
     this.ruler.onBoundary = (dir) => {
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
-        if (this.ruler) {
-          this.ruler.isLineLocked = true;
-          this.ruler.lockAdvancement(350);
-        }
         this.nextPage();
       } else if (dir < 0) {
-        if (this.ruler) {
-          this.ruler.isLineLocked = true;
-        }
         this.prevPage();
       }
     };
@@ -1581,17 +1576,43 @@ class LuminaApp {
     if (!this.currentParser) return;
 
     this.isNavigating = true;
+    this.isNavigatingPage = true;
+    this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isNavigating = true;
+      this.ruler.isNavigatingPage = true;
+      this.ruler.isLineLocked = true;
       if (targetPage !== "last") {
         this.ruler.activeLineIndex = 0;
         this.ruler.activeWordIndex = 0;
       }
     }
 
+    clearTimeout(this._navSafetyTimer);
+    this._navSafetyTimer = setTimeout(() => {
+      if (this.isNavigating || this.isLineLocked || this.ruler?.isLineLocked) {
+        console.warn('Navigation lock timed out. Forcing release.');
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+        this.isLineLocked = false;
+        if (this.ruler) {
+          this.ruler.isNavigating = false;
+          this.ruler.isNavigatingPage = false;
+          this.ruler.isLineLocked = false;
+          this.ruler.suppressLineAdvancement = false;
+        }
+      }
+    }, 1000);
+
     const chapterTimeout = setTimeout(() => {
       this.isNavigating = false;
-      if (this.ruler) this.ruler.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      if (this.ruler) {
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
+      }
     }, 1000);
 
     try {
@@ -1629,7 +1650,13 @@ class LuminaApp {
       }
     } catch (e) {
       this.isNavigating = false;
-      if (this.ruler) this.ruler.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      if (this.ruler) {
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
+      }
       console.error("Chyba při načítání kapitoly:", e);
       this.showToast(`Chyba při načítání kapitoly: ${e.message}`, "error");
 
@@ -1647,8 +1674,16 @@ class LuminaApp {
       this.recalcPages();
     } finally {
       clearTimeout(chapterTimeout);
+      clearTimeout(this._navSafetyTimer);
       this.isNavigating = false;
-      if (this.ruler) this.ruler.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      if (this.ruler) {
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
+        this.ruler.suppressLineAdvancement = false;
+      }
     }
   }
 
@@ -1681,6 +1716,7 @@ class LuminaApp {
     // Post-navigation zámek pro debouncing syntetických gest a eventů na iPadu (WebKit)
     this.isNavigating = true;
     this.isNavigatingPage = true;
+    this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
       this.ruler.isNavigating = true;
@@ -1691,14 +1727,33 @@ class LuminaApp {
       }
     }
 
+    clearTimeout(this._navSafetyTimer);
+    this._navSafetyTimer = setTimeout(() => {
+      if (this.isNavigating || this.isLineLocked || this.ruler?.isLineLocked) {
+        console.warn('Navigation lock timed out. Forcing release.');
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+        this.isLineLocked = false;
+        if (this.ruler) {
+          this.ruler.isNavigating = false;
+          this.ruler.isNavigatingPage = false;
+          this.ruler.isLineLocked = false;
+          this.ruler.suppressLineAdvancement = false;
+        }
+      }
+    }, 300); // 300ms maximum lock lifetime
+
     // Failsafe timeout pro zaručené odemčení navigačního zámku
     if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
     this.navigatingPageTimer = setTimeout(() => {
       this.isNavigating = false;
       this.isNavigatingPage = false;
+      this.isLineLocked = false;
       if (this.ruler) {
         this.ruler.isNavigating = false;
         this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
+        this.ruler.suppressLineAdvancement = false;
       }
       this.navigatingPageTimer = null;
     }, 200);
@@ -1733,18 +1788,22 @@ class LuminaApp {
       } catch (rulerErr) {
         console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
       }
+    } catch (err) {
+      console.error('Page navigation error:', err);
     } finally {
       // Synchronní uvolnění navigačního zámku ihned po vykreslení DOMu a změření řádků
       this.isNavigating = false;
       this.isNavigatingPage = false;
+      this.isLineLocked = false;
       if (this.ruler) {
         this.ruler.isNavigating = false;
         this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
       }
     }
   }
 
-  nextPage() {
+  async nextPage() {
     console.log(`[LuminaReader] nextPage() called, currentPageIndex: ${this.currentPageIndex}, totalPagesInChapter: ${this.totalPagesInChapter}`);
     const now = Date.now();
     if (this.isNavigating) {
@@ -1758,6 +1817,8 @@ class LuminaApp {
     this.lastPageTurnTime = now;
 
     this.isNavigating = true;
+    this.isNavigatingPage = true;
+    this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
       this.ruler.lockAdvancement(350);
@@ -1765,27 +1826,48 @@ class LuminaApp {
       this.ruler.activeWordIndex = 0;
     }
 
+    clearTimeout(this._navSafetyTimer);
+    this._navSafetyTimer = setTimeout(() => {
+      if (this.isNavigating || this.isLineLocked || this.ruler?.isLineLocked) {
+        console.warn('Navigation lock timed out. Forcing release.');
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+        this.isLineLocked = false;
+        if (this.ruler) {
+          this.ruler.isNavigating = false;
+          this.ruler.isNavigatingPage = false;
+          this.ruler.isLineLocked = false;
+          this.ruler.suppressLineAdvancement = false;
+        }
+      }
+    }, 300); // 300ms maximum lock lifetime
+
     try {
       if (this.currentPageIndex < this.totalPagesInChapter - 1) {
         this.goToPage(this.currentPageIndex + 1, 1);
         console.log(`[LuminaReader] nextPage() resolved cleanly: page -> ${this.currentPageIndex + 1}`);
       } else if (this.currentChapterIndex < this.currentParser.spine.length - 1) {
         console.log(`[LuminaReader] nextPage() advancing to next chapter -> ${this.currentChapterIndex + 1}`);
-        this.navigateChapter(1, 0);
+        await this.navigateChapter(1, 0);
       } else {
-        this.isNavigating = false;
-        if (this.ruler) this.ruler.isNavigating = false;
         this.showToast("Dočetli jste knihu až do konce! 🎉", "success");
         console.log("[LuminaReader] nextPage() reached end of book");
       }
     } catch (err) {
-      console.error("[LuminaReader] Error in nextPage():", err);
+      console.error('Page navigation error:', err);
+    } finally {
       this.isNavigating = false;
-      if (this.ruler) this.ruler.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      if (this.ruler) {
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
+      }
     }
   }
 
-  prevPage() {
+  async prevPage() {
     console.log(`[LuminaReader] prevPage() called, currentPageIndex: ${this.currentPageIndex}`);
     const now = Date.now();
     if (this.isNavigating) {
@@ -1796,10 +1878,28 @@ class LuminaApp {
     this.lastPageTurnTime = now;
 
     this.isNavigating = true;
+    this.isNavigatingPage = true;
+    this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
       this.ruler.lockAdvancement(350);
     }
+
+    clearTimeout(this._navSafetyTimer);
+    this._navSafetyTimer = setTimeout(() => {
+      if (this.isNavigating || this.isLineLocked || this.ruler?.isLineLocked) {
+        console.warn('Navigation lock timed out. Forcing release.');
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+        this.isLineLocked = false;
+        if (this.ruler) {
+          this.ruler.isNavigating = false;
+          this.ruler.isNavigatingPage = false;
+          this.ruler.isLineLocked = false;
+          this.ruler.suppressLineAdvancement = false;
+        }
+      }
+    }, 300); // 300ms maximum lock lifetime
 
     try {
       if (this.currentPageIndex > 0) {
@@ -1807,15 +1907,19 @@ class LuminaApp {
         console.log(`[LuminaReader] prevPage() resolved cleanly: page -> ${this.currentPageIndex + 1}`);
       } else if (this.currentChapterIndex > 0) {
         console.log(`[LuminaReader] prevPage() moving to prev chapter -> ${this.currentChapterIndex - 1}`);
-        this.navigateChapter(-1, "last");
-      } else {
-        this.isNavigating = false;
-        if (this.ruler) this.ruler.isNavigating = false;
+        await this.navigateChapter(-1, "last");
       }
     } catch (err) {
-      console.error("[LuminaReader] Error in prevPage():", err);
+      console.error('Page navigation error:', err);
+    } finally {
       this.isNavigating = false;
-      if (this.ruler) this.ruler.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      if (this.ruler) {
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
+      }
     }
   }
 

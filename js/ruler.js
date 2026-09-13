@@ -97,6 +97,7 @@ export class ReadingRuler {
     this.pageChangeRafId = null;
     this.isLineLocked = false;
     this.lineLockTimer = null;
+    this._navSafetyTimer = null;
 
     this.createDomElements();
     this.attachEvents();
@@ -110,6 +111,16 @@ export class ReadingRuler {
       this.suppressLineAdvancement = false;
       this.suppressTimer = null;
     }, duration);
+
+    clearTimeout(this._navSafetyTimer);
+    this._navSafetyTimer = setTimeout(() => {
+      if (this.isNavigating || this.isLineLocked) {
+        console.warn('Navigation lock timed out. Forcing release.');
+        this.isNavigating = false;
+        this.isLineLocked = false;
+        this.suppressLineAdvancement = false;
+      }
+    }, 300); // 300ms maximum lock lifetime
   }
 
   isLastLine() {
@@ -1531,6 +1542,17 @@ export class ReadingRuler {
       this.navigatingPageTimer = null;
     }, 250);
 
+    clearTimeout(this._navSafetyTimer);
+    this._navSafetyTimer = setTimeout(() => {
+      if (this.isNavigating || this.isLineLocked) {
+        console.warn('Navigation lock timed out. Forcing release.');
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+        this.isLineLocked = false;
+        this.suppressLineAdvancement = false;
+      }
+    }, 300); // 300ms maximum lock lifetime
+
     const isBackward = direction < 0;
     if (!isBackward) {
       this.activeLineIndex = 0;
@@ -1629,13 +1651,12 @@ export class ReadingRuler {
       } finally {
         this.isNavigating = false;
         this.isNavigatingPage = false;
+        this.isLineLocked = false;
+        this.suppressLineAdvancement = false;
         if (this.lineLockTimer) {
           clearTimeout(this.lineLockTimer);
-        }
-        this.lineLockTimer = setTimeout(() => {
-          this.isLineLocked = false;
           this.lineLockTimer = null;
-        }, 250);
+        }
       }
 
       requestAnimationFrame(() => {
@@ -1717,33 +1738,84 @@ export class ReadingRuler {
     if (!force && this.isInteracting()) return;
     this.cancelHold();
 
-    if (this.wordTracking) {
-      if (this.isWordTransitioning) {
-        if (this.wordTransitionTimer) {
-          clearTimeout(this.wordTransitionTimer);
-          this.wordTransitionTimer = null;
+    try {
+      if (this.wordTracking) {
+        if (this.isWordTransitioning) {
+          if (this.wordTransitionTimer) {
+            clearTimeout(this.wordTransitionTimer);
+            this.wordTransitionTimer = null;
+          }
+          this.isWordTransitioning = false;
+          this.disableWordTransition();
         }
-        this.isWordTransitioning = false;
-        this.disableWordTransition();
+
+        if (this.cachedWords.length === 0) {
+          this.refreshWords();
+        }
+
+        if (this.cachedWords.length > 0) {
+          let newIdx;
+          if (this.activeWordIndex < 0) {
+            if (direction > 0) {
+              newIdx = 0;
+            } else if (direction < 0) {
+              newIdx = this.cachedWords.length - 1;
+            } else {
+              newIdx = 0;
+            }
+          } else {
+            const curIdx = this.activeWordIndex;
+            if (direction > 0 && curIdx >= this.cachedWords.length - 1) {
+              if (this.onBoundary) {
+                this.lockAdvancement(350);
+                this.onBoundary(1);
+                return;
+              }
+            } else if (direction < 0 && curIdx <= 0) {
+              if (this.onBoundary) {
+                this.onBoundary(-1);
+                return;
+              }
+            }
+            newIdx = curIdx + direction;
+          }
+
+          newIdx = Math.max(0, Math.min(this.cachedWords.length - 1, newIdx));
+          this.setWordWindow(newIdx);
+
+          this.rulerEl.classList.add("word-tracking-mode");
+          this.rulerEl.classList.add("is-snapped");
+          this.maskTopEl.classList.add("is-snapped");
+          this.maskBottomEl.classList.add("is-snapped");
+          this.maskLeftEl.classList.add("is-snapped");
+          this.maskRightEl.classList.add("is-snapped");
+
+          this.disableWordTransition();
+          this.applyPosition();
+          return;
+        }
       }
 
-      if (this.cachedWords.length === 0) {
-        this.refreshWords();
+      this.disableWordTransition();
+
+      // --- STANDARDNÍ REŽIM ŘÁDKŮ (Line-level mode) ---
+      if (this.cachedLines.length === 0) {
+        this.refreshLines();
       }
 
-      if (this.cachedWords.length > 0) {
+      if (this.cachedLines.length > 0) {
         let newIdx;
-        if (this.activeWordIndex < 0) {
+        if (this.activeLineIndex < 0) {
           if (direction > 0) {
             newIdx = 0;
           } else if (direction < 0) {
-            newIdx = this.cachedWords.length - 1;
+            newIdx = this.cachedLines.length - 1;
           } else {
             newIdx = 0;
           }
         } else {
-          const curIdx = this.activeWordIndex;
-          if (direction > 0 && curIdx >= this.cachedWords.length - 1) {
+          const curIdx = this.activeLineIndex;
+          if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
             if (this.onBoundary) {
               this.lockAdvancement(350);
               this.onBoundary(1);
@@ -1758,86 +1830,39 @@ export class ReadingRuler {
           newIdx = curIdx + direction;
         }
 
-        newIdx = Math.max(0, Math.min(this.cachedWords.length - 1, newIdx));
-        this.setWordWindow(newIdx);
+        newIdx = Math.max(0, Math.min(this.cachedLines.length - 1, newIdx));
+        this.activeLineIndex = newIdx;
 
-        this.rulerEl.classList.add("word-tracking-mode");
+        this.rulerEl.classList.remove("word-tracking-mode");
+        const geom = this.computeLineGeometry(newIdx);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+          this.currentY = this.targetY;
+        }
+
+        const line = this.cachedLines[newIdx];
+        this.lastPointerX = line.left != null ? line.left : 100;
+        this.lastPointerY = line.centerY;
+        this.lastValidPointerX = this.lastPointerX;
+        this.lastValidPointerY = this.lastPointerY;
+
         this.rulerEl.classList.add("is-snapped");
         this.maskTopEl.classList.add("is-snapped");
         this.maskBottomEl.classList.add("is-snapped");
         this.maskLeftEl.classList.add("is-snapped");
         this.maskRightEl.classList.add("is-snapped");
-
-        this.disableWordTransition();
         this.applyPosition();
         return;
-      }
-    }
-
-    this.disableWordTransition();
-
-    // --- STANDARDNÍ REŽIM ŘÁDKŮ (Line-level mode) ---
-    if (this.cachedLines.length === 0) {
-      this.refreshLines();
-    }
-
-    if (this.cachedLines.length > 0) {
-      let newIdx;
-      if (this.activeLineIndex < 0) {
+      } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0) {
         if (direction > 0) {
-          newIdx = 0;
-        } else if (direction < 0) {
-          newIdx = this.cachedLines.length - 1;
-        } else {
-          newIdx = 0;
+          this.lockAdvancement(350);
         }
-      } else {
-        const curIdx = this.activeLineIndex;
-        if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
-          if (this.onBoundary) {
-            this.lockAdvancement(350);
-            this.onBoundary(1);
-            return;
-          }
-        } else if (direction < 0 && curIdx <= 0) {
-          if (this.onBoundary) {
-            this.onBoundary(-1);
-            return;
-          }
-        }
-        newIdx = curIdx + direction;
+        this.onBoundary(direction > 0 ? 1 : -1);
+        return;
       }
-
-      newIdx = Math.max(0, Math.min(this.cachedLines.length - 1, newIdx));
-      this.activeLineIndex = newIdx;
-
-      this.rulerEl.classList.remove("word-tracking-mode");
-      const geom = this.computeLineGeometry(newIdx);
-      if (geom) {
-        this.height = geom.height;
-        this.targetY = geom.targetY;
-        this.currentY = this.targetY;
-      }
-
-      const line = this.cachedLines[newIdx];
-      this.lastPointerX = line.left != null ? line.left : 100;
-      this.lastPointerY = line.centerY;
-      this.lastValidPointerX = this.lastPointerX;
-      this.lastValidPointerY = this.lastPointerY;
-
-      this.rulerEl.classList.add("is-snapped");
-      this.maskTopEl.classList.add("is-snapped");
-      this.maskBottomEl.classList.add("is-snapped");
-      this.maskLeftEl.classList.add("is-snapped");
-      this.maskRightEl.classList.add("is-snapped");
-      this.applyPosition();
-      return;
-    } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0) {
-      if (direction > 0) {
-        this.lockAdvancement(350);
-      }
-      this.onBoundary(direction > 0 ? 1 : -1);
-      return;
+    } catch (err) {
+      console.error("[ReadingRuler] Error in stepLine:", err);
     }
   }
 
@@ -2140,6 +2165,18 @@ export class ReadingRuler {
   onPageChange(direction = 0, isPageChanged = true) {
     if (!this.enabled) return;
     this.isLineLocked = true;
+
+    clearTimeout(this._navSafetyTimer);
+    this._navSafetyTimer = setTimeout(() => {
+      if (this.isNavigating || this.isLineLocked) {
+        console.warn('Navigation lock timed out. Forcing release.');
+        this.isNavigating = false;
+        this.isNavigatingPage = false;
+        this.isLineLocked = false;
+        this.suppressLineAdvancement = false;
+      }
+    }, 300); // 300ms maximum lock lifetime
+
     this.disableWordTransition();
     if (this.wordTransitionTimer) {
       clearTimeout(this.wordTransitionTimer);
@@ -2166,6 +2203,10 @@ export class ReadingRuler {
   }
 
   destroy() {
+    if (this._navSafetyTimer) {
+      clearTimeout(this._navSafetyTimer);
+      this._navSafetyTimer = null;
+    }
     if (this.lineLockTimer) {
       clearTimeout(this.lineLockTimer);
       this.lineLockTimer = null;
