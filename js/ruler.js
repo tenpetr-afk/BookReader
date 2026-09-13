@@ -95,6 +95,8 @@ export class ReadingRuler {
     this.pageTurnTimestamp = 0;
     this.suppressTimer = null;
     this.pageChangeRafId = null;
+    this.isLineLocked = false;
+    this.lineLockTimer = null;
 
     this.createDomElements();
     this.attachEvents();
@@ -122,6 +124,10 @@ export class ReadingRuler {
 
   stepRuler(delta, force = false) {
     return this.stepLine(delta, force);
+  }
+
+  detectLines() {
+    return this.refreshLines();
   }
 
   get rulerMode() {
@@ -257,7 +263,7 @@ export class ReadingRuler {
    * Plynulá aktualizace pozice pravítka synchronizovaná s obnovovací frekvencí displeje (120Hz ProMotion)
    */
   schedulePointerUpdate(clientX, clientY, pointerType = "mouse") {
-    if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isPageTransitioning) {
+    if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isPageTransitioning) {
       return;
     }
     this.pendingPointerX = clientX;
@@ -268,7 +274,7 @@ export class ReadingRuler {
       this.rafPointerPending = true;
       requestAnimationFrame(() => {
         this.rafPointerPending = false;
-        if (this.enabled && !this.isPageTransitioning) {
+        if (this.enabled && !this.isLineLocked && !this.isPageTransitioning) {
           this.handlePointerMove(this.pendingPointerX, this.pendingPointerY, this.pendingPointerType);
         }
       });
@@ -412,11 +418,12 @@ export class ReadingRuler {
   attachEvents() {
     // 1. POINTER EVENTS: Sjednocené sledování pro prst, Apple Pencil i myš
     const onPointerDown = (e) => {
-      if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+      if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
       if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
         this.holdStartTime = 0;
         return;
       }
+      if (e.target?.closest && e.target.closest("img, svg, figure, picture, canvas, hr")) return;
 
       // Pro myš na PC vyžadujeme výhradně stisknuté levé tlačítko (button === 0)
       if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -444,7 +451,7 @@ export class ReadingRuler {
     };
 
     const onPointerMove = (e) => {
-      if (!this.enabled || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
 
       if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
@@ -571,12 +578,13 @@ export class ReadingRuler {
 
     // 2. TOUCH EVENTS (WebKit Safari fallback pro starší zařízení)
     const onTouchStart = (e) => {
-      if (!this.enabled) return;
+      if (!this.enabled || this.isLineLocked) return;
       const touch = e.touches[0];
       if (this.isUiControl(e.target) || !touch || !this.isPointerInStage(touch.clientX, touch.clientY)) {
         this.holdStartTime = 0;
         return;
       }
+      if (e.target?.closest && e.target.closest("img, svg, figure, picture, canvas, hr")) return;
       const isStylus = Array.from(e.touches).some(t => t.touchType === "stylus");
       if (isStylus) {
         this.lastPenTime = Date.now();
@@ -594,7 +602,7 @@ export class ReadingRuler {
     };
 
     const onTouchMove = (e) => {
-      if (!this.enabled || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
       const isStylus = Array.from(e.touches).some(t => t.touchType === "stylus");
       if (isStylus) {
         this.lastPenTime = Date.now();
@@ -695,7 +703,7 @@ export class ReadingRuler {
     // 3. MOUSEMOVE fallback (pro prohlížeče bez PointerEvents)
     window.addEventListener("mousemove", (e) => {
       if (window.PointerEvent) return;
-      if (!this.enabled || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isDraggingRuler || this.isPenTouching) return;
+      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isDraggingRuler || this.isPenTouching) return;
       if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
         return;
       }
@@ -715,10 +723,17 @@ export class ReadingRuler {
       }
     });
 
+    // Ignorování kolečka myši a gest touchpadu během uzamčení řádků
+    window.addEventListener("wheel", (e) => {
+      if (!this.enabled || this.isLineLocked) {
+        return;
+      }
+    }, { passive: true });
+
     // Zachycení kliknutí pro zabránění nežádoucího resetu nebo odskoku pravítka po dokončení podržení či jeho zrušení
     window.addEventListener("click", (e) => {
       if (!this.enabled) return;
-      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+      if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
         e.stopPropagation();
         e.stopImmediatePropagation();
         return;
@@ -756,8 +771,8 @@ export class ReadingRuler {
       this.cancelHold();
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
 
-      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
-        if (["j", "J", "k", "K"].includes(e.key)) {
+      if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+        if (["j", "J", "k", "K", "ArrowDown", "ArrowUp", " "].includes(e.key) || e.code === "Space") {
           e.preventDefault();
           return;
         }
@@ -810,12 +825,34 @@ export class ReadingRuler {
     // Pomocná funkce pro zjištění přítomnosti viditelného znaku (ignoruje běžné i zero-width mezery a řídicí znaky)
     const isVisChar = (c) => !/[\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u00AD\u2060]/.test(c);
 
-    while ((node = walker.nextNode())) {
-      const parent = node.parentElement;
-      if (parent && (parent.tagName === "SCRIPT" || parent.tagName === "STYLE")) continue;
+    // Selektor pro explicitní vyloučení obrázků, ilustrací a netextových elementů
+    const nonTextSelector = "img, svg, figure, picture, canvas, hr, script, style";
 
+    while ((node = walker.nextNode())) {
+      if (node.nodeType !== Node.TEXT_NODE) continue;
       const text = node.textContent;
-      if (!text) continue;
+      if (!text || !text.trim()) continue;
+
+      const parent = node.parentElement;
+      if (!parent || parent.closest(nonTextSelector)) continue;
+
+      // Pokud kontejner obaluje obrázek nebo ilustraci bez plnohodnotného textu, přeskočit
+      const container = parent.closest("p, div, section, article, figure, a, li, blockquote") || parent;
+      if (container && container.querySelector("img, svg, figure, picture, canvas, hr")) {
+        let hasRealText = false;
+        const cWalker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
+        let cNode;
+        while ((cNode = cWalker.nextNode())) {
+          if (cNode.nodeType === Node.TEXT_NODE && cNode.textContent.trim().length > 0) {
+            const cParent = cNode.parentElement;
+            if (cParent && !cParent.closest(nonTextSelector)) {
+              hasRealText = true;
+              break;
+            }
+          }
+        }
+        if (!hasRealText) continue;
+      }
 
       // Najít první a poslední viditelný znak v textovém uzlu pro eliminaci phantom obdélníků
       // z úvodního odsazení odstavců (indent), nových řádků a zero-width znaků
@@ -853,7 +890,8 @@ export class ReadingRuler {
               left: r.left,
               right: r.right,
               height: r.height,
-              centerY: r.top + r.height / 2
+              centerY: r.top + r.height / 2,
+              hasText: true
             });
           }
         }
@@ -881,7 +919,7 @@ export class ReadingRuler {
       }
     }
 
-    this.cachedLines = clustered;
+    this.cachedLines = clustered.filter(l => l.hasText && l.height >= 8 && (l.right - l.left) >= 8);
 
     if (this.cachedLines.length > 0) {
       let minLeft = Infinity;
@@ -946,8 +984,10 @@ export class ReadingRuler {
 
     if (this.autoHeight && this.cachedLines.length > 0) {
       const medianLine = this.cachedLines[Math.floor(this.cachedLines.length / 2)];
-      this.updateEffectiveHeight(medianLine.height);
+      const baseH = Math.round(medianLine.height || 32);
+      this.height = baseH + (2 * RULER_PADDING);
     }
+    return this.cachedLines;
   }
 
   /**
@@ -975,12 +1015,32 @@ export class ReadingRuler {
     const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u00AD\u2060]+/g;
     const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
 
-    while ((node = walker.nextNode())) {
-      const parent = node.parentElement;
-      if (parent && (parent.tagName === "SCRIPT" || parent.tagName === "STYLE")) continue;
+    const nonTextSelector = "img, svg, figure, picture, canvas, hr, script, style";
 
+    while ((node = walker.nextNode())) {
+      if (node.nodeType !== Node.TEXT_NODE) continue;
       const text = node.textContent;
       if (!text || !text.trim()) continue;
+
+      const parent = node.parentElement;
+      if (!parent || parent.closest(nonTextSelector)) continue;
+
+      const container = parent.closest("p, div, section, article, figure, a, li, blockquote") || parent;
+      if (container && container.querySelector("img, svg, figure, picture, canvas, hr")) {
+        let hasRealText = false;
+        const cWalker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
+        let cNode;
+        while ((cNode = cWalker.nextNode())) {
+          if (cNode.nodeType === Node.TEXT_NODE && cNode.textContent.trim().length > 0) {
+            const cParent = cNode.parentElement;
+            if (cParent && !cParent.closest(nonTextSelector)) {
+              hasRealText = true;
+              break;
+            }
+          }
+        }
+        if (!hasRealText) continue;
+      }
 
       let match;
       wordRegex.lastIndex = 0;
@@ -1230,7 +1290,7 @@ export class ReadingRuler {
    * Zpracuje pohyb ukazatele (myši nebo prstu)
    */
   handlePointerMove(clientX, clientY, pointerType = null) {
-    if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     this.disableWordTransition();
 
     // Displacement / Delta Threshold Sanity Check:
@@ -1474,17 +1534,23 @@ export class ReadingRuler {
       this.rulerEl.style.transition = "none";
     }
 
+    if (this.lineLockTimer) {
+      clearTimeout(this.lineLockTimer);
+      this.lineLockTimer = null;
+    }
+    this.isLineLocked = true;
+
     if (this.navigatingPageTimer) {
       clearTimeout(this.navigatingPageTimer);
     }
     this.isNavigating = true;
     this.isNavigatingPage = true;
-    this.navigatingPageLockoutEndTime = Date.now() + 150;
+    this.navigatingPageLockoutEndTime = Date.now() + 250;
     this.navigatingPageTimer = setTimeout(() => {
       this.isNavigating = false;
       this.isNavigatingPage = false;
       this.navigatingPageTimer = null;
-    }, 200);
+    }, 250);
 
     const isBackward = direction < 0;
     if (!isBackward) {
@@ -1502,6 +1568,7 @@ export class ReadingRuler {
       if (!this.enabled) {
         this.isNavigating = false;
         this.isNavigatingPage = false;
+        this.isLineLocked = false;
         return;
       }
 
@@ -1593,6 +1660,13 @@ export class ReadingRuler {
       } finally {
         this.isNavigating = false;
         this.isNavigatingPage = false;
+        if (this.lineLockTimer) {
+          clearTimeout(this.lineLockTimer);
+        }
+        this.lineLockTimer = setTimeout(() => {
+          this.isLineLocked = false;
+          this.lineLockTimer = null;
+        }, 250);
       }
 
       requestAnimationFrame(() => {
@@ -1635,7 +1709,7 @@ export class ReadingRuler {
    * - Ignoruje při pohybu > 10px nebo pokud je aktivní / dokončené podržení (long-press).
    */
   handleTap(clientX, clientY, pointerType = "touch", movementDelta = 0) {
-    if (!this.enabled || this.followMode !== "keyboard") return false;
+    if (!this.enabled || this.isLineLocked || this.followMode !== "keyboard") return false;
     if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return false;
     if (pointerType !== "touch" && pointerType !== "mouse") return false;
     if (movementDelta > 10) return false;
@@ -1667,7 +1741,7 @@ export class ReadingRuler {
    */
   stepLine(direction, force = false) {
     // Pokud probíhá přechod strany, aktivní tažení nebo dobíhá lockout přechodu strany, ignorovat krokování
-    if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     if (direction > 0 && (this.suppressLineAdvancement || (performance.now() - this.pageTurnTimestamp < 350))) {
       return;
     }
@@ -1733,11 +1807,12 @@ export class ReadingRuler {
 
     this.disableWordTransition();
 
+    // --- STANDARDNÍ REŽIM ŘÁDKŮ (Line-level mode) ---
     if (this.cachedLines.length === 0) {
       this.refreshLines();
     }
 
-    if (this.snapToLines && this.cachedLines.length > 0) {
+    if (this.cachedLines.length > 0) {
       let newIdx;
       if (this.activeLineIndex < 0) {
         if (direction > 0) {
@@ -1767,19 +1842,27 @@ export class ReadingRuler {
       newIdx = Math.max(0, Math.min(this.cachedLines.length - 1, newIdx));
       this.activeLineIndex = newIdx;
 
+      this.rulerEl.classList.remove("word-tracking-mode");
       const geom = this.computeLineGeometry(newIdx);
       if (geom) {
         this.height = geom.height;
         this.targetY = geom.targetY;
+        this.currentY = this.targetY;
       }
 
-      this.currentY = this.targetY;
+      const line = this.cachedLines[newIdx];
+      this.lastPointerX = line.left != null ? line.left : 100;
+      this.lastPointerY = line.centerY;
+      this.lastValidPointerX = this.lastPointerX;
+      this.lastValidPointerY = this.lastPointerY;
+
       this.rulerEl.classList.add("is-snapped");
       this.maskTopEl.classList.add("is-snapped");
       this.maskBottomEl.classList.add("is-snapped");
       this.maskLeftEl.classList.add("is-snapped");
       this.maskRightEl.classList.add("is-snapped");
       this.applyPosition();
+      return;
     } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0) {
       if (direction > 0) {
         this.lockAdvancement(350);
@@ -1790,6 +1873,7 @@ export class ReadingRuler {
   }
 
   moveBy(deltaY) {
+    if (this.isLineLocked) return;
     this.disableWordTransition();
     if (this.cachedLines.length > 0) {
       this.stepLine(deltaY > 0 ? 1 : -1);
@@ -2086,6 +2170,7 @@ export class ReadingRuler {
    */
   onPageChange(direction = 0, isPageChanged = true) {
     if (!this.enabled) return;
+    this.isLineLocked = true;
     this.disableWordTransition();
     if (this.wordTransitionTimer) {
       clearTimeout(this.wordTransitionTimer);
@@ -2112,6 +2197,11 @@ export class ReadingRuler {
   }
 
   destroy() {
+    if (this.lineLockTimer) {
+      clearTimeout(this.lineLockTimer);
+      this.lineLockTimer = null;
+    }
+    this.isLineLocked = false;
     if (this.suppressTimer) {
       clearTimeout(this.suppressTimer);
       this.suppressTimer = null;

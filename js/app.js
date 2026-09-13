@@ -224,10 +224,14 @@ class LuminaApp {
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
         if (this.ruler) {
+          this.ruler.isLineLocked = true;
           this.ruler.lockAdvancement(350);
         }
         this.nextPage();
       } else if (dir < 0) {
+        if (this.ruler) {
+          this.ruler.isLineLocked = true;
+        }
         this.prevPage();
       }
     };
@@ -425,7 +429,7 @@ class LuminaApp {
     this.dom.zoneTouchPrev.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating) {
+      if (this.isNavigating || this.ruler?.isLineLocked) {
         e.preventDefault();
         return;
       }
@@ -456,7 +460,7 @@ class LuminaApp {
     this.dom.zoneTouchNext.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating) {
+      if (this.isNavigating || this.ruler?.isLineLocked) {
         e.preventDefault();
         return;
       }
@@ -519,7 +523,7 @@ class LuminaApp {
         isSwiping = false;
         return;
       }
-      if (this.isNavigating) {
+      if (this.isNavigating || this.ruler?.isLineLocked) {
         isSwiping = false;
         return;
       }
@@ -610,7 +614,7 @@ class LuminaApp {
     // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
     this.dom.pagedViewport.addEventListener("click", (e) => {
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating) return;
+      if (this.isNavigating || this.ruler?.isLineLocked) return;
       if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
         return;
       }
@@ -654,7 +658,7 @@ class LuminaApp {
 
     this.dom.pagedViewport.addEventListener("wheel", (e) => {
       if (this.isAnyModalOrMenuOpen()) return;
-      if (this.isNavigating) return;
+      if (this.isNavigating || this.ruler?.isLineLocked) return;
       this.ruler?.cancelHold();
       const absX = Math.abs(e.deltaX);
       const absY = Math.abs(e.deltaY);
@@ -1167,11 +1171,12 @@ class LuminaApp {
       if (this.isAnyModalOrMenuOpen()) return;
 
       if (isReader) {
-        if (this.isNavigating) {
+        if (this.isNavigating || this.ruler?.isLineLocked) {
           const navKeys = ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "PageDown", "PageUp", " ", "Spacebar"];
           if (navKeys.includes(e.key) || e.code === "Space") {
             e.preventDefault();
             e.stopPropagation();
+            e.stopImmediatePropagation();
             return;
           }
         }
@@ -1677,6 +1682,7 @@ class LuminaApp {
     this.isNavigating = true;
     this.isNavigatingPage = true;
     if (this.ruler) {
+      this.ruler.isLineLocked = true;
       this.ruler.isNavigating = true;
       this.ruler.isNavigatingPage = true;
       if (direction >= 0) {
@@ -1749,6 +1755,7 @@ class LuminaApp {
 
     this.isNavigating = true;
     if (this.ruler) {
+      this.ruler.isLineLocked = true;
       this.ruler.lockAdvancement(350);
       this.ruler.activeLineIndex = 0;
       this.ruler.activeWordIndex = 0;
@@ -1786,6 +1793,7 @@ class LuminaApp {
 
     this.isNavigating = true;
     if (this.ruler) {
+      this.ruler.isLineLocked = true;
       this.ruler.lockAdvancement(350);
     }
 
