@@ -175,6 +175,10 @@ export class StorageManager {
   // --- NASTAVENÍ ČTEČKY (SETTINGS V LOCALSTORAGE) ---
 
   getSettings() {
+    const showProgressBar = localStorage.getItem('showProgressBar') !== null
+      ? localStorage.getItem('showProgressBar') === 'true'
+      : true; // MUST default to true for new domains/first visits
+
     const defaults = {
       theme: "warm", // light, warm, sepia, dark, oled
       fontFamily: "georgia", // georgia, inter, merriweather, opendyslexic
@@ -183,7 +187,8 @@ export class StorageManager {
       contentWidth: 720, // px
       textAlign: "justify", // left, justify
       readingMode: "scroll", // scroll, paginated
-      showFooterBar: false, // skrytí spodní lišty čtečky
+      showFooterBar: showProgressBar, // zobrazení spodní lišty čtečky (postup čtení, výchozí zapnuto)
+      showProgressBar: showProgressBar,
       ruler: {
         enabled: false,
         mode: "highlight", // highlight, focus, underline
@@ -206,6 +211,16 @@ export class StorageManager {
           ...parsed,
           ruler: { ...defaults.ruler, ...(parsed.ruler || {}) }
         };
+        if (localStorage.getItem('showProgressBar') !== null) {
+          merged.showFooterBar = localStorage.getItem('showProgressBar') === 'true';
+        } else if (parsed.showFooterBar !== undefined) {
+          merged.showFooterBar = parsed.showFooterBar !== false;
+        } else if (parsed.showProgressBar !== undefined) {
+          merged.showFooterBar = parsed.showProgressBar !== false;
+        } else {
+          merged.showFooterBar = true;
+        }
+        merged.showProgressBar = merged.showFooterBar;
         if (merged.ruler.followMode !== "keyboard") {
           merged.ruler.followMode = "mouse";
         }
@@ -219,6 +234,10 @@ export class StorageManager {
 
   saveSettings(settings) {
     try {
+      const isVisible = (settings.showProgressBar !== undefined ? settings.showProgressBar : settings.showFooterBar) !== false;
+      settings.showFooterBar = isVisible;
+      settings.showProgressBar = isVisible;
+      localStorage.setItem('showProgressBar', String(isVisible));
       localStorage.setItem("luminareader_settings", JSON.stringify(settings));
     } catch (e) {
       console.warn("Chyba při ukládání nastavení do localStorage:", e);

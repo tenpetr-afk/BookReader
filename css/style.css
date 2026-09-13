@@ -1409,6 +1409,40 @@ body.dragging-file .drop-zone-overlay {
 .reading-ruler.color-lavender { --ruler-glow-rgb: 168, 85, 247; }
 .reading-ruler.color-slate { --ruler-glow-rgb: 100, 116, 139; }
 
+/* Zajištění viditelnosti a vysokého z-indexu pravítka */
+.reading-ruler {
+  --ruler-glow-rgb: 245, 158, 11;
+  z-index: 9999 !important;
+  pointer-events: none !important;
+}
+
+.reading-ruler.is-visible {
+  display: block !important;
+  opacity: 1 !important;
+}
+
+.reading-ruler.mode-highlight:not(.mode-focus) {
+  background: linear-gradient(
+    to bottom,
+    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.08) 0%,
+    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.28) 20%,
+    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.28) 80%,
+    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.08) 100%
+  ) !important;
+  box-shadow: 0 0 12px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.25),
+              inset 0 1px 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.35),
+              inset 0 -1px 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.35) !important;
+}
+
+.ruler-mask {
+  z-index: 9998 !important;
+  pointer-events: none !important;
+}
+
+.ruler-mask.is-visible {
+  display: block !important;
+}
+
 /* Řádkový režim: přesné ohraničení přes celou šířku čtecího sloupce s jednotným odsazením */
 .reading-ruler:not(.word-tracking-mode) {
   right: auto;
@@ -1428,7 +1462,8 @@ body.dragging-file .drop-zone-overlay {
               border-color var(--transition-normal);
 }
 
-/* Postup čtení: ve výchozím stavu nebo při vypnutí v nastavení je spodní lišta zcela skryta */
+/* Postup čtení: při explicitním vypnutí v nastavení je spodní lišta zcela skryta */
+body.hide-footer-bar .paged-footer-bar,
 body:not(.show-footer-bar) .paged-footer-bar,
 body.in-reader-view:not(.show-footer-bar) .paged-footer-bar {
   display: none !important;

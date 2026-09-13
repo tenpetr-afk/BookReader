@@ -268,10 +268,16 @@ class LuminaApp {
     });
 
     // Zobrazení spodní lišty čtečky
-    const showFooter = this.settings.showFooterBar ?? false;
-    document.body.classList.toggle("show-footer-bar", showFooter);
+    const showProgressBar = localStorage.getItem('showProgressBar') !== null
+      ? localStorage.getItem('showProgressBar') === 'true'
+      : true; // MUST default to true for new domains/first visits
+    this.settings.showFooterBar = showProgressBar;
+    this.settings.showProgressBar = showProgressBar;
+
+    document.body.classList.toggle("show-footer-bar", showProgressBar);
+    document.body.classList.toggle("hide-footer-bar", !showProgressBar);
     if (this.dom.settingShowFooter) {
-      this.dom.settingShowFooter.checked = showFooter;
+      this.dom.settingShowFooter.checked = showProgressBar;
     }
 
     // Synchronizace rychlého popoveru pravítka
@@ -933,7 +939,10 @@ class LuminaApp {
       this.dom.settingShowFooter.addEventListener("change", (e) => {
         const val = e.target.checked;
         this.settings.showFooterBar = val;
+        this.settings.showProgressBar = val;
+        localStorage.setItem('showProgressBar', String(val));
         document.body.classList.toggle("show-footer-bar", val);
+        document.body.classList.toggle("hide-footer-bar", !val);
         storage.saveSettings(this.settings);
         if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
           requestAnimationFrame(() => {
@@ -1665,6 +1674,13 @@ class LuminaApp {
     this.dom.viewLibrary.classList.add("is-hidden");
     this.dom.viewReader.classList.remove("is-hidden");
     document.body.classList.add("in-reader-view");
+    const showProgressBar = localStorage.getItem('showProgressBar') !== null
+      ? localStorage.getItem('showProgressBar') === 'true'
+      : (this.settings.showProgressBar !== undefined ? this.settings.showProgressBar : (this.settings.showFooterBar !== false));
+    this.settings.showFooterBar = showProgressBar;
+    this.settings.showProgressBar = showProgressBar;
+    document.body.classList.toggle("show-footer-bar", showProgressBar);
+    document.body.classList.toggle("hide-footer-bar", !showProgressBar);
     if (this.settings.ruler.enabled) {
       this.ruler.setEnabled(true);
     }
