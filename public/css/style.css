@@ -1197,3 +1197,12 @@ body.dragging-file .drop-zone-overlay {
 .ruler-mask.word-transition-snap {
   transition: none !important;
 }
+
+.ruler-mask {
+  z-index: 50 !important;
+  pointer-events: none !important;
+}
+
+.reading-ruler {
+  z-index: 60 !important;
+}

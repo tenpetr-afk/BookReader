@@ -40,8 +40,13 @@ class LuminaApp {
   }
 
   async init() {
-    document.body.classList.remove("in-reader-view");
     this.cacheDom();
+    const isInReader = this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden");
+    if (isInReader) {
+      document.body.classList.add("in-reader-view");
+    } else {
+      document.body.classList.remove("in-reader-view");
+    }
     const versionEl = this.dom.versionBadge || document.getElementById("app-version-badge");
     if (versionEl) {
       versionEl.textContent = APP_VERSION;
@@ -1286,6 +1291,7 @@ class LuminaApp {
     const isInReader = !this.dom.viewReader.classList.contains("is-hidden");
     if (!isInReader) return;
 
+    document.body.classList.add("in-reader-view");
     this.settings.ruler.enabled = !this.settings.ruler.enabled;
     this.ruler.setEnabled(this.settings.ruler.enabled);
     this.updateRulerToggleButtonUI();
@@ -2111,6 +2117,7 @@ class LuminaApp {
     this.closeDrawer("settings");
     this.dom.viewLibrary.classList.add("is-hidden");
     this.dom.viewReader.classList.remove("is-hidden");
+    document.body.classList.add("in-reader-view");
     const showProgressBar = localStorage.getItem('showProgressBar') !== null
       ? localStorage.getItem('showProgressBar') === 'true'
       : (this.settings.showProgressBar !== undefined ? this.settings.showProgressBar : (this.settings.showFooterBar !== false));

@@ -367,9 +367,9 @@ body.show-footer-bar .paged-viewport {
    ========================================================================== */
 
 /* Pravítko a ovladače jsou viditelné VÝHRADNĚ při čtení knihy (nikdy v knihovně) */
-body:not(.in-reader-view) .reading-ruler,
-body:not(.in-reader-view) .ruler-mask,
-body:not(.in-reader-view) .ruler-floating-controls {
+body:not(.in-reader-view):not(.ruler-active) .reading-ruler,
+body:not(.in-reader-view):not(.ruler-active) .ruler-mask,
+body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
   display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
@@ -380,26 +380,31 @@ body:not(.in-reader-view) .ruler-floating-controls {
   position: fixed;
   left: 0;
   right: 0;
-  z-index: 900;
+  z-index: 60 !important;
   transition: opacity 0.2s ease, background-color 0.2s ease;
   display: none;
-  pointer-events: none;
+  pointer-events: none !important;
   box-sizing: border-box;
   overflow: visible !important;
 }
 
 .reading-ruler.is-visible {
-  display: block;
+  display: block !important;
+  opacity: 1 !important;
+  z-index: 60 !important;
+  pointer-events: none !important;
 }
 
-/* Režim sledování jednotlivých slov – přesné ohraničení slova bez ořezávání sousedních znaků */
+/* Režim sledování jednotlivých slov – přesné ohraničení slova s plynulým dozníváním dopředu (do ztracena) */
 .reading-ruler.word-tracking-mode {
   left: auto;
   right: auto;
-  border-radius: 4px;
-  box-shadow: 0 0 0 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.55),
-              0 1px 4px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.2);
-  background-color: rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.18);
+  border-radius: 4px 0 0 4px !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent;
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
   overflow: visible !important;
   transition: left 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
               width 0.08s ease-out,
@@ -407,16 +412,105 @@ body:not(.in-reader-view) .ruler-floating-controls {
               height 0.12s ease-out;
 }
 
-.reading-ruler.word-tracking-mode.mode-underline {
-  border-top: none !important;
-  border-left: none !important;
-  border-right: none !important;
-  box-shadow: none !important;
+.reading-ruler.mode-highlight.word-tracking-mode {
+  border-radius: 4px 0 0 4px !important;
+  border: none !important;
+  background: linear-gradient(
+    to right,
+    rgba(var(--ruler-glow-rgb, 6, 182, 212), 0.28) 0%,
+    rgba(var(--ruler-glow-rgb, 6, 182, 212), 0.28) var(--word-solid-ratio, 33%),
+    rgba(var(--ruler-glow-rgb, 6, 182, 212), 0.14) calc(var(--word-solid-ratio, 33%) + (100% - var(--word-solid-ratio, 33%)) * 0.5),
+    rgba(var(--ruler-glow-rgb, 6, 182, 212), 0) 100%
+  ) !important;
+  box-shadow: inset 1px 0 0 rgba(var(--ruler-glow-rgb, 6, 182, 212), 0.35) !important;
+}
+
+.reading-ruler.mode-highlight.word-tracking-mode.color-amber {
+  --ruler-glow-rgb: 245, 158, 11;
+  background: linear-gradient(
+    to right,
+    rgba(245, 158, 11, 0.28) 0%,
+    rgba(245, 158, 11, 0.28) var(--word-solid-ratio, 33%),
+    rgba(245, 158, 11, 0.14) calc(var(--word-solid-ratio, 33%) + (100% - var(--word-solid-ratio, 33%)) * 0.5),
+    rgba(245, 158, 11, 0) 100%
+  ) !important;
+  box-shadow: inset 1px 0 0 rgba(245, 158, 11, 0.35) !important;
+  border-radius: 4px 0 0 4px !important;
+}
+
+.reading-ruler.mode-highlight.word-tracking-mode.color-cyan {
+  --ruler-glow-rgb: 6, 182, 212;
+  background: linear-gradient(
+    to right,
+    rgba(6, 182, 212, 0.28) 0%,
+    rgba(6, 182, 212, 0.28) var(--word-solid-ratio, 33%),
+    rgba(6, 182, 212, 0.14) calc(var(--word-solid-ratio, 33%) + (100% - var(--word-solid-ratio, 33%)) * 0.5),
+    rgba(6, 182, 212, 0) 100%
+  ) !important;
+  box-shadow: inset 1px 0 0 rgba(6, 182, 212, 0.35) !important;
+  border-radius: 4px 0 0 4px !important;
+}
+
+.reading-ruler.mode-highlight.word-tracking-mode.color-emerald {
+  --ruler-glow-rgb: 16, 185, 129;
+  background: linear-gradient(
+    to right,
+    rgba(16, 185, 129, 0.28) 0%,
+    rgba(16, 185, 129, 0.28) var(--word-solid-ratio, 33%),
+    rgba(16, 185, 129, 0.14) calc(var(--word-solid-ratio, 33%) + (100% - var(--word-solid-ratio, 33%)) * 0.5),
+    rgba(16, 185, 129, 0) 100%
+  ) !important;
+  box-shadow: inset 1px 0 0 rgba(16, 185, 129, 0.35) !important;
+  border-radius: 4px 0 0 4px !important;
+}
+
+.reading-ruler.mode-highlight.word-tracking-mode.color-lavender {
+  --ruler-glow-rgb: 168, 85, 247;
+  background: linear-gradient(
+    to right,
+    rgba(168, 85, 247, 0.28) 0%,
+    rgba(168, 85, 247, 0.28) var(--word-solid-ratio, 33%),
+    rgba(168, 85, 247, 0.14) calc(var(--word-solid-ratio, 33%) + (100% - var(--word-solid-ratio, 33%)) * 0.5),
+    rgba(168, 85, 247, 0) 100%
+  ) !important;
+  box-shadow: inset 1px 0 0 rgba(168, 85, 247, 0.35) !important;
+  border-radius: 4px 0 0 4px !important;
+}
+
+.reading-ruler.mode-highlight.word-tracking-mode.color-slate {
+  --ruler-glow-rgb: 100, 116, 139;
+  background: linear-gradient(
+    to right,
+    rgba(100, 116, 139, 0.28) 0%,
+    rgba(100, 116, 139, 0.28) var(--word-solid-ratio, 33%),
+    rgba(100, 116, 139, 0.14) calc(var(--word-solid-ratio, 33%) + (100% - var(--word-solid-ratio, 33%)) * 0.5),
+    rgba(100, 116, 139, 0) 100%
+  ) !important;
+  box-shadow: inset 1px 0 0 rgba(100, 116, 139, 0.35) !important;
+  border-radius: 4px 0 0 4px !important;
+}
+
+.reading-ruler.word-tracking-mode.no-preview {
+  border-radius: 4px !important;
 }
 
 .reading-ruler.word-tracking-mode.mode-focus {
   border: none !important;
   box-shadow: none !important;
+  background: transparent !important;
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
+}
+
+.reading-ruler.word-tracking-mode.mode-underline {
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-bottom: 2.5px solid var(--ruler-primary) !important;
+  border-radius: 0 !important;
+  box-shadow: 0 1px 3px rgba(var(--ruler-glow-rgb), 0.3) !important;
+  background-color: transparent !important;
+  height: 2.5px !important;
 }
 
 /* Magnetická animace při přichycení k řádku */
@@ -442,43 +536,39 @@ body:not(.in-reader-view) .ruler-floating-controls {
 /* 1. Režim: Zvýrazňovací proužek (Highlight Strip) – zjemněný feathering bez ostrých hran */
 .reading-ruler.mode-highlight {
   border-radius: 6px;
-  border: none;
+  border: none !important;
   overflow: visible !important;
 }
 
-.reading-ruler.mode-highlight.color-amber,
-.reading-ruler.word-tracking-mode.color-amber {
-  --ruler-glow-rgb: 245, 158, 11;
-  background: linear-gradient(to bottom, rgba(245, 158, 11, 0.06) 0%, rgba(245, 158, 11, 0.22) 20%, rgba(245, 158, 11, 0.22) 80%, rgba(245, 158, 11, 0.06) 100%);
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.25), inset 0 1px 1.5px rgba(245, 158, 11, 0.35), inset 0 -1px 1.5px rgba(245, 158, 11, 0.35);
+.reading-ruler.color-amber { --ruler-glow-rgb: 245, 158, 11; }
+.reading-ruler.color-cyan { --ruler-glow-rgb: 6, 182, 212; }
+.reading-ruler.color-emerald { --ruler-glow-rgb: 16, 185, 129; }
+.reading-ruler.color-lavender { --ruler-glow-rgb: 168, 85, 247; }
+.reading-ruler.color-slate { --ruler-glow-rgb: 100, 116, 139; }
+
+.reading-ruler.mode-highlight:not(.word-tracking-mode).color-amber {
+  background: linear-gradient(to bottom, rgba(245, 158, 11, 0.04) 0%, rgba(245, 158, 11, 0.22) 25%, rgba(245, 158, 11, 0.22) 75%, rgba(245, 158, 11, 0.04) 100%) !important;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.3), inset 0 1px 1.5px rgba(245, 158, 11, 0.35), inset 0 -1px 1.5px rgba(245, 158, 11, 0.35) !important;
 }
 
-.reading-ruler.mode-highlight.color-cyan,
-.reading-ruler.word-tracking-mode.color-cyan {
-  --ruler-glow-rgb: 6, 182, 212;
-  background: linear-gradient(to bottom, rgba(6, 182, 212, 0.06) 0%, rgba(6, 182, 212, 0.22) 20%, rgba(6, 182, 212, 0.22) 80%, rgba(6, 182, 212, 0.06) 100%);
-  box-shadow: 0 0 12px rgba(6, 182, 212, 0.25), inset 0 1px 1.5px rgba(6, 182, 212, 0.35), inset 0 -1px 1.5px rgba(6, 182, 212, 0.35);
+.reading-ruler.mode-highlight:not(.word-tracking-mode).color-cyan {
+  background: linear-gradient(to bottom, rgba(6, 182, 212, 0.04) 0%, rgba(6, 182, 212, 0.22) 25%, rgba(6, 182, 212, 0.22) 75%, rgba(6, 182, 212, 0.04) 100%) !important;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.3), inset 0 1px 1.5px rgba(6, 182, 212, 0.35), inset 0 -1px 1.5px rgba(6, 182, 212, 0.35) !important;
 }
 
-.reading-ruler.mode-highlight.color-emerald,
-.reading-ruler.word-tracking-mode.color-emerald {
-  --ruler-glow-rgb: 16, 185, 129;
-  background: linear-gradient(to bottom, rgba(16, 185, 129, 0.06) 0%, rgba(16, 185, 129, 0.22) 20%, rgba(16, 185, 129, 0.22) 80%, rgba(16, 185, 129, 0.06) 100%);
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.25), inset 0 1px 1.5px rgba(16, 185, 129, 0.35), inset 0 -1px 1.5px rgba(16, 185, 129, 0.35);
+.reading-ruler.mode-highlight:not(.word-tracking-mode).color-emerald {
+  background: linear-gradient(to bottom, rgba(16, 185, 129, 0.04) 0%, rgba(16, 185, 129, 0.22) 25%, rgba(16, 185, 129, 0.22) 75%, rgba(16, 185, 129, 0.04) 100%) !important;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3), inset 0 1px 1.5px rgba(16, 185, 129, 0.35), inset 0 -1px 1.5px rgba(16, 185, 129, 0.35) !important;
 }
 
-.reading-ruler.mode-highlight.color-lavender,
-.reading-ruler.word-tracking-mode.color-lavender {
-  --ruler-glow-rgb: 168, 85, 247;
-  background: linear-gradient(to bottom, rgba(168, 85, 247, 0.06) 0%, rgba(168, 85, 247, 0.22) 20%, rgba(168, 85, 247, 0.22) 80%, rgba(168, 85, 247, 0.06) 100%);
-  box-shadow: 0 0 12px rgba(168, 85, 247, 0.25), inset 0 1px 1.5px rgba(168, 85, 247, 0.35), inset 0 -1px 1.5px rgba(168, 85, 247, 0.35);
+.reading-ruler.mode-highlight:not(.word-tracking-mode).color-lavender {
+  background: linear-gradient(to bottom, rgba(168, 85, 247, 0.04) 0%, rgba(168, 85, 247, 0.22) 25%, rgba(168, 85, 247, 0.22) 75%, rgba(168, 85, 247, 0.04) 100%) !important;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.3), inset 0 1px 1.5px rgba(168, 85, 247, 0.35), inset 0 -1px 1.5px rgba(168, 85, 247, 0.35) !important;
 }
 
-.reading-ruler.mode-highlight.color-slate,
-.reading-ruler.word-tracking-mode.color-slate {
-  --ruler-glow-rgb: 100, 116, 139;
-  background: linear-gradient(to bottom, rgba(100, 116, 139, 0.06) 0%, rgba(100, 116, 139, 0.24) 20%, rgba(100, 116, 139, 0.24) 80%, rgba(100, 116, 139, 0.06) 100%);
-  box-shadow: 0 0 12px rgba(100, 116, 139, 0.25), inset 0 1px 1.5px rgba(100, 116, 139, 0.35), inset 0 -1px 1.5px rgba(100, 116, 139, 0.35);
+.reading-ruler.mode-highlight:not(.word-tracking-mode).color-slate {
+  background: linear-gradient(to bottom, rgba(100, 116, 139, 0.04) 0%, rgba(100, 116, 139, 0.24) 25%, rgba(100, 116, 139, 0.24) 75%, rgba(100, 116, 139, 0.04) 100%) !important;
+  box-shadow: 0 0 10px rgba(100, 116, 139, 0.3), inset 0 1px 1.5px rgba(100, 116, 139, 0.35), inset 0 -1px 1.5px rgba(100, 116, 139, 0.35) !important;
 }
 
 /* 2. Režim: Vodicí linka (Underline) */
@@ -507,15 +597,15 @@ body:not(.in-reader-view) .ruler-floating-controls {
   left: 0;
   right: 0;
   background-color: #000000;
-  pointer-events: none;
-  z-index: 899;
+  pointer-events: none !important;
+  z-index: 50 !important; /* sits just above reader text, well below UI bars */
   display: none;
   transition: opacity 0.2s ease;
   box-sizing: border-box;
 }
 
 .ruler-mask.is-visible {
-  display: block;
+  display: block !important;
 }
 
 .ruler-mask-top {
