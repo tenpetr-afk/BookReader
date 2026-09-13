@@ -801,357 +801,336 @@ export class ReadingRuler {
    * Zmapuje přesné obdélníky všech viditelných řádků textu na aktuální stránce.
    * Využívá Range.prototype.getClientRects() nad textovými uzly.
    */
-  refreshLines() {
-    const stage = this.container || document.getElementById("paged-stage");
-    const content = document.getElementById("reader-content");
-    if (!stage || !content) {
-      this.cachedLines = [];
-      return;
-    }
+  /**
+   * Bezpečná detekce řádků textu chráněná proti pádu (try-catch) a zacyklení.
+   * Využívá standardní dotaz nad kandidátními elementy bez rekurzivního průchodu DOMem.
+   */
+  detectLines() {
+    try {
+      const stage = this.container || document.getElementById("paged-stage");
+      const content = document.getElementById("reader-content");
+      if (!stage || !content) {
+        this.cachedLines = [];
+        return [];
+      }
 
-    const stageRect = stage.getBoundingClientRect();
-    this.stageLeft = Math.round(stageRect.left);
-    this.stageWidth = Math.round(stageRect.width);
-    const stageLeft = stageRect.left;
-    const stageRight = stageRect.right;
-    const stageTop = stageRect.top;
-    const stageBottom = stageRect.bottom;
+      const stageRect = stage.getBoundingClientRect();
+      this.stageLeft = Math.round(stageRect.left);
+      this.stageWidth = Math.round(stageRect.width);
+      const stageLeft = stageRect.left;
+      const stageRight = stageRect.right;
+      const stageTop = stageRect.top;
+      const stageBottom = stageRect.bottom;
 
-    const rawLines = [];
-    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
-    let node;
-    const range = document.createRange();
+      // Cílíme výhradně na elementy, které jsou viditelné a obsahují neprázdný text
+      const candidateElements = content.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6, li, blockquote');
+      const validLines = [];
 
-    // Pomocná funkce pro zjištění přítomnosti viditelného znaku (ignoruje běžné i zero-width mezery a řídicí znaky)
-    const isVisChar = (c) => !/[\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u00AD\u2060]/.test(c);
+      candidateElements.forEach(el => {
+        // Explicitně přeskočit obrázky, svg a prázdné elementy
+        if (el.closest('svg, figure, picture') || el.tagName === 'IMG' || el.tagName === 'HR' || el.tagName === 'CANVAS') return;
+        if (!el.textContent || el.textContent.trim().length === 0) return;
 
-    // Selektor pro explicitní vyloučení obrázků, ilustrací a netextových elementů
-    const nonTextSelector = "img, svg, figure, picture, canvas, hr, script, style";
+        // Přeskočit vnořené inline elementy, pokud je již zachycen jejich nadřazený blok
+        if (el.tagName === 'SPAN' && el.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote')) return;
 
-    while ((node = walker.nextNode())) {
-      if (node.nodeType !== Node.TEXT_NODE) continue;
-      const text = node.textContent;
-      if (!text || !text.trim()) continue;
-
-      const parent = node.parentElement;
-      if (!parent || parent.closest(nonTextSelector)) continue;
-
-      // Pokud kontejner obaluje obrázek nebo ilustraci bez plnohodnotného textu, přeskočit
-      const container = parent.closest("p, div, section, article, figure, a, li, blockquote") || parent;
-      if (container && container.querySelector("img, svg, figure, picture, canvas, hr")) {
-        let hasRealText = false;
-        const cWalker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
-        let cNode;
-        while ((cNode = cWalker.nextNode())) {
-          if (cNode.nodeType === Node.TEXT_NODE && cNode.textContent.trim().length > 0) {
-            const cParent = cNode.parentElement;
-            if (cParent && !cParent.closest(nonTextSelector)) {
-              hasRealText = true;
-              break;
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          // Bezpečně extrahovat nebo seskupit ohraničení řádků
+          try {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const rects = range.getClientRects();
+            if (rects && rects.length > 0) {
+              for (let i = 0; i < rects.length; i++) {
+                const r = rects[i];
+                if (
+                  r.right > stageLeft + 5 &&
+                  r.left < stageRight - 5 &&
+                  r.bottom > stageTop + 2 &&
+                  r.top < stageBottom - 2 &&
+                  r.height >= 8 &&
+                  r.width >= 8
+                ) {
+                  validLines.push({
+                    el,
+                    rect: r,
+                    top: r.top,
+                    bottom: r.bottom,
+                    left: r.left,
+                    right: r.right,
+                    height: r.height,
+                    centerY: r.top + r.height / 2,
+                    hasText: true
+                  });
+                }
+              }
+            } else if (
+              rect.right > stageLeft + 5 &&
+              rect.left < stageRight - 5 &&
+              rect.bottom > stageTop + 2 &&
+              rect.top < stageBottom - 2 &&
+              rect.height >= 8 &&
+              rect.width >= 8
+            ) {
+              validLines.push({
+                el,
+                rect,
+                top: rect.top,
+                bottom: rect.bottom,
+                left: rect.left,
+                right: rect.right,
+                height: rect.height,
+                centerY: rect.top + rect.height / 2,
+                hasText: true
+              });
+            }
+          } catch (e) {
+            if (
+              rect.right > stageLeft + 5 &&
+              rect.left < stageRight - 5 &&
+              rect.bottom > stageTop + 2 &&
+              rect.top < stageBottom - 2 &&
+              rect.height >= 8 &&
+              rect.width >= 8
+            ) {
+              validLines.push({
+                el,
+                rect,
+                top: rect.top,
+                bottom: rect.bottom,
+                left: rect.left,
+                right: rect.right,
+                height: rect.height,
+                centerY: rect.top + rect.height / 2,
+                hasText: true
+              });
             }
           }
         }
-        if (!hasRealText) continue;
-      }
+      });
 
-      // Najít první a poslední viditelný znak v textovém uzlu pro eliminaci phantom obdélníků
-      // z úvodního odsazení odstavců (indent), nových řádků a zero-width znaků
-      let firstVis = -1;
-      let lastVis = -1;
-      for (let i = 0; i < text.length; i++) {
-        if (isVisChar(text[i])) {
-          if (firstVis === -1) firstVis = i;
-          lastVis = i;
-        }
-      }
-      if (firstVis === -1 || lastVis === -1) continue;
+      validLines.sort((a, b) => a.centerY - b.centerY);
 
-      try {
-        range.setStart(node, firstVis);
-        range.setEnd(node, lastVis + 1);
-        const rects = range.getClientRects();
-        for (let i = 0; i < rects.length; i++) {
-          const r = rects[i];
-          // Striktní hranice viditelného paged stage:
-          // - vyloučit fragmenty a přetečení z předchozího/následujícího sloupce
-          // - vyloučit ořezané řádky nad horním (stageTop) či pod dolním (stageBottom) okrajem
-          // - odfiltrovat prázdné a phantom obdélníky (šířka < 8px, výška < 8px)
-          if (
-            r.right > stageLeft + 5 &&
-            r.left < stageRight - 5 &&
-            r.bottom > stageTop + 2 &&
-            r.top < stageBottom - 2 &&
-            r.height >= 8 &&
-            r.width >= 8
-          ) {
-            rawLines.push({
-              top: r.top,
-              bottom: r.bottom,
-              left: r.left,
-              right: r.right,
-              height: r.height,
-              centerY: r.top + r.height / 2,
-              hasText: true
-            });
+      const clustered = [];
+      for (const r of validLines) {
+        if (clustered.length === 0) {
+          clustered.push({ ...r });
+        } else {
+          const prev = clustered[clustered.length - 1];
+          if (Math.abs(r.centerY - prev.centerY) < 8 || (Math.max(r.top, prev.top) < Math.min(r.bottom, prev.bottom) - 3)) {
+            prev.top = Math.min(prev.top, r.top);
+            prev.bottom = Math.max(prev.bottom, r.bottom);
+            prev.left = Math.min(prev.left ?? r.left, r.left);
+            prev.right = Math.max(prev.right ?? r.right, r.right);
+            prev.height = prev.bottom - prev.top;
+            prev.centerY = prev.top + prev.height / 2;
+          } else {
+            clustered.push({ ...r });
           }
         }
-      } catch (err) {}
-    }
-
-    rawLines.sort((a, b) => a.centerY - b.centerY);
-
-    const clustered = [];
-    for (const r of rawLines) {
-      if (clustered.length === 0) {
-        clustered.push({ ...r });
-      } else {
-        const prev = clustered[clustered.length - 1];
-        if (Math.abs(r.centerY - prev.centerY) < 8 || (Math.max(r.top, prev.top) < Math.min(r.bottom, prev.bottom) - 3)) {
-          prev.top = Math.min(prev.top, r.top);
-          prev.bottom = Math.max(prev.bottom, r.bottom);
-          prev.left = Math.min(prev.left ?? r.left, r.left);
-          prev.right = Math.max(prev.right ?? r.right, r.right);
-          prev.height = prev.bottom - prev.top;
-          prev.centerY = prev.top + prev.height / 2;
-        } else {
-          clustered.push({ ...r });
-        }
-      }
-    }
-
-    this.cachedLines = clustered.filter(l => l.hasText && l.height >= 8 && (l.right - l.left) >= 8);
-
-    if (this.cachedLines.length > 0) {
-      let minLeft = Infinity;
-      let maxRight = -Infinity;
-      let maxLineWidth = 0;
-
-      for (const line of this.cachedLines) {
-        if (line.left != null && line.left < minLeft) {
-          minLeft = line.left;
-        }
-        if (line.right != null && line.right > maxRight) {
-          maxRight = line.right;
-        }
-        if (line.left != null && line.right != null) {
-          const w = line.right - line.left;
-          if (w > maxLineWidth) maxLineWidth = w;
-        }
       }
 
-      if (minLeft < Infinity && maxRight > -Infinity) {
-        const standardLineWidth = Math.max(maxLineWidth, maxRight - minLeft);
-        const colLeft = minLeft;
-        const colRight = Math.max(maxRight, minLeft + standardLineWidth);
+      this.cachedLines = clustered.filter(l => l.hasText && l.height >= 8 && (l.right - l.left) >= 8);
 
-        // 1. Uniformní horizontální odsazení RULER_PADDING na obou stranách sloupce textu:
-        // - left: levý okraj textu posunutý o RULER_PADDING doleva (první znak není nalepený na hraně pravítka)
-        // - width: plná šířka sloupce textu rozšířená o (2 * RULER_PADDING) pro symetrické odsazení
-        let desiredLeft = colLeft - RULER_PADDING;
-        let desiredRight = colRight + RULER_PADDING;
+      if (this.cachedLines.length > 0) {
+        let minLeft = Infinity;
+        let maxRight = -Infinity;
+        let maxLineWidth = 0;
 
-        // Ochrana proti přetečení mimo viditelný viewport se zachováním plného odsazení textu
-        const minScreenBound = 0;
-        const maxScreenBound = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 99999);
+        for (const line of this.cachedLines) {
+          if (line.left != null && line.left < minLeft) {
+            minLeft = line.left;
+          }
+          if (line.right != null && line.right > maxRight) {
+            maxRight = line.right;
+          }
+          if (line.left != null && line.right != null) {
+            const w = line.right - line.left;
+            if (w > maxLineWidth) maxLineWidth = w;
+          }
+        }
 
-        desiredLeft = Math.max(minScreenBound, desiredLeft);
-        desiredRight = Math.min(maxScreenBound, desiredRight);
+        if (minLeft < Infinity && maxRight > -Infinity) {
+          const standardLineWidth = Math.max(maxLineWidth, maxRight - minLeft);
+          const colLeft = minLeft;
+          const colRight = Math.max(maxRight, minLeft + standardLineWidth);
 
-        const computedLeft = Math.round(desiredLeft);
-        const computedWidth = Math.round(Math.max(0, desiredRight - desiredLeft));
+          let desiredLeft = colLeft - RULER_PADDING;
+          let desiredRight = colRight + RULER_PADDING;
 
-        if (standardLineWidth > 200) {
-          this.textBlockLeft = computedLeft;
-          this.textBlockWidth = computedWidth;
-          this.lastKnownColumnLeft = computedLeft;
-          this.lastKnownColumnWidth = computedWidth;
-        } else if (this.lastKnownColumnWidth) {
-          this.textBlockLeft = this.lastKnownColumnLeft != null ? this.lastKnownColumnLeft : computedLeft;
-          this.textBlockWidth = this.lastKnownColumnWidth;
-        } else if (stageRect && stageRect.width > 200) {
-          const sLeft = Math.max(minScreenBound, Math.round(stageRect.left - RULER_PADDING));
-          const sWidth = Math.round(stageRect.width + (2 * RULER_PADDING));
-          this.textBlockLeft = sLeft;
-          this.textBlockWidth = sWidth;
-          this.lastKnownColumnLeft = sLeft;
-          this.lastKnownColumnWidth = sWidth;
-        } else {
-          this.textBlockLeft = computedLeft;
-          this.textBlockWidth = computedWidth;
+          const minScreenBound = 0;
+          const maxScreenBound = window.innerWidth || (document.documentElement ? document.documentElement.clientWidth : 99999);
+
+          desiredLeft = Math.max(minScreenBound, desiredLeft);
+          desiredRight = Math.min(maxScreenBound, desiredRight);
+
+          const computedLeft = Math.round(desiredLeft);
+          const computedWidth = Math.round(Math.max(0, desiredRight - desiredLeft));
+
+          if (standardLineWidth > 200) {
+            this.textBlockLeft = computedLeft;
+            this.textBlockWidth = computedWidth;
+            this.lastKnownColumnLeft = computedLeft;
+            this.lastKnownColumnWidth = computedWidth;
+          } else if (this.lastKnownColumnWidth) {
+            this.textBlockLeft = this.lastKnownColumnLeft != null ? this.lastKnownColumnLeft : computedLeft;
+            this.textBlockWidth = this.lastKnownColumnWidth;
+          } else if (stageRect && stageRect.width > 200) {
+            const sLeft = Math.max(minScreenBound, Math.round(stageRect.left - RULER_PADDING));
+            const sWidth = Math.round(stageRect.width + (2 * RULER_PADDING));
+            this.textBlockLeft = sLeft;
+            this.textBlockWidth = sWidth;
+            this.lastKnownColumnLeft = sLeft;
+            this.lastKnownColumnWidth = sWidth;
+          } else {
+            this.textBlockLeft = computedLeft;
+            this.textBlockWidth = computedWidth;
+          }
         }
       }
-    }
 
-    if (this.autoHeight && this.cachedLines.length > 0) {
-      const medianLine = this.cachedLines[Math.floor(this.cachedLines.length / 2)];
-      const baseH = Math.round(medianLine.height || 32);
-      this.height = baseH + (2 * RULER_PADDING);
+      if (this.autoHeight && this.cachedLines.length > 0) {
+        const medianLine = this.cachedLines[Math.floor(this.cachedLines.length / 2)];
+        const baseH = Math.round(medianLine.height || 32);
+        this.height = baseH + (2 * RULER_PADDING);
+      }
+
+      return this.cachedLines;
+    } catch (err) {
+      console.error("[ReadingRuler] Error in detectLines:", err);
+      this.cachedLines = [];
+      return [];
     }
-    return this.cachedLines;
+  }
+
+  refreshLines() {
+    return this.detectLines();
   }
 
   /**
    * Zmapuje přesné obdélníky všech viditelných slov na aktuální stránce.
    */
   refreshWords() {
-    const stage = this.container || document.getElementById("paged-stage");
-    const content = document.getElementById("reader-content");
-    if (!stage || !content) {
-      this.cachedWords = [];
-      return;
-    }
-
-    const stageRect = stage.getBoundingClientRect();
-    const stageLeft = stageRect.left;
-    const stageRight = stageRect.right;
-    const stageTop = stageRect.top;
-    const stageBottom = stageRect.bottom;
-
-    const words = [];
-    const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
-    let node;
-    const range = document.createRange();
-    // Podpora všech unicode mezer, nezlomitelných mezer i neviditelných dělicích znaků
-    const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u00AD\u2060]+/g;
-    const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
-
-    const nonTextSelector = "img, svg, figure, picture, canvas, hr, script, style";
-
-    while ((node = walker.nextNode())) {
-      if (node.nodeType !== Node.TEXT_NODE) continue;
-      const text = node.textContent;
-      if (!text || !text.trim()) continue;
-
-      const parent = node.parentElement;
-      if (!parent || parent.closest(nonTextSelector)) continue;
-
-      const container = parent.closest("p, div, section, article, figure, a, li, blockquote") || parent;
-      if (container && container.querySelector("img, svg, figure, picture, canvas, hr")) {
-        let hasRealText = false;
-        const cWalker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
-        let cNode;
-        while ((cNode = cWalker.nextNode())) {
-          if (cNode.nodeType === Node.TEXT_NODE && cNode.textContent.trim().length > 0) {
-            const cParent = cNode.parentElement;
-            if (cParent && !cParent.closest(nonTextSelector)) {
-              hasRealText = true;
-              break;
-            }
-          }
-        }
-        if (!hasRealText) continue;
+    try {
+      const stage = this.container || document.getElementById("paged-stage");
+      const content = document.getElementById("reader-content");
+      if (!stage || !content) {
+        this.cachedWords = [];
+        return [];
       }
 
-      let match;
-      wordRegex.lastIndex = 0;
-      while ((match = wordRegex.exec(text)) !== null) {
-        const rawToken = match[0];
-        const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
-        if (!cleanToken) continue;
+      const stageRect = stage.getBoundingClientRect();
+      const stageLeft = stageRect.left;
+      const stageRight = stageRect.right;
+      const stageTop = stageRect.top;
+      const stageBottom = stageRect.bottom;
 
-        const start = match.index;
-        const end = start + rawToken.length;
-        try {
-          range.setStart(node, start);
-          range.setEnd(node, end);
-          const clientRects = range.getClientRects();
-          if (!clientRects || clientRects.length === 0) continue;
+      const words = [];
+      const candidateElements = content.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6, li, blockquote');
+      const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u00AD\u2060]+/g;
+      const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
 
-          // Pokud je slovo na jednom řádku (standardní případ), použijeme přesný getBoundingClientRect()
-          if (clientRects.length === 1) {
-            const bRect = range.getBoundingClientRect();
-            if (
-              bRect.right > stageLeft + 5 &&
-              bRect.left < stageRight - 5 &&
-              bRect.bottom > stageTop + 2 &&
-              bRect.top < stageBottom - 2 &&
-              bRect.width >= 3 &&
-              bRect.width < stageRect.width * 0.85 &&
-              bRect.height >= 8 &&
-              bRect.height <= 65
-            ) {
-              words.push({
-                text: cleanToken,
-                left: bRect.left,
-                right: bRect.right,
-                top: bRect.top,
-                bottom: bRect.bottom,
-                width: bRect.width,
-                height: bRect.height,
-                centerX: bRect.left + bRect.width / 2,
-                centerY: bRect.top + bRect.height / 2
-              });
-            }
-          } else {
-            // Zalomené slovo na více řádcích
-            for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
-              const rect = clientRects[rIdx];
+      candidateElements.forEach(el => {
+        if (el.closest('svg, figure, picture') || el.tagName === 'IMG' || el.tagName === 'HR' || el.tagName === 'CANVAS') return;
+        if (!el.textContent || el.textContent.trim().length === 0) return;
+        if (el.tagName === 'SPAN' && el.closest('p, h1, h2, h3, h4, h5, h6, li, blockquote')) return;
+
+        const elRect = el.getBoundingClientRect();
+        if (elRect.width <= 0 || elRect.height <= 0) return;
+        if (elRect.right < stageLeft - 10 || elRect.left > stageRight + 10) return;
+
+        for (let c = 0; c < el.childNodes.length; c++) {
+          const node = el.childNodes[c];
+          if (node.nodeType !== Node.TEXT_NODE) continue;
+          const text = node.textContent;
+          if (!text || !text.trim()) continue;
+
+          let match;
+          wordRegex.lastIndex = 0;
+          while ((match = wordRegex.exec(text)) !== null) {
+            const rawToken = match[0];
+            const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
+            if (!cleanToken) continue;
+
+            const start = match.index;
+            const end = start + rawToken.length;
+            try {
+              const range = document.createRange();
+              range.setStart(node, start);
+              range.setEnd(node, end);
+              const bRect = range.getBoundingClientRect();
               if (
-                rect.right > stageLeft + 5 &&
-                rect.left < stageRight - 5 &&
-                rect.bottom > stageTop + 2 &&
-                rect.top < stageBottom - 2 &&
-                rect.width >= 3 &&
-                rect.width < stageRect.width * 0.85 &&
-                rect.height >= 8 &&
-                rect.height <= 65
+                bRect.right > stageLeft + 5 &&
+                bRect.left < stageRight - 5 &&
+                bRect.bottom > stageTop + 2 &&
+                bRect.top < stageBottom - 2 &&
+                bRect.width >= 3 &&
+                bRect.width < stageRect.width * 0.85 &&
+                bRect.height >= 8 &&
+                bRect.height <= 65
               ) {
                 words.push({
                   text: cleanToken,
-                  left: rect.left,
-                  right: rect.right,
-                  top: rect.top,
-                  bottom: rect.bottom,
-                  width: rect.width,
-                  height: rect.height,
-                  centerX: rect.left + rect.width / 2,
-                  centerY: rect.top + rect.height / 2
+                  left: bRect.left,
+                  right: bRect.right,
+                  top: bRect.top,
+                  bottom: bRect.bottom,
+                  width: bRect.width,
+                  height: bRect.height,
+                  centerX: bRect.left + bRect.width / 2,
+                  centerY: bRect.top + bRect.height / 2
                 });
               }
+            } catch (e) {}
+          }
+        }
+      });
+
+      // Seřadíme čtecím pořadím: shora dolů (tolerance 8px pro tentýž řádek), a zleva doprava
+      words.sort((a, b) => {
+        if (Math.abs(a.centerY - b.centerY) > 8) {
+          return a.centerY - b.centerY;
+        }
+        return a.left - b.left;
+      });
+
+      if (this.cachedLines.length === 0) {
+        this.detectLines();
+      }
+
+      if (this.cachedLines.length > 0) {
+        for (const w of words) {
+          let bestIdx = 0;
+          let minDiff = Infinity;
+          for (let j = 0; j < this.cachedLines.length; j++) {
+            const diff = Math.abs(w.centerY - this.cachedLines[j].centerY);
+            if (diff < minDiff) {
+              minDiff = diff;
+              bestIdx = j;
             }
           }
-        } catch (e) {}
-      }
-    }
-
-    // Seřadíme čtecím pořadím: shora dolů (tolerance 8px pro tentýž řádek), a zleva doprava
-    words.sort((a, b) => {
-      if (Math.abs(a.centerY - b.centerY) > 8) {
-        return a.centerY - b.centerY;
-      }
-      return a.left - b.left;
-    });
-
-    if (this.cachedLines.length === 0) {
-      this.refreshLines();
-    }
-
-    if (this.cachedLines.length > 0) {
-      for (const w of words) {
-        let bestIdx = 0;
-        let minDiff = Infinity;
-        for (let j = 0; j < this.cachedLines.length; j++) {
-          const diff = Math.abs(w.centerY - this.cachedLines[j].centerY);
-          if (diff < minDiff) {
-            minDiff = diff;
-            bestIdx = j;
+          w.lineIndex = bestIdx;
+        }
+      } else {
+        let currentLine = 0;
+        let lastCenterY = null;
+        for (const w of words) {
+          if (lastCenterY !== null && Math.abs(w.centerY - lastCenterY) > 8) {
+            currentLine++;
           }
+          w.lineIndex = currentLine;
+          lastCenterY = w.centerY;
         }
-        w.lineIndex = bestIdx;
       }
-    } else {
-      let currentLine = 0;
-      let lastCenterY = null;
-      for (const w of words) {
-        if (lastCenterY !== null && Math.abs(w.centerY - lastCenterY) > 8) {
-          currentLine++;
-        }
-        w.lineIndex = currentLine;
-        lastCenterY = w.centerY;
-      }
-    }
 
-    this.cachedWords = words;
+      this.cachedWords = words;
+      return this.cachedWords;
+    } catch (err) {
+      console.error("[ReadingRuler] Error in refreshWords:", err);
+      this.cachedWords = [];
+      return [];
+    }
   }
 
   computeLineGeometry(lineIdx) {
@@ -1645,18 +1624,8 @@ export class ReadingRuler {
             this.applyPosition();
           }
         }
-
-        if (this.cachedLines.length === 0) {
-          requestAnimationFrame(() => {
-            if (this.enabled && this.cachedLines.length === 0) {
-              this.refreshLines();
-              this.refreshWords();
-              if (this.cachedLines.length > 0) {
-                this.resetPositionForPage(direction);
-              }
-            }
-          });
-        }
+      } catch (err) {
+        console.error("[ReadingRuler] Error in resetPositionForPage:", err);
       } finally {
         this.isNavigating = false;
         this.isNavigatingPage = false;

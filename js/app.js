@@ -1728,7 +1728,11 @@ class LuminaApp {
       }
 
       // Aktualizace řádků pro pravítko na nové stránce s přesným směrem a detekcí změny
-      this.ruler?.onPageChange(direction, isPageChanged);
+      try {
+        this.ruler?.onPageChange(direction, isPageChanged);
+      } catch (rulerErr) {
+        console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
+      }
     } finally {
       // Synchronní uvolnění navigačního zámku ihned po vykreslení DOMu a změření řádků
       this.isNavigating = false;
