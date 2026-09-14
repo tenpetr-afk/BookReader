@@ -191,7 +191,7 @@ export class StorageManager {
       showProgressBar: showProgressBar,
       ruler: {
         enabled: false,
-        mode: "highlight", // highlight, focus, underline
+        mode: "highlight", // highlight, focus
         height: 48, // px
         autoHeight: true, // Automatická výška podle velikosti řádku
         snapToLines: true, // Magnetická přilnavost k jednotlivým řádkům
@@ -221,9 +221,14 @@ export class StorageManager {
           merged.showFooterBar = true;
         }
         merged.showProgressBar = merged.showFooterBar;
+        if (merged.ruler.mode === "underline") {
+          merged.ruler.mode = "highlight";
+        }
         if (merged.ruler.followMode !== "keyboard") {
           merged.ruler.followMode = "mouse";
         }
+        merged.ruler.snapToLines = true;
+        merged.ruler.autoHeight = true;
         return merged;
       }
     } catch (e) {
@@ -234,6 +239,10 @@ export class StorageManager {
 
   saveSettings(settings) {
     try {
+      if (settings?.ruler) {
+        settings.ruler.snapToLines = true;
+        settings.ruler.autoHeight = true;
+      }
       const isVisible = (settings.showProgressBar !== undefined ? settings.showProgressBar : settings.showFooterBar) !== false;
       settings.showFooterBar = isVisible;
       settings.showProgressBar = isVisible;
