@@ -1526,6 +1526,122 @@ export class ReadingRuler {
 
         this.setWordWindow(closestIdx);
 
+        // V režimu sledování myši (mouse-follow) zajistit plynulý spojitý horizontální pohyb bez magnetického přichytávání a bez trhání zpět
+        if (this.followMode === "mouse") {
+          const geom = this.computeLineGeometry(targetLineIdx);
+          if (geom) {
+            this.height = geom.height;
+            this.targetY = geom.targetY;
+            this.currentY = this.targetY;
+          }
+          const padX = 3;
+          const lineWords = [];
+          for (let i = 0; i < this.cachedWords.length; i++) {
+            if (this.cachedWords[i].lineIndex === targetLineIdx) {
+              lineWords.push({ word: this.cachedWords[i], index: i });
+            }
+          }
+
+          const computeWordPreview = (wIdx) => {
+            if (wIdx < 0 || wIdx >= this.cachedWords.length) return 0;
+            const w = this.cachedWords[wIdx];
+            const firstW = Math.round(w.width + padX * 2);
+            let nextWLast = null;
+            for (let offset = 1; offset <= 2; offset++) {
+              const nextIdx = wIdx + offset;
+              if (nextIdx >= this.cachedWords.length) break;
+              const nw = this.cachedWords[nextIdx];
+              const isSameLine = (nw.lineIndex != null && w.lineIndex != null)
+                ? (nw.lineIndex === w.lineIndex)
+                : (Math.abs(nw.centerY - w.centerY) <= 10);
+              if (!isSameLine || nw.left <= w.left) break;
+              nextWLast = nw;
+            }
+            if (!nextWLast) return 0;
+            const activeLine = (w.lineIndex != null && w.lineIndex >= 0 && w.lineIndex < this.cachedLines.length)
+              ? this.cachedLines[w.lineIndex]
+              : null;
+            const maxB = activeLine?.right ? Math.round(activeLine.right + padX) : Infinity;
+            const rawTargetRight = Math.round(nextWLast.right + padX);
+            const clampedTargetRight = Math.min(rawTargetRight, maxB);
+            const stableLeft = Math.round(w.left - padX);
+            return Math.max(0, clampedTargetRight - stableLeft - firstW);
+          };
+
+          let continuousLeft = 0;
+          let continuousWidth = this.activeWordWidth;
+          let previewW = 0;
+
+          if (lineWords.length > 0) {
+            if (curX <= lineWords[0].word.centerX) {
+              const firstItem = lineWords[0];
+              continuousLeft = Math.round(firstItem.word.left - padX + (curX - firstItem.word.centerX));
+              continuousWidth = Math.round(firstItem.word.width + padX * 2);
+              previewW = computeWordPreview(firstItem.index);
+              this.activeWordIndex = firstItem.index;
+            } else if (curX >= lineWords[lineWords.length - 1].word.centerX) {
+              const lastItem = lineWords[lineWords.length - 1];
+              continuousLeft = Math.round(lastItem.word.left - padX + (curX - lastItem.word.centerX));
+              continuousWidth = Math.round(lastItem.word.width + padX * 2);
+              previewW = computeWordPreview(lastItem.index);
+              this.activeWordIndex = lastItem.index;
+            } else {
+              // Najdeme dvojici sousedních slov, mezi jejichž středy se curX nachází
+              let segIdx = 0;
+              for (let k = 0; k < lineWords.length - 1; k++) {
+                if (curX >= lineWords[k].word.centerX && curX <= lineWords[k + 1].word.centerX) {
+                  segIdx = k;
+                  break;
+                }
+              }
+              const itemA = lineWords[segIdx];
+              const itemB = lineWords[segIdx + 1];
+              const dx = itemB.word.centerX - itemA.word.centerX;
+              const t = dx > 0 ? (curX - itemA.word.centerX) / dx : 0;
+              const clampedT = Math.max(0, Math.min(1, t));
+
+              const leftA = itemA.word.left - padX;
+              const leftB = itemB.word.left - padX;
+              continuousLeft = Math.round(leftA + clampedT * (leftB - leftA));
+
+              const widthA = itemA.word.width + padX * 2;
+              const widthB = itemB.word.width + padX * 2;
+              continuousWidth = Math.round(widthA + clampedT * (widthB - widthA));
+
+              const prevA = computeWordPreview(itemA.index);
+              const prevB = computeWordPreview(itemB.index);
+              previewW = Math.round(prevA + clampedT * (prevB - prevA));
+
+              this.activeWordIndex = (clampedT < 0.5) ? itemA.index : itemB.index;
+            }
+          } else {
+            continuousLeft = Math.round(curX - this.activeWordWidth / 2);
+            continuousWidth = this.activeWordWidth;
+          }
+
+          const activeLine = (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) ? this.cachedLines[targetLineIdx] : null;
+          if (activeLine && activeLine.left != null && activeLine.right != null) {
+            const minLeft = Math.round(activeLine.left - padX);
+            const maxLeft = Math.round(activeLine.right + padX - continuousWidth);
+            if (maxLeft >= minLeft) {
+              continuousLeft = Math.max(minLeft, Math.min(maxLeft, continuousLeft));
+            }
+          }
+
+          this.wordLeft = continuousLeft;
+          this.activeWordWidth = continuousWidth;
+          this.totalWidth = continuousWidth + previewW;
+          this.wordWidth = this.totalWidth;
+          this.previewWidth = previewW;
+          this.previewLeft = this.wordLeft + continuousWidth;
+
+          const firstWordRatio = Math.min(1, Math.max(0.15, continuousWidth / this.totalWidth));
+          this.firstWordRatio = firstWordRatio;
+          if (this.rulerEl) {
+            this.rulerEl.style.setProperty('--word-solid-ratio', `${(firstWordRatio * 100).toFixed(1)}%`);
+          }
+        }
+
         this.rulerEl.classList.add("word-tracking-mode");
         this.rulerEl.classList.add("is-snapped");
         this.maskTopEl.classList.add("is-snapped");
@@ -1653,9 +1769,11 @@ export class ReadingRuler {
       const wLast = nextWords[nextWords.length - 1];
       const rawTargetRight = Math.round(wLast.right + padX);
       const clampedTargetRight = Math.min(rawTargetRight, maxBoundary);
-      totalWidth = Math.max(firstWordWidth, clampedTargetRight - this.wordLeft);
+      const stableLeft = Math.round(w0.left - padX);
+      const previewW = Math.max(0, clampedTargetRight - stableLeft - firstWordWidth);
+      totalWidth = firstWordWidth + previewW;
       this.previewLeft = this.wordLeft + firstWordWidth;
-      this.previewWidth = Math.max(0, totalWidth - firstWordWidth);
+      this.previewWidth = previewW;
     } else {
       this.previewLeft = 0;
       this.previewWidth = 0;

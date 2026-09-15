@@ -1509,16 +1509,8 @@ body.dragging-file .drop-zone-overlay {
 }
 
 .reading-ruler.mode-highlight:not(.mode-focus) {
-  background: linear-gradient(
-    to bottom,
-    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.08) 0%,
-    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.28) 20%,
-    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.28) 80%,
-    rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.08) 100%
-  ) !important;
-  box-shadow: 0 0 12px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.25),
-              inset 0 1px 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.35),
-              inset 0 -1px 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.35) !important;
+  background: rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.22) !important;
+  box-shadow: none !important;
 }
 
 .ruler-mask {

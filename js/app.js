@@ -173,6 +173,7 @@ class LuminaApp {
       sliderRulerOpacity: document.getElementById("slider-ruler-opacity"),
       valRulerOpacity: document.getElementById("val-ruler-opacity"),
       rulerFollowSelect: document.getElementById("ruler-follow-select"),
+      rulerFollowButtons: document.querySelectorAll("[data-ruler-follow]"),
 
       // Rychlé nastavení pravítka v záhlaví (popover)
       rulerBtnGroup: document.getElementById("ruler-btn-group"),
@@ -321,6 +322,11 @@ class LuminaApp {
     }
     if (this.dom.popoverRulerFollowSelect) {
       this.dom.popoverRulerFollowSelect.value = s.ruler.followMode;
+    }
+    if (this.dom.rulerFollowButtons) {
+      this.dom.rulerFollowButtons.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.rulerFollow === s.ruler.followMode);
+      });
     }
     // Tlačítka témat
     this.dom.themeSelects.forEach(btn => {
@@ -1054,32 +1060,53 @@ class LuminaApp {
       });
     });
 
-    this.dom.sliderRulerHeight.addEventListener("input", (e) => {
-      const val = parseInt(e.target.value, 10);
-      this.settings.ruler.height = val;
-      this.ruler.setHeight(val);
-      this.updateRulerHeightUI();
-      storage.saveSettings(this.settings);
-    });
+    if (this.dom.sliderRulerHeight) {
+      this.dom.sliderRulerHeight.addEventListener("input", (e) => {
+        const val = parseInt(e.target.value, 10);
+        this.settings.ruler.height = val;
+        this.ruler.setHeight(val);
+        this.updateRulerHeightUI();
+        storage.saveSettings(this.settings);
+      });
+    }
 
-    this.dom.sliderRulerOpacity.addEventListener("input", (e) => {
-      const val = parseInt(e.target.value, 10);
-      this.settings.ruler.dimOpacity = val / 100;
-      this.ruler.setDimOpacity(this.settings.ruler.dimOpacity);
-      if (this.dom.popoverSliderRulerOpacity) this.dom.popoverSliderRulerOpacity.value = val;
-      if (this.dom.popoverValRulerOpacity) this.dom.popoverValRulerOpacity.textContent = `${val}%`;
-      this.applySettings();
-      storage.saveSettings(this.settings);
-    });
+    if (this.dom.sliderRulerOpacity) {
+      this.dom.sliderRulerOpacity.addEventListener("input", (e) => {
+        const val = parseInt(e.target.value, 10);
+        this.settings.ruler.dimOpacity = val / 100;
+        this.ruler.setDimOpacity(this.settings.ruler.dimOpacity);
+        if (this.dom.popoverSliderRulerOpacity) this.dom.popoverSliderRulerOpacity.value = val;
+        if (this.dom.popoverValRulerOpacity) this.dom.popoverValRulerOpacity.textContent = `${val}%`;
+        this.applySettings();
+        storage.saveSettings(this.settings);
+      });
+    }
 
-    this.dom.rulerFollowSelect.addEventListener("change", (e) => {
-      const val = e.target.value;
-      this.settings.ruler.followMode = val;
-      this.ruler.setFollowMode(val);
-      if (this.dom.popoverRulerFollowSelect) this.dom.popoverRulerFollowSelect.value = val;
-      this.applySettings();
-      storage.saveSettings(this.settings);
-    });
+    if (this.dom.rulerFollowSelect) {
+      this.dom.rulerFollowSelect.addEventListener("change", (e) => {
+        const val = e.target.value;
+        this.settings.ruler.followMode = val;
+        this.ruler.setFollowMode(val);
+        if (this.dom.popoverRulerFollowSelect) this.dom.popoverRulerFollowSelect.value = val;
+        this.applySettings();
+        storage.saveSettings(this.settings);
+      });
+    }
+
+    if (this.dom.rulerFollowButtons) {
+      this.dom.rulerFollowButtons.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const val = btn.dataset.rulerFollow;
+          if (!val) return;
+          this.settings.ruler.followMode = val;
+          this.ruler.setFollowMode(val);
+          this.applySettings();
+          this.updateTouchZonesUI();
+          storage.saveSettings(this.settings);
+        });
+      });
+    }
 
     // Přepínač zobrazení spodní lišty s postupem čtení
     if (this.dom.settingShowFooter) {

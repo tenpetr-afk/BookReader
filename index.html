@@ -127,6 +127,15 @@
               </button>
             </div>
 
+            <!-- Způsob pohybu -->
+            <div class="popover-section" id="popover-follow-section">
+              <div class="popover-section-label">Způsob pohybu</div>
+              <div class="popover-styles-grid">
+                <button type="button" class="popover-style-btn" data-ruler-follow="mouse">Kurzor myši</button>
+                <button type="button" class="popover-style-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
+              </div>
+            </div>
+
             <!-- Režim pravítka: Řádkové vs. Sledování slov -->
             <div class="popover-section">
               <div class="popover-section-label">Režim zvýraznění</div>
@@ -163,19 +172,6 @@
               </div>
             </div>
 
-
-
-            <!-- Výška / tloušťka pravítka -->
-            <div class="popover-section" id="popover-setting-ruler-height-container">
-              <div class="popover-row-between">
-                <span class="popover-section-label">Výška / tloušťka</span>
-                <span id="popover-val-ruler-height" class="popover-val-badge">Auto</span>
-              </div>
-              <div class="popover-slider-wrapper">
-                <input type="range" id="popover-slider-ruler-height" class="slider-input" min="16" max="100" value="48">
-              </div>
-            </div>
-
             <!-- Intenzita ztmavení okolí -->
             <div class="popover-section">
               <div class="popover-row-between">
@@ -185,15 +181,6 @@
               <div class="popover-slider-wrapper">
                 <input type="range" id="popover-slider-ruler-opacity" class="slider-input" min="20" max="90" value="65">
               </div>
-            </div>
-
-            <!-- Způsob pohybu -->
-            <div class="popover-section popover-section-last">
-              <div class="popover-section-label">Způsob pohybu</div>
-              <select id="popover-ruler-follow-select" class="popover-select">
-                <option value="mouse">Sledovat kurzor myši</option>
-                <option value="keyboard">Klávesové šipky (Nahoru / Dolů)</option>
-              </select>
             </div>
           </div>
         </div>
@@ -346,6 +333,14 @@
           </button>
         </div>
 
+        <div style="margin-bottom: 1rem;" id="settings-follow-section">
+          <div class="slider-label"><span>Způsob pohybu</span></div>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
+            <button type="button" class="font-btn" data-ruler-follow="mouse">Kurzor myši</button>
+            <button type="button" class="font-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
+          </div>
+        </div>
+
         <div style="margin-bottom: 1rem;">
           <div class="slider-label"><span>Styl pravítka</span></div>
           <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
@@ -375,28 +370,12 @@
           </div>
         </div>
 
-        <div class="slider-setting" id="setting-ruler-height-container">
-          <div class="slider-label">
-            <span>Výška / tloušťka pravítka</span>
-            <span id="val-ruler-height">Auto</span>
-          </div>
-          <input type="range" id="slider-ruler-height" class="slider-input" min="16" max="100" value="48" />
-        </div>
-
         <div class="slider-setting">
           <div class="slider-label">
             <span>Intenzita ztmavení okolí (režim Zaostření)</span>
             <span id="val-ruler-opacity">65%</span>
           </div>
           <input type="range" id="slider-ruler-opacity" class="slider-input" min="20" max="90" value="65" />
-        </div>
-
-        <div style="margin-bottom: 1rem;">
-          <div class="slider-label"><span>Způsob pohybu</span></div>
-          <select id="ruler-follow-select" style="width: 100%; padding: 0.5rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-surface-elevated); color: var(--text-main);">
-            <option value="mouse">Sledovat kurzor myši</option>
-            <option value="keyboard">Klávesové šipky (Nahoru / Dolů)</option>
-          </select>
         </div>
 
       </div>
