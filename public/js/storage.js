@@ -181,12 +181,14 @@ export class StorageManager {
 
     const defaults = {
       theme: "warm", // light, warm, sepia, dark, oled
-      fontFamily: "georgia", // georgia, inter, merriweather, opendyslexic
+      fontFamily: "georgia", // georgia, inter, merriweather, lora, atkinson, opendyslexic
       fontSize: 19, // px
+      marginPercent: 20, // % velikost okrajů stránky
       lineHeight: 1.65,
       contentWidth: 720, // px
       textAlign: "justify", // left, justify
       readingMode: "scroll", // scroll, paginated
+      fastReading: false, // Bionic reading (zvýraznění prvních písmen slov)
       showFooterBar: showProgressBar, // zobrazení spodní lišty čtečky (postup čtení, výchozí zapnuto)
       showProgressBar: showProgressBar,
       ruler: {
@@ -211,6 +213,8 @@ export class StorageManager {
           ...parsed,
           ruler: { ...defaults.ruler, ...(parsed.ruler || {}) }
         };
+        merged.marginPercent = parsed.marginPercent ?? 20;
+        merged.fastReading = !!parsed.fastReading;
         if (localStorage.getItem('showProgressBar') !== null) {
           merged.showFooterBar = localStorage.getItem('showProgressBar') === 'true';
         } else if (parsed.showFooterBar !== undefined) {

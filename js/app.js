@@ -150,9 +150,16 @@ class LuminaApp {
 
       // Nastavení elementy
       themeSelects: document.querySelectorAll("[data-theme]"),
-      fontSelects: document.querySelectorAll("[data-font]"),
+      fontDropdownWrapper: document.getElementById("font-dropdown-wrapper"),
+      fontDropdownTrigger: document.getElementById("font-dropdown-trigger"),
+      fontDropdownCurrent: document.getElementById("font-dropdown-current"),
+      fontDropdownMenu: document.getElementById("font-dropdown-menu"),
+      fontSelects: document.querySelectorAll(".font-dropdown-item[data-font], [data-font]"),
+      settingFastReading: document.getElementById("setting-fast-reading"),
       sliderFontSize: document.getElementById("slider-font-size"),
       valFontSize: document.getElementById("val-font-size"),
+      sliderPageMargin: document.getElementById("slider-page-margin"),
+      valPageMargin: document.getElementById("val-page-margin"),
       sliderLineHeight: document.getElementById("slider-line-height"),
       valLineHeight: document.getElementById("val-line-height"),
       sliderContentWidth: document.getElementById("slider-content-width"),
@@ -292,6 +299,8 @@ class LuminaApp {
 
     document.documentElement.style.setProperty("--reader-font-size", `${s.fontSize}px`);
     document.documentElement.style.setProperty("--reader-line-height", s.lineHeight || 1.65);
+    const stageWidthVw = `${100 - (this.settings.marginPercent || 20)}vw`;
+    document.documentElement.style.setProperty('--reader-stage-width', stageWidthVw);
     document.documentElement.style.setProperty("--reader-max-width", `${s.contentWidth || 720}px`);
     document.documentElement.style.setProperty("--reader-text-align", s.textAlign || "justify");
 
@@ -299,6 +308,11 @@ class LuminaApp {
     if (this.dom.sliderFontSize) {
       this.dom.sliderFontSize.value = s.fontSize;
       if (this.dom.valFontSize) this.dom.valFontSize.textContent = `${s.fontSize}px`;
+    }
+    if (this.dom.sliderPageMargin) {
+      const marginVal = this.settings.marginPercent ?? 20;
+      this.dom.sliderPageMargin.value = marginVal;
+      if (this.dom.valPageMargin) this.dom.valPageMargin.textContent = `${marginVal}%`;
     }
     if (this.dom.sliderLineHeight) {
       this.dom.sliderLineHeight.value = s.lineHeight;
@@ -333,9 +347,27 @@ class LuminaApp {
       btn.classList.toggle("active", btn.dataset.theme === s.theme);
     });
     // Písma
+    const fontLabels = {
+      georgia: "Georgia (Serif)",
+      merriweather: "Merriweather",
+      lora: "Lora",
+      inter: "Inter (Sans)",
+      atkinson: "Atkinson Hyperlegible",
+      opendyslexic: "Pro dyslexii"
+    };
+    const activeFont = s.fontFamily || "georgia";
+    if (this.dom.fontDropdownCurrent) {
+      this.dom.fontDropdownCurrent.textContent = fontLabels[activeFont] || activeFont;
+      this.dom.fontDropdownCurrent.style.fontFamily = "var(--font-book)";
+    }
     this.dom.fontSelects.forEach(btn => {
-      btn.classList.toggle("active", btn.dataset.font === s.fontFamily);
+      const isSelected = btn.dataset.font === activeFont;
+      btn.classList.toggle("active", isSelected);
+      btn.setAttribute("aria-selected", isSelected ? "true" : "false");
     });
+    if (this.dom.settingFastReading) {
+      this.setSwitchState(this.dom.settingFastReading, !!s.fastReading);
+    }
     // Režimy pravítka
     this.dom.rulerModeSelects.forEach(btn => {
       btn.classList.toggle("active", btn.dataset.rulerMode === s.ruler.mode);
@@ -972,11 +1004,50 @@ class LuminaApp {
       });
     });
 
+    // Dropdown písma (Google Docs style)
+    if (this.dom.fontDropdownTrigger && this.dom.fontDropdownWrapper) {
+      const closeFontDropdown = () => {
+        this.dom.fontDropdownWrapper.classList.remove("open");
+        this.dom.fontDropdownTrigger.setAttribute("aria-expanded", "false");
+      };
+
+      const toggleFontDropdown = () => {
+        const isOpen = this.dom.fontDropdownWrapper.classList.toggle("open");
+        this.dom.fontDropdownTrigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      };
+
+      this.dom.fontDropdownTrigger.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleFontDropdown();
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!this.dom.fontDropdownWrapper.contains(e.target)) {
+          closeFontDropdown();
+        }
+      });
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && this.dom.fontDropdownWrapper.classList.contains("open")) {
+          closeFontDropdown();
+          this.dom.fontDropdownTrigger.focus();
+        }
+      });
+    }
+
     this.dom.fontSelects.forEach(btn => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
         this.settings.fontFamily = btn.dataset.font;
         this.applySettings();
         storage.saveSettings(this.settings);
+        if (this.dom.fontDropdownWrapper) {
+          this.dom.fontDropdownWrapper.classList.remove("open");
+        }
+        if (this.dom.fontDropdownTrigger) {
+          this.dom.fontDropdownTrigger.setAttribute("aria-expanded", "false");
+          this.dom.fontDropdownTrigger.focus();
+        }
       });
     });
 
@@ -985,6 +1056,28 @@ class LuminaApp {
       this.applySettings();
       storage.saveSettings(this.settings);
     });
+
+    if (this.dom.sliderPageMargin) {
+      this.dom.sliderPageMargin.addEventListener("input", (e) => {
+        const val = parseInt(e.target.value, 10);
+        this.settings.marginPercent = val;
+        if (this.dom.valPageMargin) {
+          this.dom.valPageMargin.textContent = `${val}%`;
+        }
+        const stageWidthVw = `${100 - val}vw`;
+        document.documentElement.style.setProperty("--reader-stage-width", stageWidthVw);
+        storage.saveSettings(this.settings);
+
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            this.recalcPages();
+            this.goToPage(this.currentPageIndex);
+            this.ruler?.refreshLines();
+            this.ruler?.applyPosition();
+          });
+        });
+      });
+    }
 
     if (this.dom.sliderLineHeight) {
       this.dom.sliderLineHeight.addEventListener("input", (e) => {
@@ -1129,6 +1222,17 @@ class LuminaApp {
             this.updateScrubberUI();
           });
         }
+      });
+    }
+
+    // Přepínač rychlého čtení (Bionic reading)
+    if (this.dom.settingFastReading) {
+      this.dom.settingFastReading.addEventListener("click", () => {
+        const val = !this.settings.fastReading;
+        this.settings.fastReading = val;
+        this.setSwitchState(this.dom.settingFastReading, val);
+        storage.saveSettings(this.settings);
+        this.applyFastReadingMode();
       });
     }
 
@@ -1669,9 +1773,10 @@ class LuminaApp {
 
     try {
       const chapter = await this.currentParser.loadChapter(this.currentChapterIndex);
+      this.currentRawChapterHtml = chapter.html;
       if (this.dom.chapterTitleEl) this.dom.chapterTitleEl.textContent = chapter.title;
       if (this.dom.pagedChapterName) this.dom.pagedChapterName.textContent = chapter.title;
-      if (this.dom.readerContent) this.dom.readerContent.innerHTML = chapter.html;
+      this.renderChapterHtml();
 
       // Nastavíme tracker pro novou kapitolu
       tracker.startSession(
@@ -1736,6 +1841,123 @@ class LuminaApp {
         this.ruler.isLineLocked = false;
         this.ruler.suppressLineAdvancement = false;
       }
+    }
+  }
+
+  renderChapterHtml() {
+    if (!this.dom.readerContent) return;
+    let html = this.currentRawChapterHtml || "";
+    if (this.settings.fastReading) {
+      html = this.toBionicReadingHtml(html);
+    }
+    this.dom.readerContent.innerHTML = html;
+  }
+
+  applyFastReadingMode() {
+    if (!this.currentBook || !this.currentRawChapterHtml || !this.dom.readerContent) return;
+    const curPageIndex = this.currentPageIndex;
+    this.renderChapterHtml();
+    requestAnimationFrame(() => {
+      this.recalcPages();
+      this.goToPage(Math.min(curPageIndex, Math.max(0, this.totalPagesInChapter - 1)));
+      if (this.ruler && this.ruler.enabled && this.ruler.wordTracking) {
+        this.ruler.refreshWords();
+      }
+    });
+  }
+
+  toBionicReadingHtml(html) {
+    if (!html || typeof html !== "string") return html;
+    try {
+      const doc = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
+      const root = doc.body;
+
+      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+      const textNodes = [];
+      let node;
+
+      while ((node = walker.nextNode())) {
+        if (node.parentElement) {
+          const tag = node.parentElement.tagName.toUpperCase();
+          if (tag === "SCRIPT" || tag === "STYLE" || tag === "CODE" || tag === "PRE" || tag === "SVG") {
+            continue;
+          }
+        }
+        textNodes.push(node);
+      }
+
+      const wordTokenRegex = /([^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+)/g;
+      const letterRegex = /[\p{L}\p{N}]+/gu;
+
+      for (const textNode of textNodes) {
+        const text = textNode.textContent;
+        if (!text || !text.trim()) continue;
+
+        const frag = doc.createDocumentFragment();
+        let lastIdx = 0;
+        let match;
+        wordTokenRegex.lastIndex = 0;
+
+        while ((match = wordTokenRegex.exec(text)) !== null) {
+          if (match.index > lastIdx) {
+            frag.appendChild(doc.createTextNode(text.substring(lastIdx, match.index)));
+          }
+
+          const rawWord = match[0];
+          letterRegex.lastIndex = 0;
+          let subLast = 0;
+          let letterMatch;
+          const wordSpan = doc.createElement("span");
+          wordSpan.className = "bionic-word";
+
+          let hasLetters = false;
+          while ((letterMatch = letterRegex.exec(rawWord)) !== null) {
+            hasLetters = true;
+            if (letterMatch.index > subLast) {
+              wordSpan.appendChild(doc.createTextNode(rawWord.substring(subLast, letterMatch.index)));
+            }
+            const letters = letterMatch[0];
+            const len = letters.length;
+            let boldLen;
+            if (len <= 1) boldLen = 1;
+            else if (len <= 3) boldLen = 1;
+            else if (len <= 5) boldLen = 2;
+            else boldLen = Math.ceil(len * 0.45);
+
+            const b = doc.createElement("b");
+            b.className = "bionic-bold";
+            b.textContent = letters.slice(0, boldLen);
+            wordSpan.appendChild(b);
+
+            if (boldLen < len) {
+              wordSpan.appendChild(doc.createTextNode(letters.slice(boldLen)));
+            }
+            subLast = letterMatch.index + len;
+          }
+
+          if (hasLetters) {
+            if (subLast < rawWord.length) {
+              wordSpan.appendChild(doc.createTextNode(rawWord.substring(subLast)));
+            }
+            frag.appendChild(wordSpan);
+          } else {
+            frag.appendChild(doc.createTextNode(rawWord));
+          }
+
+          lastIdx = match.index + rawWord.length;
+        }
+
+        if (lastIdx < text.length) {
+          frag.appendChild(doc.createTextNode(text.substring(lastIdx)));
+        }
+
+        textNode.parentNode.replaceChild(frag, textNode);
+      }
+
+      return root.innerHTML;
+    } catch (e) {
+      console.warn("Chyba při formátování rychlého čtení (Bionic):", e);
+      return html;
     }
   }
 

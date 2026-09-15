@@ -1141,11 +1141,103 @@ export class ReadingRuler {
       const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g;
       const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
 
+      const visitedBionicSpans = new Set();
       while ((node = walker.nextNode())) {
         if (node.parentElement) {
           const parentTag = node.parentElement.tagName;
           if (parentTag === 'SCRIPT' || parentTag === 'STYLE') continue;
           if (node.parentElement.closest('svg, audio, video')) continue;
+        }
+
+        const bionicSpan = node.parentElement ? node.parentElement.closest('.bionic-word') : null;
+        if (bionicSpan) {
+          if (visitedBionicSpans.has(bionicSpan)) continue;
+          visitedBionicSpans.add(bionicSpan);
+
+          const rawToken = bionicSpan.textContent;
+          const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
+          if (!cleanToken) continue;
+
+          try {
+            range.selectNodeContents(bionicSpan);
+            const clientRects = range.getClientRects();
+            if (!clientRects || clientRects.length === 0) continue;
+
+            const subRects = [];
+            for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
+              const rect = clientRects[rIdx];
+              if (
+                rect.width > 0.5 &&
+                rect.height > 2 &&
+                rect.right > stageLeft &&
+                rect.left < stageRight &&
+                rect.bottom > stageTop - 40 &&
+                rect.top < stageBottom + 40
+              ) {
+                subRects.push(rect);
+              }
+            }
+
+            if (subRects.length === 0) continue;
+
+            if (subRects.length > 1) {
+              subRects.sort((a, b) => (a.top - b.top) || (a.left - b.left));
+            }
+
+            const lineMergedRects = [];
+            for (let sIdx = 0; sIdx < subRects.length; sIdx++) {
+              const r = subRects[sIdx];
+              if (lineMergedRects.length === 0) {
+                lineMergedRects.push({
+                  left: r.left,
+                  top: r.top,
+                  right: r.right,
+                  bottom: r.bottom,
+                  width: r.width,
+                  height: r.height
+                });
+              } else {
+                const prevR = lineMergedRects[lineMergedRects.length - 1];
+                const prevCenterY = (prevR.top + prevR.bottom) / 2;
+                const rCenterY = (r.top + r.bottom) / 2;
+                if (Math.abs(rCenterY - prevCenterY) <= 8 || Math.abs(r.top - prevR.top) <= 6) {
+                  prevR.left = Math.min(prevR.left, r.left);
+                  prevR.top = Math.min(prevR.top, r.top);
+                  prevR.right = Math.max(prevR.right, r.right);
+                  prevR.bottom = Math.max(prevR.bottom, r.bottom);
+                  prevR.width = prevR.right - prevR.left;
+                  prevR.height = prevR.bottom - prevR.top;
+                } else {
+                  lineMergedRects.push({
+                    left: r.left,
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom,
+                    width: r.width,
+                    height: r.height
+                  });
+                }
+              }
+            }
+
+            for (let sIdx = 0; sIdx < lineMergedRects.length; sIdx++) {
+              const r = lineMergedRects[sIdx];
+              words.push({
+                text: cleanToken,
+                left: r.left,
+                right: r.right,
+                top: r.top,
+                bottom: r.bottom,
+                width: r.width,
+                height: r.height,
+                centerX: r.left + r.width / 2,
+                centerY: r.top + r.height / 2
+              });
+            }
+          } catch (e) {
+            // Ignore range errors
+          }
+          continue;
         }
 
         const text = node.textContent;
@@ -1643,11 +1735,19 @@ export class ReadingRuler {
         }
 
         this.rulerEl.classList.add("word-tracking-mode");
-        this.rulerEl.classList.add("is-snapped");
-        this.maskTopEl.classList.add("is-snapped");
-        this.maskBottomEl.classList.add("is-snapped");
-        this.maskLeftEl.classList.add("is-snapped");
-        this.maskRightEl.classList.add("is-snapped");
+        if (this.followMode === "mouse") {
+          this.rulerEl.classList.remove("is-snapped");
+          this.maskTopEl.classList.remove("is-snapped");
+          this.maskBottomEl.classList.remove("is-snapped");
+          this.maskLeftEl.classList.remove("is-snapped");
+          this.maskRightEl.classList.remove("is-snapped");
+        } else {
+          this.rulerEl.classList.add("is-snapped");
+          this.maskTopEl.classList.add("is-snapped");
+          this.maskBottomEl.classList.add("is-snapped");
+          this.maskLeftEl.classList.add("is-snapped");
+          this.maskRightEl.classList.add("is-snapped");
+        }
         this.applyPosition();
         return;
       }
@@ -1682,11 +1782,19 @@ export class ReadingRuler {
       }
 
       this.currentY = this.targetY;
-      this.rulerEl.classList.add("is-snapped");
-      this.maskTopEl.classList.add("is-snapped");
-      this.maskBottomEl.classList.add("is-snapped");
-      this.maskLeftEl.classList.add("is-snapped");
-      this.maskRightEl.classList.add("is-snapped");
+      if (this.followMode === "mouse") {
+        this.rulerEl.classList.remove("is-snapped");
+        this.maskTopEl.classList.remove("is-snapped");
+        this.maskBottomEl.classList.remove("is-snapped");
+        this.maskLeftEl.classList.remove("is-snapped");
+        this.maskRightEl.classList.remove("is-snapped");
+      } else {
+        this.rulerEl.classList.add("is-snapped");
+        this.maskTopEl.classList.add("is-snapped");
+        this.maskBottomEl.classList.add("is-snapped");
+        this.maskLeftEl.classList.add("is-snapped");
+        this.maskRightEl.classList.add("is-snapped");
+      }
       this.applyPosition();
       return;
     }

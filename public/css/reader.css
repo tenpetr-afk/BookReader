@@ -6,6 +6,7 @@
 :root {
   --reader-font-size: 19px;
   --reader-line-height: 1.68;
+  --reader-stage-width: 80vw;
   --reader-max-width: 760px;
   --reader-text-align: justify;
   --header-base-height: 60px;
@@ -24,14 +25,33 @@
   --font-book: "Merriweather", Georgia, serif;
 }
 
+[data-font="lora"] {
+  --font-book: "Lora", Georgia, serif;
+}
+
 [data-font="inter"] {
-  --font-book: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+  --font-book: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+[data-font="atkinson"] {
+  --font-book: "Atkinson Hyperlegible", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 [data-font="opendyslexic"] {
   --font-book: "OpenDyslexic", "Comic Sans MS", "Arial Rounded MT Bold", sans-serif;
   letter-spacing: 0.05em;
   word-spacing: 0.12em;
+}
+
+/* Rychlé čtení (Bionic reading) */
+.bionic-word {
+  display: inline;
+}
+
+.bionic-bold,
+b.bionic-bold {
+  font-weight: 700 !important;
+  color: inherit;
 }
 
 /* ==========================================================================
@@ -58,7 +78,8 @@
 /* Jeviště stránky: přesně ohraničený prostor pro jednu stranu */
 .paged-stage {
   position: relative;
-  width: min(var(--reader-max-width), calc(100vw - 60px));
+  width: min(var(--reader-stage-width), 900px);
+  max-width: calc(100vw - 32px);
   height: calc(100% - 24px);
   overflow: hidden;
   margin: 0 auto;
@@ -73,7 +94,6 @@
     --footer-height: calc(var(--footer-base-height) + var(--safe-area-bottom, 0px));
   }
   .paged-stage {
-    width: min(var(--reader-max-width), calc(100vw - 80px));
     height: calc(100% - 30px);
   }
 }
@@ -84,7 +104,7 @@
   width: 100%;
   margin: 0;
   padding: 0;
-  column-width: calc(min(var(--reader-max-width), calc(100vw - 60px)));
+  column-width: min(var(--reader-stage-width), 900px, calc(100vw - 32px));
   column-gap: var(--page-gap);
   column-fill: auto;
   font-family: var(--font-book, Georgia, serif);
@@ -99,12 +119,6 @@
   will-change: transform;
   user-select: text;
   -webkit-user-select: text;
-}
-
-@media (min-width: 768px) {
-  .paged-content {
-    column-width: calc(min(var(--reader-max-width), calc(100vw - 80px)));
-  }
 }
 
 /* Typografické elementy uvnitř knihy v režimu stran */
@@ -527,13 +541,11 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
 }
 
 /* V režimu sledování myši zakázat přechody pro okamžité 1:1 sledování bez zpoždění a zadrhávání */
-body.ruler-mouse-follow-active .reading-ruler,
-body.ruler-mouse-follow-active .reading-ruler.word-tracking-mode,
-body.ruler-mouse-follow-active .ruler-mask,
-body.ruler-mouse-follow-active .ruler-mask-left,
-body.ruler-mouse-follow-active .ruler-mask-right {
+body.ruler-mouse-follow-active .reading-ruler {
   transition: none !important;
-  animation: none !important;
+}
+body.ruler-mouse-follow-active .ruler-mask {
+  transition: opacity 0.2s ease !important;
 }
 
 /* Okamžité skrytí pravítka během přechodu mezi stranami pro zamezení desynchronizace */
@@ -1006,5 +1018,163 @@ body.ruler-holding * {
   user-select: none !important;
   -webkit-user-select: none !important;
 }
+
+/* ==========================================================================
+   Vlastní rozbalovací nabídka písma (Google Docs style font dropdown)
+   ========================================================================== */
+.font-dropdown-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.font-dropdown-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.9rem;
+  background: var(--bg-surface-elevated, #ffffff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  color: var(--text-main, #0f172a);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--transition-fast, 0.15s), box-shadow var(--transition-fast, 0.15s), background var(--transition-fast, 0.15s);
+  text-align: left;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.font-dropdown-trigger:hover {
+  border-color: var(--color-primary, #3b82f6);
+  background: var(--bg-hover, #f8fafc);
+}
+
+.font-dropdown-trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-primary, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+
+.font-dropdown-wrapper.open .font-dropdown-trigger,
+.font-dropdown-trigger[aria-expanded="true"] {
+  border-color: var(--color-primary, #3b82f6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.font-dropdown-current {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.95rem;
+}
+
+.font-dropdown-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted, #64748b);
+  transition: transform 0.2s ease, color 0.2s ease;
+  margin-left: 0.5rem;
+}
+
+.font-dropdown-wrapper.open .font-dropdown-chevron,
+.font-dropdown-trigger[aria-expanded="true"] .font-dropdown-chevron {
+  transform: rotate(180deg);
+  color: var(--color-primary, #3b82f6);
+}
+
+.font-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-surface-elevated, #ffffff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 120;
+  padding: 0.35rem 0;
+  box-sizing: border-box;
+}
+
+.font-dropdown-wrapper.open .font-dropdown-menu {
+  display: block;
+}
+
+.font-dropdown-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.9rem;
+  background: transparent;
+  border: none;
+  color: var(--text-main, #0f172a);
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background var(--transition-fast, 0.15s), color var(--transition-fast, 0.15s);
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.font-dropdown-item:hover,
+.font-dropdown-item:focus-visible {
+  background: var(--bg-hover, #f1f5f9);
+  color: var(--color-primary, #3b82f6);
+  outline: none;
+}
+
+.font-dropdown-item.active {
+  background: var(--color-primary-light, rgba(59, 130, 246, 0.1));
+  color: var(--color-primary, #3b82f6);
+  font-weight: 600;
+}
+
+.font-dropdown-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.95rem;
+}
+
+.font-dropdown-check {
+  flex-shrink: 0;
+  color: var(--color-primary, #3b82f6);
+  opacity: 0;
+  visibility: hidden;
+  margin-left: 0.75rem;
+  transition: opacity 0.15s ease;
+}
+
+.font-dropdown-item.active .font-dropdown-check {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Typography previews for font dropdown items */
+.font-dropdown-item[data-font="georgia"] .font-dropdown-name {
+  font-family: Georgia, Cambria, "Times New Roman", Times, serif;
+}
+.font-dropdown-item[data-font="merriweather"] .font-dropdown-name {
+  font-family: "Merriweather", Georgia, serif;
+}
+.font-dropdown-item[data-font="lora"] .font-dropdown-name {
+  font-family: "Lora", Georgia, serif;
+}
+.font-dropdown-item[data-font="inter"] .font-dropdown-name {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.font-dropdown-item[data-font="atkinson"] .font-dropdown-name {
+  font-family: "Atkinson Hyperlegible", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.font-dropdown-item[data-font="opendyslexic"] .font-dropdown-name {
+  font-family: "OpenDyslexic", "Comic Sans MS", "Arial Rounded MT Bold", sans-serif;
+}
+
 
 
