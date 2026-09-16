@@ -853,6 +853,7 @@ export class ReadingRuler {
         }
       }
 
+      this.colGap = colGap;
       const singleColWidth = isTwoCol ? Math.max(100, (stageRect.width - colGap) / 2) : stageRect.width;
       const col0StageLeft = stageRect.left;
       const col0StageRight = isTwoCol ? stageRect.left + singleColWidth : stageRect.right;
@@ -1074,7 +1075,9 @@ export class ReadingRuler {
           columnIndex: 0,
           columnLeft: left,
           columnWidth: width,
-          columnRight: left + width
+          columnRight: left + width,
+          colBoundaryLeft: col0StageLeft,
+          colBoundaryRight: col0StageRight
         }];
       }
 
@@ -1121,10 +1124,14 @@ export class ReadingRuler {
             line.columnLeft = c1Left;
             line.columnWidth = c1Width;
             line.columnRight = c1Left + c1Width;
+            line.colBoundaryLeft = col1StageLeft;
+            line.colBoundaryRight = col1StageRight;
           } else {
             line.columnLeft = c0Left;
             line.columnWidth = c0Width;
             line.columnRight = c0Left + c0Width;
+            line.colBoundaryLeft = col0StageLeft;
+            line.colBoundaryRight = col0StageRight;
           }
           line.left = line.columnLeft;
           line.width = line.columnWidth;
@@ -2506,10 +2513,37 @@ export class ReadingRuler {
         }
       }
 
+      const horizontalPadding = 10; // px - vodorovné odsazení za začátek a konec textu
+      const baseLeft = currentLine ? (currentLine.columnLeft ?? currentLine.left ?? colLeft) : colLeft;
+      const baseWidth = currentLine ? (currentLine.columnWidth ?? currentLine.width ?? colWidth) : colWidth;
+
+      let minBound = 0;
+      let maxBound = window.innerWidth || 800;
+
+      if (this.isTwoCol && currentLine) {
+        const gap = this.colGap || (window.innerWidth * 0.05);
+        const gapMargin = gap > 0 ? Math.round(gap * 0.35) : 0;
+        if (currentLine.columnIndex === 1) {
+          minBound = currentLine.colBoundaryLeft != null ? Math.max(0, Math.round(currentLine.colBoundaryLeft - gapMargin)) : 0;
+          maxBound = currentLine.colBoundaryRight != null ? Math.round(currentLine.colBoundaryRight + horizontalPadding) : (window.innerWidth || 800);
+        } else {
+          minBound = currentLine.colBoundaryLeft != null ? Math.max(0, Math.round(currentLine.colBoundaryLeft - horizontalPadding)) : 0;
+          maxBound = currentLine.colBoundaryRight != null ? Math.round(currentLine.colBoundaryRight + gapMargin) : (window.innerWidth || 800);
+        }
+      } else if (currentLine) {
+        minBound = 0;
+        maxBound = window.innerWidth || 800;
+      }
+
+      const calculatedX = Math.max(minBound, Math.max(0, Math.round(baseLeft - horizontalPadding)));
+      const rawRight = Math.round(baseLeft + baseWidth + horizontalPadding);
+      const clampedRight = Math.min(maxBound, rawRight);
+      const calculatedWidth = Math.max(0, clampedRight - calculatedX);
+
       this.rulerEl.style.top = `${y}px`;
-      this.rulerEl.style.left = `${Math.round(colLeft)}px`;
+      this.rulerEl.style.left = `${calculatedX}px`;
       this.rulerEl.style.right = "auto";
-      this.rulerEl.style.width = `${Math.round(colWidth)}px`;
+      this.rulerEl.style.width = `${calculatedWidth}px`;
       this.rulerEl.style.maxWidth = "100%";
       this.rulerEl.style.transform = "none";
     }

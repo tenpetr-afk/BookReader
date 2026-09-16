@@ -95,7 +95,7 @@ class LuminaApp {
       readerHeader: document.getElementById("reader-header"),
       readerContent: document.getElementById("reader-content"),
       pagedViewport: document.getElementById("paged-viewport"),
-      pagedStage: document.getElementById("paged-stage"),
+      pagedStage: document.getElementById("paged-stage") || document.getElementById("reader-stage"),
       pagedFooterBar: document.getElementById("paged-footer-bar"),
       btnPagePrev: document.getElementById("btn-page-prev"),
       btnPageNext: document.getElementById("btn-page-next"),
@@ -301,11 +301,20 @@ class LuminaApp {
     if (this.dom.readerContent) {
       const comp = getComputedStyle(this.dom.readerContent);
       const colGap = parseFloat(comp.columnGap);
-      if (!isNaN(colGap) && colGap > 0) {
+      if (!isNaN(colGap) && colGap >= 0) {
         return colGap;
       }
     }
     return this.pageGap || 50;
+  }
+
+  getColumnStride() {
+    const stage = this.dom.pagedStage || this.dom.readerContent;
+    if (!stage) return 700;
+    const stageRect = stage.getBoundingClientRect ? stage.getBoundingClientRect() : null;
+    const stageWidth = (stageRect && stageRect.width > 0) ? stageRect.width : (stage.clientWidth || 700);
+    const gap = this.getPageGap();
+    return stageWidth + gap;
   }
 
   applySettings() {
@@ -2128,12 +2137,16 @@ class LuminaApp {
 
   recalcPages() {
     if (!this.dom.pagedStage || !this.dom.readerContent) return;
-    const stageWidth = this.dom.pagedStage.clientWidth || 700;
     const gap = this.getPageGap();
     this.pageGap = gap;
+    const stride = this.getColumnStride();
     const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / (stageWidth + gap)));
+    if (stride <= 0) {
+      this.totalPagesInChapter = 1;
+    } else {
+      this.totalPagesInChapter = Math.max(1, Math.ceil((scrollWidth + gap - 1) / stride));
+    }
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
@@ -2143,10 +2156,10 @@ class LuminaApp {
   goToPage(pageIndex, explicitDirection = null) {
     const oldIndex = this.currentPageIndex;
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
-    const stageWidth = this.dom.pagedStage.clientWidth || 700;
     const gap = this.getPageGap();
     this.pageGap = gap;
-    const offset = this.currentPageIndex * (stageWidth + gap);
+    const stride = this.getColumnStride();
+    const offset = this.currentPageIndex * stride;
 
     const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
     const direction = explicitDirection !== null
@@ -2816,9 +2829,10 @@ class LuminaApp {
 
     if (foundParent) {
       const rect = foundParent.getBoundingClientRect();
-      const currentOffset = this.currentPageIndex * (stageWidth + gap);
+      const stride = this.getColumnStride();
+      const currentOffset = this.currentPageIndex * stride;
       const relativeX = (rect.left - stageRect.left) + currentOffset;
-      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / (stageWidth + gap))));
+      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / stride)));
 
       this.goToPage(targetPage);
       foundParent.classList.add("search-highlight-flash");
