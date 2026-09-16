@@ -367,13 +367,50 @@
         <input type="range" id="slider-font-size" class="slider-input" min="14" max="32" value="19" />
       </div>
 
+      <!-- Výška řádku -->
+      <div class="slider-setting">
+        <div class="slider-label">
+          <span>Výška řádku</span>
+          <span id="val-line-height">1.6</span>
+        </div>
+        <input type="range" id="slider-line-height" class="slider-input" min="1.2" max="2.6" step="0.1" value="1.6" />
+      </div>
+
+      <!-- Mezery mezi písmeny -->
+      <div class="slider-setting">
+        <div class="slider-label">
+          <span>Mezery mezi písmeny</span>
+          <span id="val-letter-spacing">0px</span>
+        </div>
+        <input type="range" id="slider-letter-spacing" class="slider-input" min="0" max="4" step="0.25" value="0" />
+      </div>
+
+      <!-- Mezery mezi slovy -->
+      <div class="slider-setting">
+        <div class="slider-label">
+          <span>Mezery mezi slovy</span>
+          <span id="val-word-spacing">0px</span>
+        </div>
+        <input type="range" id="slider-word-spacing" class="slider-input" min="0" max="8" step="0.5" value="0" />
+      </div>
+
       <!-- Velikost okrajů -->
       <div class="slider-setting">
         <div class="slider-label">
           <span>Velikost okrajů</span>
           <span id="val-page-margin">20%</span>
         </div>
-        <input type="range" id="slider-page-margin" class="slider-input" min="8" max="40" step="2" value="20" />
+        <input type="range" id="slider-page-margin" class="slider-input" min="0" max="40" step="2" value="20" />
+      </div>
+
+      <!-- Rozvržení sloupců -->
+      <div class="settings-group" style="margin-top: 1rem; margin-bottom: 1.25rem;">
+        <div class="settings-group-title">Rozvržení sloupců</div>
+        <div class="popover-segmented-control columns-3" id="columns-mode-control">
+          <button type="button" class="segment-btn" data-columns="auto">Automaticky</button>
+          <button type="button" class="segment-btn" data-columns="1">1 sloupec</button>
+          <button type="button" class="segment-btn" data-columns="2">2 sloupce</button>
+        </div>
       </div>
 
       <!-- Spodní lišta s postupem čtení -->

@@ -184,7 +184,10 @@ export class StorageManager {
       fontFamily: "georgia", // georgia, inter, merriweather, lora, atkinson, opendyslexic
       fontSize: 19, // px
       marginPercent: 20, // % velikost okrajů stránky
-      lineHeight: 1.65,
+      columnsMode: "auto", // "auto" | "1" | "2" - rozvržení sloupců
+      lineHeight: 1.6,
+      letterSpacing: 0, // px
+      wordSpacing: 0, // px
       contentWidth: 720, // px
       textAlign: "justify", // left, justify
       readingMode: "scroll", // scroll, paginated
@@ -214,6 +217,10 @@ export class StorageManager {
           ruler: { ...defaults.ruler, ...(parsed.ruler || {}) }
         };
         merged.marginPercent = parsed.marginPercent ?? 20;
+        merged.columnsMode = parsed.columnsMode ?? "auto";
+        merged.lineHeight = parsed.lineHeight !== undefined ? Number(parsed.lineHeight) : 1.6;
+        merged.letterSpacing = parsed.letterSpacing !== undefined ? Number(parsed.letterSpacing) : 0;
+        merged.wordSpacing = parsed.wordSpacing !== undefined ? Number(parsed.wordSpacing) : 0;
         merged.fastReading = !!parsed.fastReading;
         if (localStorage.getItem('showProgressBar') !== null) {
           merged.showFooterBar = localStorage.getItem('showProgressBar') === 'true';

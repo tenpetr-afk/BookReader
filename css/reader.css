@@ -5,15 +5,25 @@
 
 :root {
   --reader-font-size: 19px;
-  --reader-line-height: 1.68;
+  --reader-line-height: 1.6;
+  --reader-letter-spacing: 0px;
+  --reader-word-spacing: 0px;
   --reader-stage-width: 80vw;
   --reader-max-width: 760px;
+  --reader-column-count: 1;
   --reader-text-align: justify;
   --header-base-height: 60px;
   --header-height: calc(var(--header-base-height) + var(--safe-area-top, 0px));
   --footer-base-height: 48px;
   --footer-height: calc(var(--footer-base-height) + var(--safe-area-bottom, 0px));
+  --col-gap: 5vw;
   --page-gap: 50px;
+}
+
+:root.columns-2,
+body.columns-2 {
+  --reader-column-count: 2;
+  --page-gap: var(--col-gap);
 }
 
 /* Písma pro čtení */
@@ -72,17 +82,27 @@ b.bionic-bold {
   padding: 0;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: pan-y pinch-zoom;
+  touch-action: pan-x;
+  overscroll-behavior: none;
 }
 
 /* Jeviště stránky: přesně ohraničený prostor pro jednu stranu */
 .paged-stage {
   position: relative;
-  width: min(var(--reader-stage-width), 900px);
-  max-width: calc(100vw - 32px);
+  width: var(--reader-stage-width, 80vw) !important;
+  max-width: 100vw !important;
   height: calc(100% - 24px);
   overflow: hidden;
   margin: 0 auto;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+
+:root.columns-2 .paged-stage,
+body.columns-2 .paged-stage {
+  width: calc(100vw - (2 * var(--col-gap))) !important;
+  max-width: calc(100vw - (2 * var(--col-gap))) !important;
+  margin: 0 auto !important;
 }
 
 /* Responzivní přizpůsobení jeviště pro iPad */
@@ -104,8 +124,9 @@ b.bionic-bold {
   width: 100%;
   margin: 0;
   padding: 0;
-  column-width: min(var(--reader-stage-width), 900px, calc(100vw - 32px));
-  column-gap: var(--page-gap);
+  column-count: 1 !important;
+  column-width: var(--reader-stage-width, 80vw) !important;
+  column-gap: var(--page-gap, 50px);
   column-fill: auto;
   font-family: var(--font-book, Georgia, serif);
   font-size: var(--reader-font-size);
@@ -119,6 +140,25 @@ b.bionic-bold {
   will-change: transform;
   user-select: text;
   -webkit-user-select: text;
+}
+
+:root.columns-2 .paged-content,
+body.columns-2 .paged-content,
+.paged-content.columns-2 {
+  column-width: calc((100% - var(--col-gap)) / 2) !important;
+  column-count: 2 !important;
+  column-gap: var(--col-gap) !important;
+}
+
+/* Hloubková dědičnost typografie pro přebití vložených EPUB stylů */
+#reader-stage,
+#reader-content,
+#reader-content *,
+.paged-content,
+.paged-content * {
+  line-height: var(--reader-line-height) !important;
+  letter-spacing: var(--reader-letter-spacing) !important;
+  word-spacing: var(--reader-word-spacing) !important;
 }
 
 /* Typografické elementy uvnitř knihy v režimu stran */
@@ -392,8 +432,8 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
 
 .reading-ruler {
   position: fixed;
-  left: 0;
-  right: 0;
+  right: auto !important;
+  max-width: 100%;
   z-index: 60 !important;
   transition: opacity 0.2s ease, background-color 0.2s ease;
   display: none;
@@ -809,6 +849,10 @@ body.ruler-mouse-follow-active .ruler-mask {
   border-radius: var(--radius-md);
   gap: 3px;
   border: 1px solid var(--border-color);
+}
+
+.popover-segmented-control.columns-3 {
+  grid-template-columns: 1fr 1fr 1fr;
 }
 
 .popover-segmented-control .segment-btn {
