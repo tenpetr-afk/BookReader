@@ -125,18 +125,15 @@ body.columns-2 .paged-stage {
 /* Multi-column layout: prohlížeč automaticky rozdělí text kapitoly do stran */
 #reader-content,
 .paged-content {
-  display: block !important;
-  width: 100% !important;
-  column-fill: auto !important;
-  -webkit-column-fill: auto !important;
-  overflow: visible !important;
   height: 100%;
+  width: 100%;
   margin: 0;
   padding: 0;
   box-sizing: border-box;
   column-count: 1 !important;
   column-width: auto !important;
   column-gap: var(--page-gap, 50px);
+  column-fill: auto;
   font-family: var(--font-book, Georgia, serif);
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
@@ -194,18 +191,8 @@ body.columns-2 .paged-content,
 .paged-content h2 { font-size: 1.6em; }
 .paged-content h3 { font-size: 1.25em; }
 
-/* Strip conflicting styles injected by the EPUB chapter markup */
-#reader-content * {
-  max-height: none;
-}
-
-#reader-content p,
 .paged-content p {
-  break-inside: auto !important;
-  -webkit-column-break-inside: auto !important;
-  page-break-inside: auto !important;
-  margin-top: 0;
-  margin-bottom: 0.85em;
+  margin-bottom: 1.1em;
   orphans: 2;
   widows: 2;
 }
@@ -233,21 +220,17 @@ body.columns-2 .paged-content,
 }
 
 /* Obrázky přizpůsobené výšce obrazovky (žádné přetékání mimo stranu!) */
-#reader-content img,
 .paged-content img,
-#reader-content svg,
 .paged-content svg {
-  max-width: 100% !important;
-  max-height: 55dvh !important;
-  height: auto !important;
-  object-fit: contain !important;
-  display: block !important;
-  margin: 1rem auto !important;
-  break-inside: avoid !important;
-  -webkit-column-break-inside: avoid !important;
-  page-break-inside: avoid;
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  margin: 1.2rem auto;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-md);
+  break-inside: avoid;
+  page-break-inside: avoid;
 }
 
 .paged-content .character {
@@ -315,165 +298,29 @@ body.columns-2 .paged-content,
 }
 
 /* ==========================================================================
-   Hlavička čtečky (Top Bar / Reader Header)
-   ========================================================================== */
-
-#reader-header,
-.reader-header,
-.reader-top-bar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: var(--header-height, 56px);
-  background: transparent !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border: none !important;
-  box-shadow: none !important;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--safe-area-top, 0px) max(1rem, var(--safe-area-right, 0px)) 0 max(1rem, var(--safe-area-left, 0px));
-  z-index: 1000;
-  box-sizing: border-box;
-  transition: transform 0.25s ease, opacity 0.25s ease;
-  pointer-events: none;
-}
-
-#reader-header > *,
-.reader-header > * {
-  pointer-events: auto;
-}
-
-#btn-back-library,
-#btn-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  min-width: 38px;
-  padding: 0;
-  border-radius: var(--radius-md);
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  color: var(--text-main);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  flex-shrink: 0;
-  z-index: 2;
-}
-
-#btn-back-library:hover,
-#btn-back:hover {
-  background: var(--bg-hover) !important;
-  color: var(--color-primary);
-}
-
-#reader-book-title,
-.book-title {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  text-align: center;
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--text-main);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  overflow: hidden;
-  max-width: 60vw;
-  z-index: 1;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-
-.reading-progress-container {
-  display: none !important;
-}
-
-/* ==========================================================================
    Spodní lišta se stránkami a navigací (Paged Footer Bar)
    ========================================================================== */
 
-#reader-footer,
-.reader-footer,
-.reader-bottom-bar,
-#paged-footer-bar,
 .paged-footer-bar {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
   height: var(--footer-height);
-  background: transparent !important;
-  background-color: transparent !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border: none !important;
-  border-top: none !important;
-  box-shadow: none !important;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 max(1.25rem, env(safe-area-inset-right, 0px)) 0 max(1.25rem, env(safe-area-inset-left, 0px));
+  padding: 0 max(1.25rem, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(1.25rem, env(safe-area-inset-left, 0px));
   z-index: 1000;
   box-sizing: border-box;
-  transition: transform 0.25s ease, opacity 0.25s ease;
-  pointer-events: none;
-}
-
-#reader-footer > *,
-.reader-footer > *,
-.reader-bottom-bar > *,
-#paged-footer-bar > *,
-.paged-footer-bar > * {
-  pointer-events: auto;
-}
-
-#reader-footer::before,
-#reader-footer::after,
-.reader-footer::before,
-.reader-footer::after,
-.reader-bottom-bar::before,
-.reader-bottom-bar::after,
-#paged-footer-bar::before,
-#paged-footer-bar::after,
-.paged-footer-bar::before,
-.paged-footer-bar::after {
-  content: none !important;
-  background: transparent !important;
-  background-color: transparent !important;
-  border: none !important;
-  border-top: none !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-/* Automatické skrytí lišt v režimu celé obrazovky */
-body.reader-chrome-hidden #reader-header,
-body.reader-chrome-hidden .reader-header {
-  transform: translateY(-100%);
-  opacity: 0 !important;
-  pointer-events: none !important;
-}
-
-body.reader-chrome-hidden #reader-footer,
-body.reader-chrome-hidden #paged-footer-bar,
-body.reader-chrome-hidden .paged-footer-bar {
-  transform: translateY(100%);
-  opacity: 0 !important;
-  pointer-events: none !important;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.03);
+  transition: background-color var(--transition-normal), border-color var(--transition-normal);
 }
 
 /* Při vypnutí v nastavení je spodní lišta skryta a čtecí plocha sahá až ke spodnímu okraji displeje */
-body.hide-footer-bar #reader-footer,
 body.hide-footer-bar .paged-footer-bar,
-body:not(.show-footer-bar) #reader-footer,
 body:not(.show-footer-bar) .paged-footer-bar {
   display: none !important;
   visibility: hidden !important;
@@ -485,7 +332,6 @@ body:not(.show-footer-bar) .paged-viewport {
   bottom: var(--safe-area-bottom, 0px);
 }
 
-body.show-footer-bar #reader-footer,
 body.show-footer-bar .paged-footer-bar {
   display: flex !important;
 }
@@ -494,224 +340,88 @@ body.show-footer-bar .paged-viewport {
   bottom: var(--footer-height);
 }
 
-/* 3 sekce spodní lišty */
-#chapter-progress,
-.footer-progress-chapter {
-  display: flex;
-  align-items: center;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  white-space: nowrap;
-  flex: 1;
-  text-align: left;
-}
-
-#book-progress,
-.footer-progress-book {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--text-main);
-  white-space: nowrap;
-  text-align: center;
-}
-
-#bottom-actions-cluster,
-.bottom-actions-cluster {
-  position: absolute;
-  right: max(1.25rem, env(safe-area-inset-right, 16px));
-  bottom: 0;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  z-index: 1001;
-}
-
-.bar-icon-btn,
-#bottom-actions-cluster .btn-icon {
-  width: 38px;
-  height: 38px;
-  min-width: 38px;
-  padding: 0;
+.btn-page-nav {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
   background: var(--bg-surface-elevated);
   color: var(--text-main);
   cursor: pointer;
   transition: all var(--transition-fast);
+  min-height: 38px;
 }
 
-.bar-icon-btn:hover,
-#bottom-actions-cluster .btn-icon:hover {
+.btn-page-nav:hover:not(:disabled) {
   background: var(--bg-hover);
   border-color: var(--color-primary);
   color: var(--color-primary);
 }
 
-/* Sjednocené dělené tlačítko pro pravítko (Split-Button Pill) */
-.split-pill-btn {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 14px;
-  background: rgba(0, 0, 0, 0.07);
-  padding: 2px 4px;
-  box-sizing: border-box;
-  transition: background-color var(--transition-fast, 0.15s ease);
+.btn-page-nav:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-[data-theme="dark"] .split-pill-btn,
-[data-theme="oled"] .split-pill-btn,
-.theme-dark .split-pill-btn,
-.dark .split-pill-btn {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]):not([data-theme="sepia"]):not([data-theme="warm"]) .split-pill-btn {
-    background: rgba(255, 255, 255, 0.12);
-  }
-}
-
-.pill-divider {
-  width: 1px;
-  height: 16px;
-  background-color: currentColor;
-  opacity: 0.2;
-  margin: 0 1px;
-  flex-shrink: 0;
-}
-
-.pill-action,
-.pill-dropdown {
-  display: inline-flex;
+.paged-footer-info {
+  display: flex;
   align-items: center;
   justify-content: center;
-  border: none !important;
-  background: transparent !important;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.footer-stat-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.footer-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-subtle);
+  font-weight: 600;
+}
+
+.footer-value {
   color: var(--text-main);
-  cursor: pointer;
-  padding: 0;
-  border-radius: 10px;
-  box-shadow: none !important;
-  transition: all var(--transition-fast, 0.15s ease);
+  font-weight: 700;
 }
 
-.pill-action {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
+.paged-separator {
+  opacity: 0.35;
+  font-size: 0.75rem;
 }
 
-.pill-dropdown {
-  width: 22px;
-  height: 32px;
-  min-width: 22px;
+.paged-chapter-name {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-main);
 }
 
-.pill-action:hover,
-.pill-dropdown:hover {
-  background: var(--bg-hover) !important;
+.paged-percent {
   color: var(--color-primary);
 }
 
-.pill-action.active,
-#btn-toggle-ruler.active {
-  background: var(--color-primary) !important;
-  color: #ffffff !important;
-}
-
-.pill-dropdown.active,
-.pill-dropdown[aria-expanded="true"],
-#btn-ruler-settings.active,
-#btn-ruler-settings[aria-expanded="true"],
-#btn-ruler-quick-menu.active,
-#btn-ruler-quick-menu[aria-expanded="true"] {
-  background: var(--bg-hover) !important;
-  color: var(--color-primary) !important;
-}
-
-#btn-speed-dial-trigger.active,
-#btn-speed-dial-trigger[aria-expanded="true"] {
-  background: var(--color-primary);
-  color: #ffffff;
-  border-color: var(--color-primary);
-}
-
-/* Vertikální popout kontejner speed-dialu */
-#speed-dial-menu,
-.speed-dial-menu {
-  display: flex;
-  flex-direction: column-reverse;
-  position: absolute;
-  bottom: calc(100% + 12px);
-  right: 0;
-  gap: 8px;
-  z-index: 100;
-  align-items: center;
-}
-
-#speed-dial-menu.hidden,
-.speed-dial-menu.hidden {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(8px);
-}
-
-#speed-dial-menu:not(.hidden),
-.speed-dial-menu:not(.hidden) {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-  transition: 0.15s ease;
-}
-
-/* Kruhová akční tlačítka ve speed-dialu */
-.action-btn,
-#speed-dial-menu .action-btn,
-#speed-dial-menu button {
-  width: 42px;
-  height: 42px;
-  min-width: 42px;
-  border-radius: 50%;
-  background: var(--color-primary, #4caf50);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-  transition: transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.action-btn:hover,
-#speed-dial-menu .action-btn:hover,
-#speed-dial-menu button:hover {
-  transform: scale(1.08);
-  filter: brightness(1.1);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-}
-
-.action-btn:active,
-#speed-dial-menu .action-btn:active,
-#speed-dial-menu button:active {
-  transform: scale(0.95);
-}
-
-.action-btn svg,
-#speed-dial-menu svg {
-  stroke: currentColor;
+@media (max-width: 680px) {
+  .paged-footer-info {
+    gap: 0.4rem;
+    font-size: 0.78rem;
+  }
+  .footer-label {
+    display: none; /* Na malých displejích skrýt textové popisky pro úsporu místa */
+  }
 }
 
 /* ==========================================================================
@@ -1050,8 +760,7 @@ body.ruler-mouse-follow-active .ruler-mask {
 
 .ruler-quick-popover {
   position: absolute;
-  bottom: calc(100% + 12px);
-  top: auto;
+  top: calc(100% + 10px);
   right: 0;
   width: 320px;
   max-height: min(580px, calc(100vh - 85px));
@@ -1070,7 +779,7 @@ body.ruler-mouse-follow-active .ruler-mask {
   flex-direction: column;
   gap: 0.85rem;
   box-sizing: border-box;
-  transform-origin: bottom right;
+  transform-origin: top right;
   transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -1090,7 +799,7 @@ body.ruler-mouse-follow-active .ruler-mask {
 .ruler-quick-popover.is-hidden {
   opacity: 0;
   pointer-events: none;
-  transform: scale(0.95) translateY(6px);
+  transform: scale(0.95) translateY(-6px);
   display: none !important;
 }
 

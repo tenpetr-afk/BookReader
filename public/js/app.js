@@ -92,33 +92,27 @@ class LuminaApp {
       versionBadge: document.getElementById("app-version-badge"),
 
       // Stránkovaná čtečka
-      readerHeader: document.getElementById("reader-header") || document.getElementById("top-bar"),
-      topBar: document.getElementById("reader-header") || document.getElementById("top-bar"),
+      readerHeader: document.getElementById("reader-header"),
       readerContent: document.getElementById("reader-content"),
       pagedViewport: document.getElementById("paged-viewport"),
       pagedStage: document.getElementById("paged-stage") || document.getElementById("reader-stage"),
-      pagedFooterBar: document.getElementById("reader-footer") || document.getElementById("paged-footer-bar"),
+      pagedFooterBar: document.getElementById("paged-footer-bar"),
       btnPagePrev: document.getElementById("btn-page-prev"),
       btnPageNext: document.getElementById("btn-page-next"),
-      chapterProgress: document.getElementById("chapter-progress"),
-      bookProgress: document.getElementById("book-progress"),
-      pageCounterText: document.getElementById("chapter-progress") || document.getElementById("chapter-page-counter") || document.getElementById("page-counter-text"),
-      chapterPageCounter: document.getElementById("chapter-progress") || document.getElementById("chapter-page-counter"),
-      bookPageCounter: document.getElementById("book-progress") || document.getElementById("book-page-counter"),
+      pageCounterText: document.getElementById("chapter-page-counter") || document.getElementById("page-counter-text"),
+      chapterPageCounter: document.getElementById("chapter-page-counter"),
+      bookPageCounter: document.getElementById("book-page-counter"),
       pagedChapterName: document.getElementById("paged-chapter-name") || document.getElementById("header-chapter-title"),
       zoneTouchPrev: document.getElementById("zone-touch-prev"),
       zoneTouchNext: document.getElementById("zone-touch-next"),
-      bookTitleEl: document.getElementById("reader-book-title") || document.getElementById("header-book-title") || document.getElementById("book-title"),
+      bookTitleEl: document.getElementById("header-book-title"),
       chapterTitleEl: document.getElementById("header-chapter-title"),
       wpmBadge: document.getElementById("wpm-badge"),
       etrBadge: document.getElementById("etr-badge"),
       progressBar: document.getElementById("reading-progress-bar"),
       progressText: document.getElementById("reading-progress-text"),
 
-      // Spodní lišta a Speed-dial cluster
-      bottomActionsCluster: document.getElementById("bottom-actions-cluster"),
-      speedDialMenu: document.getElementById("speed-dial-menu"),
-      btnSpeedDialTrigger: document.getElementById("btn-speed-dial-trigger"),
+      // Spodní lišta a posuvník (Scrubber)
       readingScrubber: document.getElementById("reading-scrubber"),
       scrubberTrack: document.getElementById("scrubber-track"),
       scrubberProgressFill: document.getElementById("scrubber-progress-fill"),
@@ -130,16 +124,10 @@ class LuminaApp {
       footerEtrSeparator: document.getElementById("footer-etr-separator"),
       
       // Navigace ve čtečce
-      btnBackToLibrary: document.getElementById("btn-back-library") || document.getElementById("btn-back"),
-      btnBack: document.getElementById("btn-back-library") || document.getElementById("btn-back"),
-      btnToggleToc: document.getElementById("btn-toc") || document.getElementById("btn-toggle-toc"),
-      btnToc: document.getElementById("btn-toc") || document.getElementById("btn-toggle-toc"),
-      btnToggleSettings: document.getElementById("btn-settings") || document.getElementById("btn-toggle-settings"),
-      btnSettings: document.getElementById("btn-settings") || document.getElementById("btn-toggle-settings"),
-      btnToggleStats: document.getElementById("btn-stats") || document.getElementById("btn-toggle-stats"),
-      btnStats: document.getElementById("btn-stats") || document.getElementById("btn-toggle-stats"),
-      btnToggleSearch: document.getElementById("btn-search") || document.getElementById("btn-toggle-search"),
-      btnSearch: document.getElementById("btn-search") || document.getElementById("btn-toggle-search"),
+      btnBackToLibrary: document.getElementById("btn-back-library"),
+      btnToggleToc: document.getElementById("btn-toggle-toc"),
+      btnToggleSettings: document.getElementById("btn-toggle-settings"),
+      btnToggleStats: document.getElementById("btn-toggle-stats"),
       btnToggleRuler: document.getElementById("btn-toggle-ruler"),
 
       // Postranní panely a modály
@@ -199,11 +187,9 @@ class LuminaApp {
       rulerFollowSelect: document.getElementById("ruler-follow-select"),
       rulerFollowButtons: document.querySelectorAll("[data-ruler-follow]"),
 
-      // Rychlé nastavení pravítka v záhlaví / liště (popover a dělené tlačítko)
-      rulerSplitPill: document.getElementById("ruler-split-pill"),
+      // Rychlé nastavení pravítka v záhlaví (popover)
       rulerBtnGroup: document.getElementById("ruler-btn-group"),
-      btnRulerSettings: document.getElementById("btn-ruler-settings") || document.getElementById("btn-ruler-quick-menu"),
-      btnRulerQuickMenu: document.getElementById("btn-ruler-settings") || document.getElementById("btn-ruler-quick-menu"),
+      btnRulerQuickMenu: document.getElementById("btn-ruler-quick-menu"),
       rulerQuickPopover: document.getElementById("ruler-quick-popover"),
       popoverRulerToggle: document.getElementById("popover-ruler-toggle"),
       popoverModeLine: document.getElementById("popover-mode-line"),
@@ -238,7 +224,7 @@ class LuminaApp {
   isInteractiveOrUiElement(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      'header, nav, footer, #reader-header, .reader-header, #top-bar, .top-bar, #reader-footer, #paged-footer-bar, .paged-footer-bar, #bottom-actions-cluster, .bottom-actions-cluster, #speed-dial-menu, .speed-dial-menu, #btn-speed-dial-trigger, #btn-toggle-ruler, #btn-ruler-settings, #ruler-split-pill, .split-pill-btn, .pill-action, .pill-dropdown, #btn-back-library, #btn-back, .reading-scrubber, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, [role="button"], [role="dialog"], [role="slider"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group, #btn-ruler-quick-menu'
+      'header, nav, footer, .paged-footer-bar, .reading-scrubber, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, [role="button"], [role="dialog"], [role="slider"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group, #btn-toggle-ruler, #btn-ruler-quick-menu'
     );
   }
 
@@ -248,8 +234,6 @@ class LuminaApp {
     if (this.dom.searchDrawer?.classList.contains("open")) return true;
     if (this.dom.statsModal?.classList.contains("open")) return true;
     if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) return true;
-    const speedDial = document.getElementById("speed-dial-menu");
-    if (speedDial && !speedDial.classList.contains("hidden")) return true;
     return false;
   }
 
@@ -548,17 +532,7 @@ class LuminaApp {
     this.dom.btnLoadSample?.addEventListener("click", () => this.loadBundledSampleBook());
 
     // 2. Přepínání pohledů a stránkování
-    const btnBack = document.getElementById("btn-back-library") || document.getElementById("btn-back") || this.dom.btnBackToLibrary;
-    if (btnBack) {
-      ["pointerdown", "touchstart"].forEach((evt) => {
-        btnBack.addEventListener(evt, (e) => e.stopPropagation(), { passive: true });
-      });
-      btnBack.addEventListener("click", (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        this.showLibraryView();
-      });
-    }
+    if (this.dom.btnBackToLibrary) this.dom.btnBackToLibrary.addEventListener("click", () => this.showLibraryView());
     
     // Tlačítka stránkování v patičce
     if (this.dom.btnPagePrev) this.dom.btnPagePrev.addEventListener("click", () => this.prevPage());
@@ -746,7 +720,7 @@ class LuminaApp {
 
       // 3. Dotykové zóny pro krokování pravítka v klávesovém režimu (layout zóny)
       if (this.ruler && this.ruler.enabled && this.ruler.followMode === "keyboard") {
-        if (e.target && (e.target.closest("button") || e.target.closest("#bottom-actions-cluster") || e.target.closest("#speed-dial-menu") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+        if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
           return;
         }
         if (typeof this.ruler.handleTap === "function") {
@@ -765,7 +739,7 @@ class LuminaApp {
       }
 
       // 4. Běžné klepnutí (Tap) když je pravítko vypnuté
-      if (e.target && (e.target.closest("button") || e.target.closest("#bottom-actions-cluster") || e.target.closest("#speed-dial-menu") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+      if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
         return;
       }
       if (this.isCenterTap(touchEndX, touchEndY)) {
@@ -783,7 +757,7 @@ class LuminaApp {
       if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
         return;
       }
-      if (e.target && (e.target.closest("button") || e.target.closest("#bottom-actions-cluster") || e.target.closest("#speed-dial-menu") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+      if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
         return;
       }
 
@@ -900,15 +874,7 @@ class LuminaApp {
     // Izolace událostí pro lišty, panely nastavení a modální okna proti nechtěnému otáčení stránek
     const uiContainers = [
       document.getElementById("reader-header"),
-      document.getElementById("top-bar"),
-      document.getElementById("reader-footer"),
       document.getElementById("paged-footer-bar"),
-      document.getElementById("bottom-actions-cluster"),
-      document.getElementById("speed-dial-menu"),
-      document.getElementById("btn-speed-dial-trigger"),
-      document.getElementById("btn-toggle-ruler"),
-      document.getElementById("btn-back-library"),
-      document.getElementById("btn-back"),
       document.querySelector(".library-header"),
       document.querySelector(".top-navbar"),
       document.getElementById("settings-drawer"),
@@ -918,72 +884,23 @@ class LuminaApp {
       document.getElementById("stats-modal"),
       document.querySelector(".modal-content"),
       document.getElementById("ruler-btn-group"),
-      document.getElementById("ruler-split-pill"),
-      document.getElementById("btn-ruler-settings"),
-      document.getElementById("btn-ruler-quick-menu"),
       document.getElementById("ruler-quick-popover")
     ].filter(Boolean);
 
     uiContainers.forEach((container) => {
       ["pointerdown", "touchstart", "click"].forEach((eventType) => {
         container.addEventListener(eventType, (e) => {
+          if (eventType === "click" && container.id === "reader-header") {
+            if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
+              if (!this.dom.rulerBtnGroup || !this.dom.rulerBtnGroup.contains(e.target)) {
+                this.dom.rulerQuickPopover.classList.add("is-hidden");
+                if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+              }
+            }
+          }
           e.stopPropagation();
         });
       });
-    });
-
-    // Speed Dial Menu toggle a izolace kliknutí
-    const btnSpeedDialTrigger = document.getElementById("btn-speed-dial-trigger") || this.dom.btnSpeedDialTrigger;
-    const speedDialMenu = document.getElementById("speed-dial-menu") || this.dom.speedDialMenu;
-    const bottomActionsCluster = document.getElementById("bottom-actions-cluster") || this.dom.bottomActionsCluster;
-
-    const closeSpeedDial = () => {
-      const menu = document.getElementById("speed-dial-menu") || speedDialMenu;
-      if (menu) {
-        menu.classList.add("hidden");
-        const trigger = document.getElementById("btn-speed-dial-trigger") || btnSpeedDialTrigger;
-        if (trigger) {
-          trigger.setAttribute("aria-expanded", "false");
-          trigger.classList.remove("active");
-        }
-      }
-    };
-
-    const closeRulerQuickPopover = () => {
-      if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
-        this.dom.rulerQuickPopover.classList.add("is-hidden");
-        const btnSettings = document.getElementById("btn-ruler-settings") || document.getElementById("btn-ruler-quick-menu") || this.dom.btnRulerSettings || this.dom.btnRulerQuickMenu;
-        if (btnSettings) {
-          btnSettings.setAttribute("aria-expanded", "false");
-          btnSettings.classList.remove("active");
-        }
-      }
-    };
-    this.closeRulerQuickPopover = closeRulerQuickPopover;
-
-    if (btnSpeedDialTrigger && speedDialMenu) {
-      ["pointerdown", "touchstart"].forEach((evt) => {
-        btnSpeedDialTrigger.addEventListener(evt, (e) => e.stopPropagation(), { passive: true });
-        speedDialMenu.addEventListener(evt, (e) => e.stopPropagation(), { passive: true });
-      });
-
-      btnSpeedDialTrigger.addEventListener("click", (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        closeRulerQuickPopover();
-        const isHidden = speedDialMenu.classList.toggle("hidden");
-        btnSpeedDialTrigger.setAttribute("aria-expanded", String(!isHidden));
-        btnSpeedDialTrigger.classList.toggle("active", !isHidden);
-      });
-    }
-
-    // Zavření speed-dial menu a ruler popoveru při kliknutí mimo shluk akcí
-    document.addEventListener("click", (e) => {
-      const cluster = document.getElementById("bottom-actions-cluster") || bottomActionsCluster;
-      if (!cluster || !cluster.contains(e.target)) {
-        closeSpeedDial();
-        closeRulerQuickPopover();
-      }
     });
 
     if (this.dom.drawerBackdrop) {
@@ -1002,40 +919,14 @@ class LuminaApp {
       this.dom.btnToggleStatsLib.addEventListener("click", () => this.openStatsModal());
     }
 
-    const btnToc = document.getElementById("btn-toc") || this.dom.btnToggleToc;
-    if (btnToc) {
-      ["pointerdown", "touchstart"].forEach((evt) => btnToc.addEventListener(evt, (e) => e.stopPropagation(), { passive: true }));
-      btnToc.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeSpeedDial();
-        this.toggleDrawer("toc");
-      });
-    }
-    if (this.dom.btnCloseToc) {
-      this.dom.btnCloseToc.addEventListener("click", () => this.closeDrawer("toc"));
-    }
+    this.dom.btnToggleToc.addEventListener("click", () => this.toggleDrawer("toc"));
+    this.dom.btnCloseToc.addEventListener("click", () => this.closeDrawer("toc"));
 
-    const btnSettings = document.getElementById("btn-settings") || this.dom.btnToggleSettings;
-    if (btnSettings) {
-      ["pointerdown", "touchstart"].forEach((evt) => btnSettings.addEventListener(evt, (e) => e.stopPropagation(), { passive: true }));
-      btnSettings.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeSpeedDial();
-        this.toggleDrawer("settings");
-      });
-    }
-    if (this.dom.btnCloseSettings) {
-      this.dom.btnCloseSettings.addEventListener("click", () => this.closeDrawer("settings"));
-    }
+    this.dom.btnToggleSettings.addEventListener("click", () => this.toggleDrawer("settings"));
+    this.dom.btnCloseSettings.addEventListener("click", () => this.closeDrawer("settings"));
 
-    const btnSearch = document.getElementById("btn-search") || this.dom.btnToggleSearch;
-    if (btnSearch) {
-      ["pointerdown", "touchstart"].forEach((evt) => btnSearch.addEventListener(evt, (e) => e.stopPropagation(), { passive: true }));
-      btnSearch.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeSpeedDial();
-        this.toggleDrawer("search");
-      });
+    if (this.dom.btnToggleSearch) {
+      this.dom.btnToggleSearch.addEventListener("click", () => this.toggleDrawer("search"));
     }
     if (this.dom.btnCloseSearch) {
       this.dom.btnCloseSearch.addEventListener("click", () => this.closeDrawer("search"));
@@ -1063,44 +954,30 @@ class LuminaApp {
       });
     }
 
-    const btnStats = document.getElementById("btn-stats") || this.dom.btnToggleStats;
-    if (btnStats) {
-      ["pointerdown", "touchstart"].forEach((evt) => btnStats.addEventListener(evt, (e) => e.stopPropagation(), { passive: true }));
-      btnStats.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeSpeedDial();
-        this.openStatsModal();
-      });
-    }
-    if (this.dom.btnCloseStats) {
-      this.dom.btnCloseStats.addEventListener("click", () => this.closeStatsModal());
-    }
-    if (this.dom.statsModal) {
-      this.dom.statsModal.addEventListener("click", (e) => {
-        if (e.target === this.dom.statsModal) this.closeStatsModal();
-      });
-    }
+    this.dom.btnToggleStats.addEventListener("click", () => this.openStatsModal());
+    this.dom.btnCloseStats.addEventListener("click", () => this.closeStatsModal());
+    this.dom.statsModal.addEventListener("click", (e) => {
+      if (e.target === this.dom.statsModal) this.closeStatsModal();
+    });
 
-    // Pravítko toggle tlačítko
-    const btnRuler = document.getElementById("btn-toggle-ruler") || this.dom.btnToggleRuler;
-    if (btnRuler) {
+    // Pravítko toggle tlačítko v hlavičce
+    if (this.dom.btnToggleRuler) {
       ["pointerdown", "touchstart"].forEach((evt) => {
-        btnRuler.addEventListener(evt, (e) => {
+        this.dom.btnToggleRuler.addEventListener(evt, (e) => {
           e.stopPropagation();
         }, { passive: true });
       });
-      btnRuler.addEventListener("click", (e) => {
+      this.dom.btnToggleRuler.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
         this.toggleRuler();
       });
     }
 
-    // Rychlé nastavení pravítka (Popover přes chevron na split-pill)
-    const btnRulerSettings = document.getElementById("btn-ruler-settings") || document.getElementById("btn-ruler-quick-menu") || this.dom.btnRulerSettings || this.dom.btnRulerQuickMenu;
-    if (btnRulerSettings && this.dom.rulerQuickPopover) {
+    // Rychlé nastavení pravítka v hlavičce (Popover)
+    if (this.dom.btnRulerQuickMenu && this.dom.rulerQuickPopover) {
       ["pointerdown", "touchstart"].forEach((evt) => {
-        btnRulerSettings.addEventListener(evt, (e) => {
+        this.dom.btnRulerQuickMenu.addEventListener(evt, (e) => {
           e.stopPropagation();
         }, { passive: true });
         this.dom.rulerQuickPopover.addEventListener(evt, (e) => {
@@ -1108,17 +985,16 @@ class LuminaApp {
         }, { passive: true });
       });
 
-      btnRulerSettings.addEventListener("click", (e) => {
+      this.dom.btnRulerQuickMenu.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
         const isHidden = this.dom.rulerQuickPopover.classList.contains("is-hidden");
         if (isHidden) {
-          closeSpeedDial();
           this.dom.rulerQuickPopover.classList.remove("is-hidden");
-          btnRulerSettings.setAttribute("aria-expanded", "true");
-          btnRulerSettings.classList.add("active");
+          this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "true");
         } else {
-          closeRulerQuickPopover();
+          this.dom.rulerQuickPopover.classList.add("is-hidden");
+          this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
         }
       });
 
@@ -1126,6 +1002,15 @@ class LuminaApp {
         e.stopPropagation();
       });
     }
+
+    document.addEventListener("click", (e) => {
+      if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
+        if (!this.dom.rulerBtnGroup || !this.dom.rulerBtnGroup.contains(e.target)) {
+          this.dom.rulerQuickPopover.classList.add("is-hidden");
+          if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+        }
+      }
+    });
 
     if (this.dom.popoverRulerToggle) {
       this.dom.popoverRulerToggle.addEventListener("click", (e) => {
@@ -1585,22 +1470,10 @@ class LuminaApp {
       }
 
       if (e.key === "Escape") {
-        const speedDial = document.getElementById("speed-dial-menu");
-        if (speedDial && !speedDial.classList.contains("hidden")) {
-          speedDial.classList.add("hidden");
-          const trigger = document.getElementById("btn-speed-dial-trigger");
-          trigger?.setAttribute("aria-expanded", "false");
-          trigger?.classList.remove("active");
-          return;
-        }
         let closedPopover = false;
         if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
           this.dom.rulerQuickPopover.classList.add("is-hidden");
-          const btnSettings = document.getElementById("btn-ruler-settings") || document.getElementById("btn-ruler-quick-menu") || this.dom.btnRulerSettings || this.dom.btnRulerQuickMenu;
-          if (btnSettings) {
-            btnSettings.setAttribute("aria-expanded", "false");
-            btnSettings.classList.remove("active");
-          }
+          if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
           closedPopover = true;
         }
         if (closedPopover) return;
@@ -1772,7 +1645,6 @@ class LuminaApp {
   updateRulerToggleButtonUI() {
     const isEnabled = !!this.settings.ruler.enabled;
     if (this.dom.btnToggleRuler) this.dom.btnToggleRuler.classList.toggle("active", isEnabled);
-    if (this.dom.rulerSplitPill) this.dom.rulerSplitPill.classList.toggle("is-active", isEnabled);
     if (this.dom.rulerBtnGroup) this.dom.rulerBtnGroup.classList.toggle("is-active", isEnabled);
     if (this.dom.popoverRulerToggle) this.setSwitchState(this.dom.popoverRulerToggle, isEnabled);
     if (this.dom.rulerToggle) this.setSwitchState(this.dom.rulerToggle, isEnabled);
@@ -2021,8 +1893,9 @@ class LuminaApp {
 
       // Obnovení kapitoly
       this.currentChapterIndex = book.currentChapterIndex || 0;
-      this.showReaderView();
       await this.loadCurrentChapter(book.currentPageIndex || 0);
+
+      this.showReaderView();
     } catch (err) {
       console.error("Chyba při otevírání knihy:", err);
       this.showToast(`Knihu se nepodařilo otevřít: ${err.message}`, "error");
@@ -2097,27 +1970,6 @@ class LuminaApp {
         this.dom.readerContent.style.transform = "translateX(0px)";
       }
 
-      // Počkáme na načtení webových fontů, aby měření sloupců mělo správné metriky
-      if (document.fonts && document.fonts.ready) {
-        try {
-          await document.fonts.ready;
-        } catch (e) {}
-      }
-
-      // Počkáme na načtení vložených obrázků v kapitole, aby neposouvaly layout až po změření
-      const imgs = Array.from(this.dom.readerContent?.querySelectorAll("img") || []);
-      if (imgs.length > 0) {
-        await Promise.all(
-          imgs.map(img => {
-            if (img.complete) return Promise.resolve();
-            return new Promise(resolve => {
-              img.addEventListener("load", resolve, { once: true });
-              img.addEventListener("error", resolve, { once: true });
-            });
-          })
-        );
-      }
-
       this.recalcPages();
 
       if (targetPage === "last") {
@@ -2127,20 +1979,6 @@ class LuminaApp {
       } else {
         this.goToPage(0, 1);
       }
-
-      // Následná verifikace v dalším rámci pro zachycení případného opožděného layoutu na iPadu
-      requestAnimationFrame(() => {
-        const prevTotal = this.totalPagesInChapter;
-        this.recalcPages();
-        if (this.totalPagesInChapter !== prevTotal) {
-          console.log(`[LuminaReader] Layout update totalPages: ${prevTotal} -> ${this.totalPagesInChapter}`);
-          if (targetPage === "last") {
-            this.goToPage(this.totalPagesInChapter - 1, -1);
-          } else if (typeof targetPage === "number") {
-            this.goToPage(Math.min(targetPage, this.totalPagesInChapter - 1), targetPage > 0 ? 1 : 0);
-          }
-        }
-      });
     } catch (e) {
       this.isNavigating = false;
       this.isNavigatingPage = false;
@@ -2187,18 +2025,6 @@ class LuminaApp {
       html = this.toBionicReadingHtml(html);
     }
     this.dom.readerContent.innerHTML = html;
-
-    // Odstranit vložené <style> a stylesheet tagy z EPUBu, které mohou vnutit height/overflow pravidla
-    this.dom.readerContent.querySelectorAll("style, link[rel='stylesheet']").forEach(s => s.remove());
-
-    // Odstranit omezující inline výšky a overflow z kontejnerů uvnitř kapitoly
-    this.dom.readerContent.querySelectorAll("div, section, article, main").forEach(el => {
-      if (el.style.height || el.style.maxHeight || el.style.overflow) {
-        el.style.height = "auto";
-        el.style.maxHeight = "none";
-        el.style.overflow = "visible";
-      }
-    });
   }
 
   applyFastReadingMode() {
@@ -2310,42 +2136,16 @@ class LuminaApp {
   }
 
   recalcPages() {
-    const contentEl = this.dom.readerContent;
-    const stageEl = this.dom.pagedStage || contentEl?.parentElement;
-    if (!contentEl || !stageEl) return;
-
-    // WebKit vyžaduje explicitní pevnou výšku v pixelech na multi-column kontejneru,
-    // aby mohl zalomit text do vodorovných sloupců namísto zřícení do jedné strany.
-    // Výšku navíc zarovnáme na celistvé násobky line-height, aby nevznikalo půlřádkové oříznutí.
-    const cs = window.getComputedStyle(contentEl);
-    const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.6);
-    const rawHeight = stageEl.clientHeight || (window.innerHeight - 120);
-    const snappedHeight = Math.floor(rawHeight / lh) * lh;
-    if (snappedHeight > 0) {
-      contentEl.style.height = `${snappedHeight}px`;
-      document.documentElement.style.setProperty("--reader-stage-height", `${snappedHeight}px`);
-    }
-
-    // Vynucení reflow pro WebKit
-    void contentEl.offsetHeight;
-
+    if (!this.dom.pagedStage || !this.dom.readerContent) return;
     const gap = this.getPageGap();
     this.pageGap = gap;
     const stride = this.getColumnStride();
-    const scrollWidth = contentEl.scrollWidth;
-
-    const isTwoCol = document.documentElement.classList.contains("columns-2") ||
-                     document.body.classList.contains("columns-2") ||
-                     contentEl.classList.contains("columns-2");
+    const scrollWidth = this.dom.readerContent.scrollWidth;
 
     if (stride <= 0) {
       this.totalPagesInChapter = 1;
-    } else if (isTwoCol) {
-      const colStep = stride / 2;
-      const totalCols = Math.max(1, Math.round((scrollWidth + gap) / colStep));
-      this.totalPagesInChapter = Math.ceil(totalCols / 2);
     } else {
-      this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / stride));
+      this.totalPagesInChapter = Math.max(1, Math.ceil((scrollWidth + gap - 1) / stride));
     }
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
@@ -2495,16 +2295,6 @@ class LuminaApp {
       }
     }, 300); // 300ms maximum lock lifetime
 
-    // iPad WebKit failsafe: pokud jsme na konci kapitoly nebo máme jen 1 stranu,
-    // re-evaluujeme rozložení před přeskočením do další kapitoly
-    if (this.dom.readerContent && this.currentPageIndex >= this.totalPagesInChapter - 1) {
-      const prevTotal = this.totalPagesInChapter;
-      this.recalcPages();
-      if (this.totalPagesInChapter > prevTotal) {
-        console.warn(`[LuminaReader] nextPage: detected unmeasured pages (${prevTotal} -> ${this.totalPagesInChapter}), preventing premature chapter jump`);
-      }
-    }
-
     try {
       if (this.currentPageIndex < this.totalPagesInChapter - 1) {
         this.goToPage(this.currentPageIndex + 1, 1);
@@ -2602,18 +2392,14 @@ class LuminaApp {
     const currChapterPage = this.currentPageIndex + 1;
     const totalChapterPages = Math.max(1, this.totalPagesInChapter);
 
-    // 1. Popisek a číslo stránky v aktuální kapitole ("kap. X – Y z Z")
-    const chapterProgressText = `kap. ${this.currentChapterIndex + 1} – ${currChapterPage} z ${totalChapterPages}`;
-    if (this.dom.chapterProgress) {
-      this.dom.chapterProgress.textContent = chapterProgressText;
-    }
-    if (this.dom.chapterPageCounter && this.dom.chapterPageCounter !== this.dom.chapterProgress) {
+    // 1. Popisek a číslo stránky v aktuální kapitole ("strana X z Y")
+    if (this.dom.chapterPageCounter) {
       this.dom.chapterPageCounter.textContent = `strana ${currChapterPage} z ${totalChapterPages}`;
-    } else if (this.dom.pageCounterText && this.dom.pageCounterText !== this.dom.chapterProgress) {
+    } else if (this.dom.pageCounterText) {
       this.dom.pageCounterText.textContent = `strana ${currChapterPage} z ${totalChapterPages}`;
     }
 
-    // 2. Počítadlo stránek pro celou knihu ("105 z 527")
+    // 2. Počítadlo stránek pro celou knihu ("strana A z B")
     let currBookPage = currChapterPage;
     let totalBookPages = totalChapterPages;
 
@@ -2635,10 +2421,7 @@ class LuminaApp {
       totalBookPages = allPages;
     }
 
-    if (this.dom.bookProgress) {
-      this.dom.bookProgress.textContent = `${currBookPage} z ${totalBookPages}`;
-    }
-    if (this.dom.bookPageCounter && this.dom.bookPageCounter !== this.dom.bookProgress) {
+    if (this.dom.bookPageCounter) {
       this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
     }
 
@@ -2747,15 +2530,7 @@ class LuminaApp {
     tracker.stopSession();
     this.closeDrawer("toc");
     this.closeDrawer("settings");
-    this.closeDrawer("search");
     this.closeStatsModal();
-    const speedDial = document.getElementById("speed-dial-menu");
-    if (speedDial) {
-      speedDial.classList.add("hidden");
-      const trigger = document.getElementById("btn-speed-dial-trigger");
-      trigger?.setAttribute("aria-expanded", "false");
-      trigger?.classList.remove("active");
-    }
     document.body.classList.remove("immersive-reading");
     document.body.classList.remove("in-reader-view");
     document.body.classList.remove("reader-chrome-hidden");
