@@ -22,6 +22,7 @@
   --bg-app: #f8fafc;
   --bg-surface: #ffffff;
   --bg-surface-elevated: #ffffff;
+  --bg-card: #ffffff;
   --bg-modal: #ffffff;
   --bg-secondary: #f1f5f9;
   --bg-hover: #f1f5f9;
@@ -53,6 +54,7 @@
   --bg-app: #f8fafc;
   --bg-surface: #ffffff;
   --bg-surface-elevated: #ffffff;
+  --bg-card: #ffffff;
   --bg-modal: #ffffff;
   --bg-secondary: #f1f5f9;
   --bg-hover: #f1f5f9;
@@ -69,6 +71,7 @@
   --bg-app: #0f172a;
   --bg-surface: #1e293b;
   --bg-surface-elevated: #334155;
+  --bg-card: #1e293b;
   --bg-modal: #1e293b;
   --bg-secondary: #334155;
   --bg-hover: #273549;
@@ -87,6 +90,7 @@
   --bg-app: #000000;
   --bg-surface: #121212;
   --bg-surface-elevated: #1e1e1e;
+  --bg-card: #141414;
   --bg-modal: #121212;
   --bg-secondary: #1e1e1e;
   --bg-hover: #242424;
@@ -103,6 +107,7 @@
   --bg-app: #f4ecd8;
   --bg-surface: #faf4e6;
   --bg-surface-elevated: #ede3cb;
+  --bg-card: #faf4e6;
   --bg-modal: #faf4e6;
   --bg-secondary: #ede3cb;
   --bg-hover: #ede3cb;
@@ -119,6 +124,7 @@
   --bg-app: #fbf0d9;
   --bg-surface: #fff8e7;
   --bg-surface-elevated: #f4ebd4;
+  --bg-card: #fff8e7;
   --bg-modal: #fff8e7;
   --bg-secondary: #f4ebd4;
   --bg-hover: #ede3cb;

@@ -581,6 +581,14 @@ body.columns-2 .paged-content,
   padding: 0;
 }
 
+.dock-action-btn svg {
+  display: block;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+}
+
 .dock-action-btn:hover {
   background: #1d4ed8;
   transform: scale(1.08);
@@ -1059,13 +1067,13 @@ body.ruler-mouse-follow-active .ruler-mask {
   max-height: min(580px, calc(100vh - 85px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: var(--bg-surface-elevated);
-  background: rgba(30, 41, 59, 0.95);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  background: var(--bg-card, var(--bg-surface-elevated, var(--bg-surface, #ffffff)));
+  color: var(--text-main);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg, 16px);
-  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
   padding: 1rem;
   z-index: 1200;
   display: flex;
@@ -1074,6 +1082,11 @@ body.ruler-mouse-follow-active .ruler-mask {
   box-sizing: border-box;
   transform-origin: bottom right;
   transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="dark"] .ruler-quick-popover,
+[data-theme="oled"] .ruler-quick-popover {
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .ruler-quick-popover::-webkit-scrollbar {
@@ -1085,7 +1098,7 @@ body.ruler-mouse-follow-active .ruler-mask {
 }
 
 .ruler-quick-popover::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--border-color);
   border-radius: 4px;
 }
 
@@ -1172,10 +1185,14 @@ body.ruler-mouse-follow-active .ruler-mask {
   transition: all var(--transition-fast);
 }
 
+.popover-segmented-control .segment-btn:hover:not(.active) {
+  color: var(--text-main);
+}
+
 .popover-segmented-control .segment-btn.active {
-  background: var(--bg-surface-elevated);
+  background: var(--bg-card, var(--bg-surface, #ffffff));
   color: var(--color-primary);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .popover-slider-wrapper {
@@ -1184,6 +1201,36 @@ body.ruler-mouse-follow-active .ruler-mask {
 
 .popover-slider-wrapper .slider-input {
   width: 100%;
+  height: 6px;
+  background: var(--border-color);
+  border-radius: 9999px;
+  outline: none;
+  accent-color: var(--color-primary);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.popover-slider-wrapper .slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  cursor: pointer;
+  border: 2px solid var(--bg-card, var(--bg-surface, #ffffff));
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: transform 0.1s ease;
+}
+
+.popover-slider-wrapper .slider-input::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  cursor: pointer;
+  border: 2px solid var(--bg-card, var(--bg-surface, #ffffff));
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
 .popover-styles-grid {
@@ -1193,22 +1240,27 @@ body.ruler-mouse-follow-active .ruler-mask {
 }
 
 .popover-style-btn {
-  padding: 0.4rem 0.3rem;
+  padding: 0.45rem 0.3rem;
   font-size: 0.8rem;
   font-weight: 600;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-color);
-  background: var(--bg-surface-elevated);
+  background: var(--bg-hover);
   color: var(--text-muted);
   cursor: pointer;
   transition: all var(--transition-fast);
   text-align: center;
 }
 
+.popover-style-btn:hover:not(.active) {
+  color: var(--text-main);
+}
+
 .popover-style-btn.active {
   border-color: var(--color-primary);
-  background: var(--bg-hover);
+  background: var(--bg-card, var(--bg-surface, #ffffff));
   color: var(--color-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 
 .popover-colors-row {
@@ -1227,9 +1279,9 @@ body.ruler-mouse-follow-active .ruler-mask {
 }
 
 .popover-colors-row .ruler-color-btn.active {
-  border-color: #ffffff;
+  border-color: var(--text-main);
   transform: scale(1.15);
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+  box-shadow: 0 0 0 2px var(--bg-card, var(--bg-surface, #ffffff)), 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .popover-select {
