@@ -333,50 +333,6 @@ class LuminaApp {
     return stageWidth + gap;
   }
 
-  getExactLineHeightPx() {
-    if (this.dom.readerContent) {
-      const computed = window.getComputedStyle(this.dom.readerContent);
-      const computedLh = parseFloat(computed.lineHeight);
-      if (!isNaN(computedLh) && computedLh > 0) {
-        return computedLh;
-      }
-    }
-    const s = this.settings;
-    const fontSize = Number(s?.fontSize || 19);
-    const lineHeightMultiplier = Number(s?.lineHeight || 1.6);
-    return fontSize * lineHeightMultiplier;
-  }
-
-  adjustStageHeight() {
-    if (!this.dom.pagedStage) return;
-    const viewport = this.dom.pagedViewport || this.dom.pagedStage.parentElement;
-    let availableHeight = 0;
-    if (viewport && viewport.clientHeight > 0) {
-      availableHeight = viewport.clientHeight;
-    }
-    if (!availableHeight || availableHeight <= 0) {
-      const headerH = this.dom.readerHeader?.offsetHeight || 56;
-      const footerH = this.dom.pagedFooterBar?.offsetHeight || 60;
-      availableHeight = window.innerHeight - headerH - footerH;
-    }
-    if (availableHeight <= 0) return;
-
-    // Get exact line height in pixels
-    const lh = this.getExactLineHeightPx();
-    if (!lh || isNaN(lh) || lh <= 0) return;
-
-    // Align stage height to exact integer multiples of line-height so WebKit multicolumn doesn't clip lines
-    const maxLines = Math.floor(availableHeight / lh);
-    if (maxLines <= 0) return;
-    const alignedHeight = maxLines * lh;
-
-    document.documentElement.style.setProperty("--reader-stage-height", `${alignedHeight}px`);
-    this.dom.pagedStage.style.height = `${alignedHeight}px`;
-    if (this.dom.readerContent) {
-      this.dom.readerContent.style.height = `${alignedHeight}px`;
-    }
-  }
-
   applySettings() {
     const s = this.settings;
     document.documentElement.setAttribute("data-theme", s.theme);
@@ -914,7 +870,7 @@ class LuminaApp {
 
     // Přizpůsobení stran při změně orientace iPadu (Portrait/Landscape) a velikosti okna
     let lastEffectiveCols = this.resolveEffectiveColumnCount();
-    const handleViewportChange = () => {
+    window.addEventListener("resize", () => {
       if (this.settings.columnsMode === "auto") {
         const newCols = this.resolveEffectiveColumnCount();
         if (newCols !== lastEffectiveCols) {
@@ -928,15 +884,7 @@ class LuminaApp {
         this.ruler?.refreshLines();
         this.ruler?.applyPosition();
       }
-    };
-    window.addEventListener("resize", handleViewportChange);
-    window.addEventListener("orientationchange", () => {
-      setTimeout(handleViewportChange, 100);
-      setTimeout(handleViewportChange, 300);
     });
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener("resize", handleViewportChange);
-    }
 
     // Tracker události
     tracker.subscribe((event) => {
@@ -2073,8 +2021,9 @@ class LuminaApp {
 
       // Obnovení kapitoly
       this.currentChapterIndex = book.currentChapterIndex || 0;
-      this.showReaderView();
       await this.loadCurrentChapter(book.currentPageIndex || 0);
+
+      this.showReaderView();
     } catch (err) {
       console.error("Chyba při otevírání knihy:", err);
       this.showToast(`Knihu se nepodařilo otevřít: ${err.message}`, "error");
@@ -2111,7 +2060,7 @@ class LuminaApp {
           this.ruler.suppressLineAdvancement = false;
         }
       }
-    }, 2500);
+    }, 1000);
 
     const chapterTimeout = setTimeout(() => {
       this.isNavigating = false;
@@ -2122,7 +2071,7 @@ class LuminaApp {
         this.ruler.isNavigatingPage = false;
         this.ruler.isLineLocked = false;
       }
-    }, 2500);
+    }, 1000);
 
     try {
       const chapter = await this.currentParser.loadChapter(this.currentChapterIndex);
@@ -2143,46 +2092,13 @@ class LuminaApp {
       // Zvýraznění aktivní kapitoly v obsahu
       this.highlightActiveTocItem();
 
-      // Počkáme na úplné načtení webových fontů před měřením geometrie textu
-      if (document.fonts && document.fonts.ready) {
-        try {
-          await document.fonts.ready;
-        } catch (e) {
-          console.warn("[LuminaReader] Font ready wait warning:", e);
-        }
-      }
-
-      // Počkáme na případné vložené obrázky uvnitř kapitoly
-      if (this.dom.readerContent) {
-        const imgs = this.dom.readerContent.querySelectorAll("img");
-        if (imgs.length > 0) {
-          await Promise.all(
-            Array.from(imgs).map(img => {
-              if (img.complete) return Promise.resolve();
-              return new Promise(res => {
-                img.addEventListener("load", res, { once: true });
-                img.addEventListener("error", res, { once: true });
-                setTimeout(res, 250);
-              });
-            })
-          );
-        }
-      }
-
-      // Reset transformace před měřením
+      // Reset transformace před měřením a okamžité změření rozložení
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transition = "none";
         this.dom.readerContent.style.transform = "translateX(0px)";
       }
 
-      // Zarovnat výšku jeviště na celistvé násobky výšky řádku proti vertikálnímu ořezávání
-      this.adjustStageHeight();
-
-      // Vynucení reflow a vyčkání na dokončení multi-column layout passu na iPadu (WebKit double RAF)
-      if (this.dom.readerContent) {
-        void this.dom.readerContent.offsetHeight;
-      }
-      await this.recalcPages();
+      this.recalcPages();
 
       if (targetPage === "last") {
         this.goToPage(this.totalPagesInChapter - 1, -1);
@@ -2191,20 +2107,6 @@ class LuminaApp {
       } else {
         this.goToPage(0, 1);
       }
-
-      // Následná verifikace v dalším rámci pro zachycení případného opožděného layoutu
-      requestAnimationFrame(async () => {
-        const prevTotal = this.totalPagesInChapter;
-        await this.recalcPages();
-        if (this.totalPagesInChapter !== prevTotal) {
-          console.log(`[LuminaReader] Follow-up layout check updated totalPages: ${prevTotal} -> ${this.totalPagesInChapter}`);
-          if (targetPage === "last") {
-            this.goToPage(this.totalPagesInChapter - 1, -1);
-          } else if (typeof targetPage === "number") {
-            this.goToPage(Math.min(targetPage, this.totalPagesInChapter - 1), targetPage > 0 ? 1 : 0);
-          }
-        }
-      });
     } catch (e) {
       this.isNavigating = false;
       this.isNavigatingPage = false;
@@ -2361,36 +2263,18 @@ class LuminaApp {
     }
   }
 
-  async recalcPages() {
-    const contentEl = this.dom.readerContent || this.dom.pagedContent;
-    const stageEl = this.dom.pagedStage || contentEl?.parentElement;
-    if (!contentEl || !stageEl) return;
-
-    if (document.fonts) {
-      try {
-        await document.fonts.ready;
-      } catch (e) {
-        console.warn("[LuminaReader] Font ready wait warning:", e);
-      }
-    }
-
-    if (contentEl && stageEl) {
-      const cs = window.getComputedStyle(contentEl);
-      const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.5);
-      const rawHeight = stageEl.clientHeight;
-      const snappedHeight = Math.floor(rawHeight / lh) * lh;
-      contentEl.style.height = `${snappedHeight}px`;
-      document.documentElement.style.setProperty("--reader-stage-height", `${snappedHeight}px`);
-    }
-
+  recalcPages() {
+    if (!this.dom.pagedStage || !this.dom.readerContent) return;
     const gap = this.getPageGap();
     this.pageGap = gap;
     const stride = this.getColumnStride();
+    const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    // Allow forced reflow for WebKit
-    const scrollW = contentEl.scrollWidth;
-    const strideW = stride; // existing stride calculation
-    this.totalPagesInChapter = strideW > 0 ? Math.max(1, Math.round(scrollW / strideW)) : 1;
+    if (stride <= 0) {
+      this.totalPagesInChapter = 1;
+    } else {
+      this.totalPagesInChapter = Math.max(1, Math.ceil((scrollWidth + gap - 1) / stride));
+    }
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
@@ -2538,16 +2422,6 @@ class LuminaApp {
         }
       }
     }, 300); // 300ms maximum lock lifetime
-
-    // iPad WebKit failsafe: pokud jsme na konci kapitoly nebo máme jen 1 stranu,
-    // ověříme skutečné rozložení, abychom nepřeskočili celou kapitolu kvůli nezměřenému layoutu
-    if (this.dom.readerContent && this.currentPageIndex >= this.totalPagesInChapter - 1) {
-      const prevTotal = this.totalPagesInChapter;
-      await this.recalcPages();
-      if (this.totalPagesInChapter > prevTotal) {
-        console.warn(`[LuminaReader] nextPage: detected unmeasured pages (${prevTotal} -> ${this.totalPagesInChapter}), preventing premature chapter jump`);
-      }
-    }
 
     try {
       if (this.currentPageIndex < this.totalPagesInChapter - 1) {
@@ -2829,8 +2703,6 @@ class LuminaApp {
     this.updateTouchZonesUI();
     this.renderScrubberTicks();
     this.updateScrubberUI();
-    this.recalcPages();
-    this.updatePageUI();
   }
 
   toggleDrawer(name) {
