@@ -134,7 +134,7 @@ body.columns-2 .paged-stage {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  column-count: 1 !important;
+  column-count: auto !important;
   column-width: auto !important;
   column-gap: var(--page-gap, 50px);
   font-family: var(--font-book, Georgia, serif);
