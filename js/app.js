@@ -259,6 +259,10 @@ class LuminaApp {
   initRuler() {
     this.ruler = new ReadingRuler(this.dom.pagedStage);
 
+    // Callback pro ruler.js: vrátí true pokud je otevřen jakýkoliv panel/zásuvka,
+    // aby ruler neinterferoval s kliknutím na backdrop (zavření panelu).
+    this.ruler.isAnyDrawerOpen = () => this.isAnyModalOrMenuOpen();
+
     // Automatický přechod na další/předchozí stránku při překročení hranice textu pravítkem
     this.ruler.onBoundary = (dir) => {
       if (this.isAnyModalOrMenuOpen()) return;
@@ -1036,6 +1040,41 @@ class LuminaApp {
       this.dom.rulerQuickPopover.addEventListener("click", (e) => {
         e.stopPropagation();
       });
+
+      // Zavření popoveru kliknutím mimo (outside-click dismiss) — capture fáze, nejvyšší priorita.
+      // Používáme pointerdown místo click, aby se zavření stalo před jakýmkoliv bubble handlerem.
+      document.addEventListener("pointerdown", (e) => {
+        if (!this.dom.rulerQuickPopover || this.dom.rulerQuickPopover.classList.contains("is-hidden")) return;
+        // Pokud klik zasáhl samotný popover nebo tlačítko (►chevron), nic neděláme
+        const insidePopover = this.dom.rulerQuickPopover.contains(e.target);
+        const insideBtn = this.dom.btnRulerQuickMenu && this.dom.btnRulerQuickMenu.contains(e.target);
+        if (insidePopover || insideBtn) return;
+        // Klik je venku → okamžitě zavřít a potlačit veškerou navigaci
+        e.preventDefault();
+        e.stopPropagation();
+        this.dom.rulerQuickPopover.classList.add("is-hidden");
+        if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+        // Krátký navigační zámek aby zavírací klik nespustil otočení stránky ani krokování pravítka
+        this.isNavigating = true;
+        setTimeout(() => { this.isNavigating = false; }, 300);
+      }, { capture: true });
+
+      // Stejný handler pro touchstart (iPad – pointerdown může být passive v některých kontextech)
+      document.addEventListener("touchstart", (e) => {
+        if (!this.dom.rulerQuickPopover || this.dom.rulerQuickPopover.classList.contains("is-hidden")) return;
+        const touch = e.touches[0];
+        if (!touch) return;
+        const target = document.elementFromPoint(touch.clientX, touch.clientY);
+        const insidePopover = this.dom.rulerQuickPopover.contains(target);
+        const insideBtn = this.dom.btnRulerQuickMenu && this.dom.btnRulerQuickMenu.contains(target);
+        if (insidePopover || insideBtn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.dom.rulerQuickPopover.classList.add("is-hidden");
+        if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+        this.isNavigating = true;
+        setTimeout(() => { this.isNavigating = false; }, 300);
+      }, { capture: true, passive: false });
     }
 
     // Plovoucí dock rychlých akcí (Menu FAB & Dock)
