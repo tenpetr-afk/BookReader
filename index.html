@@ -46,7 +46,6 @@
           <div>
             <div class="brand-title-wrap">
               <h1 class="brand-title">LuminaReader</h1>
-              <div id="app-version-badge" class="app-version-badge"></div>
             </div>
             <p class="brand-tagline">Čtečka EPUB knih s měřením rychlosti a čtecím pravítkem</p>
           </div>
@@ -94,124 +93,14 @@
        ========================================================================= -->
   <div id="view-reader" class="view-reader is-hidden">
     
-    <!-- Fixní hlavička čtečky -->
+    <!-- Fixní hlavička čtečky (Top Bar) -->
     <header id="reader-header" class="reader-header">
-      <div class="reader-header-left">
-        <button id="btn-back-library" class="btn btn-secondary btn-back-library" title="Zpět do knihovny (klávesa Esc)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-          <span class="btn-back-label">Knihovna</span>
-        </button>
-        <button id="btn-toggle-toc" class="btn-icon" title="Obsah knihy (klávesa T)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        </button>
-      </div>
+      <button id="btn-back-library" class="btn-icon" title="Zpět do knihovny" aria-label="Zpět do knihovny">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      </button>
 
-      <div class="reader-header-center">
-        <div class="header-title-wrapper">
-          <div id="header-book-title" class="header-book-title">Název knihy</div>
-          <div id="header-chapter-title" class="header-chapter-title">Kapitola</div>
-        </div>
-      </div>
-
-      <div class="reader-header-right">
-        <!-- Skupina tlačítek pravítka a rychlého popoveru -->
-        <div class="ruler-btn-group" id="ruler-btn-group">
-          <button id="btn-toggle-ruler" class="btn-icon" title="Zapnout/vypnout čtecí pravítko (klávesa R)">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.3 8.7 8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4z"/><path d="m14.5 3.5 2 2"/><path d="m11.5 6.5 2 2"/><path d="m8.5 9.5 2 2"/><path d="m5.5 12.5 2 2"/></svg>
-          </button>
-          <button id="btn-ruler-quick-menu" class="btn-icon btn-ruler-dropdown-arrow" title="Rychlé nastavení pravítka a tempa (WPM)" aria-haspopup="true" aria-expanded="false">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
-          </button>
-
-          <!-- Rychlý konfigurační popover pravítka -->
-          <div id="ruler-quick-popover" class="ruler-quick-popover is-hidden" role="dialog" aria-label="Rychlé nastavení pravítka">
-            <div class="popover-header">
-              <span class="popover-title">Čtecí pravítko</span>
-              <button type="button" role="switch" id="popover-ruler-toggle" class="switch-control" aria-checked="false" aria-label="Aktivovat pravítko">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-              </button>
-            </div>
-
-            <!-- Způsob pohybu -->
-            <div class="popover-section" id="popover-follow-section">
-              <div class="popover-section-label">Způsob pohybu</div>
-              <div class="popover-styles-grid">
-                <button type="button" class="popover-style-btn" data-ruler-follow="mouse">Kurzor myši</button>
-                <button type="button" class="popover-style-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
-              </div>
-            </div>
-
-            <!-- Režim pravítka: Řádkové vs. Sledování slov -->
-            <div class="popover-section">
-              <div class="popover-section-label">Režim zvýraznění</div>
-              <div class="popover-segmented-control" id="popover-mode-segmented">
-                <button type="button" class="segment-btn active" id="popover-mode-line" data-ruler-mode-type="line">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-                  <span>Řádky</span>
-                </button>
-                <button type="button" class="segment-btn" id="popover-mode-word" data-ruler-mode-type="word">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="10" rx="3"/></svg>
-                  <span>Slova</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Styl zobrazení -->
-            <div class="popover-section">
-              <div class="popover-section-label">Styl pravítka</div>
-              <div class="popover-styles-grid">
-                <button type="button" class="popover-style-btn active" data-ruler-style="highlight">Zvýrazňovač</button>
-                <button type="button" class="popover-style-btn" data-ruler-style="focus">Zaostření</button>
-              </div>
-            </div>
-
-            <!-- Barva pravítka -->
-            <div class="popover-section">
-              <div class="popover-section-label">Barva</div>
-              <div class="popover-colors-row">
-                <button type="button" class="ruler-color-btn color-amber active" data-ruler-color="amber" title="Jantarová"></button>
-                <button type="button" class="ruler-color-btn color-cyan" data-ruler-color="cyan" title="Tyrkysová"></button>
-                <button type="button" class="ruler-color-btn color-emerald" data-ruler-color="emerald" title="Smaragdová"></button>
-                <button type="button" class="ruler-color-btn color-lavender" data-ruler-color="lavender" title="Levandulová"></button>
-                <button type="button" class="ruler-color-btn color-slate" data-ruler-color="slate" title="Břidlicová"></button>
-              </div>
-            </div>
-
-            <!-- Intenzita ztmavení okolí -->
-            <div class="popover-section">
-              <div class="popover-row-between">
-                <span class="popover-section-label">Ztmavení okolí (Zaostření)</span>
-                <span id="popover-val-ruler-opacity" class="popover-val-badge">65%</span>
-              </div>
-              <div class="popover-slider-wrapper">
-                <input type="range" id="popover-slider-ruler-opacity" class="slider-input" min="20" max="90" value="65">
-              </div>
-            </div>
-          </div>
-        </div>
-
-
-        <!-- Hledání v knize -->
-        <button id="btn-toggle-search" class="btn-icon" title="Hledat v knize (klávesa F)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </button>
-
-        <!-- Statistiky -->
-        <button id="btn-toggle-stats" class="btn-icon" title="Statistiky čtení (klávesa S)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
-        </button>
-
-        <!-- Nastavení zobrazení -->
-        <button id="btn-toggle-settings" class="btn-icon" title="Nastavení písma a vzhledu">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
-      </div>
+      <div id="reader-book-title" class="book-title">Název knihy</div>
     </header>
-
-    <!-- Tenká linka celkového postupu v knize -->
-    <div class="reading-progress-container">
-      <div id="reading-progress-bar" class="reading-progress-bar"></div>
-    </div>
 
     <!-- Stránkovaná čtečka (Paged Viewport pro iPad swipe a touchpad) -->
     <main class="paged-viewport" id="paged-viewport">
@@ -231,29 +120,103 @@
       </div>
     </main>
 
-    <!-- Spodní lišta s posuvníkem čtení a informacemi (Scrubber Bar) -->
-    <footer class="paged-footer-bar" id="paged-footer-bar" role="region" aria-label="Průběh čtení">
-      <div class="footer-left-item" id="footer-book-title" title="Aktuální kapitola">
-        <span class="footer-title-text" id="footer-title-text">Kapitola</span>
-      </div>
+    <!-- Spodní lišta se 3 sekcemi a speed-dialem (Bottom Bar) -->
+    <footer class="paged-footer-bar" id="reader-footer" role="region" aria-label="Průběh čtení">
+      <div id="chapter-progress" class="footer-progress-chapter"></div>
+      <div id="book-progress" class="footer-progress-book"></div>
+      <div class="bottom-actions-cluster" id="bottom-actions-cluster">
+        <!-- Rychlý konfigurační popover pravítka -->
+        <div id="ruler-quick-popover" class="ruler-quick-popover is-hidden" role="dialog" aria-label="Rychlé nastavení pravítka">
+          <div class="popover-header">
+            <span class="popover-title">Čtecí pravítko</span>
+            <button type="button" role="switch" id="popover-ruler-toggle" class="switch-control" aria-checked="false" aria-label="Aktivovat pravítko">
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </button>
+          </div>
 
-      <div class="footer-center-item">
-        <div class="reading-scrubber" id="reading-scrubber">
-          <div class="scrubber-tooltip" id="scrubber-tooltip">Strana 1 / Kapitola 1</div>
-          <div class="scrubber-track" id="scrubber-track">
-            <div class="scrubber-chapter-ticks" id="scrubber-chapter-ticks"></div>
-            <div class="scrubber-progress-fill" id="scrubber-progress-fill"></div>
-            <div class="scrubber-thumb" id="scrubber-thumb" tabindex="0" role="slider" aria-label="Pozice čtení" aria-valuemin="1" aria-valuemax="100" aria-valuenow="1"></div>
+          <!-- Způsob pohybu -->
+          <div class="popover-section" id="popover-follow-section">
+            <div class="popover-section-label">Způsob pohybu</div>
+            <div class="popover-styles-grid">
+              <button type="button" class="popover-style-btn" data-ruler-follow="mouse">Kurzor myši</button>
+              <button type="button" class="popover-style-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
+            </div>
+          </div>
+
+          <!-- Režim pravítka: Řádkové vs. Sledování slov -->
+          <div class="popover-section">
+            <div class="popover-section-label">Režim zvýraznění</div>
+            <div class="popover-segmented-control" id="popover-mode-segmented">
+              <button type="button" class="segment-btn active" id="popover-mode-line" data-ruler-mode-type="line">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                <span>Řádky</span>
+              </button>
+              <button type="button" class="segment-btn" id="popover-mode-word" data-ruler-mode-type="word">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="10" rx="3"/></svg>
+                <span>Slova</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Styl zobrazení -->
+          <div class="popover-section">
+            <div class="popover-section-label">Styl pravítka</div>
+            <div class="popover-styles-grid">
+              <button type="button" class="popover-style-btn active" data-ruler-style="highlight">Zvýrazňovač</button>
+              <button type="button" class="popover-style-btn" data-ruler-style="focus">Zaostření</button>
+            </div>
+          </div>
+
+          <!-- Barva pravítka -->
+          <div class="popover-section">
+            <div class="popover-section-label">Barva</div>
+            <div class="popover-colors-row">
+              <button type="button" class="ruler-color-btn color-amber active" data-ruler-color="amber" title="Jantarová"></button>
+              <button type="button" class="ruler-color-btn color-cyan" data-ruler-color="cyan" title="Tyrkysová"></button>
+              <button type="button" class="ruler-color-btn color-emerald" data-ruler-color="emerald" title="Smaragdová"></button>
+              <button type="button" class="ruler-color-btn color-lavender" data-ruler-color="lavender" title="Levandulová"></button>
+              <button type="button" class="ruler-color-btn color-slate" data-ruler-color="slate" title="Břidlicová"></button>
+            </div>
+          </div>
+
+          <!-- Intenzita ztmavení okolí -->
+          <div class="popover-section">
+            <div class="popover-row-between">
+              <span class="popover-section-label">Ztmavení okolí (Zaostření)</span>
+              <span id="popover-val-ruler-opacity" class="popover-val-badge">65%</span>
+            </div>
+            <div class="popover-slider-wrapper">
+              <input type="range" id="popover-slider-ruler-opacity" class="slider-input" min="20" max="90" value="65">
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="footer-right-item" id="footer-progress-metrics">
-        <span id="footer-etr-text" class="footer-etr-text"></span>
-        <span class="footer-metric-separator" id="footer-etr-separator" style="display: none;">•</span>
-        <span id="book-page-counter" class="footer-value">strana 1 z 1</span>
-        <span class="footer-metric-separator">•</span>
-        <span id="reading-progress-text" class="paged-percent footer-value">0%</span>
+        <div class="speed-dial-menu hidden" id="speed-dial-menu">
+          <button class="action-btn" id="btn-search" title="Hledat v knize" aria-label="Hledat v knize">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </button>
+          <button class="action-btn" id="btn-toc" title="Obsah knihy" aria-label="Obsah knihy">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <button class="action-btn" id="btn-stats" title="Statistiky" aria-label="Statistiky">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+          </button>
+          <button class="action-btn" id="btn-settings" title="Nastavení" aria-label="Nastavení">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
+        <div class="split-pill-btn" id="ruler-split-pill">
+          <button class="pill-action" id="btn-toggle-ruler" title="Zapnout/Vypnout pravítko" aria-label="Zapnout/Vypnout pravítko">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 8.7 8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4z"/><path d="m14.5 3.5 2 2"/><path d="m11.5 6.5 2 2"/><path d="m8.5 9.5 2 2"/><path d="m5.5 12.5 2 2"/></svg>
+          </button>
+          <div class="pill-divider" aria-hidden="true"></div>
+          <button class="pill-dropdown" id="btn-ruler-settings" title="Nastavení pravítka" aria-label="Nastavení pravítka" aria-haspopup="true" aria-expanded="false">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+        <button class="bar-icon-btn" id="btn-speed-dial-trigger" title="Menu akcí" aria-label="Menu akcí" aria-haspopup="true" aria-expanded="false">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="5" x2="8" y2="19"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="16" y1="5" x2="16" y2="19"/></svg>
+        </button>
       </div>
     </footer>
 
