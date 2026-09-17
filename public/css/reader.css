@@ -344,7 +344,8 @@ body.columns-2 .paged-content,
    Spodní lišta se stránkami a navigací (Paged Footer Bar dle mockupu)
    ========================================================================== */
 
-.paged-footer-bar {
+.paged-footer-bar,
+#paged-footer-bar {
   position: fixed;
   bottom: 0;
   left: 0;
@@ -353,47 +354,75 @@ body.columns-2 .paged-content,
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 max(1.5rem, env(safe-area-inset-right, 0px)) max(0.5rem, env(safe-area-inset-bottom, 0px)) max(1.5rem, env(safe-area-inset-left, 0px));
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  display: grid !important;
+  grid-template-columns: 1fr auto 1fr !important;
+  align-items: center !important;
+  padding: 0 max(1.5rem, env(safe-area-inset-right, 0px)) max(0.5rem, env(safe-area-inset-bottom, 0px)) max(1.5rem, env(safe-area-inset-left, 0px)) !important;
   z-index: 1000;
   box-sizing: border-box;
-  pointer-events: none;
+  pointer-events: none !important;
   transition: background-color var(--transition-normal), border-color var(--transition-normal);
 }
 
-.paged-footer-bar > * {
-  pointer-events: auto;
+.paged-footer-bar > *,
+#footer-remaining-chapter,
+#footer-book-pages,
+#footer-actions-group {
+  pointer-events: auto !important;
 }
 
 /* 1. Levá část: zbývající počet stránek do konce kapitoly */
-.footer-remaining-chapter {
+#footer-remaining-chapter,
+.footer-remaining-chapter,
+.footer-left-item {
+  grid-column: 1 !important;
+  justify-self: start !important;
+  text-align: left !important;
   font-size: 0.85rem;
   font-weight: 500;
   color: var(--text-muted, #64748b);
   white-space: nowrap;
   user-select: none;
+  -webkit-user-select: none;
+  flex: none !important;
+  max-width: none !important;
+  min-width: 0 !important;
 }
 
 /* 2. Střední část: globální číslo stránky v knize ("X z Y") */
-.footer-book-pages {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+#footer-book-pages,
+.footer-book-pages,
+.footer-center-item {
+  grid-column: 2 !important;
+  justify-self: center !important;
+  text-align: center !important;
+  position: static !important;
+  transform: none !important;
+  left: auto !important;
+  right: auto !important;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-main, #334155);
   white-space: nowrap;
   user-select: none;
+  -webkit-user-select: none;
+  flex: none !important;
+  max-width: none !important;
+  min-width: 0 !important;
 }
 
 /* 3. Pravá akční skupina (Ruler Split-Pill + Menu FAB) */
+#footer-actions-group,
 .footer-actions-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  grid-column: 3 !important;
+  justify-self: end !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
   position: relative;
+  flex: none !important;
 }
 
 /* Spojené pilulkové tlačítko pravítka (Split-Pill) */
@@ -512,10 +541,16 @@ body.columns-2 .paged-content,
   right: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
   z-index: 1200;
   transform-origin: bottom right;
   transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: auto;
 }
 
 .reader-floating-dock.is-hidden {
@@ -526,15 +561,12 @@ body.columns-2 .paged-content,
 }
 
 .dock-action-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  position: relative;
+  display: contents;
 }
 
 .dock-action-btn {
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   background: #2563eb;
   color: #ffffff;
@@ -546,11 +578,12 @@ body.columns-2 .paged-content,
   box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
   transition: transform 0.15s ease, background-color 0.15s ease;
   flex-shrink: 0;
+  padding: 0;
 }
 
 .dock-action-btn:hover {
   background: #1d4ed8;
-  transform: scale(1.06);
+  transform: scale(1.08);
 }
 
 .dock-action-btn:active {
@@ -558,26 +591,7 @@ body.columns-2 .paged-content,
 }
 
 .dock-action-label {
-  position: absolute;
-  left: calc(100% + 10px);
-  white-space: nowrap;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-main, #1e293b);
-  pointer-events: none;
-  user-select: none;
-}
-
-@media (max-width: 768px) {
-  .dock-action-label {
-    left: auto;
-    right: calc(100% + 10px);
-    background: var(--bg-surface-elevated, #fff);
-    padding: 3px 8px;
-    border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-    border: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
-  }
+  display: none !important;
 }
 
 /* Při vypnutí v nastavení je spodní lišta skryta a čtecí plocha sahá až ke spodnímu okraji displeje */
@@ -594,7 +608,7 @@ body:not(.show-footer-bar) .paged-viewport {
 }
 
 body.show-footer-bar .paged-footer-bar {
-  display: flex !important;
+  display: grid !important;
 }
 
 body.show-footer-bar .paged-viewport {

@@ -1206,3 +1206,92 @@ body.dragging-file .drop-zone-overlay {
 .reading-ruler {
   z-index: 60 !important;
 }
+
+body.hide-footer-bar .paged-footer-bar,
+body:not(.show-footer-bar) .paged-footer-bar,
+body.in-reader-view:not(.show-footer-bar) .paged-footer-bar {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body.in-reader-view .paged-footer-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--footer-height, 48px);
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  display: grid !important;
+  grid-template-columns: 1fr auto 1fr !important;
+  align-items: center !important;
+  padding: 0 max(1.5rem, env(safe-area-inset-right, 0px)) max(0.5rem, env(safe-area-inset-bottom, 0px)) max(1.5rem, env(safe-area-inset-left, 0px)) !important;
+  z-index: 1000;
+  box-sizing: border-box;
+  pointer-events: none !important;
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+              opacity 0.24s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body.in-reader-view .paged-footer-bar > * {
+  pointer-events: auto !important;
+}
+
+/* Synchronizované skrývání / zobrazování lišt (UI Chrome) */
+body.in-reader-view.reader-chrome-hidden .reader-header {
+  transform: translateY(-100%) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
+  transform: translateY(100%) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+#footer-remaining-chapter,
+.footer-remaining-chapter,
+.footer-left-item {
+  grid-column: 1 !important;
+  justify-self: start !important;
+  text-align: left !important;
+  pointer-events: auto !important;
+  flex: none !important;
+  max-width: none !important;
+  min-width: 0 !important;
+}
+
+#footer-book-pages,
+.footer-book-pages,
+.footer-center-item {
+  grid-column: 2 !important;
+  justify-self: center !important;
+  text-align: center !important;
+  position: static !important;
+  transform: none !important;
+  left: auto !important;
+  right: auto !important;
+  pointer-events: auto !important;
+  flex: none !important;
+  max-width: none !important;
+  min-width: 0 !important;
+}
+
+#footer-actions-group,
+.footer-actions-group {
+  grid-column: 3 !important;
+  justify-self: end !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  pointer-events: auto !important;
+  flex: none !important;
+}
+
