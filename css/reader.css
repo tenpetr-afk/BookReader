@@ -287,7 +287,61 @@ body.columns-2 .paged-content,
 }
 
 /* ==========================================================================
-   Spodní lišta se stránkami a navigací (Paged Footer Bar)
+   Minimalistické záhlaví čtečky (Reader Header dle mockupu)
+   ========================================================================== */
+#reader-header,
+.reader-header,
+.reader-top-bar {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  pointer-events: none;
+}
+
+#reader-header > * {
+  pointer-events: auto;
+}
+
+.btn-back-library {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-main, currentColor) !important;
+  padding: 6px !important;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  min-height: auto !important;
+  transition: transform var(--transition-fast, 0.15s), background-color var(--transition-fast, 0.15s);
+}
+
+.btn-back-library:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+  transform: translateX(-2px);
+}
+
+.reading-progress-container {
+  display: none !important;
+}
+
+#header-book-title {
+  text-align: center;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text-main);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 60vw;
+}
+
+/* ==========================================================================
+   Spodní lišta se stránkami a navigací (Paged Footer Bar dle mockupu)
    ========================================================================== */
 
 .paged-footer-bar {
@@ -296,16 +350,234 @@ body.columns-2 .paged-content,
   left: 0;
   right: 0;
   height: var(--footer-height);
-  background: var(--bg-surface);
-  border-top: 1px solid var(--border-color);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 max(1.25rem, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(1.25rem, env(safe-area-inset-left, 0px));
+  padding: 0 max(1.5rem, env(safe-area-inset-right, 0px)) max(0.5rem, env(safe-area-inset-bottom, 0px)) max(1.5rem, env(safe-area-inset-left, 0px));
   z-index: 1000;
   box-sizing: border-box;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.03);
+  pointer-events: none;
   transition: background-color var(--transition-normal), border-color var(--transition-normal);
+}
+
+.paged-footer-bar > * {
+  pointer-events: auto;
+}
+
+/* 1. Levá část: zbývající počet stránek do konce kapitoly */
+.footer-remaining-chapter {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted, #64748b);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* 2. Střední část: globální číslo stránky v knize ("X z Y") */
+.footer-book-pages {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-main, #334155);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* 3. Pravá akční skupina (Ruler Split-Pill + Menu FAB) */
+.footer-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+/* Spojené pilulkové tlačítko pravítka (Split-Pill) */
+.ruler-split-pill {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.07);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  padding: 2px;
+  height: 34px;
+  box-sizing: border-box;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+[data-theme="dark"] .ruler-split-pill {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.split-pill-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 8px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.split-pill-btn.pill-action {
+  border-radius: 6px 0 0 6px;
+}
+
+.split-pill-btn.pill-dropdown {
+  border-radius: 0 6px 6px 0;
+  padding: 0 6px;
+}
+
+.split-pill-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .split-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ruler-split-pill.is-active .pill-action,
+#btn-toggle-ruler.active {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.pill-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.15);
+  margin: 0 1px;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .pill-divider {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Tlačítko rozbalení menu (FAB) */
+.menu-fab-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.btn-reader-menu-fab {
+  width: 36px;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.07);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  color: var(--text-main);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="dark"] .btn-reader-menu-fab {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.btn-reader-menu-fab:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] .btn-reader-menu-fab:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.btn-reader-menu-fab.active,
+.btn-reader-menu-fab[aria-expanded="true"] {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+}
+
+/* Plovoucí vertikální dock rychlých akcí */
+.reader-floating-dock {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 1200;
+  transform-origin: bottom right;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.reader-floating-dock.is-hidden {
+  display: none !important;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px) scale(0.95);
+}
+
+.dock-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  position: relative;
+}
+
+.dock-action-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.dock-action-btn:hover {
+  background: #1d4ed8;
+  transform: scale(1.06);
+}
+
+.dock-action-btn:active {
+  transform: scale(0.94);
+}
+
+.dock-action-label {
+  position: absolute;
+  left: calc(100% + 10px);
+  white-space: nowrap;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-main, #1e293b);
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (max-width: 768px) {
+  .dock-action-label {
+    left: auto;
+    right: calc(100% + 10px);
+    background: var(--bg-surface-elevated, #fff);
+    padding: 3px 8px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    border: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
+  }
 }
 
 /* Při vypnutí v nastavení je spodní lišta skryta a čtecí plocha sahá až ke spodnímu okraji displeje */
@@ -749,7 +1021,8 @@ body.ruler-mouse-follow-active .ruler-mask {
 
 .ruler-quick-popover {
   position: absolute;
-  top: calc(100% + 10px);
+  bottom: calc(100% + 12px);
+  top: auto;
   right: 0;
   width: 320px;
   max-height: min(580px, calc(100vh - 85px));
@@ -768,7 +1041,7 @@ body.ruler-mouse-follow-active .ruler-mask {
   flex-direction: column;
   gap: 0.85rem;
   box-sizing: border-box;
-  transform-origin: top right;
+  transform-origin: bottom right;
   transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -788,7 +1061,7 @@ body.ruler-mouse-follow-active .ruler-mask {
 .ruler-quick-popover.is-hidden {
   opacity: 0;
   pointer-events: none;
-  transform: scale(0.95) translateY(-6px);
+  transform: scale(0.95) translateY(6px);
   display: none !important;
 }
 

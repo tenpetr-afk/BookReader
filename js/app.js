@@ -123,11 +123,21 @@ class LuminaApp {
       footerEtrText: document.getElementById("footer-etr-text"),
       footerEtrSeparator: document.getElementById("footer-etr-separator"),
       
-      // Navigace ve čtečce
+      // Navigace ve čtečce a spodní lišta (nové rozložení)
+      footerRemainingChapter: document.getElementById("footer-remaining-chapter"),
+      footerBookPages: document.getElementById("footer-book-pages"),
+      footerActionsGroup: document.getElementById("footer-actions-group"),
+      rulerSplitPill: document.getElementById("ruler-split-pill"),
+      btnReaderMenuFab: document.getElementById("btn-reader-menu-fab"),
+      readerFloatingDock: document.getElementById("reader-floating-dock"),
+      btnMenuSettings: document.getElementById("btn-menu-settings"),
+      btnMenuStats: document.getElementById("btn-menu-stats"),
+      btnMenuToc: document.getElementById("btn-menu-toc"),
+      btnMenuSearch: document.getElementById("btn-menu-search"),
       btnBackToLibrary: document.getElementById("btn-back-library"),
-      btnToggleToc: document.getElementById("btn-toggle-toc"),
-      btnToggleSettings: document.getElementById("btn-toggle-settings"),
-      btnToggleStats: document.getElementById("btn-toggle-stats"),
+      btnToggleToc: document.getElementById("btn-toggle-toc") || document.getElementById("btn-menu-toc"),
+      btnToggleSettings: document.getElementById("btn-toggle-settings") || document.getElementById("btn-menu-settings"),
+      btnToggleStats: document.getElementById("btn-toggle-stats") || document.getElementById("btn-menu-stats"),
       btnToggleRuler: document.getElementById("btn-toggle-ruler"),
 
       // Postranní panely a modály
@@ -224,7 +234,7 @@ class LuminaApp {
   isInteractiveOrUiElement(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      'header, nav, footer, .paged-footer-bar, .reading-scrubber, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, [role="button"], [role="dialog"], [role="slider"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group, #btn-toggle-ruler, #btn-ruler-quick-menu'
+      'header, nav, footer, .paged-footer-bar, .reading-scrubber, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, [role="button"], [role="dialog"], [role="slider"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group, #ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group'
     );
   }
 
@@ -234,6 +244,7 @@ class LuminaApp {
     if (this.dom.searchDrawer?.classList.contains("open")) return true;
     if (this.dom.statsModal?.classList.contains("open")) return true;
     if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) return true;
+    if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) return true;
     return false;
   }
 
@@ -836,6 +847,10 @@ class LuminaApp {
       document.getElementById("stats-modal"),
       document.querySelector(".modal-content"),
       document.getElementById("ruler-btn-group"),
+      document.getElementById("ruler-split-pill"),
+      document.getElementById("btn-reader-menu-fab"),
+      document.getElementById("reader-floating-dock"),
+      document.getElementById("footer-actions-group"),
       document.getElementById("ruler-quick-popover")
     ].filter(Boolean);
 
@@ -926,7 +941,7 @@ class LuminaApp {
       });
     }
 
-    // Rychlé nastavení pravítka v hlavičce (Popover)
+    // Rychlé nastavení pravítka (Popover)
     if (this.dom.btnRulerQuickMenu && this.dom.rulerQuickPopover) {
       ["pointerdown", "touchstart"].forEach((evt) => {
         this.dom.btnRulerQuickMenu.addEventListener(evt, (e) => {
@@ -942,6 +957,14 @@ class LuminaApp {
         e.preventDefault();
         const isHidden = this.dom.rulerQuickPopover.classList.contains("is-hidden");
         if (isHidden) {
+          // Zavřít menu dock pokud je otevřený
+          if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+            this.dom.readerFloatingDock.classList.add("is-hidden");
+            if (this.dom.btnReaderMenuFab) {
+              this.dom.btnReaderMenuFab.classList.remove("active");
+              this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "false");
+            }
+          }
           this.dom.rulerQuickPopover.classList.remove("is-hidden");
           this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "true");
         } else {
@@ -955,11 +978,102 @@ class LuminaApp {
       });
     }
 
+    // Plovoucí dock rychlých akcí (Menu FAB & Dock)
+    if (this.dom.btnReaderMenuFab && this.dom.readerFloatingDock) {
+      ["pointerdown", "touchstart"].forEach((evt) => {
+        this.dom.btnReaderMenuFab.addEventListener(evt, (e) => {
+          e.stopPropagation();
+        }, { passive: true });
+        this.dom.readerFloatingDock.addEventListener(evt, (e) => {
+          e.stopPropagation();
+        }, { passive: true });
+      });
+
+      this.dom.btnReaderMenuFab.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const isHidden = this.dom.readerFloatingDock.classList.contains("is-hidden");
+        if (isHidden) {
+          // Zavřít popover pravítka pokud je otevřený
+          if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
+            this.dom.rulerQuickPopover.classList.add("is-hidden");
+            if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+          }
+          this.dom.readerFloatingDock.classList.remove("is-hidden");
+          this.dom.btnReaderMenuFab.classList.add("active");
+          this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "true");
+        } else {
+          this.dom.readerFloatingDock.classList.add("is-hidden");
+          this.dom.btnReaderMenuFab.classList.remove("active");
+          this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "false");
+        }
+      });
+
+      this.dom.readerFloatingDock.addEventListener("click", (e) => {
+        e.stopPropagation();
+      });
+    }
+
+    const closeFloatingDock = () => {
+      if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+        this.dom.readerFloatingDock.classList.add("is-hidden");
+        if (this.dom.btnReaderMenuFab) {
+          this.dom.btnReaderMenuFab.classList.remove("active");
+          this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "false");
+        }
+      }
+    };
+
+    if (this.dom.btnMenuSettings) {
+      this.dom.btnMenuSettings.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        closeFloatingDock();
+        this.toggleDrawer("settings");
+      });
+    }
+
+    if (this.dom.btnMenuStats) {
+      this.dom.btnMenuStats.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        closeFloatingDock();
+        this.openStatsModal();
+      });
+    }
+
+    if (this.dom.btnMenuToc) {
+      this.dom.btnMenuToc.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        closeFloatingDock();
+        this.toggleDrawer("toc");
+      });
+    }
+
+    if (this.dom.btnMenuSearch) {
+      this.dom.btnMenuSearch.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        closeFloatingDock();
+        this.toggleDrawer("search");
+      });
+    }
+
     document.addEventListener("click", (e) => {
       if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
-        if (!this.dom.rulerBtnGroup || !this.dom.rulerBtnGroup.contains(e.target)) {
+        const insideRuler = (this.dom.rulerSplitPill && this.dom.rulerSplitPill.contains(e.target)) ||
+                            (this.dom.rulerBtnGroup && this.dom.rulerBtnGroup.contains(e.target));
+        if (!insideRuler) {
           this.dom.rulerQuickPopover.classList.add("is-hidden");
           if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+        }
+      }
+      if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+        const insideDock = (this.dom.readerFloatingDock && this.dom.readerFloatingDock.contains(e.target)) ||
+                           (this.dom.btnReaderMenuFab && this.dom.btnReaderMenuFab.contains(e.target));
+        if (!insideDock) {
+          closeFloatingDock();
         }
       }
     });
@@ -1423,6 +1537,14 @@ class LuminaApp {
 
       if (e.key === "Escape") {
         let closedPopover = false;
+        if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+          this.dom.readerFloatingDock.classList.add("is-hidden");
+          if (this.dom.btnReaderMenuFab) {
+            this.dom.btnReaderMenuFab.classList.remove("active");
+            this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "false");
+          }
+          closedPopover = true;
+        }
         if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
           this.dom.rulerQuickPopover.classList.add("is-hidden");
           if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
@@ -1598,6 +1720,7 @@ class LuminaApp {
     const isEnabled = !!this.settings.ruler.enabled;
     if (this.dom.btnToggleRuler) this.dom.btnToggleRuler.classList.toggle("active", isEnabled);
     if (this.dom.rulerBtnGroup) this.dom.rulerBtnGroup.classList.toggle("is-active", isEnabled);
+    if (this.dom.rulerSplitPill) this.dom.rulerSplitPill.classList.toggle("is-active", isEnabled);
     if (this.dom.popoverRulerToggle) this.setSwitchState(this.dom.popoverRulerToggle, isEnabled);
     if (this.dom.rulerToggle) this.setSwitchState(this.dom.rulerToggle, isEnabled);
     if (this.dom.rulerWordTrackingSetting) this.setSwitchState(this.dom.rulerWordTrackingSetting, !!this.settings.ruler.wordTracking);
@@ -2339,15 +2462,21 @@ class LuminaApp {
   updatePageUI() {
     const currChapterPage = this.currentPageIndex + 1;
     const totalChapterPages = Math.max(1, this.totalPagesInChapter);
+    const remainingChapterPages = Math.max(0, this.totalPagesInChapter - currChapterPage);
 
-    // 1. Popisek a číslo stránky v aktuální kapitole ("strana X z Y")
+    // 1. Informace o zbývajících stránkách v kapitole ("konec kapitoly za: X stran")
+    if (this.dom.footerRemainingChapter) {
+      this.dom.footerRemainingChapter.textContent = `konec kapitoly za: ${remainingChapterPages} stran`;
+    }
+
+    // Zpětná kompatibilita pro původní čítače
     if (this.dom.chapterPageCounter) {
       this.dom.chapterPageCounter.textContent = `strana ${currChapterPage} z ${totalChapterPages}`;
     } else if (this.dom.pageCounterText) {
       this.dom.pageCounterText.textContent = `strana ${currChapterPage} z ${totalChapterPages}`;
     }
 
-    // 2. Počítadlo stránek pro celou knihu ("strana A z B")
+    // 2. Počítadlo stránek pro celou knihu ("A z B" / "strana A z B")
     let currBookPage = currChapterPage;
     let totalBookPages = totalChapterPages;
 
@@ -2369,6 +2498,9 @@ class LuminaApp {
       totalBookPages = allPages;
     }
 
+    if (this.dom.footerBookPages) {
+      this.dom.footerBookPages.textContent = `${currBookPage} z ${totalBookPages}`;
+    }
     if (this.dom.bookPageCounter) {
       this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
     }

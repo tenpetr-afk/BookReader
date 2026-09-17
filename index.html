@@ -97,30 +97,58 @@
     <!-- Fixní hlavička čtečky -->
     <header id="reader-header" class="reader-header">
       <div class="reader-header-left">
-        <button id="btn-back-library" class="btn btn-secondary btn-back-library" title="Zpět do knihovny (klávesa Esc)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-          <span class="btn-back-label">Knihovna</span>
-        </button>
-        <button id="btn-toggle-toc" class="btn-icon" title="Obsah knihy (klávesa T)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <button id="btn-back-library" class="btn-icon btn-back-library" title="Zpět do knihovny (klávesa Esc)" aria-label="Zpět do knihovny">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         </button>
       </div>
 
       <div class="reader-header-center">
         <div class="header-title-wrapper">
           <div id="header-book-title" class="header-book-title">Název knihy</div>
-          <div id="header-chapter-title" class="header-chapter-title">Kapitola</div>
+          <div id="header-chapter-title" class="header-chapter-title" style="display: none;"></div>
         </div>
       </div>
 
-      <div class="reader-header-right">
-        <!-- Skupina tlačítek pravítka a rychlého popoveru -->
-        <div class="ruler-btn-group" id="ruler-btn-group">
-          <button id="btn-toggle-ruler" class="btn-icon" title="Zapnout/vypnout čtecí pravítko (klávesa R)">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.3 8.7 8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4z"/><path d="m14.5 3.5 2 2"/><path d="m11.5 6.5 2 2"/><path d="m8.5 9.5 2 2"/><path d="m5.5 12.5 2 2"/></svg>
+      <div class="reader-header-right"></div>
+    </header>
+
+    <!-- Stránkovaná čtečka (Paged Viewport pro iPad swipe a touchpad) -->
+    <main class="paged-viewport" id="paged-viewport">
+      <!-- Dotykové zóny na okrajích pro listování klepnutím na iPadu -->
+      <div class="page-touch-zone page-touch-left" id="zone-touch-prev" title="Předchozí strana">
+        <span class="touch-zone-hint">‹</span>
+      </div>
+      <div class="page-touch-zone page-touch-right" id="zone-touch-next" title="Další strana">
+        <span class="touch-zone-hint">›</span>
+      </div>
+
+      <!-- Jeviště stránky s multi-column rozložením -->
+      <div class="paged-stage" id="paged-stage">
+        <article id="reader-content" class="reader-content paged-content">
+          <!-- Text kapitoly rozdělený do sloupců/stránek -->
+        </article>
+      </div>
+    </main>
+
+    <!-- Spodní lišta se stránkami a rychlými akcemi (Footer Bar dle mockupu) -->
+    <footer class="paged-footer-bar" id="paged-footer-bar" role="region" aria-label="Průběh čtení">
+      <div class="footer-left-item" id="footer-remaining-chapter">
+        konec kapitoly za: 0 stran
+      </div>
+
+      <div class="footer-center-item" id="footer-book-pages">
+        1 z 1
+      </div>
+
+      <div class="footer-actions-group" id="footer-actions-group">
+        <!-- Spojené tlačítko pravítka (Split-pill) -->
+        <div class="ruler-split-pill" id="ruler-split-pill">
+          <button id="btn-toggle-ruler" class="split-pill-btn pill-action" title="Zapnout/vypnout čtecí pravítko (klávesa R)" aria-label="Zapnout/vypnout pravítko">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 8.7 8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4z"/><path d="m14.5 3.5 2 2"/><path d="m11.5 6.5 2 2"/><path d="m8.5 9.5 2 2"/><path d="m5.5 12.5 2 2"/></svg>
           </button>
-          <button id="btn-ruler-quick-menu" class="btn-icon btn-ruler-dropdown-arrow" title="Rychlé nastavení pravítka a tempa (WPM)" aria-haspopup="true" aria-expanded="false">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
+          <div class="pill-divider" aria-hidden="true"></div>
+          <button id="btn-ruler-quick-menu" class="split-pill-btn pill-dropdown" title="Rychlé nastavení pravítka a tempa (WPM)" aria-haspopup="true" aria-expanded="false" aria-label="Nastavení pravítka">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
           </button>
 
           <!-- Rychlý konfigurační popover pravítka -->
@@ -190,70 +218,40 @@
           </div>
         </div>
 
+        <!-- Tlačítko pro rozbalení modrých tlačítek (hlavní menu FAB) -->
+        <div class="menu-fab-wrapper" id="menu-fab-wrapper">
+          <button id="btn-reader-menu-fab" class="btn-reader-menu-fab" title="Menu nástrojů čtečky" aria-haspopup="true" aria-expanded="false" aria-label="Menu čtečky">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="5" x2="6" y2="19"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="18" y1="5" x2="18" y2="19"/></svg>
+          </button>
 
-        <!-- Hledání v knize -->
-        <button id="btn-toggle-search" class="btn-icon" title="Hledat v knize (klávesa F)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </button>
-
-        <!-- Statistiky -->
-        <button id="btn-toggle-stats" class="btn-icon" title="Statistiky čtení (klávesa S)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
-        </button>
-
-        <!-- Nastavení zobrazení -->
-        <button id="btn-toggle-settings" class="btn-icon" title="Nastavení písma a vzhledu">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
-      </div>
-    </header>
-
-    <!-- Tenká linka celkového postupu v knize -->
-    <div class="reading-progress-container">
-      <div id="reading-progress-bar" class="reading-progress-bar"></div>
-    </div>
-
-    <!-- Stránkovaná čtečka (Paged Viewport pro iPad swipe a touchpad) -->
-    <main class="paged-viewport" id="paged-viewport">
-      <!-- Dotykové zóny na okrajích pro listování klepnutím na iPadu -->
-      <div class="page-touch-zone page-touch-left" id="zone-touch-prev" title="Předchozí strana">
-        <span class="touch-zone-hint">‹</span>
-      </div>
-      <div class="page-touch-zone page-touch-right" id="zone-touch-next" title="Další strana">
-        <span class="touch-zone-hint">›</span>
-      </div>
-
-      <!-- Jeviště stránky s multi-column rozložením -->
-      <div class="paged-stage" id="paged-stage">
-        <article id="reader-content" class="reader-content paged-content">
-          <!-- Text kapitoly rozdělený do sloupců/stránek -->
-        </article>
-      </div>
-    </main>
-
-    <!-- Spodní lišta s posuvníkem čtení a informacemi (Scrubber Bar) -->
-    <footer class="paged-footer-bar" id="paged-footer-bar" role="region" aria-label="Průběh čtení">
-      <div class="footer-left-item" id="footer-book-title" title="Aktuální kapitola">
-        <span class="footer-title-text" id="footer-title-text">Kapitola</span>
-      </div>
-
-      <div class="footer-center-item">
-        <div class="reading-scrubber" id="reading-scrubber">
-          <div class="scrubber-tooltip" id="scrubber-tooltip">Strana 1 / Kapitola 1</div>
-          <div class="scrubber-track" id="scrubber-track">
-            <div class="scrubber-chapter-ticks" id="scrubber-chapter-ticks"></div>
-            <div class="scrubber-progress-fill" id="scrubber-progress-fill"></div>
-            <div class="scrubber-thumb" id="scrubber-thumb" tabindex="0" role="slider" aria-label="Pozice čtení" aria-valuemin="1" aria-valuemax="100" aria-valuenow="1"></div>
+          <!-- Vertikální plovoucí panel rychlých akcí -->
+          <div id="reader-floating-dock" class="reader-floating-dock is-hidden" role="menu" aria-label="Rychlé akce čtečky">
+            <div class="dock-action-row">
+              <button id="btn-menu-settings" class="dock-action-btn" title="Nastavení písma a vzhledu" aria-label="Nastavení">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </button>
+              <span class="dock-action-label">nastavení</span>
+            </div>
+            <div class="dock-action-row">
+              <button id="btn-menu-stats" class="dock-action-btn" title="Statistiky čtení (klávesa S)" aria-label="Statistika">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+              </button>
+              <span class="dock-action-label">statistika</span>
+            </div>
+            <div class="dock-action-row">
+              <button id="btn-menu-toc" class="dock-action-btn" title="Obsah knihy (klávesa T)" aria-label="Obsah knihy">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+              </button>
+              <span class="dock-action-label">obsah knihy</span>
+            </div>
+            <div class="dock-action-row">
+              <button id="btn-menu-search" class="dock-action-btn" title="Hledat v knize (klávesa F)" aria-label="Hledat v knize">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </button>
+              <span class="dock-action-label">hledat v knize</span>
+            </div>
           </div>
         </div>
-      </div>
-
-      <div class="footer-right-item" id="footer-progress-metrics">
-        <span id="footer-etr-text" class="footer-etr-text"></span>
-        <span class="footer-metric-separator" id="footer-etr-separator" style="display: none;">•</span>
-        <span id="book-page-counter" class="footer-value">strana 1 z 1</span>
-        <span class="footer-metric-separator">•</span>
-        <span id="reading-progress-text" class="paged-percent footer-value">0%</span>
       </div>
     </footer>
 
