@@ -594,6 +594,23 @@ body.columns-2 .paged-content,
   display: none !important;
 }
 
+.dock-action-btn svg {
+  pointer-events: none;
+}
+
+/* Zajištění, že postranní panely a backdrop jsou vždy bezpečně nad čtečkou, lištami a plovoucím dockem */
+#drawer-backdrop,
+.drawer-backdrop {
+  z-index: 2400 !important;
+}
+
+#settings-drawer,
+#toc-drawer,
+#search-drawer,
+.drawer-panel {
+  z-index: 2500 !important;
+}
+
 /* Při vypnutí v nastavení je spodní lišta skryta a čtecí plocha sahá až ke spodnímu okraji displeje */
 body.hide-footer-bar .paged-footer-bar,
 body:not(.show-footer-bar) .paged-footer-bar {

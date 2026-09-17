@@ -135,9 +135,9 @@ class LuminaApp {
       btnMenuToc: document.getElementById("btn-menu-toc"),
       btnMenuSearch: document.getElementById("btn-menu-search"),
       btnBackToLibrary: document.getElementById("btn-back-library"),
-      btnToggleToc: document.getElementById("btn-toggle-toc") || document.getElementById("btn-menu-toc"),
-      btnToggleSettings: document.getElementById("btn-toggle-settings") || document.getElementById("btn-menu-settings"),
-      btnToggleStats: document.getElementById("btn-toggle-stats") || document.getElementById("btn-menu-stats"),
+      btnToggleToc: document.getElementById("btn-toggle-toc"),
+      btnToggleSettings: document.getElementById("btn-toggle-settings"),
+      btnToggleStats: document.getElementById("btn-toggle-stats"),
       btnToggleRuler: document.getElementById("btn-toggle-ruler"),
 
       // Postranní panely a modály
@@ -886,17 +886,49 @@ class LuminaApp {
       this.dom.btnToggleStatsLib.addEventListener("click", () => this.openStatsModal());
     }
 
-    this.dom.btnToggleToc.addEventListener("click", () => this.toggleDrawer("toc"));
-    this.dom.btnCloseToc.addEventListener("click", () => this.closeDrawer("toc"));
+    if (this.dom.btnToggleToc) {
+      this.dom.btnToggleToc.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.toggleDrawer("toc");
+      });
+    }
+    if (this.dom.btnCloseToc) {
+      this.dom.btnCloseToc.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.closeDrawer("toc");
+      });
+    }
 
-    this.dom.btnToggleSettings.addEventListener("click", () => this.toggleDrawer("settings"));
-    this.dom.btnCloseSettings.addEventListener("click", () => this.closeDrawer("settings"));
+    if (this.dom.btnToggleSettings) {
+      this.dom.btnToggleSettings.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.toggleDrawer("settings");
+      });
+    }
+    if (this.dom.btnCloseSettings) {
+      this.dom.btnCloseSettings.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.closeDrawer("settings");
+      });
+    }
 
     if (this.dom.btnToggleSearch) {
-      this.dom.btnToggleSearch.addEventListener("click", () => this.toggleDrawer("search"));
+      this.dom.btnToggleSearch.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.toggleDrawer("search");
+      });
     }
     if (this.dom.btnCloseSearch) {
-      this.dom.btnCloseSearch.addEventListener("click", () => this.closeDrawer("search"));
+      this.dom.btnCloseSearch.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.closeDrawer("search");
+      });
     }
     if (this.dom.btnClearSearch) {
       this.dom.btnClearSearch.addEventListener("click", () => this.clearSearch());
@@ -921,8 +953,20 @@ class LuminaApp {
       });
     }
 
-    this.dom.btnToggleStats.addEventListener("click", () => this.openStatsModal());
-    this.dom.btnCloseStats.addEventListener("click", () => this.closeStatsModal());
+    if (this.dom.btnToggleStats) {
+      this.dom.btnToggleStats.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.openStatsModal();
+      });
+    }
+    if (this.dom.btnCloseStats) {
+      this.dom.btnCloseStats.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.closeStatsModal();
+      });
+    }
     this.dom.statsModal.addEventListener("click", (e) => {
       if (e.target === this.dom.statsModal) this.closeStatsModal();
     });
@@ -1014,21 +1058,11 @@ class LuminaApp {
       });
     }
 
-    const closeFloatingDock = () => {
-      if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
-        this.dom.readerFloatingDock.classList.add("is-hidden");
-        if (this.dom.btnReaderMenuFab) {
-          this.dom.btnReaderMenuFab.classList.remove("active");
-          this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "false");
-        }
-      }
-    };
-
     if (this.dom.btnMenuSettings) {
       this.dom.btnMenuSettings.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
-        closeFloatingDock();
+        this.closeFloatingDock();
         this.toggleDrawer("settings");
       });
     }
@@ -1037,7 +1071,7 @@ class LuminaApp {
       this.dom.btnMenuStats.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
-        closeFloatingDock();
+        this.closeFloatingDock();
         this.openStatsModal();
       });
     }
@@ -1046,7 +1080,7 @@ class LuminaApp {
       this.dom.btnMenuToc.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
-        closeFloatingDock();
+        this.closeFloatingDock();
         this.toggleDrawer("toc");
       });
     }
@@ -1055,7 +1089,7 @@ class LuminaApp {
       this.dom.btnMenuSearch.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
-        closeFloatingDock();
+        this.closeFloatingDock();
         this.toggleDrawer("search");
       });
     }
@@ -1073,7 +1107,7 @@ class LuminaApp {
         const insideDock = (this.dom.readerFloatingDock && this.dom.readerFloatingDock.contains(e.target)) ||
                            (this.dom.btnReaderMenuFab && this.dom.btnReaderMenuFab.contains(e.target));
         if (!insideDock) {
-          closeFloatingDock();
+          this.closeFloatingDock();
         }
       }
     });
@@ -2642,7 +2676,18 @@ class LuminaApp {
     this.updateScrubberUI();
   }
 
+  closeFloatingDock() {
+    if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+      this.dom.readerFloatingDock.classList.add("is-hidden");
+      if (this.dom.btnReaderMenuFab) {
+        this.dom.btnReaderMenuFab.classList.remove("active");
+        this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "false");
+      }
+    }
+  }
+
   toggleDrawer(name) {
+    this.closeFloatingDock();
     if (name === "toc") {
       const willOpen = !this.dom.tocDrawer?.classList.contains("open");
       this.dom.tocDrawer?.classList.toggle("open", willOpen);
@@ -2677,6 +2722,7 @@ class LuminaApp {
   }
 
   closeDrawer(name) {
+    this.closeFloatingDock();
     if (name === "toc" && this.dom.tocDrawer) this.dom.tocDrawer.classList.remove("open");
     if (name === "settings" && this.dom.settingsDrawer) this.dom.settingsDrawer.classList.remove("open");
     if (name === "search" && this.dom.searchDrawer) this.dom.searchDrawer.classList.remove("open");
@@ -2920,6 +2966,7 @@ class LuminaApp {
   }
 
   async openStatsModal() {
+    this.closeFloatingDock();
     if (this.dom.statsModal) this.dom.statsModal.classList.add("open");
     const stats = await ReadingTracker.computeGlobalStats();
 
