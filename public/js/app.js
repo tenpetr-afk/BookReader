@@ -870,7 +870,7 @@ class LuminaApp {
 
     // Přizpůsobení stran při změně orientace iPadu (Portrait/Landscape) a velikosti okna
     let lastEffectiveCols = this.resolveEffectiveColumnCount();
-    window.addEventListener("resize", () => {
+    const handleViewportChange = () => {
       if (this.settings.columnsMode === "auto") {
         const newCols = this.resolveEffectiveColumnCount();
         if (newCols !== lastEffectiveCols) {
@@ -884,7 +884,15 @@ class LuminaApp {
         this.ruler?.refreshLines();
         this.ruler?.applyPosition();
       }
+    };
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("orientationchange", () => {
+      setTimeout(handleViewportChange, 100);
+      setTimeout(handleViewportChange, 300);
     });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", handleViewportChange);
+    }
 
     // Tracker události
     tracker.subscribe((event) => {
@@ -2703,6 +2711,8 @@ class LuminaApp {
     this.updateTouchZonesUI();
     this.renderScrubberTicks();
     this.updateScrubberUI();
+    this.recalcPages();
+    this.updatePageUI();
   }
 
   toggleDrawer(name) {
