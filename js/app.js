@@ -2104,6 +2104,20 @@ class LuminaApp {
         } catch (e) {}
       }
 
+      // Počkáme na načtení vložených obrázků v kapitole, aby neposouvaly layout až po změření
+      const imgs = Array.from(this.dom.readerContent?.querySelectorAll("img") || []);
+      if (imgs.length > 0) {
+        await Promise.all(
+          imgs.map(img => {
+            if (img.complete) return Promise.resolve();
+            return new Promise(resolve => {
+              img.addEventListener("load", resolve, { once: true });
+              img.addEventListener("error", resolve, { once: true });
+            });
+          })
+        );
+      }
+
       this.recalcPages();
 
       if (targetPage === "last") {
@@ -2320,10 +2334,18 @@ class LuminaApp {
     const stride = this.getColumnStride();
     const scrollWidth = contentEl.scrollWidth;
 
+    const isTwoCol = document.documentElement.classList.contains("columns-2") ||
+                     document.body.classList.contains("columns-2") ||
+                     contentEl.classList.contains("columns-2");
+
     if (stride <= 0) {
       this.totalPagesInChapter = 1;
+    } else if (isTwoCol) {
+      const colStep = stride / 2;
+      const totalCols = Math.max(1, Math.round((scrollWidth + gap) / colStep));
+      this.totalPagesInChapter = Math.ceil(totalCols / 2);
     } else {
-      this.totalPagesInChapter = Math.max(1, Math.round(scrollWidth / stride));
+      this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / stride));
     }
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
