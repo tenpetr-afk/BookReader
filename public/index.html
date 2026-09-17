@@ -262,157 +262,78 @@
   </aside>
 
   <!-- =========================================================================
-  <!-- =========================================================================
-       4. POSTRANNÍ / SPODNÍ PANEL: NASTAVENÍ (SETTINGS BOTTOM SHEET)
+       4. POSTRANNÍ PANEL: NASTAVENÍ (SETTINGS DRAWER)
        ========================================================================= -->
-  <aside id="settings-drawer" class="drawer-panel settings-modal settings-bottom-sheet" aria-label="Nastavení čtení">
-    <div class="bottom-sheet-drag-handle" aria-hidden="true"><span class="drag-bar"></span></div>
-    <div class="drawer-header settings-sheet-header">
-      <div class="settings-tabs-nav" role="tablist" aria-label="Kategorie nastavení">
-        <button type="button" class="settings-tab-btn active" role="tab" data-tab="tab-pane-font" id="tab-btn-font" aria-selected="true" aria-controls="tab-pane-font">Písmo</button>
-        <button type="button" class="settings-tab-btn" role="tab" data-tab="tab-pane-appearance" id="tab-btn-appearance" aria-selected="false" aria-controls="tab-pane-appearance">Vzhled</button>
-        <button type="button" class="settings-tab-btn" role="tab" data-tab="tab-pane-reading" id="tab-btn-reading" aria-selected="false" aria-controls="tab-pane-reading">Čtení &amp; Pravítko</button>
-      </div>
+  <aside id="settings-drawer" class="drawer-panel settings-modal" aria-label="Nastavení čtení">
+    <div class="drawer-header">
+      <h2 class="drawer-title">Nastavení zobrazení</h2>
       <button id="btn-close-settings" class="btn-close-drawer" aria-label="Zavřít nastavení">✕</button>
     </div>
-    <div class="drawer-body settings-drawer-body">
+    <div class="drawer-body">
       
-      <!-- TAB 1: PÍSMO -->
-      <div id="tab-pane-font" class="settings-tab-pane active" role="tabpanel" aria-labelledby="tab-btn-font">
-        <!-- Písmo -->
-        <div class="settings-group">
-          <div class="settings-group-title">Typ písma</div>
-          <div class="font-dropdown-wrapper" id="font-dropdown-wrapper">
-            <button type="button" class="font-dropdown-trigger" id="font-dropdown-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Vybrat typ písma">
-              <span class="font-dropdown-current" id="font-dropdown-current">Georgia (Serif)</span>
-              <svg class="font-dropdown-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polyline points="6 9 12 15 18 9"></polyline>
+      <!-- Motiv vzhledu -->
+      <div class="settings-group">
+        <div class="settings-group-title">Barevný motiv</div>
+        <div class="theme-options-grid">
+          <button class="theme-btn" data-theme="light">Světlý</button>
+          <button class="theme-btn" data-theme="warm">Teplý</button>
+          <button class="theme-btn" data-theme="sepia">Sépie</button>
+          <button class="theme-btn" data-theme="dark">Tmavý</button>
+          <button class="theme-btn" data-theme="oled">OLED</button>
+        </div>
+      </div>
+
+      <!-- Písmo -->
+      <div class="settings-group">
+        <div class="settings-group-title">Typ písma</div>
+        <div class="font-dropdown-wrapper" id="font-dropdown-wrapper">
+          <button type="button" class="font-dropdown-trigger" id="font-dropdown-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Vybrat typ písma">
+            <span class="font-dropdown-current" id="font-dropdown-current">Georgia (Serif)</span>
+            <svg class="font-dropdown-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div class="font-dropdown-menu" id="font-dropdown-menu" role="listbox" aria-label="Možnosti písma">
+            <button type="button" class="font-dropdown-item" role="option" data-font="georgia" aria-selected="false">
+              <span class="font-dropdown-name">Georgia (Serif)</span>
+              <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
             </button>
-            <div class="font-dropdown-menu" id="font-dropdown-menu" role="listbox" aria-label="Možnosti písma">
-              <button type="button" class="font-dropdown-item" role="option" data-font="georgia" aria-selected="false">
-                <span class="font-dropdown-name">Georgia (Serif)</span>
-                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </button>
-              <button type="button" class="font-dropdown-item" role="option" data-font="merriweather" aria-selected="false">
-                <span class="font-dropdown-name">Merriweather</span>
-                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </button>
-              <button type="button" class="font-dropdown-item" role="option" data-font="lora" aria-selected="false">
-                <span class="font-dropdown-name">Lora</span>
-                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </button>
-              <button type="button" class="font-dropdown-item" role="option" data-font="inter" aria-selected="false">
-                <span class="font-dropdown-name">Inter (Sans)</span>
-                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </button>
-              <button type="button" class="font-dropdown-item" role="option" data-font="atkinson" aria-selected="false">
-                <span class="font-dropdown-name">Atkinson Hyperlegible</span>
-                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </button>
-              <button type="button" class="font-dropdown-item" role="option" data-font="opendyslexic" aria-selected="false">
-                <span class="font-dropdown-name">Pro dyslexii</span>
-                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </button>
-            </div>
+            <button type="button" class="font-dropdown-item" role="option" data-font="merriweather" aria-selected="false">
+              <span class="font-dropdown-name">Merriweather</span>
+              <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </button>
+            <button type="button" class="font-dropdown-item" role="option" data-font="lora" aria-selected="false">
+              <span class="font-dropdown-name">Lora</span>
+              <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </button>
+            <button type="button" class="font-dropdown-item" role="option" data-font="inter" aria-selected="false">
+              <span class="font-dropdown-name">Inter (Sans)</span>
+              <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </button>
+            <button type="button" class="font-dropdown-item" role="option" data-font="atkinson" aria-selected="false">
+              <span class="font-dropdown-name">Atkinson Hyperlegible</span>
+              <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </button>
+            <button type="button" class="font-dropdown-item" role="option" data-font="opendyslexic" aria-selected="false">
+              <span class="font-dropdown-name">Pro dyslexii</span>
+              <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </button>
           </div>
         </div>
 
-        <!-- Velikost písma -->
-        <div class="slider-setting">
-          <div class="slider-label">
-            <span>Velikost písma</span>
-            <span id="val-font-size">19px</span>
-          </div>
-          <input type="range" id="slider-font-size" class="slider-input" min="14" max="32" value="19" />
-        </div>
-
-        <!-- Výška řádku -->
-        <div class="slider-setting">
-          <div class="slider-label">
-            <span>Výška řádku</span>
-            <span id="val-line-height">1.6</span>
-          </div>
-          <input type="range" id="slider-line-height" class="slider-input" min="1.2" max="2.6" step="0.1" value="1.6" />
-        </div>
-
-        <!-- Mezery mezi písmeny -->
-        <div class="slider-setting">
-          <div class="slider-label">
-            <span>Mezery mezi písmeny</span>
-            <span id="val-letter-spacing">0px</span>
-          </div>
-          <input type="range" id="slider-letter-spacing" class="slider-input" min="0" max="4" step="0.25" value="0" />
-        </div>
-
-        <!-- Mezery mezi slovy -->
-        <div class="slider-setting">
-          <div class="slider-label">
-            <span>Mezery mezi slovy</span>
-            <span id="val-word-spacing">0px</span>
-          </div>
-          <input type="range" id="slider-word-spacing" class="slider-input" min="0" max="8" step="0.5" value="0" />
-        </div>
-      </div>
-
-      <!-- TAB 2: VZHLED -->
-      <div id="tab-pane-appearance" class="settings-tab-pane" role="tabpanel" aria-labelledby="tab-btn-appearance">
-        <!-- Motiv vzhledu -->
-        <div class="settings-group">
-          <div class="settings-group-title">Barevný motiv</div>
-          <div class="theme-options-grid">
-            <button class="theme-btn" data-theme="light">Světlý</button>
-            <button class="theme-btn" data-theme="warm">Teplý</button>
-            <button class="theme-btn" data-theme="sepia">Sépie</button>
-            <button class="theme-btn" data-theme="dark">Tmavý</button>
-            <button class="theme-btn" data-theme="oled">OLED</button>
-          </div>
-        </div>
-
-        <!-- Velikost okrajů -->
-        <div class="slider-setting">
-          <div class="slider-label">
-            <span>Velikost okrajů</span>
-            <span id="val-page-margin">20%</span>
-          </div>
-          <input type="range" id="slider-page-margin" class="slider-input" min="8" max="40" step="2" value="20" />
-        </div>
-
-        <!-- Rozvržení sloupců -->
-        <div class="settings-group" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
-          <div class="settings-group-title">Rozvržení sloupců</div>
-          <div class="popover-segmented-control columns-3" id="columns-mode-control">
-            <button type="button" class="segment-btn" data-columns="auto">Automaticky</button>
-            <button type="button" class="segment-btn" data-columns="1">1 sloupec</button>
-            <button type="button" class="segment-btn" data-columns="2">2 sloupce</button>
-          </div>
-        </div>
-
-        <!-- Spodní lišta s postupem čtení -->
-        <div class="toggle-row" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
-          <span class="toggle-title">Zobrazit postup čtení</span>
-          <button type="button" role="switch" id="setting-show-footer" class="switch-control is-checked active" aria-checked="true" aria-label="Zobrazit postup čtení">
-            <span class="switch-track"><span class="switch-thumb"></span></span>
-          </button>
-        </div>
-      </div>
-
-      <!-- TAB 3: ČTENÍ & PRAVÍTKO -->
-      <div id="tab-pane-reading" class="settings-tab-pane" role="tabpanel" aria-labelledby="tab-btn-reading">
-        <!-- Rychlé čtení (Bionic) -->
-        <div class="toggle-row" style="margin-bottom: 0.5rem;">
+        <div class="toggle-row" style="margin-top: 1rem; margin-bottom: 0.75rem;">
           <div>
             <span class="toggle-title">Rychlé čtení (Bionic)</span>
             <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0;">Zvýrazní první písmena každého slova pro rychlejší fixaci oka</p>
@@ -421,66 +342,129 @@
             <span class="switch-track"><span class="switch-thumb"></span></span>
           </button>
         </div>
+      </div>
 
-        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 0.75rem 0;" />
+      <!-- Velikost písma -->
+      <div class="slider-setting">
+        <div class="slider-label">
+          <span>Velikost písma</span>
+          <span id="val-font-size">19px</span>
+        </div>
+        <input type="range" id="slider-font-size" class="slider-input" min="14" max="32" value="19" />
+      </div>
 
-        <!-- NASTAVENÍ PRAVÍTKA (READING RULER) -->
-        <div class="settings-group">
-          <div class="settings-group-title">Čtecí pravítko (Klávesa R)</div>
+      <!-- Výška řádku -->
+      <div class="slider-setting">
+        <div class="slider-label">
+          <span>Výška řádku</span>
+          <span id="val-line-height">1.6</span>
+        </div>
+        <input type="range" id="slider-line-height" class="slider-input" min="1.2" max="2.6" step="0.1" value="1.6" />
+      </div>
 
-          <div class="toggle-row" style="margin-bottom: 0.75rem;">
-            <span class="toggle-title">Aktivovat pravítko</span>
-            <button type="button" role="switch" id="ruler-toggle-setting" class="switch-control" aria-checked="false" aria-label="Aktivovat pravítko">
+      <!-- Mezery mezi písmeny -->
+      <div class="slider-setting">
+        <div class="slider-label">
+          <span>Mezery mezi písmeny</span>
+          <span id="val-letter-spacing">0px</span>
+        </div>
+        <input type="range" id="slider-letter-spacing" class="slider-input" min="0" max="4" step="0.25" value="0" />
+      </div>
+
+      <!-- Mezery mezi slovy -->
+      <div class="slider-setting">
+        <div class="slider-label">
+          <span>Mezery mezi slovy</span>
+          <span id="val-word-spacing">0px</span>
+        </div>
+        <input type="range" id="slider-word-spacing" class="slider-input" min="0" max="8" step="0.5" value="0" />
+      </div>
+
+      <!-- Velikost okrajů -->
+      <div class="slider-setting">
+        <div class="slider-label">
+          <span>Velikost okrajů</span>
+          <span id="val-page-margin">20%</span>
+        </div>
+        <input type="range" id="slider-page-margin" class="slider-input" min="8" max="40" step="2" value="20" />
+      </div>
+
+      <!-- Rozvržení sloupců -->
+      <div class="settings-group" style="margin-top: 1rem; margin-bottom: 1.25rem;">
+        <div class="settings-group-title">Rozvržení sloupců</div>
+        <div class="popover-segmented-control columns-3" id="columns-mode-control">
+          <button type="button" class="segment-btn" data-columns="auto">Automaticky</button>
+          <button type="button" class="segment-btn" data-columns="1">1 sloupec</button>
+          <button type="button" class="segment-btn" data-columns="2">2 sloupce</button>
+        </div>
+      </div>
+
+      <!-- Spodní lišta s postupem čtení -->
+      <div class="toggle-row" style="margin-top: 1.25rem; margin-bottom: 0.5rem;">
+        <span class="toggle-title">Zobrazit postup čtení</span>
+        <button type="button" role="switch" id="setting-show-footer" class="switch-control is-checked active" aria-checked="true" aria-label="Zobrazit postup čtení">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </button>
+      </div>
+
+      <hr style="border: none; border-top: 1px solid var(--border-color); margin: 1.5rem 0;" />
+
+      <!-- NASTAVENÍ PRAVÍTKA (READING RULER) -->
+      <div class="settings-group">
+        <div class="settings-group-title">Čtecí pravítko (Klávesa R)</div>
+
+        <div class="toggle-row" style="margin-bottom: 0.75rem;">
+          <span class="toggle-title">Aktivovat pravítko</span>
+          <button type="button" role="switch" id="ruler-toggle-setting" class="switch-control" aria-checked="false" aria-label="Aktivovat pravítko">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+          </button>
+        </div>
+
+        <div style="margin-bottom: 1rem;" id="settings-follow-section">
+          <div class="slider-label"><span>Způsob pohybu</span></div>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
+            <button type="button" class="font-btn" data-ruler-follow="mouse">Kurzor myši</button>
+            <button type="button" class="font-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 1rem;">
+          <div class="slider-label"><span>Styl pravítka</span></div>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
+            <button class="font-btn" data-ruler-mode="highlight">Zvýrazňovač</button>
+            <button class="font-btn" data-ruler-mode="focus">Zaostření</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 1rem;">
+          <div class="slider-label"><span>Barva pravítka</span></div>
+          <div class="ruler-color-options">
+            <button class="ruler-color-btn" data-ruler-color="amber" title="Jantarová"></button>
+            <button class="ruler-color-btn" data-ruler-color="cyan" title="Tyrkysová"></button>
+            <button class="ruler-color-btn" data-ruler-color="emerald" title="Smaragdová"></button>
+            <button class="ruler-color-btn" data-ruler-color="lavender" title="Levandulová"></button>
+            <button class="ruler-color-btn" data-ruler-color="slate" title="Břidlicová"></button>
+          </div>
+        </div>
+
+        <!-- Funkce pravítka: Sledování slov -->
+        <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
+          <div class="toggle-row">
+            <span class="toggle-title">Sledování jednotlivých slov</span>
+            <button type="button" role="switch" id="ruler-word-tracking-setting" class="switch-control" aria-checked="false" aria-label="Sledování jednotlivých slov">
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </button>
           </div>
-
-          <div style="margin-bottom: 1rem;" id="settings-follow-section">
-            <div class="slider-label"><span>Způsob pohybu</span></div>
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
-              <button type="button" class="font-btn" data-ruler-follow="mouse">Kurzor myši</button>
-              <button type="button" class="font-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
-            </div>
-          </div>
-
-          <div style="margin-bottom: 1rem;">
-            <div class="slider-label"><span>Styl pravítka</span></div>
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
-              <button class="font-btn" data-ruler-mode="highlight">Zvýrazňovač</button>
-              <button class="font-btn" data-ruler-mode="focus">Zaostření</button>
-            </div>
-          </div>
-
-          <div style="margin-bottom: 1rem;">
-            <div class="slider-label"><span>Barva pravítka</span></div>
-            <div class="ruler-color-options">
-              <button class="ruler-color-btn" data-ruler-color="amber" title="Jantarová"></button>
-              <button class="ruler-color-btn" data-ruler-color="cyan" title="Tyrkysová"></button>
-              <button class="ruler-color-btn" data-ruler-color="emerald" title="Smaragdová"></button>
-              <button class="ruler-color-btn" data-ruler-color="lavender" title="Levandulová"></button>
-              <button class="ruler-color-btn" data-ruler-color="slate" title="Břidlicová"></button>
-            </div>
-          </div>
-
-          <!-- Funkce pravítka: Sledování slov -->
-          <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
-            <div class="toggle-row">
-              <span class="toggle-title">Sledování jednotlivých slov</span>
-              <button type="button" role="switch" id="ruler-word-tracking-setting" class="switch-control" aria-checked="false" aria-label="Sledování jednotlivých slov">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-              </button>
-            </div>
-          </div>
-
-          <div class="slider-setting">
-            <div class="slider-label">
-              <span>Intenzita ztmavení okolí (režim Zaostření)</span>
-              <span id="val-ruler-opacity">65%</span>
-            </div>
-            <input type="range" id="slider-ruler-opacity" class="slider-input" min="20" max="90" value="65" />
-          </div>
-
         </div>
+
+        <div class="slider-setting">
+          <div class="slider-label">
+            <span>Intenzita ztmavení okolí (režim Zaostření)</span>
+            <span id="val-ruler-opacity">65%</span>
+          </div>
+          <input type="range" id="slider-ruler-opacity" class="slider-input" min="20" max="90" value="65" />
+        </div>
+
       </div>
 
     </div>

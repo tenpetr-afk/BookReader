@@ -98,9 +98,6 @@ export class ReadingRuler {
     this.isLineLocked = false;
     this.lineLockTimer = null;
     this._navSafetyTimer = null;
-    // Callback wired by app.js: () => bool — returns true when any drawer/panel is open.
-    // When true, ruler click/tap handlers must yield to backdrop close logic.
-    this.isAnyDrawerOpen = null;
 
     this.createDomElements();
     this.attachEvents();
@@ -221,7 +218,7 @@ export class ReadingRuler {
   isUiControl(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], [role='slider'], .btn, .btn-icon, .drawer-panel, .drawer, .drawer-backdrop, .modal-dialog, .modal-overlay, .paged-footer-bar, .reading-scrubber, .reader-header, .top-navbar, .ruler-btn-group, #ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, .ruler-quick-popover, .ruler-floating-controls, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group"
+      "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], [role='slider'], .btn, .btn-icon, .drawer-panel, .drawer, .modal-dialog, .modal-overlay, .paged-footer-bar, .reading-scrubber, .reader-header, .top-navbar, .ruler-btn-group, #ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, .ruler-quick-popover, .ruler-floating-controls, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group"
     );
   }
 
@@ -516,17 +513,6 @@ export class ReadingRuler {
         return;
       }
 
-      // If any drawer or settings panel is open, yield to the backdrop close handler.
-      if (typeof this.isAnyDrawerOpen === "function" && this.isAnyDrawerOpen()) {
-        if (this.isHoldActive) this.cancelHold(false);
-        this.holdStartTime = 0;
-        this.isDraggingRuler = false;
-        this.isPenTouching = false;
-        this.activePointerId = null;
-        this.activePointerType = null;
-        return;
-      }
-
       if (this.isUiControl(e.target) || !this.holdStartTime) {
         if (this.isHoldActive) this.cancelHold(false);
         this.holdStartTime = 0;
@@ -667,14 +653,6 @@ export class ReadingRuler {
         return;
       }
 
-      // If any drawer or settings panel is open, release the hold without stepping.
-      // The touchend on the backdrop will handle drawer close instead.
-      if (typeof this.isAnyDrawerOpen === "function" && this.isAnyDrawerOpen()) {
-        if (this.isHoldActive) this.cancelHold(false);
-        this.holdStartTime = 0;
-        return;
-      }
-
       if (this.followMode === "mouse") return;
 
       if (this.isUiControl(e.target) || !this.holdStartTime) {
@@ -770,8 +748,6 @@ export class ReadingRuler {
     // Zachycení kliknutí pro zabránění nežádoucího resetu nebo odskoku pravítka po dokončení podržení či jeho zrušení
     window.addEventListener("click", (e) => {
       if (!this.enabled) return;
-      // When any drawer/panel is open, do NOT swallow the event — let the backdrop handler close it.
-      if (typeof this.isAnyDrawerOpen === "function" && this.isAnyDrawerOpen()) return;
       if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
         e.stopPropagation();
         e.stopImmediatePropagation();
