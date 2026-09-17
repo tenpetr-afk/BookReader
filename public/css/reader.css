@@ -82,26 +82,20 @@ b.bionic-bold {
   padding: 0;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: pan-x;
-  overscroll-behavior: none;
+  touch-action: pan-y pinch-zoom;
 }
 
 /* Jeviště stránky: přesně ohraničený prostor pro jednu stranu */
-#reader-stage,
 .paged-stage {
   position: relative;
-  overflow: hidden !important;
-  margin: 0 auto;
   width: var(--reader-stage-width, 80vw) !important;
-  max-width: 100vw !important;
+  max-width: calc(100vw - 32px) !important;
   height: calc(100% - 24px);
-  padding: 0 !important;
-  box-sizing: border-box;
+  overflow: hidden;
+  margin: 0 auto;
 }
 
-:root.columns-2 #reader-stage,
 :root.columns-2 .paged-stage,
-body.columns-2 #reader-stage,
 body.columns-2 .paged-stage {
   width: calc(100vw - (2 * var(--col-gap))) !important;
   max-width: calc(100vw - (2 * var(--col-gap))) !important;
@@ -116,22 +110,19 @@ body.columns-2 .paged-stage {
     --footer-base-height: 52px;
     --footer-height: calc(var(--footer-base-height) + var(--safe-area-bottom, 0px));
   }
-  #reader-stage,
   .paged-stage {
     height: calc(100% - 30px);
   }
 }
 
 /* Multi-column layout: prohlížeč automaticky rozdělí text kapitoly do stran */
-#reader-content,
 .paged-content {
   height: 100%;
   width: 100%;
   margin: 0;
   padding: 0;
-  box-sizing: border-box;
   column-count: 1 !important;
-  column-width: auto !important;
+  column-width: var(--reader-stage-width, 80vw) !important;
   column-gap: var(--page-gap, 50px);
   column-fill: auto;
   font-family: var(--font-book, Georgia, serif);
@@ -148,13 +139,11 @@ body.columns-2 .paged-stage {
   -webkit-user-select: text;
 }
 
-:root.columns-2 #reader-content,
 :root.columns-2 .paged-content,
-body.columns-2 #reader-content,
 body.columns-2 .paged-content,
 .paged-content.columns-2 {
+  column-width: calc((100% - var(--col-gap)) / 2) !important;
   column-count: 2 !important;
-  column-width: auto !important;
   column-gap: var(--col-gap) !important;
 }
 

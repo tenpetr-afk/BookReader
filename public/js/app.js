@@ -95,7 +95,7 @@ class LuminaApp {
       readerHeader: document.getElementById("reader-header"),
       readerContent: document.getElementById("reader-content"),
       pagedViewport: document.getElementById("paged-viewport"),
-      pagedStage: document.getElementById("paged-stage") || document.getElementById("reader-stage"),
+      pagedStage: document.getElementById("paged-stage"),
       pagedFooterBar: document.getElementById("paged-footer-bar"),
       btnPagePrev: document.getElementById("btn-page-prev"),
       btnPageNext: document.getElementById("btn-page-next"),
@@ -301,20 +301,11 @@ class LuminaApp {
     if (this.dom.readerContent) {
       const comp = getComputedStyle(this.dom.readerContent);
       const colGap = parseFloat(comp.columnGap);
-      if (!isNaN(colGap) && colGap >= 0) {
+      if (!isNaN(colGap) && colGap > 0) {
         return colGap;
       }
     }
     return this.pageGap || 50;
-  }
-
-  getColumnStride() {
-    const stage = this.dom.pagedStage || this.dom.readerContent;
-    if (!stage) return 700;
-    const stageRect = stage.getBoundingClientRect ? stage.getBoundingClientRect() : null;
-    const stageWidth = (stageRect && stageRect.width > 0) ? stageRect.width : (stage.clientWidth || 700);
-    const gap = this.getPageGap();
-    return stageWidth + gap;
   }
 
   applySettings() {
@@ -610,23 +601,6 @@ class LuminaApp {
     let touchStartTime = 0;
     let isSwiping = false;
 
-    let pointerStartX = 0;
-    let pointerStartY = 0;
-    let pointerTravelDist = 0;
-
-    this.dom.pagedViewport.addEventListener("pointerdown", (e) => {
-      pointerStartX = e.clientX;
-      pointerStartY = e.clientY;
-      pointerTravelDist = 0;
-    }, { passive: true });
-
-    this.dom.pagedViewport.addEventListener("pointermove", (e) => {
-      const d = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
-      if (d > pointerTravelDist) {
-        pointerTravelDist = d;
-      }
-    }, { passive: true });
-
     this.dom.pagedViewport.addEventListener("touchstart", (e) => {
       if (this.isUiOrOverlayEvent(e)) {
         isSwiping = false;
@@ -694,33 +668,25 @@ class LuminaApp {
         return;
       }
 
-      // Rozlišení záměrných klepnutí od gest posunu/tažení: ignorovat klepnutí pokud delta pohybu > 10px
-      if (dist > 10 || absDeltaX > 10 || absDeltaY > 10) {
-        return;
-      }
-
-      // Nepřepínat lišty při výběru textu ani při manipulaci s pravítkem
-      const selection = window.getSelection ? window.getSelection() : null;
-      if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
-        return;
-      }
-      if (this.ruler?.isDragging || this.ruler?.isDraggingRuler || this.ruler?.isHoldTriggered) {
-        return;
-      }
-
       // 2. V režimu sledování myši ("mouse") prst nehýbe ani neukotvuje pravítko
       if (this.ruler && this.ruler.enabled && this.ruler.followMode === "mouse") {
-        if (this.isCenterTap(touchEndX, touchEndY)) {
+        if (absDeltaX < 15 && absDeltaY < 15 && this.isCenterTap(touchEndX, touchEndY)) {
           lastTapTime = Date.now();
-          this.toggleToolbars();
+          this.toggleReaderChrome();
           e.preventDefault();
         }
         return;
       }
 
       // 3. Dotykové zóny pro krokování pravítka v klávesovém režimu (layout zóny)
+      // Krokování se spustí pouze při čistém, stacionárním klepnutí (|deltaX| < 10px a |deltaY| < 10px)
       if (this.ruler && this.ruler.enabled && this.ruler.followMode === "keyboard") {
         if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+          return;
+        }
+        if (absDeltaX >= 10 || absDeltaY >= 10 || dist >= 10) return;
+        if (this.ruler.isHoldTriggered) {
+          this.ruler.isHoldTriggered = false;
           return;
         }
         if (typeof this.ruler.handleTap === "function") {
@@ -739,14 +705,16 @@ class LuminaApp {
       }
 
       // 4. Běžné klepnutí (Tap) když je pravítko vypnuté
-      if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
-        return;
-      }
-      if (this.isCenterTap(touchEndX, touchEndY)) {
-        lastTapTime = Date.now();
-        this.toggleToolbars();
-        e.preventDefault();
-        return;
+      if (absDeltaX < 15 && absDeltaY < 15) {
+        if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+          return;
+        }
+        if (this.isCenterTap(touchEndX, touchEndY)) {
+          lastTapTime = Date.now();
+          this.toggleReaderChrome();
+          e.preventDefault();
+          return;
+        }
       }
     }, { passive: false });
 
@@ -761,27 +729,11 @@ class LuminaApp {
         return;
       }
 
-      // Ignorovat kliknutí pokud byl detekován pohyb ukazatele > 10px (např. tažení myší, výběr)
-      if (pointerTravelDist > 10) {
-        return;
-      }
-
-      // Nepřepínat lišty při výběru textu
-      const selection = window.getSelection ? window.getSelection() : null;
-      if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
-        return;
-      }
-
-      // Nepřepínat lišty při pohybu/tažení pravítka
-      if (this.ruler?.isDragging || this.ruler?.isDraggingRuler || this.ruler?.isHoldTriggered) {
-        return;
-      }
-
       // Klepnutí doprostřed obrazovky přepne zobrazení hlavičky a spodní lišty
       if (this.isCenterTap(e.clientX, e.clientY)) {
         if (!this.ruler || !this.ruler.enabled || this.ruler.followMode === "mouse") {
           lastTapTime = Date.now();
-          this.toggleToolbars();
+          this.toggleReaderChrome();
           return;
         }
       }
@@ -2137,16 +2089,12 @@ class LuminaApp {
 
   recalcPages() {
     if (!this.dom.pagedStage || !this.dom.readerContent) return;
+    const stageWidth = this.dom.pagedStage.clientWidth || 700;
     const gap = this.getPageGap();
     this.pageGap = gap;
-    const stride = this.getColumnStride();
     const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    if (stride <= 0) {
-      this.totalPagesInChapter = 1;
-    } else {
-      this.totalPagesInChapter = Math.max(1, Math.ceil((scrollWidth + gap - 1) / stride));
-    }
+    this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / (stageWidth + gap)));
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
@@ -2156,10 +2104,10 @@ class LuminaApp {
   goToPage(pageIndex, explicitDirection = null) {
     const oldIndex = this.currentPageIndex;
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
+    const stageWidth = this.dom.pagedStage.clientWidth || 700;
     const gap = this.getPageGap();
     this.pageGap = gap;
-    const stride = this.getColumnStride();
-    const offset = this.currentPageIndex * stride;
+    const offset = this.currentPageIndex * (stageWidth + gap);
 
     const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
     const direction = explicitDirection !== null
@@ -2829,10 +2777,9 @@ class LuminaApp {
 
     if (foundParent) {
       const rect = foundParent.getBoundingClientRect();
-      const stride = this.getColumnStride();
-      const currentOffset = this.currentPageIndex * stride;
+      const currentOffset = this.currentPageIndex * (stageWidth + gap);
       const relativeX = (rect.left - stageRect.left) + currentOffset;
-      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / stride)));
+      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / (stageWidth + gap))));
 
       this.goToPage(targetPage);
       foundParent.classList.add("search-highlight-flash");
@@ -2875,22 +2822,10 @@ class LuminaApp {
     return clientX >= w * 0.20 && clientX <= w * 0.80;
   }
 
-  toggleToolbars(force) {
-    // Do NOT toggle toolbars during pointer dragging, ruler movement, or text selection
-    const selection = window.getSelection ? window.getSelection() : null;
-    if (selection && !selection.isCollapsed && selection.toString().trim().length > 0) {
-      return;
-    }
-    if (this.ruler?.isDragging || this.ruler?.isDraggingRuler || this.ruler?.isHoldTriggered) {
-      return;
-    }
+  toggleReaderChrome(force) {
     const isHidden = document.body.classList.contains("reader-chrome-hidden");
     const willHide = (force !== undefined) ? !force : !isHidden;
     document.body.classList.toggle("reader-chrome-hidden", willHide);
-  }
-
-  toggleReaderChrome(force) {
-    return this.toggleToolbars(force);
   }
 
   getBookMetrics() {
