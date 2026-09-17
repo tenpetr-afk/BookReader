@@ -125,15 +125,18 @@ body.columns-2 .paged-stage {
 /* Multi-column layout: prohlížeč automaticky rozdělí text kapitoly do stran */
 #reader-content,
 .paged-content {
+  display: block !important;
+  width: 100% !important;
+  column-fill: auto !important;
+  -webkit-column-fill: auto !important;
+  overflow: visible !important;
   height: 100%;
-  width: 100%;
   margin: 0;
   padding: 0;
   box-sizing: border-box;
   column-count: 1 !important;
   column-width: auto !important;
   column-gap: var(--page-gap, 50px);
-  column-fill: auto;
   font-family: var(--font-book, Georgia, serif);
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
@@ -191,8 +194,18 @@ body.columns-2 .paged-content,
 .paged-content h2 { font-size: 1.6em; }
 .paged-content h3 { font-size: 1.25em; }
 
+/* Strip conflicting styles injected by the EPUB chapter markup */
+#reader-content * {
+  max-height: none;
+}
+
+#reader-content p,
 .paged-content p {
-  margin-bottom: 1.1em;
+  break-inside: auto !important;
+  -webkit-column-break-inside: auto !important;
+  page-break-inside: auto !important;
+  margin-top: 0;
+  margin-bottom: 0.85em;
   orphans: 2;
   widows: 2;
 }
@@ -220,17 +233,21 @@ body.columns-2 .paged-content,
 }
 
 /* Obrázky přizpůsobené výšce obrazovky (žádné přetékání mimo stranu!) */
+#reader-content img,
 .paged-content img,
+#reader-content svg,
 .paged-content svg {
-  display: block;
-  max-width: 100%;
-  max-height: 60vh;
-  object-fit: contain;
-  margin: 1.2rem auto;
+  max-width: 100% !important;
+  max-height: 55dvh !important;
+  height: auto !important;
+  object-fit: contain !important;
+  display: block !important;
+  margin: 1rem auto !important;
+  break-inside: avoid !important;
+  -webkit-column-break-inside: avoid !important;
+  page-break-inside: avoid;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-md);
-  break-inside: avoid;
-  page-break-inside: avoid;
 }
 
 .paged-content .character {
