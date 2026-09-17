@@ -99,6 +99,8 @@ b.bionic-bold {
   box-sizing: border-box;
 }
 
+#reader-stage,
+.paged-stage,
 :root.columns-2 #reader-stage,
 :root.columns-2 .paged-stage,
 body.columns-2 #reader-stage,
@@ -118,7 +120,7 @@ body.columns-2 .paged-stage {
   }
   #reader-stage,
   .paged-stage {
-    height: calc(100% - 30px);
+    height: calc(100% - 56px - env(safe-area-inset-bottom, 0px));
   }
 }
 
