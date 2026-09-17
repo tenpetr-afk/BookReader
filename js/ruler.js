@@ -2539,6 +2539,41 @@ export class ReadingRuler {
     }
   }
 
+  getStageElement() {
+    return document.getElementById("paged-stage") || this.container || document.getElementById("reader-content") || document.body;
+  }
+
+  clearFocusTextMask(stage) {
+    const targetStage = stage || this.getStageElement();
+    if (targetStage) {
+      targetStage.classList.remove("focus-active");
+      targetStage.style.webkitMaskImage = "";
+      targetStage.style.maskImage = "";
+      targetStage.style.webkitMaskPosition = "";
+      targetStage.style.maskPosition = "";
+      targetStage.style.webkitMaskSize = "";
+      targetStage.style.maskSize = "";
+      targetStage.style.webkitMaskRepeat = "";
+      targetStage.style.maskRepeat = "";
+      targetStage.style.webkitMaskComposite = "";
+      targetStage.style.maskComposite = "";
+    }
+    const content = document.getElementById("reader-content");
+    if (content && content !== targetStage) {
+      content.classList.remove("focus-active");
+      content.style.webkitMaskImage = "";
+      content.style.maskImage = "";
+      content.style.webkitMaskPosition = "";
+      content.style.maskPosition = "";
+      content.style.webkitMaskSize = "";
+      content.style.maskSize = "";
+      content.style.webkitMaskRepeat = "";
+      content.style.maskRepeat = "";
+      content.style.webkitMaskComposite = "";
+      content.style.maskComposite = "";
+    }
+  }
+
   applyPosition() {
     if (!this.rulerEl) return;
 
@@ -2624,124 +2659,90 @@ export class ReadingRuler {
       this.rulerEl.style.transform = "none";
     }
 
-    if (this.mode === "focus" && this.enabled) {
-      const headerHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--header-height')) || 60;
-      const footerHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--footer-height')) || 48;
-      const stageTop = headerHeight;
-      const stageBottom = window.innerHeight - footerHeight;
-
-      const currentLine = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
-        ? this.cachedLines[this.activeLineIndex]
-        : null;
-
-      let colLeft = currentLine ? (currentLine.columnLeft ?? currentLine.left) : null;
-      let colWidth = currentLine ? (currentLine.columnWidth ?? currentLine.width) : null;
-      if (colLeft == null || colWidth == null || !Number.isFinite(colLeft) || !Number.isFinite(colWidth) || colWidth < 80) {
-        if (this.isTwoCol) {
-          const colIdx = (currentLine && currentLine.columnIndex === 1) ? 1 : 0;
-          colLeft = colIdx === 1 ? this.column1Left : this.column0Left;
-          colWidth = colIdx === 1 ? this.column1Width : this.column0Width;
-          if (colLeft == null || colWidth == null || colWidth < 80) {
-            const singleColW = Math.max(80, Math.floor(((this.stageWidth || window.innerWidth) - (this.colGap || 40)) / 2));
-            colLeft = colIdx === 1 ? Math.round((this.stageLeft || 0) + singleColW + (this.colGap || 40)) : Math.max(0, Math.round(this.stageLeft || 20));
-            colWidth = singleColW;
-          }
-        } else {
-          colLeft = this.column0Left ?? this.textBlockLeft;
-          colWidth = this.column0Width ?? this.textBlockWidth;
-          if (colLeft == null || colWidth == null || colWidth < 80) {
-            colLeft = Math.max(0, (this.stageLeft != null ? this.stageLeft - 12 : 20));
-            colWidth = (this.stageWidth != null ? this.stageWidth + 24 : (window.innerWidth - 40));
-          }
-        }
-      }
-
-      // Horní a dolní maska pokrývají celou šířku jeviště přes oba sloupce
-      this.maskTopEl.style.display = "block";
-      this.maskBottomEl.style.display = "block";
-      this.maskTopEl.style.top = `${stageTop}px`;
-      this.maskTopEl.style.height = `${Math.max(0, y - stageTop)}px`;
-      this.maskTopEl.style.left = "0px";
-      this.maskTopEl.style.width = "auto";
-      this.maskTopEl.style.right = "0px";
-      this.maskTopEl.style.opacity = this.dimOpacity;
-
-      this.maskBottomEl.style.top = `${y + this.height}px`;
-      this.maskBottomEl.style.height = `${Math.max(0, stageBottom - (y + this.height))}px`;
-      this.maskBottomEl.style.left = "0px";
-      this.maskBottomEl.style.width = "auto";
-      this.maskBottomEl.style.right = "0px";
-      this.maskBottomEl.style.opacity = this.dimOpacity;
-
-      const sideTop = Math.max(stageTop, y);
-      const sideBottom = Math.min(stageBottom, y + this.height);
-      const sideHeight = Math.max(0, sideBottom - sideTop);
-
-      if (this.wordTracking) {
-        const leftW = Math.max(0, Math.round(this.wordLeft));
-        const rightL = Math.max(0, Math.round(this.wordLeft + this.activeWordWidth));
-
-        this.maskLeftEl.style.display = "block";
-        this.maskLeftEl.style.top = `${sideTop}px`;
-        this.maskLeftEl.style.height = `${sideHeight}px`;
-        this.maskLeftEl.style.left = "0px";
-        this.maskLeftEl.style.right = "auto";
-        this.maskLeftEl.style.width = `${leftW}px`;
-        this.maskLeftEl.style.opacity = this.dimOpacity;
-
-        this.maskRightEl.style.display = "block";
-        this.maskRightEl.style.top = `${sideTop}px`;
-        this.maskRightEl.style.height = `${sideHeight}px`;
-        this.maskRightEl.style.left = `${rightL}px`;
-        this.maskRightEl.style.right = "0px";
-        this.maskRightEl.style.width = "auto";
-        this.maskRightEl.style.opacity = this.dimOpacity;
-
-        if (this.previewWidth > 0) {
-          const pw = Math.round(this.previewWidth);
-          const maskGrad = `linear-gradient(to right, transparent 0px, rgba(0, 0, 0, 0.25) ${Math.round(pw * 0.35)}px, rgba(0, 0, 0, 0.6) ${Math.round(pw * 0.75)}px, #000000 ${pw}px, #000000 100%)`;
-          this.maskRightEl.style.webkitMaskImage = maskGrad;
-          this.maskRightEl.style.maskImage = maskGrad;
-        } else {
-          this.maskRightEl.style.webkitMaskImage = "none";
-          this.maskRightEl.style.maskImage = "none";
-        }
-      } else if (this.isTwoCol) {
-        // V 2-sloupcovém režimu boční masky ztmaví neaktivní sloupec a mezery v horizontálním pásu aktivního řádku
-        const activeHighlightLeft = (colLeft != null && Number.isFinite(colLeft)) ? Math.round(colLeft) : 0;
-        const activeHighlightWidth = (colWidth != null && Number.isFinite(colWidth)) ? Math.round(colWidth) : 200;
-        const activeHighlightRight = Math.max(0, activeHighlightLeft + activeHighlightWidth);
-
-        this.maskLeftEl.style.display = "block";
-        this.maskLeftEl.style.top = `${sideTop}px`;
-        this.maskLeftEl.style.height = `${sideHeight}px`;
-        this.maskLeftEl.style.left = "0px";
-        this.maskLeftEl.style.right = "auto";
-        this.maskLeftEl.style.width = `${Math.max(0, activeHighlightLeft)}px`;
-        this.maskLeftEl.style.opacity = this.dimOpacity;
-
-        this.maskRightEl.style.display = "block";
-        this.maskRightEl.style.top = `${sideTop}px`;
-        this.maskRightEl.style.height = `${sideHeight}px`;
-        this.maskRightEl.style.left = `${activeHighlightRight}px`;
-        this.maskRightEl.style.right = "0px";
-        this.maskRightEl.style.width = "auto";
-        this.maskRightEl.style.opacity = this.dimOpacity;
-        this.maskRightEl.style.webkitMaskImage = "none";
-        this.maskRightEl.style.maskImage = "none";
-      } else {
-        this.maskLeftEl.style.display = "none";
-        this.maskRightEl.style.display = "none";
-        this.maskRightEl.style.webkitMaskImage = "none";
-        this.maskRightEl.style.maskImage = "none";
-      }
-    } else {
+    const stage = this.getStageElement();
+    if (this.mode === "focus" && this.enabled && stage) {
       this.maskTopEl.style.display = "none";
       this.maskBottomEl.style.display = "none";
       this.maskLeftEl.style.display = "none";
       this.maskRightEl.style.display = "none";
-      this.maskRightEl.style.webkitMaskImage = "none";
-      this.maskRightEl.style.maskImage = "none";
+
+      const stageRect = stage.getBoundingClientRect();
+      const inactiveAlpha = Math.max(0.12, Math.min(0.65, Number((1 - this.dimOpacity).toFixed(2))));
+
+      const relY = Math.max(0, Math.round(y - stageRect.top));
+      const relH = Math.max(10, Math.round(h));
+
+      let maskImage = "";
+      let maskSize = "";
+      let maskPos = "";
+
+      if (this.wordTracking) {
+        const relX = Math.max(0, Math.round(this.wordLeft - stageRect.left));
+        const aw = Number.isFinite(this.activeWordWidth) && this.activeWordWidth > 0 ? Math.round(this.activeWordWidth) : 100;
+        const pw = Number.isFinite(this.previewWidth) && this.previewWidth > 0 ? Math.round(this.previewWidth) : 0;
+
+        if (pw > 0) {
+          const totalW = aw + pw;
+          maskImage = `linear-gradient(to right, #000 0px, #000 ${aw}px, rgba(0, 0, 0, 0) ${totalW}px), linear-gradient(rgba(0, 0, 0, ${inactiveAlpha}), rgba(0, 0, 0, ${inactiveAlpha}))`;
+          maskSize = `${totalW}px ${relH}px, 100% 100%`;
+        } else {
+          maskImage = `linear-gradient(#000, #000), linear-gradient(rgba(0, 0, 0, ${inactiveAlpha}), rgba(0, 0, 0, ${inactiveAlpha}))`;
+          maskSize = `${aw}px ${relH}px, 100% 100%`;
+        }
+        maskPos = `${relX}px ${relY}px, 0px 0px`;
+      } else {
+        const currentLine = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
+          ? this.cachedLines[this.activeLineIndex]
+          : null;
+
+        let colLeft = currentLine ? (currentLine.columnLeft ?? currentLine.left) : null;
+        let colWidth = currentLine ? (currentLine.columnWidth ?? currentLine.width) : null;
+
+        if (colLeft == null || colWidth == null || !Number.isFinite(colLeft) || !Number.isFinite(colWidth) || colWidth < 80) {
+          if (this.isTwoCol) {
+            const colIdx = (currentLine && currentLine.columnIndex === 1) ? 1 : 0;
+            colLeft = colIdx === 1 ? this.column1Left : this.column0Left;
+            colWidth = colIdx === 1 ? this.column1Width : this.column0Width;
+            if (colLeft == null || colWidth == null || colWidth < 80) {
+              const singleColW = Math.max(80, Math.floor(((this.stageWidth || window.innerWidth) - (this.colGap || 40)) / 2));
+              colLeft = colIdx === 1 ? Math.round((this.stageLeft || 0) + singleColW + (this.colGap || 40)) : Math.max(0, Math.round(this.stageLeft || 20));
+              colWidth = singleColW;
+            }
+          } else {
+            colLeft = this.column0Left ?? this.textBlockLeft;
+            colWidth = this.column0Width ?? this.textBlockWidth;
+            if (colLeft == null || colWidth == null || colWidth < 80) {
+              colLeft = Math.max(0, (this.stageLeft != null ? this.stageLeft - 12 : 20));
+              colWidth = (this.stageWidth != null ? this.stageWidth + 24 : (window.innerWidth - 40));
+            }
+          }
+        }
+
+        const relX = Math.max(0, Math.round(colLeft - stageRect.left));
+        const relW = Math.max(80, Math.round(colWidth));
+
+        maskImage = `linear-gradient(#000, #000), linear-gradient(rgba(0, 0, 0, ${inactiveAlpha}), rgba(0, 0, 0, ${inactiveAlpha}))`;
+        maskSize = `${relW}px ${relH}px, 100% 100%`;
+        maskPos = `${relX}px ${relY}px, 0px 0px`;
+      }
+
+      stage.classList.add("focus-active");
+      stage.style.webkitMaskImage = maskImage;
+      stage.style.maskImage = maskImage;
+      stage.style.webkitMaskPosition = maskPos;
+      stage.style.maskPosition = maskPos;
+      stage.style.webkitMaskSize = maskSize;
+      stage.style.maskSize = maskSize;
+      stage.style.webkitMaskRepeat = "no-repeat, no-repeat";
+      stage.style.maskRepeat = "no-repeat, no-repeat";
+      stage.style.webkitMaskComposite = "source-over";
+      stage.style.maskComposite = "add";
+    } else {
+      this.clearFocusTextMask(stage);
+      this.maskTopEl.style.display = "none";
+      this.maskBottomEl.style.display = "none";
+      this.maskLeftEl.style.display = "none";
+      this.maskRightEl.style.display = "none";
     }
   }
 
@@ -2863,6 +2864,7 @@ export class ReadingRuler {
         this.rulerEl.classList.remove("is-visible");
         this.rulerEl.classList.add("is-hidden");
       }
+      this.clearFocusTextMask();
     } else {
       if (this.rulerEl && !document.body.contains(this.rulerEl)) {
         document.body.appendChild(this.maskTopEl);
@@ -2891,9 +2893,13 @@ export class ReadingRuler {
 
   setMode(mode) {
     if (["highlight", "focus"].includes(mode)) {
+      if (this.mode === "focus" && mode !== "focus") {
+        this.clearFocusTextMask();
+      }
       this.mode = mode;
       this.updateEffectiveHeight();
       this.updateStyles();
+      this.applyPosition();
     }
   }
 
@@ -2972,6 +2978,9 @@ export class ReadingRuler {
   setDimOpacity(opacity) {
     this.dimOpacity = Math.max(0.1, Math.min(0.95, parseFloat(opacity) || 0.65));
     this.updateStyles();
+    if (this.mode === "focus" && this.enabled) {
+      this.applyPosition();
+    }
   }
 
   setFollowMode(mode) {
@@ -3072,6 +3081,7 @@ export class ReadingRuler {
     if (this.maskBottomEl) this.maskBottomEl.remove();
     if (this.maskLeftEl) this.maskLeftEl.remove();
     if (this.maskRightEl) this.maskRightEl.remove();
+    this.clearFocusTextMask();
     document.body.classList.remove("ruler-active", "ruler-mouse-follow-active", "word-tracking-active");
   }
 }

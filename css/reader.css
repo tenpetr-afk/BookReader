@@ -962,47 +962,53 @@ body.ruler-mouse-follow-active .ruler-mask {
   box-shadow: none !important;
 }
 
-/* Masky ztmavující okolní text s měkkým prolnutím hran (Gradient Feathering) */
+/* Focus Mode: de-emphasis neaktivního textu na typografické vrstvě (#paged-stage) */
+.paged-stage.focus-active {
+  -webkit-mask-repeat: no-repeat, no-repeat;
+  mask-repeat: no-repeat, no-repeat;
+  -webkit-mask-composite: source-over;
+  mask-composite: add;
+  transition: -webkit-mask-position 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+              mask-position 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+              -webkit-mask-size 0.08s ease-out,
+              mask-size 0.08s ease-out;
+}
+
+body.ruler-mouse-follow-active .paged-stage.focus-active {
+  transition: none !important;
+}
+
+body:not(.in-reader-view) .paged-stage.focus-active {
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
+}
+
+/* Masky ztmavující okolní text - zachováno pro zpětnou kompatibilitu DOM, zcela transparentní a skryté */
 .ruler-mask {
   position: fixed;
   left: 0;
   right: 0;
-  background-color: #000000;
+  background-color: transparent !important;
   pointer-events: none !important;
-  z-index: 50 !important; /* sits just above reader text, well below UI bars */
-  display: none;
-  transition: opacity 0.2s ease;
+  z-index: 50 !important;
+  display: none !important;
+  opacity: 0 !important;
   box-sizing: border-box;
 }
 
 .ruler-mask.is-visible {
-  display: block !important;
+  display: none !important;
 }
 
-.ruler-mask-top {
-  top: 0;
-  mask-image: none;
-  -webkit-mask-image: none;
-}
-
-.ruler-mask-bottom {
-  bottom: 0;
-  mask-image: none;
-  -webkit-mask-image: none;
-}
-
-.ruler-mask-left {
-  left: 0;
-  right: auto;
-  mask-image: none;
-  -webkit-mask-image: none;
-}
-
+.ruler-mask-top,
+.ruler-mask-bottom,
+.ruler-mask-left,
 .ruler-mask-right {
-  right: 0;
-  width: auto;
-  mask-image: none;
-  -webkit-mask-image: none;
+  display: none !important;
+  opacity: 0 !important;
+  background-color: transparent !important;
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
 }
 
 /* ==========================================================================
