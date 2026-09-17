@@ -10,7 +10,7 @@
   --reader-word-spacing: 0px;
   --reader-stage-width: 80vw;
   --reader-max-width: 760px;
-  --reader-column-count: 1;
+  --reader-column-count: auto;
   --reader-text-align: justify;
   --header-base-height: 60px;
   --header-height: calc(var(--header-base-height) + var(--safe-area-top, 0px));
@@ -135,7 +135,7 @@ body.columns-2 .paged-stage {
   padding: 0;
   box-sizing: border-box;
   column-count: auto !important;
-  column-width: auto !important;
+  column-width: 100% !important;
   column-gap: var(--page-gap, 50px);
   font-family: var(--font-book, Georgia, serif);
   font-size: var(--reader-font-size);
