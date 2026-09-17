@@ -820,6 +820,68 @@ export class ReadingRuler {
    * Bezpečná detekce řádků textu chráněná proti pádu (try-catch) a zacyklení.
    * Využívá standardní dotaz nad kandidátními elementy bez rekurzivního průchodu DOMem.
    */
+  /**
+   * Spolehlivě detekuje, zda je obsah zobrazen ve dvou sloupcích:
+   * 1. Kontrola CSS tříd na documentElement, body a elementech čtečky
+   * 2. Kontrola CSS proměnné --reader-column-count a getComputedStyle columnCount
+   * 3. Geometrická autodetekce: ověření existence dvou sloupců textu vedle sebe
+   */
+  checkTwoColumnLayout(content, stageRect = null, rawLines = null) {
+    if (document.body && document.body.classList.contains('columns-2')) return true;
+    if (document.documentElement && document.documentElement.classList.contains('columns-2')) return true;
+    if (document.querySelector('.columns-2') !== null) return true;
+    if (document.querySelector('#reader-content.columns-2, .paged-content.columns-2, #paged-stage.columns-2') !== null) return true;
+
+    try {
+      const colCountVal = getComputedStyle(document.documentElement).getPropertyValue('--reader-column-count')?.trim();
+      if (colCountVal === '2') return true;
+    } catch (e) {}
+
+    try {
+      if (content) {
+        const comp = getComputedStyle(content);
+        if (comp.columnCount === '2' || comp.columnCount === 2 || parseInt(comp.columnCount, 10) === 2) {
+          return true;
+        }
+      }
+    } catch (e) {}
+
+    // Geometrická autodetekce: ověření existence dvou sloupců vedle sebe podle souřadnic řádků
+    if (rawLines && rawLines.length >= 4) {
+      const sRect = stageRect || (content ? content.getBoundingClientRect() : { left: 0, width: window.innerWidth });
+      const stageCenterX = sRect.left + sRect.width / 2;
+      const leftLines = [];
+      const rightLines = [];
+      for (let i = 0; i < rawLines.length; i++) {
+        const r = rawLines[i];
+        const cx = (r.left + r.right) / 2;
+        if (cx < stageCenterX - 30 && r.right <= stageCenterX + 15) {
+          leftLines.push(r);
+        } else if (cx > stageCenterX + 30 && r.left >= stageCenterX - 15) {
+          rightLines.push(r);
+        }
+      }
+      if (leftLines.length >= 2 && rightLines.length >= 2) {
+        let overlapCount = 0;
+        for (let j = 0; j < leftLines.length; j++) {
+          const lr = leftLines[j];
+          for (let k = 0; k < rightLines.length; k++) {
+            const rr = rightLines[k];
+            if (Math.abs(lr.centerY - rr.centerY) < 16 && lr.right < rr.left) {
+              overlapCount++;
+              if (overlapCount >= 2) return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Bezpečná detekce řádků textu chráněná proti pádu (try-catch) a zacyklení.
+   * Využívá standardní dotaz nad kandidátními elementy bez rekurzivního průchodu DOMem.
+   */
   detectLines() {
     try {
       // Ensure we capture whatever typography container the reader engine actually uses:
@@ -836,30 +898,9 @@ export class ReadingRuler {
       const stageBottom = stageRect.bottom;
       const hasValidStageBounds = stageRect.width > 50 && stageRect.height > 50;
 
-      const isTwoCol = document.body.classList.contains('columns-2') ||
-        document.documentElement.classList.contains('columns-2') ||
-        (content && getComputedStyle(content).columnCount === '2');
-      this.isTwoCol = isTwoCol;
-
       const stageCenterX = stageRect.left + stageRect.width / 2;
 
-      let colGap = 0;
-      if (isTwoCol) {
-        try {
-          colGap = parseFloat(getComputedStyle(content).columnGap) || 0;
-        } catch (e) {}
-        if (!colGap) {
-          colGap = window.innerWidth * 0.05;
-        }
-      }
-
-      const singleColWidth = isTwoCol ? Math.max(100, (stageRect.width - colGap) / 2) : stageRect.width;
-      const col0StageLeft = stageRect.left;
-      const col0StageRight = isTwoCol ? stageRect.left + singleColWidth : stageRect.right;
-      const col1StageLeft = isTwoCol ? col0StageRight + colGap : col0StageLeft;
-      const col1StageRight = isTwoCol ? stageRect.right : col0StageRight;
-
-      const validLines = [];
+      const rawLines = [];
 
       elements.forEach(el => {
         // Explicitně přeskočit obrázky, svg a prázdné elementy
@@ -889,8 +930,7 @@ export class ReadingRuler {
                   r.top < stageBottom - 2
                 );
                 if (inStage && r.height >= 8 && r.width >= 8) {
-                  const colIdx = isTwoCol ? (((r.left + r.right) / 2 >= stageCenterX) ? 1 : 0) : 0;
-                  validLines.push({
+                  rawLines.push({
                     el,
                     rect: r,
                     top: r.top,
@@ -899,8 +939,7 @@ export class ReadingRuler {
                     right: r.right,
                     height: r.height,
                     centerY: r.top + r.height / 2,
-                    hasText: true,
-                    columnIndex: colIdx
+                    hasText: true
                   });
                 }
               }
@@ -912,8 +951,7 @@ export class ReadingRuler {
                 rect.top < stageBottom - 2
               );
               if (inStage && rect.height >= 8 && rect.width >= 8) {
-                const colIdx = isTwoCol ? (((rect.left + rect.right) / 2 >= stageCenterX) ? 1 : 0) : 0;
-                validLines.push({
+                rawLines.push({
                   el,
                   rect,
                   top: rect.top,
@@ -922,8 +960,7 @@ export class ReadingRuler {
                   right: rect.right,
                   height: rect.height,
                   centerY: rect.top + rect.height / 2,
-                  hasText: true,
-                  columnIndex: colIdx
+                  hasText: true
                 });
               }
             }
@@ -935,8 +972,7 @@ export class ReadingRuler {
               rect.top < stageBottom - 2
             );
             if (inStage && rect.height >= 8 && rect.width >= 8) {
-              const colIdx = isTwoCol ? (((rect.left + rect.right) / 2 >= stageCenterX) ? 1 : 0) : 0;
-              validLines.push({
+              rawLines.push({
                 el,
                 rect,
                 top: rect.top,
@@ -945,8 +981,7 @@ export class ReadingRuler {
                 right: rect.right,
                 height: rect.height,
                 centerY: rect.top + rect.height / 2,
-                hasText: true,
-                columnIndex: colIdx
+                hasText: true
               });
             }
           }
@@ -954,7 +989,7 @@ export class ReadingRuler {
       });
 
       // Pokud standardní selektory nenašly řádky, nesmíme pravítko trvale skrýt
-      if (validLines.length === 0) {
+      if (rawLines.length === 0) {
         // 1. Fallback: Prohledat všechny listové textové uzly
         try {
           const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
@@ -975,8 +1010,7 @@ export class ReadingRuler {
               for (let i = 0; i < rects.length; i++) {
                 const r = rects[i];
                 if (r.width >= 8 && r.height >= 8) {
-                  const colIdx = isTwoCol ? (((r.left + r.right) / 2 >= stageCenterX) ? 1 : 0) : 0;
-                  validLines.push({
+                  rawLines.push({
                     el: textNode.parentElement,
                     rect: r,
                     top: r.top,
@@ -985,8 +1019,7 @@ export class ReadingRuler {
                     right: r.right,
                     height: r.height,
                     centerY: r.top + r.height / 2,
-                    hasText: true,
-                    columnIndex: colIdx
+                    hasText: true
                   });
                 }
               }
@@ -995,7 +1028,7 @@ export class ReadingRuler {
         } catch (e) {}
 
         // 2. Fallback: Bounding rect hlavního odstavce nebo kontejneru
-        if (validLines.length === 0) {
+        if (rawLines.length === 0) {
           const mainParagraph = content.querySelector('p, div, article') || content;
           const r = mainParagraph ? mainParagraph.getBoundingClientRect() : null;
           if (r && r.width > 0 && r.height > 0) {
@@ -1004,7 +1037,7 @@ export class ReadingRuler {
             for (let i = 0; i < count; i++) {
               const top = r.top + i * defaultLineHeight;
               const bottom = top + defaultLineHeight;
-              validLines.push({
+              rawLines.push({
                 el: mainParagraph,
                 rect: { top, bottom, left: r.left, right: r.right, width: r.width, height: defaultLineHeight },
                 top,
@@ -1020,6 +1053,34 @@ export class ReadingRuler {
           }
         }
       }
+
+      // Autodetekce dvousloupcového rozvržení (CSS třídy + geometrické překryvy řádků)
+      const isTwoCol = this.checkTwoColumnLayout(content, stageRect, rawLines);
+      this.isTwoCol = isTwoCol;
+
+      let colGap = 0;
+      if (isTwoCol) {
+        try {
+          colGap = parseFloat(getComputedStyle(content).columnGap) || 0;
+        } catch (e) {}
+        if (!colGap) {
+          colGap = window.innerWidth * 0.05;
+        }
+      }
+
+      this.colGap = colGap;
+      const singleColWidth = isTwoCol ? Math.max(100, (stageRect.width - colGap) / 2) : stageRect.width;
+      const col0StageLeft = stageRect.left;
+      const col0StageRight = isTwoCol ? stageRect.left + singleColWidth : stageRect.right;
+      const col1StageLeft = isTwoCol ? col0StageRight + colGap : col0StageLeft;
+      const col1StageRight = isTwoCol ? stageRect.right : col0StageRight;
+
+      // Přiřazení indexu sloupce každému nalezenému řádku
+      for (let i = 0; i < rawLines.length; i++) {
+        const r = rawLines[i];
+        r.columnIndex = isTwoCol ? (((r.left + r.right) / 2 >= stageCenterX) ? 1 : 0) : 0;
+      }
+      const validLines = rawLines;
 
       // Seskupení řádků odděleně podle sloupců, aby se řádky ve stejném Y v sousedních sloupcích nespojily do jednoho
       const clusterColumnLines = (colLines, colIdx) => {
@@ -1074,7 +1135,9 @@ export class ReadingRuler {
           columnIndex: 0,
           columnLeft: left,
           columnWidth: width,
-          columnRight: left + width
+          columnRight: left + width,
+          colBoundaryLeft: col0StageLeft,
+          colBoundaryRight: col0StageRight
         }];
       }
 
@@ -1092,39 +1155,60 @@ export class ReadingRuler {
           }
         }
 
-        // Horizontální ohraničení sloupce 0
-        let c0Left = Math.max(col0StageLeft, minLeft0 < Infinity ? minLeft0 - RULER_PADDING : col0StageLeft);
-        let c0Right = Math.min(col0StageRight, maxRight0 > -Infinity ? maxRight0 + RULER_PADDING : col0StageRight);
-        if (c0Right <= c0Left) {
-          c0Left = col0StageLeft;
-          c0Right = col0StageRight;
-        }
-        const c0Width = Math.max(100, Math.round(c0Right - c0Left));
-        c0Left = Math.round(c0Left);
+        const horizontalPadding = 12; // px - jednotný offset pro odsazení zvýrazňovače přesahující okraje textu
 
-        // Horizontální ohraničení sloupce 1 (pokud je 2-sloupcový režim)
-        let c1Left = col1StageLeft;
-        let c1Right = col1StageRight;
+        let gapMiddle = stageCenterX;
         if (isTwoCol) {
-          c1Left = Math.max(col1StageLeft, minLeft1 < Infinity ? minLeft1 - RULER_PADDING : col1StageLeft);
-          c1Right = Math.min(col1StageRight, maxRight1 > -Infinity ? maxRight1 + RULER_PADDING : col1StageRight);
-          if (c1Right <= c1Left) {
-            c1Left = col1StageLeft;
-            c1Right = col1StageRight;
+          if (minLeft1 < Infinity && maxRight0 > -Infinity && minLeft1 > maxRight0) {
+            gapMiddle = Math.round((maxRight0 + minLeft1) / 2);
           }
         }
-        const c1Width = Math.max(100, Math.round(c1Right - c1Left));
-        c1Left = Math.round(c1Left);
+        this.gapMiddle = gapMiddle;
+
+        // Horizontální ohraničení sloupce 0
+        const col0MaxRight = isTwoCol ? (gapMiddle - 4) : window.innerWidth;
+        let c0Left = minLeft0 < Infinity ? (minLeft0 - horizontalPadding) : (col0StageLeft - horizontalPadding);
+        let c0Right = maxRight0 > -Infinity ? (maxRight0 + horizontalPadding) : (isTwoCol ? (gapMiddle - 4) : col0StageRight + horizontalPadding);
+        c0Left = Math.max(0, Math.round(c0Left));
+        c0Right = Math.min(col0MaxRight, Math.round(c0Right));
+        if (c0Right <= c0Left) {
+          c0Left = Math.max(0, Math.round(col0StageLeft - horizontalPadding));
+          c0Right = Math.min(col0MaxRight, Math.round(col0StageRight + horizontalPadding));
+        }
+        const c0Width = Math.max(80, Math.round(c0Right - c0Left));
+
+        // Horizontální ohraničení sloupce 1 (pokud je 2-sloupcový režim)
+        let c1Left = gapMiddle + 4;
+        let c1Right = col1StageRight;
+        if (isTwoCol) {
+          const col1MinLeft = gapMiddle + 4;
+          c1Left = minLeft1 < Infinity ? (minLeft1 - horizontalPadding) : (col1StageLeft - horizontalPadding);
+          c1Right = maxRight1 > -Infinity ? (maxRight1 + horizontalPadding) : (col1StageRight + horizontalPadding);
+          c1Left = Math.max(col1MinLeft, Math.round(c1Left));
+          c1Right = Math.min(window.innerWidth, Math.round(c1Right));
+          if (c1Right <= c1Left) {
+            c1Left = Math.max(col1MinLeft, Math.round(col1StageLeft - horizontalPadding));
+            c1Right = Math.min(window.innerWidth, Math.round(col1StageRight + horizontalPadding));
+          }
+        }
+        const c1Width = Math.max(80, Math.round(c1Right - c1Left));
 
         for (const line of this.cachedLines) {
+          line.textLeft = line.left;
+          line.textRight = line.right;
+          line.textWidth = (line.right != null && line.left != null) ? (line.right - line.left) : null;
           if (line.columnIndex === 1) {
             line.columnLeft = c1Left;
             line.columnWidth = c1Width;
             line.columnRight = c1Left + c1Width;
+            line.colBoundaryLeft = col1StageLeft;
+            line.colBoundaryRight = col1StageRight;
           } else {
             line.columnLeft = c0Left;
             line.columnWidth = c0Width;
             line.columnRight = c0Left + c0Width;
+            line.colBoundaryLeft = col0StageLeft;
+            line.colBoundaryRight = col0StageRight;
           }
           line.left = line.columnLeft;
           line.width = line.columnWidth;
@@ -1133,19 +1217,51 @@ export class ReadingRuler {
 
         this.column0Left = c0Left;
         this.column0Width = c0Width;
+        this.column0Right = c0Right;
         this.column1Left = c1Left;
         this.column1Width = c1Width;
+        this.column1Right = c1Right;
 
         this.textBlockLeft = c0Left;
         this.textBlockWidth = c0Width;
         this.lastKnownColumnLeft = c0Left;
         this.lastKnownColumnWidth = c0Width;
+
+        if (this.activeLineIndex >= this.cachedLines.length) {
+          this.activeLineIndex = Math.max(0, this.cachedLines.length - 1);
+        }
+
+        this.updateStyles();
       }
 
-      if (this.autoHeight && this.cachedLines.length > 0) {
-        const medianLine = this.cachedLines[Math.floor(this.cachedLines.length / 2)];
-        const baseH = Math.round(medianLine.height || 32);
-        this.height = baseH + (2 * RULER_PADDING);
+      if (this.autoHeight) {
+        let baseH = 0;
+        if (this.cachedLines.length > 0) {
+          const sortedHeights = this.cachedLines.map(l => l.height).filter(h => h > 0).sort((a, b) => a - b);
+          if (sortedHeights.length > 0) {
+            baseH = sortedHeights[Math.floor(sortedHeights.length / 2)];
+          }
+        }
+        if (!baseH || baseH < 12) {
+          try {
+            const cs = content ? window.getComputedStyle(content) : null;
+            if (cs) {
+              const lh = parseFloat(cs.lineHeight);
+              const fs = parseFloat(cs.fontSize);
+              if (Number.isFinite(lh) && lh > 0) {
+                baseH = lh;
+              } else if (Number.isFinite(fs) && fs > 0) {
+                baseH = fs * 1.5;
+              }
+            }
+          } catch (e) {}
+        }
+        if (!baseH || baseH < 12) {
+          baseH = 32;
+        }
+        this.height = Math.round(baseH + (2 * RULER_PADDING));
+      } else {
+        this.height = this.manualHeight || 36;
       }
 
       return this.cachedLines;
@@ -1160,7 +1276,11 @@ export class ReadingRuler {
           right: window.innerWidth - 40,
           height,
           centerY: 150 + height / 2,
-          hasText: true
+          hasText: true,
+          columnIndex: 0,
+          columnLeft: 40,
+          columnWidth: window.innerWidth - 80,
+          columnRight: window.innerWidth - 40
         }];
       }
       return this.cachedLines;
@@ -1481,34 +1601,14 @@ export class ReadingRuler {
     const clampedIdx = Math.max(0, Math.min(this.cachedLines.length - 1, lineIdx));
     const line = this.cachedLines[clampedIdx];
 
-    // Jednotný vertikální offset RULER_PADDING nad i pod detekovaným řádkem (výška = lineRect.height + 2 * RULER_PADDING)
-    let top = line.top - RULER_PADDING;
-    let bottom = line.bottom + RULER_PADDING;
+    // Výška pravítka zůstává přísně fixní a konzistentní pro každý řádek (žádné dynamické zmenšování dle sousedních řádků)
+    const height = Math.round((this.autoHeight && Number.isFinite(this.height) && this.height > 0)
+      ? this.height
+      : (this.manualHeight || 36));
+    const targetY = Math.round(line.centerY - height / 2);
 
-    // Zajistit, aby offset nezpůsobil překryv se sousedními řádky textu ve stejném sloupci
-    if (clampedIdx > 0 && this.cachedLines[clampedIdx - 1]) {
-      const prevLine = this.cachedLines[clampedIdx - 1];
-      if (prevLine.columnIndex === line.columnIndex) {
-        top = Math.max(prevLine.bottom, top);
-      }
-    }
-    if (clampedIdx < this.cachedLines.length - 1 && this.cachedLines[clampedIdx + 1]) {
-      const nextLine = this.cachedLines[clampedIdx + 1];
-      if (nextLine.columnIndex === line.columnIndex) {
-        bottom = Math.min(nextLine.top, bottom);
-      }
-    }
-
-    let targetY = Math.round(top);
-    let height = Math.max(Math.round(line.height), Math.round(bottom - top));
-
-    if (!this.autoHeight) {
-      height = this.manualHeight;
-      targetY = Math.round(line.centerY - height / 2);
-    }
-
-    const left = line.columnLeft ?? line.left ?? this.textBlockLeft ?? 0;
-    const width = line.columnWidth ?? line.width ?? this.textBlockWidth ?? 200;
+    const left = line.columnLeft ?? line.left ?? (line.columnIndex === 1 ? this.column1Left : this.column0Left) ?? this.textBlockLeft ?? 0;
+    const width = line.columnWidth ?? line.width ?? (line.columnIndex === 1 ? this.column1Width : this.column0Width) ?? this.textBlockWidth ?? 200;
 
     return {
       height,
@@ -1517,6 +1617,9 @@ export class ReadingRuler {
       width,
       columnLeft: left,
       columnWidth: width,
+      columnRight: left + width,
+      colBoundaryLeft: line.colBoundaryLeft ?? left,
+      colBoundaryRight: line.colBoundaryRight ?? (left + width),
       columnIndex: line.columnIndex ?? 0
     };
   }
@@ -1599,11 +1702,22 @@ export class ReadingRuler {
     }
 
     // 1., 2. & 3. Calibration Window & Switching Thresholds pro Apple Pencil (pointerType === 'pen'):
-    let activeInPool = 0;
+    let activeInPool = -1;
     for (let i = 0; i < pool.length; i++) {
       if (pool[i].index === this.activeLineIndex) {
         activeInPool = i;
         break;
+      }
+    }
+    if (activeInPool === -1) {
+      let minDiff = Infinity;
+      activeInPool = 0;
+      for (let i = 0; i < pool.length; i++) {
+        const diff = Math.abs(curY - pool[i].line.centerY);
+        if (diff < minDiff) {
+          minDiff = diff;
+          activeInPool = i;
+        }
       }
     }
 
@@ -1686,10 +1800,12 @@ export class ReadingRuler {
     const stage = document.getElementById("paged-stage") || this.container || document.body;
     const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, width: window.innerWidth };
     const stageCenterX = stageRect.left + stageRect.width / 2;
-    const isTwoCol = document.body.classList.contains('columns-2') ||
-      document.documentElement.classList.contains('columns-2') ||
-      this.isTwoCol;
-    const activeColumn = isTwoCol ? ((curX >= stageCenterX) ? 1 : 0) : 0;
+    const isTwoCol = this.checkTwoColumnLayout(document.getElementById("reader-content"), stageRect) || this.isTwoCol;
+    if (isTwoCol !== this.isTwoCol) {
+      this.isTwoCol = isTwoCol;
+    }
+    const splitX = (this.isTwoCol && this.gapMiddle) ? this.gapMiddle : stageCenterX;
+    const activeColumn = this.isTwoCol ? ((curX >= splitX) ? 1 : 0) : 0;
 
     // --- REŽIM SLEDOVÁNÍ SLOV (Word-level Tracking) ---
     if (this.wordTracking) {
@@ -2476,32 +2592,26 @@ export class ReadingRuler {
         ? this.cachedLines[this.activeLineIndex]
         : null;
 
-      let colLeft = currentLine ? (currentLine.columnLeft ?? currentLine.left) : this.textBlockLeft;
-      let colWidth = currentLine ? (currentLine.columnWidth ?? currentLine.width) : this.textBlockWidth;
+      const isTwoCol = this.isTwoCol;
+      let colLeft = currentLine ? (currentLine.columnLeft ?? currentLine.left) : null;
+      let colWidth = currentLine ? (currentLine.columnWidth ?? currentLine.width) : null;
 
-      if (colLeft == null || colWidth == null || !Number.isFinite(colLeft) || !Number.isFinite(colWidth) || colWidth < 100) {
-        if (this.lastKnownColumnLeft != null && this.lastKnownColumnWidth != null && this.lastKnownColumnWidth >= 100) {
-          colLeft = this.lastKnownColumnLeft;
-          colWidth = this.lastKnownColumnWidth;
-        } else if (this.stageLeft != null && this.stageWidth != null && this.stageWidth >= 100) {
-          colLeft = Math.max(0, this.stageLeft - RULER_PADDING);
-          colWidth = this.stageWidth + (2 * RULER_PADDING);
+      if (colLeft == null || colWidth == null || !Number.isFinite(colLeft) || !Number.isFinite(colWidth) || colWidth < 80) {
+        if (isTwoCol) {
+          const colIdx = (currentLine && currentLine.columnIndex === 1) ? 1 : 0;
+          colLeft = colIdx === 1 ? this.column1Left : this.column0Left;
+          colWidth = colIdx === 1 ? this.column1Width : this.column0Width;
+          if (colLeft == null || colWidth == null || colWidth < 80) {
+            const singleColW = Math.max(80, Math.floor(((this.stageWidth || window.innerWidth) - (this.colGap || 40)) / 2));
+            colLeft = colIdx === 1 ? Math.round((this.stageLeft || 0) + singleColW + (this.colGap || 40)) : Math.max(0, Math.round(this.stageLeft || 20));
+            colWidth = singleColW;
+          }
         } else {
-          const stage = document.getElementById("paged-stage") || this.container || document.getElementById("reader-content");
-          if (stage) {
-            const sRect = stage.getBoundingClientRect();
-            if (sRect.width >= 100) {
-              colLeft = Math.max(0, Math.round(sRect.left - RULER_PADDING));
-              colWidth = Math.round(sRect.width + (2 * RULER_PADDING));
-              this.stageLeft = Math.round(sRect.left);
-              this.stageWidth = Math.round(sRect.width);
-            } else {
-              colLeft = 20;
-              colWidth = Math.max(200, (window.innerWidth || 800) - 40);
-            }
-          } else {
-            colLeft = 0;
-            colWidth = window.innerWidth || 800;
+          colLeft = this.column0Left ?? this.textBlockLeft;
+          colWidth = this.column0Width ?? this.textBlockWidth;
+          if (colLeft == null || colWidth == null || colWidth < 80) {
+            colLeft = Math.max(0, (this.stageLeft != null ? this.stageLeft - 12 : 20));
+            colWidth = (this.stageWidth != null ? this.stageWidth + 24 : (window.innerWidth - 40));
           }
         }
       }
@@ -2524,36 +2634,50 @@ export class ReadingRuler {
         ? this.cachedLines[this.activeLineIndex]
         : null;
 
+      let colLeft = currentLine ? (currentLine.columnLeft ?? currentLine.left) : null;
+      let colWidth = currentLine ? (currentLine.columnWidth ?? currentLine.width) : null;
+      if (colLeft == null || colWidth == null || !Number.isFinite(colLeft) || !Number.isFinite(colWidth) || colWidth < 80) {
+        if (this.isTwoCol) {
+          const colIdx = (currentLine && currentLine.columnIndex === 1) ? 1 : 0;
+          colLeft = colIdx === 1 ? this.column1Left : this.column0Left;
+          colWidth = colIdx === 1 ? this.column1Width : this.column0Width;
+          if (colLeft == null || colWidth == null || colWidth < 80) {
+            const singleColW = Math.max(80, Math.floor(((this.stageWidth || window.innerWidth) - (this.colGap || 40)) / 2));
+            colLeft = colIdx === 1 ? Math.round((this.stageLeft || 0) + singleColW + (this.colGap || 40)) : Math.max(0, Math.round(this.stageLeft || 20));
+            colWidth = singleColW;
+          }
+        } else {
+          colLeft = this.column0Left ?? this.textBlockLeft;
+          colWidth = this.column0Width ?? this.textBlockWidth;
+          if (colLeft == null || colWidth == null || colWidth < 80) {
+            colLeft = Math.max(0, (this.stageLeft != null ? this.stageLeft - 12 : 20));
+            colWidth = (this.stageWidth != null ? this.stageWidth + 24 : (window.innerWidth - 40));
+          }
+        }
+      }
+
+      // Horní a dolní maska pokrývají celou šířku jeviště přes oba sloupce
       this.maskTopEl.style.display = "block";
       this.maskBottomEl.style.display = "block";
       this.maskTopEl.style.top = `${stageTop}px`;
       this.maskTopEl.style.height = `${Math.max(0, y - stageTop)}px`;
+      this.maskTopEl.style.left = "0px";
+      this.maskTopEl.style.width = "auto";
+      this.maskTopEl.style.right = "0px";
+      this.maskTopEl.style.opacity = this.dimOpacity;
+
       this.maskBottomEl.style.top = `${y + this.height}px`;
       this.maskBottomEl.style.height = `${Math.max(0, stageBottom - (y + this.height))}px`;
-      this.maskTopEl.style.opacity = this.dimOpacity;
+      this.maskBottomEl.style.left = "0px";
+      this.maskBottomEl.style.width = "auto";
+      this.maskBottomEl.style.right = "0px";
       this.maskBottomEl.style.opacity = this.dimOpacity;
 
-      if (this.isTwoCol && currentLine && currentLine.columnLeft != null && currentLine.columnWidth != null) {
-        this.maskTopEl.style.left = `${Math.round(currentLine.columnLeft)}px`;
-        this.maskTopEl.style.width = `${Math.round(currentLine.columnWidth)}px`;
-        this.maskTopEl.style.right = "auto";
-        this.maskBottomEl.style.left = `${Math.round(currentLine.columnLeft)}px`;
-        this.maskBottomEl.style.width = `${Math.round(currentLine.columnWidth)}px`;
-        this.maskBottomEl.style.right = "auto";
-      } else {
-        this.maskTopEl.style.left = "0px";
-        this.maskTopEl.style.width = "auto";
-        this.maskTopEl.style.right = "0px";
-        this.maskBottomEl.style.left = "0px";
-        this.maskBottomEl.style.width = "auto";
-        this.maskBottomEl.style.right = "0px";
-      }
+      const sideTop = Math.max(stageTop, y);
+      const sideBottom = Math.min(stageBottom, y + this.height);
+      const sideHeight = Math.max(0, sideBottom - sideTop);
 
       if (this.wordTracking) {
-        const sideTop = Math.max(stageTop, y);
-        const sideBottom = Math.min(stageBottom, y + this.height);
-        const sideHeight = Math.max(0, sideBottom - sideTop);
-
         const leftW = Math.max(0, Math.round(this.wordLeft));
         const rightL = Math.max(0, Math.round(this.wordLeft + this.activeWordWidth));
 
@@ -2582,6 +2706,29 @@ export class ReadingRuler {
           this.maskRightEl.style.webkitMaskImage = "none";
           this.maskRightEl.style.maskImage = "none";
         }
+      } else if (this.isTwoCol) {
+        // V 2-sloupcovém režimu boční masky ztmaví neaktivní sloupec a mezery v horizontálním pásu aktivního řádku
+        const activeHighlightLeft = (colLeft != null && Number.isFinite(colLeft)) ? Math.round(colLeft) : 0;
+        const activeHighlightWidth = (colWidth != null && Number.isFinite(colWidth)) ? Math.round(colWidth) : 200;
+        const activeHighlightRight = Math.max(0, activeHighlightLeft + activeHighlightWidth);
+
+        this.maskLeftEl.style.display = "block";
+        this.maskLeftEl.style.top = `${sideTop}px`;
+        this.maskLeftEl.style.height = `${sideHeight}px`;
+        this.maskLeftEl.style.left = "0px";
+        this.maskLeftEl.style.right = "auto";
+        this.maskLeftEl.style.width = `${Math.max(0, activeHighlightLeft)}px`;
+        this.maskLeftEl.style.opacity = this.dimOpacity;
+
+        this.maskRightEl.style.display = "block";
+        this.maskRightEl.style.top = `${sideTop}px`;
+        this.maskRightEl.style.height = `${sideHeight}px`;
+        this.maskRightEl.style.left = `${activeHighlightRight}px`;
+        this.maskRightEl.style.right = "0px";
+        this.maskRightEl.style.width = "auto";
+        this.maskRightEl.style.opacity = this.dimOpacity;
+        this.maskRightEl.style.webkitMaskImage = "none";
+        this.maskRightEl.style.maskImage = "none";
       } else {
         this.maskLeftEl.style.display = "none";
         this.maskRightEl.style.display = "none";
@@ -2660,11 +2807,12 @@ export class ReadingRuler {
 
     const isFocus = this.enabled && this.mode === "focus";
     const transitionClass = this.horizontalWordTransition ? "word-transition-active" : "word-transition-snap";
+    const showSideMasks = isFocus && (this.wordTracking || this.isTwoCol);
     this.rulerEl.className = `reading-ruler mode-${this.mode} color-${this.color} ${this.enabled ? "is-visible" : "is-hidden"} ${this.wordTracking ? "word-tracking-mode " + transitionClass : ""}`;
     this.maskTopEl.className = `ruler-mask ruler-mask-top ${isFocus ? "is-visible" : "is-hidden"}`;
     this.maskBottomEl.className = `ruler-mask ruler-mask-bottom ${isFocus ? "is-visible" : "is-hidden"}`;
-    this.maskLeftEl.className = `ruler-mask ruler-mask-left ${isFocus && this.wordTracking ? "is-visible " + transitionClass : "is-hidden"}`;
-    this.maskRightEl.className = `ruler-mask ruler-mask-right ${isFocus && this.wordTracking ? "is-visible " + transitionClass : "is-hidden"}`;
+    this.maskLeftEl.className = `ruler-mask ruler-mask-left ${showSideMasks ? "is-visible " + (this.wordTracking ? transitionClass : "") : "is-hidden"}`;
+    this.maskRightEl.className = `ruler-mask ruler-mask-right ${showSideMasks ? "is-visible " + (this.wordTracking ? transitionClass : "") : "is-hidden"}`;
 
     if (this.enabled) {
       this.rulerEl.classList.add("is-visible");
