@@ -1251,15 +1251,44 @@ export class ReadingRuler {
               if (Number.isFinite(lh) && lh > 0) {
                 baseH = lh;
               } else if (Number.isFinite(fs) && fs > 0) {
-                baseH = fs * 1.5;
+                baseH = fs * 1.35;
               }
             }
           } catch (e) {}
         }
         if (!baseH || baseH < 12) {
-          baseH = 32;
+          baseH = 24;
         }
-        this.height = Math.round(baseH + (2 * RULER_PADDING));
+
+        // Vypočítat mediánovou vzdálenost mezi sousedními řádky (baseline pitch) ve stejném sloupci
+        let medianPitch = 0;
+        if (this.cachedLines.length > 1) {
+          const pitches = [];
+          for (let i = 0; i < this.cachedLines.length - 1; i++) {
+            const cur = this.cachedLines[i];
+            const next = this.cachedLines[i + 1];
+            if (cur.columnIndex === next.columnIndex) {
+              const p = next.centerY - cur.centerY;
+              if (p > 8 && p < 150) pitches.push(p);
+            }
+          }
+          if (pitches.length > 0) {
+            pitches.sort((a, b) => a - b);
+            medianPitch = pitches[Math.floor(pitches.length / 2)];
+          }
+        }
+
+        // Dynamické vertikální odsazení: nesmí za žádných okolností přesáhnout mezilinkovou vzdálenost
+        let padV = 0;
+        if (medianPitch > 0) {
+          const maxAllowedH = Math.max(10, Math.floor(medianPitch - 2));
+          const availableGap = Math.max(0, maxAllowedH - baseH);
+          padV = Math.max(0, Math.min(2, Math.floor(availableGap / 2)));
+          this.height = Math.min(maxAllowedH, Math.round(baseH + (2 * padV)));
+        } else {
+          padV = Math.max(0, Math.min(2, Math.round(baseH * 0.05)));
+          this.height = Math.round(baseH + (2 * padV));
+        }
       } else {
         this.height = this.manualHeight || 36;
       }
@@ -1601,11 +1630,39 @@ export class ReadingRuler {
     const clampedIdx = Math.max(0, Math.min(this.cachedLines.length - 1, lineIdx));
     const line = this.cachedLines[clampedIdx];
 
-    // Výška pravítka zůstává přísně fixní a konzistentní pro každý řádek (žádné dynamické zmenšování dle sousedních řádků)
-    const height = Math.round((this.autoHeight && Number.isFinite(this.height) && this.height > 0)
+    let height = Math.round((this.autoHeight && Number.isFinite(this.height) && this.height > 0)
       ? this.height
       : (this.manualHeight || 36));
-    const targetY = Math.round(line.centerY - height / 2);
+
+    // Kontrola sousedních řádků ve stejném sloupci pro zamezení přesahu do řádku nahoře i dole
+    const prevLine = clampedIdx > 0 ? this.cachedLines[clampedIdx - 1] : null;
+    const nextLine = clampedIdx < this.cachedLines.length - 1 ? this.cachedLines[clampedIdx + 1] : null;
+
+    let maxLineH = Infinity;
+    if (prevLine && prevLine.columnIndex === line.columnIndex) {
+      const distPrev = line.centerY - prevLine.centerY;
+      if (distPrev > 8) maxLineH = Math.min(maxLineH, distPrev - 2);
+    }
+    if (nextLine && nextLine.columnIndex === line.columnIndex) {
+      const distNext = nextLine.centerY - line.centerY;
+      if (distNext > 8) maxLineH = Math.min(maxLineH, distNext - 2);
+    }
+
+    if (Number.isFinite(maxLineH) && maxLineH > 10) {
+      height = Math.min(height, Math.round(maxLineH));
+    }
+
+    let targetY = Math.round(line.centerY - height / 2);
+    if (prevLine && prevLine.columnIndex === line.columnIndex && Number.isFinite(prevLine.bottom)) {
+      if (targetY <= prevLine.bottom) {
+        targetY = Math.round(prevLine.bottom + 1);
+      }
+    }
+    if (nextLine && nextLine.columnIndex === line.columnIndex && Number.isFinite(nextLine.top)) {
+      if (targetY + height >= nextLine.top) {
+        height = Math.max(10, Math.round(nextLine.top - 1 - targetY));
+      }
+    }
 
     const left = line.columnLeft ?? line.left ?? (line.columnIndex === 1 ? this.column1Left : this.column0Left) ?? this.textBlockLeft ?? 0;
     const width = line.columnWidth ?? line.width ?? (line.columnIndex === 1 ? this.column1Width : this.column0Width) ?? this.textBlockWidth ?? 200;
@@ -1627,7 +1684,8 @@ export class ReadingRuler {
   updateEffectiveHeight(lineHeight) {
     if (this.autoHeight) {
       const baseH = Math.round(lineHeight || 32);
-      this.height = baseH + (2 * RULER_PADDING);
+      const padV = Math.max(0, Math.min(2, Math.round(baseH * 0.05)));
+      this.height = Math.round(baseH + (2 * padV));
     } else {
       this.height = this.manualHeight;
     }
@@ -2070,7 +2128,7 @@ export class ReadingRuler {
     this.activeWordIndex = wordIndex;
     const w0 = this.cachedWords[wordIndex];
     const padX = 3;
-    const padY = 2.5;
+    const padY = 1.5;
 
     this.wordLeft = Math.round(w0.left - padX);
     const firstWordWidth = Math.round(w0.width + padX * 2);
@@ -2672,9 +2730,9 @@ export class ReadingRuler {
       const relY = Math.max(0, Math.round(y - stageRect.top));
       const relH = Math.max(10, Math.round(h));
 
-      let maskImage = "";
-      let maskSize = "";
-      let maskPos = "";
+      let activeGradient = "";
+      let activeSize = "";
+      let activePos = "";
 
       if (this.wordTracking) {
         const relX = Math.max(0, Math.round(this.wordLeft - stageRect.left));
@@ -2683,13 +2741,13 @@ export class ReadingRuler {
 
         if (pw > 0) {
           const totalW = aw + pw;
-          maskImage = `linear-gradient(to right, #000 0px, #000 ${aw}px, rgba(0, 0, 0, 0) ${totalW}px), linear-gradient(rgba(0, 0, 0, ${inactiveAlpha}), rgba(0, 0, 0, ${inactiveAlpha}))`;
-          maskSize = `${totalW}px ${relH}px, 100% 100%`;
+          activeGradient = `linear-gradient(to right, #000 0px, #000 ${aw}px, rgba(0, 0, 0, 0) ${totalW}px)`;
+          activeSize = `${totalW}px ${relH}px`;
         } else {
-          maskImage = `linear-gradient(#000, #000), linear-gradient(rgba(0, 0, 0, ${inactiveAlpha}), rgba(0, 0, 0, ${inactiveAlpha}))`;
-          maskSize = `${aw}px ${relH}px, 100% 100%`;
+          activeGradient = "linear-gradient(#000, #000)";
+          activeSize = `${aw}px ${relH}px`;
         }
-        maskPos = `${relX}px ${relY}px, 0px 0px`;
+        activePos = `${relX}px ${relY}px`;
       } else {
         const currentLine = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
           ? this.cachedLines[this.activeLineIndex]
@@ -2721,10 +2779,51 @@ export class ReadingRuler {
         const relX = Math.max(0, Math.round(colLeft - stageRect.left));
         const relW = Math.max(80, Math.round(colWidth));
 
-        maskImage = `linear-gradient(#000, #000), linear-gradient(rgba(0, 0, 0, ${inactiveAlpha}), rgba(0, 0, 0, ${inactiveAlpha}))`;
-        maskSize = `${relW}px ${relH}px, 100% 100%`;
-        maskPos = `${relX}px ${relY}px, 0px 0px`;
+        activeGradient = "linear-gradient(#000, #000)";
+        activeSize = `${relW}px ${relH}px`;
+        activePos = `${relX}px ${relY}px`;
       }
+
+      // Detekce a vyloučení multimediálních elementů (obrázky, ilustrace, SVG emblémy) z de-emphasis masky
+      const mediaBoxes = [];
+      const mediaEls = Array.from(stage.querySelectorAll("img, svg, figure, picture, canvas"));
+      const rootMediaEls = mediaEls.filter(el => {
+        return !el.parentElement || !el.parentElement.closest("img, svg, figure, picture, canvas");
+      });
+
+      for (const el of rootMediaEls) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 2 && r.height > 2 &&
+            r.bottom > stageRect.top + 2 && r.top < stageRect.bottom - 2 &&
+            r.right > stageRect.left + 2 && r.left < stageRect.right - 2) {
+          const mX = Math.max(0, Math.round(r.left - stageRect.left));
+          const mY = Math.max(0, Math.round(r.top - stageRect.top));
+          const mW = Math.min(Math.round(stageRect.width - mX), Math.round(r.width));
+          const mH = Math.min(Math.round(stageRect.height - mY), Math.round(r.height));
+          if (mW > 0 && mH > 0) {
+            mediaBoxes.push({ x: mX, y: mY, w: mW, h: mH });
+          }
+        }
+      }
+
+      const gradients = [activeGradient];
+      const sizes = [activeSize];
+      const positions = [activePos];
+
+      for (const mb of mediaBoxes) {
+        gradients.push("linear-gradient(#000, #000)");
+        sizes.push(`${mb.w}px ${mb.h}px`);
+        positions.push(`${mb.x}px ${mb.y}px`);
+      }
+
+      gradients.push(`linear-gradient(rgba(0, 0, 0, ${inactiveAlpha}), rgba(0, 0, 0, ${inactiveAlpha}))`);
+      sizes.push("100% 100%");
+      positions.push("0px 0px");
+
+      const maskImage = gradients.join(", ");
+      const maskSize = sizes.join(", ");
+      const maskPos = positions.join(", ");
+      const maskRepeat = new Array(gradients.length).fill("no-repeat").join(", ");
 
       stage.classList.add("focus-active");
       stage.style.webkitMaskImage = maskImage;
@@ -2733,8 +2832,8 @@ export class ReadingRuler {
       stage.style.maskPosition = maskPos;
       stage.style.webkitMaskSize = maskSize;
       stage.style.maskSize = maskSize;
-      stage.style.webkitMaskRepeat = "no-repeat, no-repeat";
-      stage.style.maskRepeat = "no-repeat, no-repeat";
+      stage.style.webkitMaskRepeat = maskRepeat;
+      stage.style.maskRepeat = maskRepeat;
       stage.style.webkitMaskComposite = "source-over";
       stage.style.maskComposite = "add";
     } else {

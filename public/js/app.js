@@ -19,6 +19,8 @@ class LuminaApp {
     this.currentChapterIndex = 0;
     this.currentPageIndex = 0;
     this.totalPagesInChapter = 1;
+    this.bookPagination = null;
+    this.bookWordCounts = null;
     this.pageGap = 50;
     this.settings = storage.getSettings();
     this.ruler = null;
@@ -488,8 +490,10 @@ class LuminaApp {
     // Pokud čteme knihu, přepočítat stránkování
     if (this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
       requestAnimationFrame(() => {
+        this.recomputeGlobalPagination();
         this.recalcPages();
         this.goToPage(this.currentPageIndex);
+        this.renderScrubberTicks();
       });
     }
 
@@ -816,8 +820,10 @@ class LuminaApp {
         }
       }
       if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
+        this.recomputeGlobalPagination();
         this.recalcPages();
         this.goToPage(this.currentPageIndex);
+        this.renderScrubberTicks();
         this.ruler?.refreshLines();
         this.ruler?.applyPosition();
       }
@@ -871,11 +877,21 @@ class LuminaApp {
     });
 
     if (this.dom.drawerBackdrop) {
-      this.dom.drawerBackdrop.addEventListener("click", () => {
+      const _closeAllDrawers = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Suppress any leaked page-turn gesture that follows the closing tap/click
+        this.isNavigating = true;
+        setTimeout(() => { this.isNavigating = false; }, 300);
         this.closeDrawer("toc");
         this.closeDrawer("settings");
         this.closeDrawer("search");
-      });
+      };
+      // "click" covers mouse and synthesised iPad click events
+      this.dom.drawerBackdrop.addEventListener("click", _closeAllDrawers);
+      // "touchend" as fallback: iOS can suppress the synthesised click when
+      // a prior touchstart on a different element called stopPropagation
+      this.dom.drawerBackdrop.addEventListener("touchend", _closeAllDrawers, { passive: false });
     }
 
     if (this.dom.btnToggleSettingsLib) {
@@ -1267,8 +1283,10 @@ class LuminaApp {
     const triggerReflowSync = () => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
+          this.recomputeGlobalPagination();
           this.recalcPages();
           this.goToPage(this.currentPageIndex);
+          this.renderScrubberTicks();
           this.ruler?.refreshLines();
           this.ruler?.applyPosition();
         });
@@ -1333,8 +1351,10 @@ class LuminaApp {
 
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
+            this.recomputeGlobalPagination();
             this.recalcPages();
             this.goToPage(this.currentPageIndex);
+            this.renderScrubberTicks();
             this.ruler?.refreshLines();
             this.ruler?.applyPosition();
           });
@@ -1350,8 +1370,10 @@ class LuminaApp {
           this.applySettings();
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
+              this.recomputeGlobalPagination();
               this.recalcPages();
               this.goToPage(this.currentPageIndex);
+              this.renderScrubberTicks();
               this.ruler?.refreshLines();
               this.ruler?.applyPosition();
             });
@@ -1995,8 +2017,12 @@ class LuminaApp {
 
       // Rychle spočítáme celkový počet slov knihy na pozadí pro přesné počítadlo celkového počtu stran
       this.bookWordCounts = null;
+      this.bookPagination = null;
+      this.recomputeGlobalPagination();
       this.currentParser.calculateTotalWords().then(counts => {
         this.bookWordCounts = counts;
+        this.recomputeGlobalPagination();
+        this.renderScrubberTicks();
         this.updatePageUI();
       }).catch(e => console.warn("Nelze spočítat celková slova knihy:", e));
 
@@ -2083,6 +2109,9 @@ class LuminaApp {
 
       if (targetPage === "last") {
         this.goToPage(this.totalPagesInChapter - 1, -1);
+      } else if (typeof targetPage === "object" && targetPage !== null && targetPage.ratio !== undefined) {
+        const targetIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.round(targetPage.ratio * (this.totalPagesInChapter - 1))));
+        this.goToPage(targetIndex, targetIndex > 0 ? 1 : 0);
       } else if (typeof targetPage === "number") {
         this.goToPage(Math.min(targetPage, this.totalPagesInChapter - 1), targetPage > 0 ? 1 : 0);
       } else {
@@ -2141,8 +2170,10 @@ class LuminaApp {
     const curPageIndex = this.currentPageIndex;
     this.renderChapterHtml();
     requestAnimationFrame(() => {
+      this.recomputeGlobalPagination();
       this.recalcPages();
       this.goToPage(Math.min(curPageIndex, Math.max(0, this.totalPagesInChapter - 1)));
+      this.renderScrubberTicks();
       if (this.ruler && this.ruler.enabled && this.ruler.wordTracking) {
         this.ruler.refreshWords();
       }
@@ -2511,26 +2542,9 @@ class LuminaApp {
     }
 
     // 2. Počítadlo stránek pro celou knihu ("A z B" / "strana A z B")
-    let currBookPage = currChapterPage;
-    let totalBookPages = totalChapterPages;
-
-    if (this.bookWordCounts && this.bookWordCounts.chapterWords && this.bookWordCounts.chapterWords.length > 0) {
-      const currentChapterWords = this.bookWordCounts.chapterWords[this.currentChapterIndex] || 250;
-      const wordsPerPage = Math.max(1, Math.round(currentChapterWords / totalChapterPages));
-      let beforePages = 0;
-      let allPages = 0;
-
-      for (let i = 0; i < this.bookWordCounts.chapterWords.length; i++) {
-        const chWords = this.bookWordCounts.chapterWords[i];
-        const chPages = (i === this.currentChapterIndex) ? totalChapterPages : Math.max(1, Math.round(chWords / wordsPerPage));
-        if (i < this.currentChapterIndex) {
-          beforePages += chPages;
-        }
-        allPages += chPages;
-      }
-      currBookPage = beforePages + currChapterPage;
-      totalBookPages = allPages;
-    }
+    const metrics = this.getBookMetrics();
+    const currBookPage = metrics.currBookPage;
+    const totalBookPages = metrics.totalBookPages;
 
     if (this.dom.footerBookPages) {
       this.dom.footerBookPages.textContent = `${currBookPage} z ${totalBookPages}`;
@@ -3007,42 +3021,91 @@ class LuminaApp {
     document.body.classList.toggle("reader-chrome-hidden", willHide);
   }
 
-  getBookMetrics() {
-    const totalChapters = this.currentParser?.spine?.length || 1;
-    const currChapterPage = this.currentPageIndex + 1;
-    const totalChapterPages = Math.max(1, this.totalPagesInChapter || 1);
-
-    const chapterPageCounts = [];
-    const chapterStarts = [];
-    let beforePages = 0;
-    let allPages = 0;
-
-    const hasWordCounts = !!(this.bookWordCounts?.chapterWords?.length);
-    const currentChapterWords = hasWordCounts ? (this.bookWordCounts.chapterWords[this.currentChapterIndex] || 250) : 250;
-    const wordsPerPage = Math.max(1, Math.round(currentChapterWords / totalChapterPages));
-
-    for (let i = 0; i < totalChapters; i++) {
-      let chPages = totalChapterPages;
-      if (hasWordCounts) {
-        const chWords = this.bookWordCounts.chapterWords[i] || 250;
-        chPages = (i === this.currentChapterIndex) ? totalChapterPages : Math.max(1, Math.round(chWords / wordsPerPage));
-      }
-      chapterPageCounts.push(chPages);
-      chapterStarts.push(allPages + 1);
-      if (i < this.currentChapterIndex) {
-        beforePages += chPages;
-      }
-      allPages += chPages;
+  recomputeGlobalPagination() {
+    if (!this.currentParser) {
+      this.bookPagination = {
+        wordsPerPage: 260,
+        chapterPageCounts: [1],
+        chapterStarts: [1],
+        totalBookPages: 1
+      };
+      return;
     }
 
-    const currBookPage = Math.max(1, beforePages + currChapterPage);
-    const totalBookPages = Math.max(1, allPages);
+    const totalChapters = this.currentParser?.spine?.length || 1;
+    const baseWordsPerPage = 260;
+    const fontSize = this.settings.fontSize || 19;
+    const lineHeight = this.settings.lineHeight || 1.6;
+    const isTwoCol = document.documentElement.classList.contains("columns-2") ||
+                     document.body.classList.contains("columns-2") ||
+                     (typeof this.resolveEffectiveColumnCount === "function" && this.resolveEffectiveColumnCount() === 2);
+    const colMultiplier = isTwoCol ? 2 : 1;
+
+    // Škálování hustoty slov podle velikosti písma (plošné), výšky řádku a počtu sloupců
+    const fontFactor = Math.pow(19 / fontSize, 1.7);
+    const lineFactor = 1.6 / lineHeight;
+    let wordsPerPage = Math.round(baseWordsPerPage * fontFactor * lineFactor * colMultiplier);
+    // Bezpečnostní mantinely, aby nedošlo k dělení 0 nebo extrémním hodnotám
+    wordsPerPage = Math.max(80, Math.min(1200, wordsPerPage));
+
+    const hasWordCounts = !!(this.bookWordCounts && Array.isArray(this.bookWordCounts.chapterWords) && this.bookWordCounts.chapterWords.length > 0);
+    const chapterPageCounts = [];
+    const chapterStarts = [];
+    let runningTotal = 0;
+
+    for (let i = 0; i < totalChapters; i++) {
+      let chPages = 1;
+      if (hasWordCounts) {
+        const words = this.bookWordCounts.chapterWords[i] != null ? this.bookWordCounts.chapterWords[i] : 0;
+        // Titulní strany, obálky, celostránkové ilustrace či kapitoly s minimem slov mají vždy min. 1 stranu
+        if (words < 50) {
+          chPages = 1;
+        } else {
+          chPages = Math.max(1, Math.round(words / wordsPerPage));
+        }
+      } else {
+        chPages = (i === this.currentChapterIndex && this.totalPagesInChapter) ? this.totalPagesInChapter : 1;
+      }
+
+      chapterPageCounts.push(chPages);
+      chapterStarts.push(runningTotal + 1);
+      runningTotal += chPages;
+    }
+
+    const totalBookPages = Math.max(1, runningTotal);
+
+    this.bookPagination = {
+      wordsPerPage,
+      chapterPageCounts,
+      chapterStarts,
+      totalBookPages
+    };
+  }
+
+  getBookMetrics() {
+    if (!this.bookPagination) {
+      this.recomputeGlobalPagination();
+    }
+    const p = this.bookPagination;
+    const totalChapters = this.currentParser?.spine?.length || 1;
+    const chAllocated = p.chapterPageCounts[this.currentChapterIndex] || 1;
+    const startPage = p.chapterStarts[this.currentChapterIndex] || 1;
+    const totalPagesInCh = Math.max(1, this.totalPagesInChapter || 1);
+
+    let currBookPage = startPage;
+    if (totalPagesInCh > 1 && chAllocated > 1) {
+      const fraction = this.currentPageIndex / (totalPagesInCh - 1);
+      currBookPage = startPage + Math.round(fraction * (chAllocated - 1));
+    } else {
+      currBookPage = startPage + Math.min(this.currentPageIndex, chAllocated - 1);
+    }
+    currBookPage = Math.max(1, Math.min(p.totalBookPages, currBookPage));
 
     return {
       currBookPage,
-      totalBookPages,
-      chapterStarts,
-      chapterPageCounts,
+      totalBookPages: p.totalBookPages,
+      chapterStarts: p.chapterStarts,
+      chapterPageCounts: p.chapterPageCounts,
       totalChapters
     };
   }
@@ -3052,11 +3115,21 @@ class LuminaApp {
     const clamped = Math.max(1, Math.min(metrics.totalBookPages, Math.round(targetBookPage)));
     let chapterIndex = 0;
     let pageInChapter = 0;
+    let pageRatio = 0;
 
     for (let i = metrics.chapterStarts.length - 1; i >= 0; i--) {
       if (clamped >= metrics.chapterStarts[i]) {
         chapterIndex = i;
-        pageInChapter = clamped - metrics.chapterStarts[i];
+        const startPage = metrics.chapterStarts[i];
+        const chAllocated = metrics.chapterPageCounts[i] || 1;
+        const offsetInAlloc = clamped - startPage;
+        pageRatio = chAllocated > 1 ? (offsetInAlloc / (chAllocated - 1)) : 0;
+
+        if (chapterIndex === this.currentChapterIndex && this.totalPagesInChapter > 1 && chAllocated > 1) {
+          pageInChapter = Math.round(pageRatio * (this.totalPagesInChapter - 1));
+        } else {
+          pageInChapter = offsetInAlloc;
+        }
         break;
       }
     }
@@ -3073,6 +3146,7 @@ class LuminaApp {
       targetBookPage: clamped,
       chapterIndex,
       pageInChapter,
+      pageRatio,
       chapterTitle,
       totalBookPages: metrics.totalBookPages
     };
@@ -3085,7 +3159,7 @@ class LuminaApp {
     } else {
       await tracker.flushSession();
       this.currentChapterIndex = resolved.chapterIndex;
-      await this.loadCurrentChapter(resolved.pageInChapter);
+      await this.loadCurrentChapter({ ratio: resolved.pageRatio, fallbackPage: resolved.pageInChapter });
     }
   }
 

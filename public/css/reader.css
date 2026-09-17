@@ -983,6 +983,16 @@ body:not(.in-reader-view) .paged-stage.focus-active {
   mask-image: none !important;
 }
 
+/* Multimediální elementy a ilustrace v režimu Focus Mode zůstávají vždy 100% kontrastní a netknuté */
+.paged-stage.focus-active img,
+.paged-stage.focus-active svg,
+.paged-stage.focus-active figure,
+.paged-stage.focus-active picture,
+.paged-stage.focus-active canvas {
+  opacity: 1 !important;
+  filter: none !important;
+}
+
 /* Masky ztmavující okolní text - zachováno pro zpětnou kompatibilitu DOM, zcela transparentní a skryté */
 .ruler-mask {
   position: fixed;
