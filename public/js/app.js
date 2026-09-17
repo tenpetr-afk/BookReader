@@ -2182,9 +2182,7 @@ class LuminaApp {
       if (this.dom.readerContent) {
         void this.dom.readerContent.offsetHeight;
       }
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-
-      this.recalcPages();
+      await this.recalcPages();
 
       if (targetPage === "last") {
         this.goToPage(this.totalPagesInChapter - 1, -1);
@@ -2195,9 +2193,9 @@ class LuminaApp {
       }
 
       // Následná verifikace v dalším rámci pro zachycení případného opožděného layoutu
-      requestAnimationFrame(() => {
+      requestAnimationFrame(async () => {
         const prevTotal = this.totalPagesInChapter;
-        this.recalcPages();
+        await this.recalcPages();
         if (this.totalPagesInChapter !== prevTotal) {
           console.log(`[LuminaReader] Follow-up layout check updated totalPages: ${prevTotal} -> ${this.totalPagesInChapter}`);
           if (targetPage === "last") {
@@ -2363,19 +2361,36 @@ class LuminaApp {
     }
   }
 
-  recalcPages() {
-    if (!this.dom.pagedStage || !this.dom.readerContent) return;
-    this.adjustStageHeight();
+  async recalcPages() {
+    const contentEl = this.dom.readerContent || this.dom.pagedContent;
+    const stageEl = this.dom.pagedStage || contentEl?.parentElement;
+    if (!contentEl || !stageEl) return;
+
+    if (document.fonts) {
+      try {
+        await document.fonts.ready;
+      } catch (e) {
+        console.warn("[LuminaReader] Font ready wait warning:", e);
+      }
+    }
+
+    if (contentEl && stageEl) {
+      const cs = window.getComputedStyle(contentEl);
+      const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.5);
+      const rawHeight = stageEl.clientHeight;
+      const snappedHeight = Math.floor(rawHeight / lh) * lh;
+      contentEl.style.height = `${snappedHeight}px`;
+      document.documentElement.style.setProperty("--reader-stage-height", `${snappedHeight}px`);
+    }
+
     const gap = this.getPageGap();
     this.pageGap = gap;
     const stride = this.getColumnStride();
-    const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    if (stride <= 0) {
-      this.totalPagesInChapter = 1;
-    } else {
-      this.totalPagesInChapter = Math.max(1, Math.ceil((scrollWidth + gap - 1) / stride));
-    }
+    // Allow forced reflow for WebKit
+    const scrollW = contentEl.scrollWidth;
+    const strideW = stride; // existing stride calculation
+    this.totalPagesInChapter = strideW > 0 ? Math.max(1, Math.round(scrollW / strideW)) : 1;
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
@@ -2528,7 +2543,7 @@ class LuminaApp {
     // ověříme skutečné rozložení, abychom nepřeskočili celou kapitolu kvůli nezměřenému layoutu
     if (this.dom.readerContent && this.currentPageIndex >= this.totalPagesInChapter - 1) {
       const prevTotal = this.totalPagesInChapter;
-      this.recalcPages();
+      await this.recalcPages();
       if (this.totalPagesInChapter > prevTotal) {
         console.warn(`[LuminaReader] nextPage: detected unmeasured pages (${prevTotal} -> ${this.totalPagesInChapter}), preventing premature chapter jump`);
       }

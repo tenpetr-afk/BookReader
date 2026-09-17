@@ -130,9 +130,10 @@ body.columns-2 .paged-stage {
 
 /* Multi-column layout: prohlížeč automaticky rozdělí text kapitoly do stran */
 #reader-content,
+.reader-content,
 .paged-content {
-  height: 100% !important;
-  max-height: 100% !important;
+  height: 100%;
+  max-height: 100%;
   width: 100%;
   margin: 0;
   padding: 0;
@@ -152,6 +153,7 @@ body.columns-2 .paged-stage {
   /* Prevent glyph fragmentation across column boundaries */
   break-inside: avoid;
   -webkit-column-break-inside: avoid;
+  overflow: hidden;
   transition: transform 0.20s cubic-bezier(0.2, 0.9, 0.3, 1);
   will-change: transform;
   user-select: text;
@@ -201,10 +203,12 @@ body.columns-2 .paged-content,
 .paged-content h2 { font-size: 1.6em; }
 .paged-content h3 { font-size: 1.25em; }
 
+#reader-content p,
 .paged-content p {
-  margin-bottom: 1em;
-  /* Ensure paragraph blocks don't split baseline in half */
-  break-inside: auto;
+  margin-top: 0;
+  margin-bottom: 0.85em;
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
   orphans: 2;
   widows: 2;
 }
