@@ -317,15 +317,27 @@ class LuminaApp {
     return window.innerWidth >= 1100 ? 2 : 1;
   }
 
-  getPageGap() {
-    if (this.dom.readerContent) {
-      const comp = getComputedStyle(this.dom.readerContent);
-      const colGap = parseFloat(comp.columnGap);
-      if (!isNaN(colGap) && colGap > 0) {
-        return colGap;
-      }
+  getExactColumnStep() {
+    if (!this.dom.pagedStage || !this.dom.readerContent) {
+      return { stageWidth: 700, gap: 50, exactStep: 750 };
     }
-    return this.pageGap || 50;
+    const stageRect = this.dom.pagedStage.getBoundingClientRect();
+    const stageWidth = stageRect.width;
+
+    const comp = getComputedStyle(this.dom.readerContent);
+    const colGap = parseFloat(comp.columnGap);
+    const gap = (!isNaN(colGap) && colGap > 0) ? colGap : (this.pageGap || 50);
+
+    const exactStep = stageWidth + gap;
+    return {
+      stageWidth,
+      gap,
+      exactStep
+    };
+  }
+
+  getPageGap() {
+    return this.getExactColumnStep().gap;
   }
 
   applySettings() {
@@ -2539,12 +2551,11 @@ class LuminaApp {
 
   recalcPages() {
     if (!this.dom.pagedStage || !this.dom.readerContent) return;
-    const stageWidth = this.dom.pagedStage.clientWidth || 700;
-    const gap = this.getPageGap();
+    const { stageWidth, gap, exactStep } = this.getExactColumnStep();
     this.pageGap = gap;
     const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / (stageWidth + gap)));
+    this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / exactStep));
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
@@ -2554,10 +2565,9 @@ class LuminaApp {
   goToPage(pageIndex, explicitDirection = null) {
     const oldIndex = this.currentPageIndex;
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
-    const stageWidth = this.dom.pagedStage.clientWidth || 700;
-    const gap = this.getPageGap();
+    const { stageWidth, gap, exactStep } = this.getExactColumnStep();
     this.pageGap = gap;
-    const offset = this.currentPageIndex * (stageWidth + gap);
+    const offset = this.currentPageIndex * exactStep;
 
     const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
     const direction = explicitDirection !== null
@@ -2612,7 +2622,7 @@ class LuminaApp {
     try {
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transition = "none";
-        this.dom.readerContent.style.transform = `translateX(-${offset}px)`;
+        this.dom.readerContent.style.transform = `translateX(-${(this.currentPageIndex * exactStep).toFixed(3)}px)`;
       }
 
       // Měření postupu
@@ -2702,12 +2712,11 @@ class LuminaApp {
       }
 
       // 3. Fyzická kontrola scrollWidth proti offsetu jako pojistka
-      const stageWidth = this.dom.pagedStage?.clientWidth || 700;
-      const gap = this.pageGap || this.getPageGap();
-      const currentOffset = this.currentPageIndex * (stageWidth + gap);
+      const { stageWidth, gap, exactStep } = this.getExactColumnStep();
+      const currentOffset = this.currentPageIndex * exactStep;
       const remainingWidth = (this.dom.readerContent?.scrollWidth || 0) - (currentOffset + stageWidth);
       if (remainingWidth > gap + 5) {
-        this.totalPagesInChapter = Math.max(this.currentPageIndex + 2, Math.round(((this.dom.readerContent?.scrollWidth || 0) + gap) / (stageWidth + gap)));
+        this.totalPagesInChapter = Math.max(this.currentPageIndex + 2, Math.round(((this.dom.readerContent?.scrollWidth || 0) + gap) / exactStep));
         this.goToPage(this.currentPageIndex + 1, 1);
         console.log(`[LuminaReader] nextPage() advanced via scrollWidth check: page -> ${this.currentPageIndex + 1}`);
         return;
@@ -3235,9 +3244,8 @@ class LuminaApp {
 
   locateAndScrollToSearchQuery(query) {
     if (!query || !this.dom.readerContent || !this.dom.pagedStage) return;
-    const stageWidth = this.dom.pagedStage.clientWidth || 700;
+    const { stageWidth, gap, exactStep } = this.getExactColumnStep();
     const stageRect = this.dom.pagedStage.getBoundingClientRect();
-    const gap = this.getPageGap();
     const lowerQ = query.toLowerCase();
 
     // Vyhledání textového uzlu v načtené kapitole
@@ -3264,9 +3272,9 @@ class LuminaApp {
 
     if (foundParent) {
       const rect = foundParent.getBoundingClientRect();
-      const currentOffset = this.currentPageIndex * (stageWidth + gap);
+      const currentOffset = this.currentPageIndex * exactStep;
       const relativeX = (rect.left - stageRect.left) + currentOffset;
-      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / (stageWidth + gap))));
+      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / exactStep)));
 
       this.goToPage(targetPage);
       foundParent.classList.add("search-highlight-flash");

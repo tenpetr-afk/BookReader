@@ -85,6 +85,16 @@ b.bionic-bold {
   touch-action: pan-y pinch-zoom;
 }
 
+/* Box-sizing enforcement across all reader stage & column elements */
+#book-stage,
+#paged-stage,
+.paged-stage,
+#reader-content,
+.paged-content,
+.paged-content * {
+  box-sizing: border-box !important;
+}
+
 /* Jeviště stránky: přesně ohraničený prostor pro jednu stranu */
 .paged-stage {
   position: relative;
@@ -145,6 +155,14 @@ body.columns-2 .paged-content,
   column-width: calc((100% - var(--col-gap)) / 2) !important;
   column-count: 2 !important;
   column-gap: var(--col-gap) !important;
+}
+
+/* Bezpečnostní vnitřní lem sloupců (safety buffer) proti ořezu diakritiky, verzálek a kurzívy */
+.paged-content > * {
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  padding-left: 2px !important;
+  padding-right: 2px !important;
 }
 
 /* Hloubková dědičnost typografie pro přebití vložených EPUB stylů */
