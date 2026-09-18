@@ -317,30 +317,15 @@ class LuminaApp {
     return window.innerWidth >= 1100 ? 2 : 1;
   }
 
-  getPageMetrics() {
-    if (!this.dom.pagedStage || !this.dom.readerContent) {
-      return { stageWidth: 700, gap: 50, stride: 750 };
-    }
-    const stageRect = this.dom.pagedStage.getBoundingClientRect();
-    const stageComputed = getComputedStyle(this.dom.pagedStage);
-    const padLeft = parseFloat(stageComputed.paddingLeft) || 0;
-    const padRight = parseFloat(stageComputed.paddingRight) || 0;
-    // Skutečná vnitřní šířka vícesloupcového obsahu (bez ochranného lemu)
-    const stageWidth = Math.max(100, stageRect.width - padLeft - padRight);
-
-    const comp = getComputedStyle(this.dom.readerContent);
-    const colGap = parseFloat(comp.columnGap);
-    const gap = (!isNaN(colGap) && colGap > 0) ? colGap : (this.pageGap || 50);
-
-    return {
-      stageWidth,
-      gap,
-      stride: stageWidth + gap
-    };
-  }
-
   getPageGap() {
-    return this.getPageMetrics().gap;
+    if (this.dom.readerContent) {
+      const comp = getComputedStyle(this.dom.readerContent);
+      const colGap = parseFloat(comp.columnGap);
+      if (!isNaN(colGap) && colGap > 0) {
+        return colGap;
+      }
+    }
+    return this.pageGap || 50;
   }
 
   applySettings() {
@@ -359,34 +344,16 @@ class LuminaApp {
     document.documentElement.style.setProperty("--reader-line-height", s.lineHeight || 1.6);
     document.documentElement.style.setProperty("--reader-letter-spacing", `${s.letterSpacing ?? 0}px`);
     document.documentElement.style.setProperty("--reader-word-spacing", `${s.wordSpacing ?? 0}px`);
-
-    // Výpočet šířky jeviště a mezer přesně v pixelech pro eliminaci subpixelového posunu (kumulativní rounding drift)
     const margin = Number(this.settings.marginPercent ?? 20);
-    const effectiveCols = this.resolveEffectiveColumnCount();
-    const isTwoCol = effectiveCols === 2;
-    const vw = window.innerWidth || document.documentElement.clientWidth || 1024;
-
-    // V 2sloupcovém režimu zajistíme sudé číslo pro mezeru a symetrickou šířku sloupců
-    let colGapPx = Math.max(16, Math.round(vw * (margin * 0.25 / 100)));
-    if (colGapPx % 2 !== 0) colGapPx += 1;
-
-    let stageContentWidthPx;
-    if (isTwoCol) {
-      const rawStageWidth = vw - (2 * colGapPx);
-      const availableForCols = rawStageWidth - colGapPx;
-      const colWidth = Math.floor(availableForCols / 2);
-      stageContentWidthPx = (colWidth * 2) + colGapPx;
-    } else {
-      stageContentWidthPx = Math.round(vw * ((100 - (margin * 2)) / 100));
-    }
-
-    document.documentElement.style.setProperty('--reader-stage-width', `${stageContentWidthPx}px`);
-    document.documentElement.style.setProperty('--col-gap', `${colGapPx}px`);
-    document.documentElement.style.setProperty('--page-gap', `${colGapPx}px`);
+    const stageWidthVw = `${100 - (margin * 2)}vw`;
+    document.documentElement.style.setProperty('--reader-stage-width', stageWidthVw);
+    const colGapVw = `${(margin * 0.25).toFixed(2)}vw`;
+    document.documentElement.style.setProperty("--col-gap", colGapVw);
     document.documentElement.style.setProperty("--reader-max-width", `${s.contentWidth || 720}px`);
     document.documentElement.style.setProperty("--reader-text-align", s.textAlign || "justify");
 
     // Rozvržení sloupců
+    const effectiveCols = this.resolveEffectiveColumnCount();
     document.documentElement.style.setProperty("--reader-column-count", effectiveCols);
     document.documentElement.classList.toggle("columns-2", effectiveCols === 2);
     if (document.body) {
@@ -852,8 +819,13 @@ class LuminaApp {
     // Přizpůsobení stran při změně orientace iPadu (Portrait/Landscape) a velikosti okna
     let lastEffectiveCols = this.resolveEffectiveColumnCount();
     window.addEventListener("resize", () => {
-      this.applySettings();
-      lastEffectiveCols = this.resolveEffectiveColumnCount();
+      if (this.settings.columnsMode === "auto") {
+        const newCols = this.resolveEffectiveColumnCount();
+        if (newCols !== lastEffectiveCols) {
+          lastEffectiveCols = newCols;
+          this.applySettings();
+        }
+      }
       if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
         this.recomputeGlobalPagination();
         this.recalcPages();
@@ -1457,8 +1429,11 @@ class LuminaApp {
         if (this.dom.valPageMargin) {
           this.dom.valPageMargin.textContent = `${val}%`;
         }
+        const stageWidthVw = `${100 - (val * 2)}vw`;
+        document.documentElement.style.setProperty("--reader-stage-width", stageWidthVw);
+        const colGapVw = `${(val * 0.25).toFixed(2)}vw`;
+        document.documentElement.style.setProperty("--col-gap", colGapVw);
         storage.saveSettings(this.settings);
-        this.applySettings();
 
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
@@ -2564,11 +2539,12 @@ class LuminaApp {
 
   recalcPages() {
     if (!this.dom.pagedStage || !this.dom.readerContent) return;
-    const { stageWidth, gap, stride } = this.getPageMetrics();
+    const stageWidth = this.dom.pagedStage.clientWidth || 700;
+    const gap = this.getPageGap();
     this.pageGap = gap;
     const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / stride));
+    this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / (stageWidth + gap)));
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
@@ -2578,9 +2554,10 @@ class LuminaApp {
   goToPage(pageIndex, explicitDirection = null) {
     const oldIndex = this.currentPageIndex;
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
-    const { stageWidth, gap, stride } = this.getPageMetrics();
+    const stageWidth = this.dom.pagedStage.clientWidth || 700;
+    const gap = this.getPageGap();
     this.pageGap = gap;
-    const offset = this.currentPageIndex * stride;
+    const offset = this.currentPageIndex * (stageWidth + gap);
 
     const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
     const direction = explicitDirection !== null
@@ -2725,11 +2702,12 @@ class LuminaApp {
       }
 
       // 3. Fyzická kontrola scrollWidth proti offsetu jako pojistka
-      const { stageWidth, gap, stride } = this.getPageMetrics();
-      const currentOffset = this.currentPageIndex * stride;
+      const stageWidth = this.dom.pagedStage?.clientWidth || 700;
+      const gap = this.pageGap || this.getPageGap();
+      const currentOffset = this.currentPageIndex * (stageWidth + gap);
       const remainingWidth = (this.dom.readerContent?.scrollWidth || 0) - (currentOffset + stageWidth);
       if (remainingWidth > gap + 5) {
-        this.totalPagesInChapter = Math.max(this.currentPageIndex + 2, Math.round(((this.dom.readerContent?.scrollWidth || 0) + gap) / stride));
+        this.totalPagesInChapter = Math.max(this.currentPageIndex + 2, Math.round(((this.dom.readerContent?.scrollWidth || 0) + gap) / (stageWidth + gap)));
         this.goToPage(this.currentPageIndex + 1, 1);
         console.log(`[LuminaReader] nextPage() advanced via scrollWidth check: page -> ${this.currentPageIndex + 1}`);
         return;
@@ -3257,8 +3235,9 @@ class LuminaApp {
 
   locateAndScrollToSearchQuery(query) {
     if (!query || !this.dom.readerContent || !this.dom.pagedStage) return;
-    const { stageWidth, gap, stride } = this.getPageMetrics();
+    const stageWidth = this.dom.pagedStage.clientWidth || 700;
     const stageRect = this.dom.pagedStage.getBoundingClientRect();
+    const gap = this.getPageGap();
     const lowerQ = query.toLowerCase();
 
     // Vyhledání textového uzlu v načtené kapitole
@@ -3285,9 +3264,9 @@ class LuminaApp {
 
     if (foundParent) {
       const rect = foundParent.getBoundingClientRect();
-      const currentOffset = this.currentPageIndex * stride;
+      const currentOffset = this.currentPageIndex * (stageWidth + gap);
       const relativeX = (rect.left - stageRect.left) + currentOffset;
-      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / stride)));
+      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / (stageWidth + gap))));
 
       this.goToPage(targetPage);
       foundParent.classList.add("search-highlight-flash");
