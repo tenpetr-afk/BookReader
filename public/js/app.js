@@ -383,6 +383,21 @@ class LuminaApp {
     document.documentElement.style.setProperty('--reader-stage-width', `${stageContentWidthPx}px`);
     document.documentElement.style.setProperty('--col-gap', `${colGapPx}px`);
     document.documentElement.style.setProperty('--page-gap', `${colGapPx}px`);
+
+    // Výpočet výšky jeviště a zarovnání na celočíselné násobky line-height (odstranění půlení řádků a stabilizace WebKitu)
+    const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+    const headerH = this.dom.readerHeader ? this.dom.readerHeader.offsetHeight : 64;
+    const isFooterHidden = document.body ? (document.body.classList.contains("hide-footer-bar") || !document.body.classList.contains("show-footer-bar")) : false;
+    const footerH = (!isFooterHidden && this.dom.pagedFooterBar) ? this.dom.pagedFooterBar.offsetHeight : (isFooterHidden ? 0 : 52);
+    const rawAvailableHeight = Math.max(200, vh - headerH - footerH - 24);
+
+    const fontSizePx = Number(s.fontSize) || 19;
+    const lineHeightRatio = Number(s.lineHeight) || 1.6;
+    const lineSpacingPx = fontSizePx * lineHeightRatio;
+    const numLines = Math.floor(rawAvailableHeight / lineSpacingPx);
+    const snappedHeightPx = Math.max(200, Math.round(numLines * lineSpacingPx));
+
+    document.documentElement.style.setProperty('--reader-stage-height', `${snappedHeightPx}px`);
     document.documentElement.style.setProperty("--reader-max-width", `${s.contentWidth || 720}px`);
     document.documentElement.style.setProperty("--reader-text-align", s.textAlign || "justify");
 
@@ -2196,14 +2211,13 @@ class LuminaApp {
       }
     }
 
-    // 2. Počkat na načtení a dekódování obrázků v kapitole
+    // 2. Počkat na načtení a dekódování obrázků a médií v kapitole
     if (this.dom.readerContent) {
-      const mediaList = Array.from(this.dom.readerContent.querySelectorAll("img, image"));
+      const mediaList = Array.from(this.dom.readerContent.querySelectorAll("img, image, svg"));
       if (mediaList.length > 0) {
         const imagePromises = mediaList.map(el => {
           if (el.tagName.toLowerCase() === "img") {
             el.loading = "eager";
-            el.decoding = "async";
             if (el.complete && el.naturalHeight !== 0) {
               return typeof el.decode === "function" ? el.decode().catch(() => {}) : Promise.resolve();
             }
@@ -2224,10 +2238,10 @@ class LuminaApp {
           return Promise.resolve();
         });
 
-        // Bezpečnostní timeout 1000ms pro případ offline/chybějících obrázků
+        // Bezpečnostní timeout 1500ms pro případ offline/chybějících obrázků
         await Promise.race([
           Promise.all(imagePromises),
-          new Promise(resolve => setTimeout(resolve, 1000))
+          new Promise(resolve => setTimeout(resolve, 1500))
         ]);
       }
     }
@@ -2367,11 +2381,12 @@ class LuminaApp {
       // Zvýraznění aktivní kapitoly v obsahu
       this.highlightActiveTocItem();
 
-      // Reset transformace před měřením a okamžité změření rozložení
+      // Reset transformace a synchronizace rozměrů před měřením
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transition = "none";
         this.dom.readerContent.style.transform = "translateX(0px)";
       }
+      this.applySettings();
 
       // Počkáme na stabilizaci fontů a obrázků před výpočtem rozložení stran
       await this.waitForContentReady();
@@ -2568,7 +2583,11 @@ class LuminaApp {
     this.pageGap = gap;
     const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / stride));
+    if (scrollWidth <= stageWidth + 10) {
+      this.totalPagesInChapter = 1;
+    } else {
+      this.totalPagesInChapter = 1 + Math.ceil((scrollWidth - stageWidth - 5) / stride);
+    }
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
@@ -2727,9 +2746,10 @@ class LuminaApp {
       // 3. Fyzická kontrola scrollWidth proti offsetu jako pojistka
       const { stageWidth, gap, stride } = this.getPageMetrics();
       const currentOffset = this.currentPageIndex * stride;
-      const remainingWidth = (this.dom.readerContent?.scrollWidth || 0) - (currentOffset + stageWidth);
-      if (remainingWidth > gap + 5) {
-        this.totalPagesInChapter = Math.max(this.currentPageIndex + 2, Math.round(((this.dom.readerContent?.scrollWidth || 0) + gap) / stride));
+      const scrollWidth = this.dom.readerContent?.scrollWidth || 0;
+      const remainingWidth = scrollWidth - (currentOffset + stageWidth);
+      if (remainingWidth > 15) {
+        this.totalPagesInChapter = Math.max(this.currentPageIndex + 2, 1 + Math.ceil((scrollWidth - stageWidth - 5) / stride));
         this.goToPage(this.currentPageIndex + 1, 1);
         console.log(`[LuminaReader] nextPage() advanced via scrollWidth check: page -> ${this.currentPageIndex + 1}`);
         return;
