@@ -186,6 +186,7 @@ class LuminaApp {
       valContentWidth: document.getElementById("val-content-width"),
       btnAlignLeft: document.getElementById("btn-align-left"),
       btnAlignJustify: document.getElementById("btn-align-justify"),
+      settingPencilRoll: document.getElementById("setting-pencil-roll"),
 
       // Pravítko nastavení
       rulerToggle: document.getElementById("ruler-toggle-setting"),
@@ -455,6 +456,9 @@ class LuminaApp {
     });
     if (this.dom.settingFastReading) {
       this.setSwitchState(this.dom.settingFastReading, !!s.fastReading);
+    }
+    if (this.dom.settingPencilRoll) {
+      this.setSwitchState(this.dom.settingPencilRoll, s.pencilRollNavigation !== false);
     }
     // Režimy pravítka
     this.dom.rulerModeSelects.forEach(btn => {
@@ -1628,6 +1632,100 @@ class LuminaApp {
         storage.saveSettings(this.settings);
         this.applyFastReadingMode();
       });
+    }
+
+    // Přepínač listování otočením Apple Pencil (barrel roll)
+    if (this.dom.settingPencilRoll) {
+      this.dom.settingPencilRoll.addEventListener("click", () => {
+        const val = !this.settings.pencilRollNavigation;
+        this.settings.pencilRollNavigation = val;
+        this.setSwitchState(this.dom.settingPencilRoll, val);
+        storage.saveSettings(this.settings);
+      });
+    }
+
+    // Apple Pencil Pro – Barrel Roll (twist) page turning
+    // Detekce otočení Apple Pencil Pro (twist hodnota 0°–359°) pro otáčení stránek.
+    {
+      let rollStartTwist = null;     // výchozí úhel natočení při stisku
+      let rollStartTime = 0;         // timestamp začátku gesta
+      let rollCooldown = false;      // zámek po úspěšném přechodu stránky
+      let rollGestureActive = false; // sledujeme pouze, když pero fyzicky leží na obrazovce
+
+      // Prahy a okna gesta
+      const ROLL_THRESHOLD_DEG = 40;  // stupně natočení pro spuštění přechodu
+      const ROLL_TIME_WINDOW_MS = 350; // maximální délka gesta v ms
+      const ROLL_COOLDOWN_MS = 600;   // prodleva po přechodu stránky
+
+      // Pomocná funkce pro výpočet úhlové diference s ošetřením přechodu 359° → 0°
+      const angularDelta = (start, end) => {
+        let delta = end - start;
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+        return delta;
+      };
+
+      const pagedViewport = this.dom.pagedViewport;
+      if (pagedViewport) {
+        pagedViewport.addEventListener("pointerdown", (e) => {
+          if (e.pointerType !== "pen") return;
+          if (typeof e.twist !== "number") return;
+          rollStartTwist = e.twist;
+          rollStartTime = Date.now();
+          rollGestureActive = true;
+        }, { passive: true });
+
+        pagedViewport.addEventListener("pointermove", (e) => {
+          if (e.pointerType !== "pen") return;
+          if (typeof e.twist !== "number") return;
+          if (!rollGestureActive) return;
+          if (!this.settings.pencilRollNavigation) return;
+          if (rollCooldown) return;
+
+          // Nechceme konflikt s pohybem pravítka (pen ruler dragging)
+          if (this.ruler?.enabled && this.ruler.followMode === "mouse") return;
+          if (this.ruler?.isDragging) return;
+
+          // Nevykonáváme přechod stránky, pokud navigace již probíhá
+          if (this.isNavigating) return;
+
+          const elapsed = Date.now() - rollStartTime;
+          if (elapsed > ROLL_TIME_WINDOW_MS) {
+            // Gesto trvalo příliš dlouho – reset výchozího bodu
+            rollStartTwist = e.twist;
+            rollStartTime = Date.now();
+            return;
+          }
+
+          const delta = angularDelta(rollStartTwist, e.twist);
+
+          if (Math.abs(delta) >= ROLL_THRESHOLD_DEG) {
+            rollGestureActive = false;
+            rollCooldown = true;
+            setTimeout(() => { rollCooldown = false; }, ROLL_COOLDOWN_MS);
+
+            if (delta > 0) {
+              // Clockwise → next page
+              this.nextPage();
+            } else {
+              // Counter-clockwise → prev page
+              this.prevPage();
+            }
+          }
+        }, { passive: true });
+
+        pagedViewport.addEventListener("pointerup", (e) => {
+          if (e.pointerType !== "pen") return;
+          rollGestureActive = false;
+          rollStartTwist = null;
+        }, { passive: true });
+
+        pagedViewport.addEventListener("pointercancel", (e) => {
+          if (e.pointerType !== "pen") return;
+          rollGestureActive = false;
+          rollStartTwist = null;
+        }, { passive: true });
+      }
     }
 
     // Export statistik
