@@ -2552,10 +2552,17 @@ class LuminaApp {
   recalcPages() {
     if (!this.dom.pagedStage || !this.dom.readerContent) return;
     const { stageWidth, gap, exactStep } = this.getExactColumnStep();
+    if (stageWidth <= 0 || exactStep <= 0) return;
     this.pageGap = gap;
     const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    this.totalPagesInChapter = Math.max(1, Math.round((scrollWidth + gap) / exactStep));
+    // Bezpečnostní práh pro sub-pixelový přetisk a mezeru mezi sloupci
+    const safetyThreshold = Math.max(5, Math.min(gap * 0.5, 15));
+    if (scrollWidth <= stageWidth + safetyThreshold) {
+      this.totalPagesInChapter = 1;
+    } else {
+      this.totalPagesInChapter = 1 + Math.ceil((scrollWidth - stageWidth - safetyThreshold) / exactStep);
+    }
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
@@ -2713,10 +2720,15 @@ class LuminaApp {
 
       // 3. Fyzická kontrola scrollWidth proti offsetu jako pojistka
       const { stageWidth, gap, exactStep } = this.getExactColumnStep();
+      const safetyThreshold = Math.max(5, Math.min(gap * 0.5, 15));
       const currentOffset = this.currentPageIndex * exactStep;
-      const remainingWidth = (this.dom.readerContent?.scrollWidth || 0) - (currentOffset + stageWidth);
-      if (remainingWidth > gap + 5) {
-        this.totalPagesInChapter = Math.max(this.currentPageIndex + 2, Math.round(((this.dom.readerContent?.scrollWidth || 0) + gap) / exactStep));
+      const scrollWidth = this.dom.readerContent?.scrollWidth || 0;
+      const remainingWidth = scrollWidth - (currentOffset + stageWidth);
+      if (remainingWidth > safetyThreshold) {
+        this.totalPagesInChapter = Math.max(
+          this.currentPageIndex + 2,
+          1 + Math.ceil((scrollWidth - stageWidth - safetyThreshold) / exactStep)
+        );
         this.goToPage(this.currentPageIndex + 1, 1);
         console.log(`[LuminaReader] nextPage() advanced via scrollWidth check: page -> ${this.currentPageIndex + 1}`);
         return;

@@ -923,6 +923,7 @@ export class ReadingRuler {
       const hasValidStageBounds = stageRect.width > 50 && stageRect.height > 50;
 
       const stageCenterX = stageRect.left + stageRect.width / 2;
+      const isTwoColEarly = this.checkTwoColumnLayout(content, stageRect, null);
 
       const rawLines = [];
 
@@ -945,13 +946,17 @@ export class ReadingRuler {
             range.selectNodeContents(el);
             const rects = range.getClientRects();
             if (rects && rects.length > 0) {
-              // For block elements (p, h1-h6, li, etc.) the element's own bounding rect
-              // is always full-width (the container width), even when Bionic markup wraps
-              // words in nested spans. Use it to anchor the left/right of each raw line
-              // rect so inline fragment rects don't truncate the measured column width.
+              // For block elements (p, h1-h6, li, etc.) in single-column mode, the element's
+              // own bounding rect anchors the left/right of each raw line rect so inline fragment
+              // rects (e.g. Bionic markup) don't truncate the measured column width.
+              // In multi-column mode or for blocks spanning across columns, NEVER apply blockLeft/Right:
+              // individual lines must retain their true physical column coordinates so continuation
+              // fragments across the column split (e.g. top of col 1) are never misassigned to col 0.
               const isBlock = /^(P|H[1-6]|LI|BLOCKQUOTE|DIV)$/.test(el.tagName);
-              const blockLeft = isBlock ? rect.left : null;
-              const blockRight = isBlock ? rect.right : null;
+              const isMultiColumnBlock = (rect.left < stageCenterX - 30 && rect.right > stageCenterX + 30);
+              const useBlockBounds = isBlock && !isTwoColEarly && !isMultiColumnBlock;
+              const blockLeft = useBlockBounds ? rect.left : null;
+              const blockRight = useBlockBounds ? rect.right : null;
               for (let i = 0; i < rects.length; i++) {
                 const r = rects[i];
                 const inStage = !hasValidStageBounds || (
@@ -961,13 +966,23 @@ export class ReadingRuler {
                   r.top < stageBottom - 2
                 );
                 if (inStage && r.height >= 8 && r.width >= 8) {
+                  let lineLeft = r.left;
+                  let lineRight = r.right;
+                  if (useBlockBounds) {
+                    if (blockLeft != null && !(r.left >= stageCenterX - 15 && blockLeft < stageCenterX - 15)) {
+                      lineLeft = Math.min(lineLeft, blockLeft);
+                    }
+                    if (blockRight != null && !(r.right <= stageCenterX + 15 && blockRight > stageCenterX + 15)) {
+                      lineRight = Math.max(lineRight, blockRight);
+                    }
+                  }
                   rawLines.push({
                     el,
                     rect: r,
                     top: r.top,
                     bottom: r.bottom,
-                    left: blockLeft != null ? Math.min(r.left, blockLeft) : r.left,
-                    right: blockRight != null ? Math.max(r.right, blockRight) : r.right,
+                    left: lineLeft,
+                    right: lineRight,
                     height: r.height,
                     centerY: r.top + r.height / 2,
                     hasText: true
@@ -1105,18 +1120,29 @@ export class ReadingRuler {
       const col0StageRight = isTwoCol ? stageRect.left + singleColWidth : stageRect.right;
       const col1StageLeft = isTwoCol ? col0StageRight + colGap : col0StageLeft;
       const col1StageRight = isTwoCol ? stageRect.right : col0StageRight;
+      const colDividerX = isTwoCol ? (col0StageRight + col1StageLeft) / 2 : stageCenterX;
 
       // Přiřazení indexu sloupce každému nalezenému řádku
       for (let i = 0; i < rawLines.length; i++) {
         const r = rawLines[i];
-        r.columnIndex = isTwoCol ? (((r.left + r.right) / 2 >= stageCenterX) ? 1 : 0) : 0;
+        if (!isTwoCol) {
+          r.columnIndex = 0;
+        } else {
+          const midX = (r.left + r.right) / 2;
+          r.columnIndex = (midX >= colDividerX || r.left >= col0StageRight - 10) ? 1 : 0;
+        }
       }
       const validLines = rawLines;
 
       // Seskupení řádků odděleně podle sloupců, aby se řádky ve stejném Y v sousedních sloupcích nespojily do jednoho
       const clusterColumnLines = (colLines, colIdx) => {
         if (colLines.length === 0) return [];
-        colLines.sort((a, b) => a.centerY - b.centerY);
+        colLines.sort((a, b) => {
+          if (Math.abs(a.top - b.top) > 3) {
+            return a.top - b.top;
+          }
+          return a.centerY - b.centerY;
+        });
         const colClustered = [];
         for (const r of colLines) {
           if (colClustered.length === 0) {
@@ -1203,16 +1229,17 @@ export class ReadingRuler {
         let c0Left = minLeft0 < Infinity ? (minLeft0 - horizontalPadding) : (col0StageLeft - horizontalPadding);
         let c0Right;
         if (isTwoCol) {
-          // 2-col: derive from measured maxRight0 (inline rects are reliable within a narrow column)
-          c0Right = maxRight0 > -Infinity ? (maxRight0 + horizontalPadding) : (gapMiddle - 4);
+          // 2-col: derive from measured maxRight0 or col0StageRight
+          c0Right = maxRight0 > -Infinity ? Math.max(maxRight0 + horizontalPadding, col0StageRight) : (gapMiddle - 4);
         } else {
           // 1-col: always anchor to stage right — Bionic inline rects cannot shrink this
           c0Right = col0StageRight + horizontalPadding;
         }
-        c0Left = Math.max(0, Math.round(c0Left));
+        const col0MinLeft = Math.max(0, Math.round(col0StageLeft - horizontalPadding));
+        c0Left = Math.max(col0MinLeft, Math.round(c0Left));
         c0Right = Math.min(col0MaxRight, Math.round(c0Right));
         if (c0Right <= c0Left) {
-          c0Left = Math.max(0, Math.round(col0StageLeft - horizontalPadding));
+          c0Left = col0MinLeft;
           c0Right = Math.min(col0MaxRight, Math.round(col0StageRight + horizontalPadding));
         }
         const c0Width = Math.max(80, Math.round(c0Right - c0Left));
@@ -1223,7 +1250,7 @@ export class ReadingRuler {
         if (isTwoCol) {
           const col1MinLeft = gapMiddle + 4;
           c1Left = minLeft1 < Infinity ? (minLeft1 - horizontalPadding) : (col1StageLeft - horizontalPadding);
-          c1Right = maxRight1 > -Infinity ? (maxRight1 + horizontalPadding) : (col1StageRight + horizontalPadding);
+          c1Right = maxRight1 > -Infinity ? Math.max(maxRight1 + horizontalPadding, col1StageRight) : (col1StageRight + horizontalPadding);
           c1Left = Math.max(col1MinLeft, Math.round(c1Left));
           c1Right = Math.min(window.innerWidth, Math.round(c1Right));
           if (c1Right <= c1Left) {
@@ -2784,8 +2811,19 @@ export class ReadingRuler {
           colLeft = this.column0Left ?? this.textBlockLeft;
           colWidth = this.column0Width ?? this.textBlockWidth;
           if (colLeft == null || colWidth == null || colWidth < 80) {
-            colLeft = Math.max(0, (this.stageLeft != null ? this.stageLeft - 12 : 20));
-            colWidth = (this.stageWidth != null ? this.stageWidth + 24 : (window.innerWidth - 40));
+            // Fallback: measure the stage live to avoid stale/zero stageLeft cache
+            const stageEl = document.getElementById("paged-stage") || this.container || document.body;
+            const sRect = stageEl ? stageEl.getBoundingClientRect() : null;
+            const sLeft = sRect && sRect.width > 50 ? sRect.left : (this.stageLeft ?? 0);
+            const sWidth = sRect && sRect.width > 50 ? sRect.width : (this.stageWidth ?? (window.innerWidth - 40));
+            colLeft = Math.max(0, sLeft - 12);
+            colWidth = sWidth + 24;
+          }
+          // Safety guard: colLeft must never be more than 12px left of the current stage left
+          const guardStageEl = document.getElementById("paged-stage") || this.container || document.body;
+          const guardRect = guardStageEl ? guardStageEl.getBoundingClientRect() : null;
+          if (guardRect && guardRect.width > 50 && colLeft < guardRect.left - 12) {
+            colLeft = Math.max(0, guardRect.left - 8);
           }
         }
       }
