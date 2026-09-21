@@ -189,11 +189,10 @@ export class StorageManager {
       letterSpacing: 0, // px
       wordSpacing: 0, // px
       contentWidth: 720, // px
-      pageTransition: "slide", // slide, instant, scroll
-      pencilRollNavigation: true, // listování otočením Apple Pencil Pro (barrel roll)
       textAlign: "justify", // left, justify
       readingMode: "scroll", // scroll, paginated
       fastReading: false, // Bionic reading (zvýraznění prvních písmen slov)
+      pencilDoubleTapNavigation: true, // listování dvojitým poklepáním Apple Pencil
       showFooterBar: showProgressBar, // zobrazení spodní lišty čtečky (postup čtení, výchozí zapnuto)
       showProgressBar: showProgressBar,
       ruler: {
@@ -224,8 +223,7 @@ export class StorageManager {
         merged.letterSpacing = parsed.letterSpacing !== undefined ? Number(parsed.letterSpacing) : 0;
         merged.wordSpacing = parsed.wordSpacing !== undefined ? Number(parsed.wordSpacing) : 0;
         merged.fastReading = !!parsed.fastReading;
-        merged.pageTransition = ["slide", "instant", "scroll"].includes(parsed.pageTransition) ? parsed.pageTransition : "slide";
-        merged.pencilRollNavigation = parsed.pencilRollNavigation !== false; // default true
+        merged.pencilDoubleTapNavigation = parsed.pencilDoubleTapNavigation !== false; // default true
         if (localStorage.getItem('showProgressBar') !== null) {
           merged.showFooterBar = localStorage.getItem('showProgressBar') === 'true';
         } else if (parsed.showFooterBar !== undefined) {

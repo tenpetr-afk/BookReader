@@ -186,7 +186,7 @@ class LuminaApp {
       valContentWidth: document.getElementById("val-content-width"),
       btnAlignLeft: document.getElementById("btn-align-left"),
       btnAlignJustify: document.getElementById("btn-align-justify"),
-      settingPencilRoll: document.getElementById("setting-pencil-roll"),
+      settingPencilDoubleTap: document.getElementById("setting-pencil-doubletap"),
 
       // Pravítko nastavení
       rulerToggle: document.getElementById("ruler-toggle-setting"),
@@ -457,8 +457,8 @@ class LuminaApp {
     if (this.dom.settingFastReading) {
       this.setSwitchState(this.dom.settingFastReading, !!s.fastReading);
     }
-    if (this.dom.settingPencilRoll) {
-      this.setSwitchState(this.dom.settingPencilRoll, s.pencilRollNavigation !== false);
+    if (this.dom.settingPencilDoubleTap) {
+      this.setSwitchState(this.dom.settingPencilDoubleTap, s.pencilDoubleTapNavigation !== false);
     }
     // Režimy pravítka
     this.dom.rulerModeSelects.forEach(btn => {
@@ -1634,96 +1634,77 @@ class LuminaApp {
       });
     }
 
-    // Přepínač listování otočením Apple Pencil (barrel roll)
-    if (this.dom.settingPencilRoll) {
-      this.dom.settingPencilRoll.addEventListener("click", () => {
-        const val = !this.settings.pencilRollNavigation;
-        this.settings.pencilRollNavigation = val;
-        this.setSwitchState(this.dom.settingPencilRoll, val);
+    // Přepínač listování poklepáním Apple Pencil
+    if (this.dom.settingPencilDoubleTap) {
+      this.dom.settingPencilDoubleTap.addEventListener("click", () => {
+        const val = !this.settings.pencilDoubleTapNavigation;
+        this.settings.pencilDoubleTapNavigation = val;
+        this.setSwitchState(this.dom.settingPencilDoubleTap, val);
         storage.saveSettings(this.settings);
       });
     }
 
-    // Apple Pencil Pro – Barrel Roll (twist) page turning
-    // Detekce otočení Apple Pencil Pro (twist hodnota 0°–359°) pro otáčení stránek.
+    // Apple Pencil – Double-tap page turning
+    // Detekce rychlého dvojitého poklepání hrotem Apple Pencil pro přechod na další stranu.
+    // Funguje přes standardní PointerEvent (pointerType === "pen") bez nutnosti speciálního Apple API.
     {
-      let rollStartTwist = null;     // výchozí úhel natočení při stisku
-      let rollStartTime = 0;         // timestamp začátku gesta
-      let rollCooldown = false;      // zámek po úspěšném přechodu stránky
-      let rollGestureActive = false; // sledujeme pouze, když pero fyzicky leží na obrazovce
+      // Stav posledního pera
+      let penLastUpTime = 0;
+      let penLastUpX = 0;
+      let penLastUpY = 0;
+      let penDoubleTapCooldown = false;
 
-      // Prahy a okna gesta
-      const ROLL_THRESHOLD_DEG = 40;  // stupně natočení pro spuštění přechodu
-      const ROLL_TIME_WINDOW_MS = 350; // maximální délka gesta v ms
-      const ROLL_COOLDOWN_MS = 600;   // prodleva po přechodu stránky
-
-      // Pomocná funkce pro výpočet úhlové diference s ošetřením přechodu 359° → 0°
-      const angularDelta = (start, end) => {
-        let delta = end - start;
-        if (delta > 180) delta -= 360;
-        if (delta < -180) delta += 360;
-        return delta;
-      };
+      // Parametry detekce
+      const PEN_DOUBLETAP_MS = 320;       // max. mezera mezi dvěma klepnutími
+      const PEN_DOUBLETAP_DIST = 22;      // max. vzdálenost mezi oběma klepnutími (px)
+      const PEN_DOUBLETAP_COOLDOWN = 500; // prodleva po úspěšném přechodu stránky
 
       const pagedViewport = this.dom.pagedViewport;
       if (pagedViewport) {
-        pagedViewport.addEventListener("pointerdown", (e) => {
+        pagedViewport.addEventListener("pointerup", (e) => {
+          // Pouze stylus (Apple Pencil) – ignorujeme prst i myš
           if (e.pointerType !== "pen") return;
-          if (typeof e.twist !== "number") return;
-          rollStartTwist = e.twist;
-          rollStartTime = Date.now();
-          rollGestureActive = true;
-        }, { passive: true });
-
-        pagedViewport.addEventListener("pointermove", (e) => {
-          if (e.pointerType !== "pen") return;
-          if (typeof e.twist !== "number") return;
-          if (!rollGestureActive) return;
-          if (!this.settings.pencilRollNavigation) return;
-          if (rollCooldown) return;
-
-          // Nechceme konflikt s pohybem pravítka (pen ruler dragging)
+          // Ignorujeme, pokud funkce není zapnuta
+          if (!this.settings.pencilDoubleTapNavigation) return;
+          // Cooldown po přechodu stránky
+          if (penDoubleTapCooldown) return;
+          // Nechceme konflikt s pohybem pravítka
           if (this.ruler?.enabled && this.ruler.followMode === "mouse") return;
           if (this.ruler?.isDragging) return;
-
-          // Nevykonáváme přechod stránky, pokud navigace již probíhá
+          // Nepřerušovat probíhající navigaci
           if (this.isNavigating) return;
 
-          const elapsed = Date.now() - rollStartTime;
-          if (elapsed > ROLL_TIME_WINDOW_MS) {
-            // Gesto trvalo příliš dlouho – reset výchozího bodu
-            rollStartTwist = e.twist;
-            rollStartTime = Date.now();
-            return;
+          const now = Date.now();
+          const dt = now - penLastUpTime;
+          const dx = e.clientX - penLastUpX;
+          const dy = e.clientY - penLastUpY;
+          const dist = Math.hypot(dx, dy);
+
+          if (dt > 0 && dt <= PEN_DOUBLETAP_MS && dist <= PEN_DOUBLETAP_DIST) {
+            // Platné dvojité poklepání – spustit přechod stránky
+            penLastUpTime = 0; // reset, aby třetí tap nevyvolal další přechod
+            penDoubleTapCooldown = true;
+            setTimeout(() => { penDoubleTapCooldown = false; }, PEN_DOUBLETAP_COOLDOWN);
+            // Potlačit výchozí chování prohlížeče (zoom, výběr textu)
+            e.preventDefault();
+            this.nextPage();
+          } else {
+            // Zapamatujeme si první klepnutí
+            penLastUpTime = now;
+            penLastUpX = e.clientX;
+            penLastUpY = e.clientY;
           }
+        }, { passive: false });
 
-          const delta = angularDelta(rollStartTwist, e.twist);
-
-          if (Math.abs(delta) >= ROLL_THRESHOLD_DEG) {
-            rollGestureActive = false;
-            rollCooldown = true;
-            setTimeout(() => { rollCooldown = false; }, ROLL_COOLDOWN_MS);
-
-            if (delta > 0) {
-              // Clockwise → next page
-              this.nextPage();
-            } else {
-              // Counter-clockwise → prev page
-              this.prevPage();
-            }
-          }
-        }, { passive: true });
-
-        pagedViewport.addEventListener("pointerup", (e) => {
+        // Při odchodu pera (hover konec) vynulujeme stav
+        pagedViewport.addEventListener("pointerleave", (e) => {
           if (e.pointerType !== "pen") return;
-          rollGestureActive = false;
-          rollStartTwist = null;
+          penLastUpTime = 0;
         }, { passive: true });
 
         pagedViewport.addEventListener("pointercancel", (e) => {
           if (e.pointerType !== "pen") return;
-          rollGestureActive = false;
-          rollStartTwist = null;
+          penLastUpTime = 0;
         }, { passive: true });
       }
     }
