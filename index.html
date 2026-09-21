@@ -115,12 +115,8 @@
     <!-- Stránkovaná čtečka (Paged Viewport pro iPad swipe a touchpad) -->
     <main class="paged-viewport" id="paged-viewport">
       <!-- Dotykové zóny na okrajích pro listování klepnutím na iPadu -->
-      <div class="page-touch-zone page-touch-left" id="zone-touch-prev" title="Předchozí strana">
-        <span class="touch-zone-hint">‹</span>
-      </div>
-      <div class="page-touch-zone page-touch-right" id="zone-touch-next" title="Další strana">
-        <span class="touch-zone-hint">›</span>
-      </div>
+      <div class="page-touch-zone page-touch-left" id="zone-touch-prev" title="Předchozí strana"></div>
+      <div class="page-touch-zone page-touch-right" id="zone-touch-next" title="Další strana"></div>
 
       <!-- Jeviště stránky s multi-column rozložením -->
       <div class="paged-stage" id="paged-stage">
@@ -330,6 +326,19 @@
           </div>
         </div>
 
+        <!-- Rychlé čtení (Bionic) -->
+        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 0.75rem 0;" />
+        <div class="toggle-row" style="margin-bottom: 0.5rem;">
+          <div>
+            <span class="toggle-title">Rychlé čtení (Bionic)</span>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0;">Zvýrazní první písmena každého slova pro rychlejší fixaci oka</p>
+          </div>
+          <button type="button" role="switch" id="setting-fast-reading" class="switch-control" aria-checked="false" aria-label="Rychlé čtení">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+          </button>
+        </div>
+        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 0.75rem 0;" />
+
         <!-- Velikost písma -->
         <div class="slider-setting">
           <div class="slider-label">
@@ -411,18 +420,6 @@
 
       <!-- TAB 3: ČTENÍ & PRAVÍTKO -->
       <div id="tab-pane-reading" class="settings-tab-pane" role="tabpanel" aria-labelledby="tab-btn-reading">
-        <!-- Rychlé čtení (Bionic) -->
-        <div class="toggle-row" style="margin-bottom: 0.5rem;">
-          <div>
-            <span class="toggle-title">Rychlé čtení (Bionic)</span>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0;">Zvýrazní první písmena každého slova pro rychlejší fixaci oka</p>
-          </div>
-          <button type="button" role="switch" id="setting-fast-reading" class="switch-control" aria-checked="false" aria-label="Rychlé čtení">
-            <span class="switch-track"><span class="switch-thumb"></span></span>
-          </button>
-        </div>
-
-        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 0.75rem 0;" />
 
         <!-- NASTAVENÍ PRAVÍTKA (READING RULER) -->
         <div class="settings-group">

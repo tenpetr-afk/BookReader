@@ -945,6 +945,13 @@ export class ReadingRuler {
             range.selectNodeContents(el);
             const rects = range.getClientRects();
             if (rects && rects.length > 0) {
+              // For block elements (p, h1-h6, li, etc.) the element's own bounding rect
+              // is always full-width (the container width), even when Bionic markup wraps
+              // words in nested spans. Use it to anchor the left/right of each raw line
+              // rect so inline fragment rects don't truncate the measured column width.
+              const isBlock = /^(P|H[1-6]|LI|BLOCKQUOTE|DIV)$/.test(el.tagName);
+              const blockLeft = isBlock ? rect.left : null;
+              const blockRight = isBlock ? rect.right : null;
               for (let i = 0; i < rects.length; i++) {
                 const r = rects[i];
                 const inStage = !hasValidStageBounds || (
@@ -959,8 +966,8 @@ export class ReadingRuler {
                     rect: r,
                     top: r.top,
                     bottom: r.bottom,
-                    left: r.left,
-                    right: r.right,
+                    left: blockLeft != null ? Math.min(r.left, blockLeft) : r.left,
+                    right: blockRight != null ? Math.max(r.right, blockRight) : r.right,
                     height: r.height,
                     centerY: r.top + r.height / 2,
                     hasText: true
@@ -1189,10 +1196,19 @@ export class ReadingRuler {
         }
         this.gapMiddle = gapMiddle;
 
-        // Horizontální ohraničení sloupce 0
+        // Horizontální ohraničení sloupce 0.
+        // In 1-column mode: always use the stage right edge as c0Right authority so that
+        // inline markup (e.g. Bionic/Fast Reading spans) cannot truncate the column width.
         const col0MaxRight = isTwoCol ? (gapMiddle - 4) : window.innerWidth;
         let c0Left = minLeft0 < Infinity ? (minLeft0 - horizontalPadding) : (col0StageLeft - horizontalPadding);
-        let c0Right = maxRight0 > -Infinity ? (maxRight0 + horizontalPadding) : (isTwoCol ? (gapMiddle - 4) : col0StageRight + horizontalPadding);
+        let c0Right;
+        if (isTwoCol) {
+          // 2-col: derive from measured maxRight0 (inline rects are reliable within a narrow column)
+          c0Right = maxRight0 > -Infinity ? (maxRight0 + horizontalPadding) : (gapMiddle - 4);
+        } else {
+          // 1-col: always anchor to stage right — Bionic inline rects cannot shrink this
+          c0Right = col0StageRight + horizontalPadding;
+        }
         c0Left = Math.max(0, Math.round(c0Left));
         c0Right = Math.min(col0MaxRight, Math.round(c0Right));
         if (c0Right <= c0Left) {
@@ -1943,26 +1959,48 @@ export class ReadingRuler {
             this.currentY = this.targetY;
           }
           const padX = 3;
+          const activeLine = (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) ? this.cachedLines[targetLineIdx] : null;
           const lineWords = [];
+
+          // Primary pass: collect words by lineIndex
           for (let i = 0; i < this.cachedWords.length; i++) {
             if (this.cachedWords[i].lineIndex === targetLineIdx) {
               lineWords.push({ word: this.cachedWords[i], index: i });
             }
           }
 
-          const activeLine = (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) ? this.cachedLines[targetLineIdx] : null;
-          const activeLineWords = lineWords.map(item => item.word);
-          const firstWord = activeLineWords.length > 0 ? activeLineWords[0] : null;
-          const lastWord = activeLineWords.length > 0 ? activeLineWords[activeLineWords.length - 1] : null;
+          // Fallback: if lineWords is sparse (< 2 words) and activeLine has a known centerY,
+          // add words by Y-proximity (within ±10px of line centerY) that aren't already included.
+          // This recovers words whose lineIndex was misassigned due to sub-pixel Y differences.
+          if (lineWords.length < 2 && activeLine && activeLine.centerY != null) {
+            const lineCY = activeLine.centerY;
+            const includedIndices = new Set(lineWords.map(lw => lw.index));
+            for (let i = 0; i < this.cachedWords.length; i++) {
+              if (includedIndices.has(i)) continue;
+              const cw = this.cachedWords[i];
+              if (Math.abs(cw.centerY - lineCY) <= 10) {
+                lineWords.push({ word: cw, index: i });
+              }
+            }
+            lineWords.sort((a, b) => a.word.left - b.word.left);
+          }
 
-          const textMinX = firstWord ? Math.round(firstWord.left - padX) : (activeLine && activeLine.left != null ? Math.round(activeLine.left - padX) : 0);
-          const textMaxX = lastWord ? Math.round(lastWord.right + padX) : (activeLine && activeLine.right != null ? Math.round(activeLine.right + padX) : window.innerWidth);
+          // Compute true horizontal text bounds for this line from all matching words
+          let textMinX = activeLine && activeLine.left != null ? Math.round(activeLine.left - padX) : 0;
+          let textMaxX = activeLine && activeLine.right != null ? Math.round(activeLine.right + padX) : window.innerWidth;
+          if (lineWords.length > 0) {
+            textMinX = Math.round(lineWords[0].word.left - padX);
+            textMaxX = Math.round(lineWords[lineWords.length - 1].word.right + padX);
+          }
 
           const computeWordPreview = (wIdx) => {
             if (wIdx < 0 || wIdx >= this.cachedWords.length) return 0;
             const w = this.cachedWords[wIdx];
             const firstW = Math.round(w.width + padX * 2);
             let nextWLast = null;
+            // Compare each candidate's left against the PREVIOUS word (not always w.left),
+            // so rightward words on the same line are not cut off past the screen midpoint.
+            let prevCandLeft = w.left;
             for (let offset = 1; offset <= 2; offset++) {
               const nextIdx = wIdx + offset;
               if (nextIdx >= this.cachedWords.length) break;
@@ -1970,13 +2008,26 @@ export class ReadingRuler {
               const isSameLine = (nw.lineIndex != null && w.lineIndex != null)
                 ? (nw.lineIndex === w.lineIndex)
                 : (Math.abs(nw.centerY - w.centerY) <= 10);
-              if (!isSameLine || nw.left <= w.left) break;
+              if (!isSameLine || nw.left <= prevCandLeft) break;
+              prevCandLeft = nw.left;
               nextWLast = nw;
             }
             if (!nextWLast) return 0;
-            const maxB = textMaxX;
+            // Use the true right boundary of this word's line from cachedWords (not the outer
+            // textMaxX which is derived from lineWords and may be incomplete in 1-col mode).
+            let trueLineRight = textMaxX;
+            if (w.lineIndex != null) {
+              for (let i = wIdx; i < this.cachedWords.length; i++) {
+                const cw = this.cachedWords[i];
+                const isSame = (cw.lineIndex != null)
+                  ? (cw.lineIndex === w.lineIndex)
+                  : (Math.abs(cw.centerY - w.centerY) <= 10);
+                if (!isSame) break;
+                trueLineRight = Math.max(trueLineRight, Math.round(cw.right + padX));
+              }
+            }
             const rawTargetRight = Math.round(nextWLast.right + padX);
-            const clampedTargetRight = Math.min(rawTargetRight, maxB);
+            const clampedTargetRight = Math.min(rawTargetRight, trueLineRight);
             const stableLeft = Math.round(w.left - padX);
             return Math.max(0, clampedTargetRight - stableLeft - firstW);
           };
@@ -2166,8 +2217,11 @@ export class ReadingRuler {
     this.targetY = Math.round(w0.top - padY);
     this.currentY = this.targetY;
 
-    // Check up to 2 following words on the SAME line (w1, w2 where w.lineIndex === w0.lineIndex)
+    // Check up to 2 following words on the SAME line (w1, w2 where w.lineIndex === w0.lineIndex).
+    // Compare each candidate's left against the PREVIOUS word in the chain (not always w0.left)
+    // so that rightward progression across the full line is not cut off at the midpoint.
     const nextWords = [];
+    let prevLeft = w0.left;
     for (let offset = 1; offset <= 2; offset++) {
       const nextIdx = wordIndex + offset;
       if (nextIdx >= this.cachedWords.length) break;
@@ -2175,24 +2229,27 @@ export class ReadingRuler {
       const isSameLine = (nw.lineIndex != null && w0.lineIndex != null)
         ? (nw.lineIndex === w0.lineIndex)
         : (Math.abs(nw.centerY - w0.centerY) <= 10);
-      if (!isSameLine || nw.left <= w0.left) break;
+      if (!isSameLine || nw.left <= prevLeft) break;
+      prevLeft = nw.left;
       nextWords.push(nw);
     }
 
-    // Zjištění pravé hranice aktuálního řádku pro striktní ořezání
+    // Zjištění pravé hranice aktuálního řádku pro striktní ořezání.
+    // Prefer textRight (true per-line text boundary) over right (column-wide boundary).
     const activeLine = (w0.lineIndex != null && w0.lineIndex >= 0 && w0.lineIndex < this.cachedLines.length)
       ? this.cachedLines[w0.lineIndex]
       : null;
-    let lineRight = activeLine?.right || null;
-    if (!lineRight) {
-      for (let i = wordIndex; i < this.cachedWords.length; i++) {
-        const cw = this.cachedWords[i];
-        const isSame = (cw.lineIndex != null && w0.lineIndex != null)
-          ? (cw.lineIndex === w0.lineIndex)
-          : (Math.abs(cw.centerY - w0.centerY) <= 10);
-        if (!isSame) break;
-        lineRight = Math.max(lineRight || 0, cw.right);
-      }
+    let lineRight = (activeLine?.textRight != null && activeLine.textRight > 0)
+      ? activeLine.textRight
+      : null;
+    // Always scan same-lineIndex words to get actual text right for THIS specific line
+    for (let i = wordIndex; i < this.cachedWords.length; i++) {
+      const cw = this.cachedWords[i];
+      const isSame = (cw.lineIndex != null && w0.lineIndex != null)
+        ? (cw.lineIndex === w0.lineIndex)
+        : (Math.abs(cw.centerY - w0.centerY) <= 10);
+      if (!isSame) break;
+      lineRight = Math.max(lineRight || 0, cw.right);
     }
     const maxBoundary = lineRight ? Math.round(lineRight + padX) : Infinity;
 

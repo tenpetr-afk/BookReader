@@ -267,12 +267,9 @@ body.columns-2 .paged-content,
   width: 15%;
   max-width: 140px;
   z-index: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.2s ease;
+  background: transparent !important;
+  opacity: 0 !important;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -283,25 +280,6 @@ body.columns-2 .paged-content,
 
 .page-touch-right {
   right: 0;
-}
-
-.touch-zone-hint {
-  font-size: 2.5rem;
-  font-weight: 300;
-  color: var(--text-muted);
-  opacity: 0.25;
-  pointer-events: none;
-  transition: all 0.2s ease;
-}
-
-.page-touch-zone:hover,
-.page-touch-zone:active {
-  opacity: 1;
-}
-
-.page-touch-zone:hover .touch-zone-hint {
-  opacity: 0.7;
-  transform: scale(1.2);
 }
 
 /* ==========================================================================
