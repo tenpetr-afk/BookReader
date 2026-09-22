@@ -99,6 +99,7 @@ class LuminaApp {
       // Stránkovaná čtečka
       readerHeader: document.getElementById("reader-header"),
       readerContent: document.getElementById("reader-content"),
+      readerSheet: document.getElementById("reader-sheet") || document.getElementById("paged-stage"),
       pagedViewport: document.getElementById("paged-viewport"),
       pagedStage: document.getElementById("paged-stage"),
       pagedFooterBar: document.getElementById("paged-footer-bar"),
@@ -394,6 +395,11 @@ class LuminaApp {
       this.dom.pageTransitionSelects.forEach(btn => {
         btn.classList.toggle("active", btn.dataset.pageTransition === pt);
       });
+    }
+    if (pt === "instant" && this.dom.readerSheet) {
+      this.dom.readerSheet.classList.remove("page-transition-animating");
+      this.dom.readerSheet.style.transition = "none";
+      this.dom.readerSheet.style.transform = "none";
     }
 
     // Synchronizace formulářů v nastavení
@@ -2415,6 +2421,11 @@ class LuminaApp {
         this.dom.readerContent.style.transition = "none";
         this.dom.readerContent.style.transform = "translateX(0px)";
       }
+      if (this.dom.readerSheet) {
+        this.dom.readerSheet.classList.remove("page-transition-animating");
+        this.dom.readerSheet.style.transition = "none";
+        this.dom.readerSheet.style.transform = "none";
+      }
 
       // Počkáme na stabilizaci fontů a obrázků před výpočtem rozložení stran
       await this.waitForContentReady();
@@ -2644,6 +2655,8 @@ class LuminaApp {
     const direction = explicitDirection !== null
       ? explicitDirection
       : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
+    const isSlide = this.settings.pageTransition === "slide" && !this._suppressSlideTransition;
+    const sheet = this.dom.readerSheet || this.dom.pagedStage;
 
     // Post-navigation zámek pro debouncing syntetických gest a eventů na iPadu (WebKit)
     this.isNavigating = true;
@@ -2653,6 +2666,9 @@ class LuminaApp {
       this.ruler.isLineLocked = true;
       this.ruler.isNavigating = true;
       this.ruler.isNavigatingPage = true;
+      if (this.ruler.rulerEl) {
+        this.ruler.rulerEl.style.opacity = isSlide && isPageChanged ? "0" : "";
+      }
       if (direction >= 0) {
         this.ruler.activeLineIndex = 0;
         this.ruler.activeWordIndex = 0;
@@ -2671,9 +2687,12 @@ class LuminaApp {
           this.ruler.isNavigatingPage = false;
           this.ruler.isLineLocked = false;
           this.ruler.suppressLineAdvancement = false;
+          if (this.ruler.rulerEl) {
+            this.ruler.rulerEl.style.opacity = "";
+          }
         }
       }
-    }, 300); // 300ms maximum lock lifetime
+    }, 400); // 400ms maximum lock lifetime
 
     // Failsafe timeout pro zaručené odemčení navigačního zámku
     if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
@@ -2686,21 +2705,47 @@ class LuminaApp {
         this.ruler.isNavigatingPage = false;
         this.ruler.isLineLocked = false;
         this.ruler.suppressLineAdvancement = false;
+        if (this.ruler.rulerEl) {
+          this.ruler.rulerEl.style.opacity = "";
+        }
       }
       this.navigatingPageTimer = null;
-    }, 200);
+    }, isSlide && isPageChanged ? 350 : 200);
 
     try {
-      const isSlide = this.settings.pageTransition === "slide" && !this._suppressSlideTransition;
-      if (this.dom.readerContent) {
-        if (isSlide) {
-          this.dom.readerContent.style.transition = "transform 0.25s cubic-bezier(0.25, 1, 0.5, 1)";
-          this.dom.readerContent.style.willChange = "transform";
-        } else {
+      if (isSlide && isPageChanged && sheet) {
+        // 1. Přesun odcházející stránky vodorovně
+        sheet.classList.add("page-transition-animating");
+        sheet.style.transform = direction > 0 ? "translateX(-100%)" : "translateX(100%)";
+
+        // 2. Okamžitý posun vnitřního textového bloku na cílovou stranu bez animace
+        if (this.dom.readerContent) {
           this.dom.readerContent.style.transition = "none";
           this.dom.readerContent.style.willChange = "auto";
+          this.dom.readerContent.style.transform = `translateX(-${(this.currentPageIndex * exactStep).toFixed(3)}px)`;
         }
-        this.dom.readerContent.style.transform = `translateX(-${(this.currentPageIndex * exactStep).toFixed(3)}px)`;
+
+        // 3. Přemístění listu na protější příchozí stranu bez animace a vynucení reflow
+        sheet.classList.remove("page-transition-animating");
+        sheet.style.transition = "none";
+        sheet.style.transform = direction > 0 ? "translateX(100%)" : (direction < 0 ? "translateX(-100%)" : "translateX(0)");
+        void sheet.offsetWidth;
+
+        // 4. Plynulý dojezd nové stránky na střed
+        sheet.classList.add("page-transition-animating");
+        sheet.style.transition = "";
+        sheet.style.transform = "translateX(0)";
+      } else {
+        if (sheet) {
+          sheet.classList.remove("page-transition-animating");
+          sheet.style.transition = "none";
+          sheet.style.transform = "none";
+        }
+        if (this.dom.readerContent) {
+          this.dom.readerContent.style.transition = "none";
+          this.dom.readerContent.style.willChange = "auto";
+          this.dom.readerContent.style.transform = `translateX(-${(this.currentPageIndex * exactStep).toFixed(3)}px)`;
+        }
       }
 
       // Měření postupu
@@ -2714,34 +2759,48 @@ class LuminaApp {
 
       // Aktualizace řádků pro pravítko na nové stránce s přesným směrem a detekcí změny
       try {
-        if (isSlide && isPageChanged && this.dom.readerContent) {
+        if (isSlide && isPageChanged && sheet) {
           let synced = false;
           const onTransEnd = (e) => {
-            if (e.target !== this.dom.readerContent || e.propertyName !== "transform") return;
-            this.dom.readerContent.removeEventListener("transitionend", onTransEnd);
+            if (e.target !== sheet || e.propertyName !== "transform") return;
+            sheet.removeEventListener("transitionend", onTransEnd);
+            sheet.classList.remove("page-transition-animating");
+            sheet.style.transition = "none";
+            sheet.style.transform = "none";
             if (!synced) {
               synced = true;
               clearTimeout(this._rulerSlideSyncTimer);
               try {
+                if (this.ruler?.rulerEl) {
+                  this.ruler.rulerEl.style.opacity = "";
+                }
                 this.ruler?.onPageChange(direction, isPageChanged);
               } catch (rulerErr) {
                 console.error("[LuminaApp] Error updating ruler after transitionend:", rulerErr);
               }
             }
           };
-          this.dom.readerContent.addEventListener("transitionend", onTransEnd);
+          sheet.addEventListener("transitionend", onTransEnd);
           clearTimeout(this._rulerSlideSyncTimer);
           this._rulerSlideSyncTimer = setTimeout(() => {
-            this.dom.readerContent?.removeEventListener("transitionend", onTransEnd);
+            sheet?.removeEventListener("transitionend", onTransEnd);
+            if (sheet) {
+              sheet.classList.remove("page-transition-animating");
+              sheet.style.transition = "none";
+              sheet.style.transform = "none";
+            }
             if (!synced) {
               synced = true;
               try {
+                if (this.ruler?.rulerEl) {
+                  this.ruler.rulerEl.style.opacity = "";
+                }
                 this.ruler?.onPageChange(direction, isPageChanged);
               } catch (rulerErr) {
                 console.error("[LuminaApp] Error updating ruler after slide timeout:", rulerErr);
               }
             }
-          }, 270);
+          }, 280);
         } else {
           this.ruler?.onPageChange(direction, isPageChanged);
         }
@@ -2751,8 +2810,7 @@ class LuminaApp {
     } catch (err) {
       console.error('Page navigation error:', err);
     } finally {
-      const isSlide = this.settings.pageTransition === "slide" && !this._suppressSlideTransition;
-      if (isSlide) {
+      if (isSlide && isPageChanged) {
         setTimeout(() => {
           this.isNavigating = false;
           this.isNavigatingPage = false;
@@ -2761,8 +2819,11 @@ class LuminaApp {
             this.ruler.isNavigating = false;
             this.ruler.isNavigatingPage = false;
             this.ruler.isLineLocked = false;
+            if (this.ruler.rulerEl) {
+              this.ruler.rulerEl.style.opacity = "";
+            }
           }
-        }, 250);
+        }, 280);
       } else {
         // Synchronní uvolnění navigačního zámku ihned po vykreslení DOMu a změření řádků
         this.isNavigating = false;
@@ -2772,6 +2833,9 @@ class LuminaApp {
           this.ruler.isNavigating = false;
           this.ruler.isNavigatingPage = false;
           this.ruler.isLineLocked = false;
+          if (this.ruler.rulerEl) {
+            this.ruler.rulerEl.style.opacity = "";
+          }
         }
       }
     }

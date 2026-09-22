@@ -96,6 +96,8 @@ b.bionic-bold {
 }
 
 /* Jeviště stránky: přesně ohraničený prostor pro jednu stranu */
+#reader-main,
+#paged-stage,
 .paged-stage {
   position: relative;
   width: var(--reader-stage-width, 80vw) !important;
@@ -110,6 +112,16 @@ body.columns-2 .paged-stage {
   width: calc(100vw - (2 * var(--col-gap))) !important;
   max-width: calc(100vw - (2 * var(--col-gap))) !important;
   margin: 0 auto !important;
+}
+
+/* Karta / list stránky (Page Sheet Wrapper) */
+.reader-sheet,
+#reader-sheet {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  margin: 0;
+  padding: 0;
 }
 
 /* Responzivní přizpůsobení jeviště pro iPad */
@@ -158,12 +170,22 @@ body.columns-2 .paged-content,
 }
 
 /* Režimy přechodu stránek (Page Transition Modes) */
-[data-page-transition="slide"] #reader-content,
-[data-page-transition="slide"] .paged-content {
-  transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+[data-page-transition="slide"] .page-transition-animating,
+[data-page-transition="slide"] #reader-sheet.page-transition-animating,
+[data-page-transition="slide"] .reader-sheet.page-transition-animating,
+[data-page-transition="slide"] #paged-stage.page-transition-animating,
+[data-page-transition="slide"] #paged-viewport.page-transition-animating {
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
   will-change: transform;
 }
 
+[data-page-transition="slide"] #reader-content,
+[data-page-transition="slide"] .paged-content,
+[data-page-transition="instant"] .page-transition-animating,
+[data-page-transition="instant"] #reader-sheet,
+[data-page-transition="instant"] .reader-sheet,
+[data-page-transition="instant"] #paged-stage,
+[data-page-transition="instant"] #paged-viewport,
 [data-page-transition="instant"] #reader-content,
 [data-page-transition="instant"] .paged-content {
   transition: none !important;
