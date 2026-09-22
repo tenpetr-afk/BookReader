@@ -20,6 +20,8 @@
 
   /* Výchozí světlý / teplý režim UI */
   --bg-app: #f8fafc;
+  --bg-color: var(--bg-app);
+  --reader-bg: var(--bg-app);
   --bg-surface: #ffffff;
   --bg-surface-elevated: #ffffff;
   --bg-card: #ffffff;
@@ -52,6 +54,8 @@
 [data-theme="light"],
 .theme-light {
   --bg-app: #f8fafc;
+  --bg-color: #f8fafc;
+  --reader-bg: #f8fafc;
   --bg-surface: #ffffff;
   --bg-surface-elevated: #ffffff;
   --bg-card: #ffffff;
@@ -69,6 +73,8 @@
 [data-theme="dark"],
 .theme-dark {
   --bg-app: #0f172a;
+  --bg-color: #0f172a;
+  --reader-bg: #0f172a;
   --bg-surface: #1e293b;
   --bg-surface-elevated: #334155;
   --bg-card: #1e293b;
@@ -88,6 +94,8 @@
 [data-theme="oled"],
 .theme-oled {
   --bg-app: #000000;
+  --bg-color: #000000;
+  --reader-bg: #000000;
   --bg-surface: #121212;
   --bg-surface-elevated: #1e1e1e;
   --bg-card: #141414;
@@ -105,6 +113,8 @@
 [data-theme="sepia"],
 .theme-sepia {
   --bg-app: #f4ecd8;
+  --bg-color: #f4ecd8;
+  --reader-bg: #f4ecd8;
   --bg-surface: #faf4e6;
   --bg-surface-elevated: #ede3cb;
   --bg-card: #faf4e6;
@@ -122,6 +132,8 @@
 [data-theme="warm"],
 .theme-warm {
   --bg-app: #fbf0d9;
+  --bg-color: #fbf0d9;
+  --reader-bg: #fbf0d9;
   --bg-surface: #fff8e7;
   --bg-surface-elevated: #f4ebd4;
   --bg-card: #fff8e7;

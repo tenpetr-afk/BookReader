@@ -18,6 +18,43 @@
   --footer-height: calc(var(--footer-base-height) + var(--safe-area-bottom, 0px));
   --col-gap: 5vw;
   --page-gap: 50px;
+  --reader-bg: var(--bg-color, var(--bg-app, #f8fafc));
+  --sheet-bg: var(--reader-bg);
+  --reader-page-divider: rgba(0, 0, 0, 0.14);
+  --sheet-shadow: none;
+  --sheet-border: none;
+}
+
+[data-theme="warm"], .theme-warm {
+  --reader-bg: var(--bg-color, var(--bg-app, #fbf0d9));
+  --sheet-bg: var(--reader-bg);
+  --reader-page-divider: rgba(74, 55, 40, 0.16);
+  --sheet-shadow: none;
+  --sheet-border: none;
+}
+
+[data-theme="sepia"], .theme-sepia {
+  --reader-bg: var(--bg-color, var(--bg-app, #f4ecd8));
+  --sheet-bg: var(--reader-bg);
+  --reader-page-divider: rgba(90, 60, 30, 0.18);
+  --sheet-shadow: none;
+  --sheet-border: none;
+}
+
+[data-theme="dark"], .theme-dark {
+  --reader-bg: var(--bg-color, var(--bg-app, #0f172a));
+  --sheet-bg: var(--reader-bg);
+  --reader-page-divider: rgba(255, 255, 255, 0.14);
+  --sheet-shadow: none;
+  --sheet-border: none;
+}
+
+[data-theme="oled"], .theme-oled {
+  --reader-bg: var(--bg-color, var(--bg-app, #000000));
+  --sheet-bg: var(--reader-bg);
+  --reader-page-divider: rgba(255, 255, 255, 0.20);
+  --sheet-shadow: none;
+  --sheet-border: none;
 }
 
 :root.columns-2,
@@ -68,7 +105,8 @@ b.bionic-bold {
    Stránkovaný kontejner (Paged Viewport & Multi-column Stage)
    ========================================================================== */
 
-.paged-viewport {
+.paged-viewport,
+#paged-viewport {
   position: fixed;
   top: var(--header-height);
   bottom: var(--footer-height);
@@ -80,6 +118,10 @@ b.bionic-bold {
   align-items: center;
   background-color: var(--bg-app);
   padding: 0;
+  margin: 0;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
   user-select: none;
   -webkit-user-select: none;
   touch-action: pan-y pinch-zoom;
@@ -95,16 +137,33 @@ b.bionic-bold {
   box-sizing: border-box !important;
 }
 
-/* Jeviště stránky: přesně ohraničený prostor pro jednu stranu */
-#reader-main,
+/* Jeviště stránky: přesně ohraničený prostor pro jednu stranu (nepohyblivé okno listu) */
+#book-stage,
 #paged-stage,
-.paged-stage {
+.paged-stage,
+.reader-sheet,
+#reader-sheet,
+.page-track,
+.page-sheet {
   position: relative;
   width: var(--reader-stage-width, 80vw) !important;
   max-width: calc(100vw - 32px) !important;
-  height: calc(100% - 24px);
+  height: 100% !important;
   overflow: hidden;
   margin: 0 auto;
+  background-color: var(--reader-bg, var(--bg-color, var(--bg-app))) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
+  outline: none !important;
+}
+
+/* Plná šířka (0% okraj) bez zaoblení a rámečku */
+.paged-stage.stage-full-width,
+:root[style*="--reader-stage-width: 100vw"] .paged-stage {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
 }
 
 :root.columns-2 .paged-stage,
@@ -112,16 +171,6 @@ body.columns-2 .paged-stage {
   width: calc(100vw - (2 * var(--col-gap))) !important;
   max-width: calc(100vw - (2 * var(--col-gap))) !important;
   margin: 0 auto !important;
-}
-
-/* Karta / list stránky (Page Sheet Wrapper) */
-.reader-sheet,
-#reader-sheet {
-  width: 100%;
-  height: 100%;
-  position: relative;
-  margin: 0;
-  padding: 0;
 }
 
 /* Responzivní přizpůsobení jeviště pro iPad */
@@ -133,7 +182,7 @@ body.columns-2 .paged-stage {
     --footer-height: calc(var(--footer-base-height) + var(--safe-area-bottom, 0px));
   }
   .paged-stage {
-    height: calc(100% - 30px);
+    height: 100% !important;
   }
 }
 
@@ -143,9 +192,12 @@ body.columns-2 .paged-stage {
   width: 100%;
   margin: 0;
   padding: 0;
+  background: transparent !important;
+  background-color: transparent !important;
   column-count: 1 !important;
-  column-width: var(--reader-stage-width, 80vw) !important;
+  column-width: var(--reader-column-width, calc(100%)) !important;
   column-gap: var(--page-gap, 50px);
+  column-rule: 1px solid var(--reader-page-divider, rgba(0, 0, 0, 0.14));
   column-fill: auto;
   font-family: var(--font-book, Georgia, serif);
   font-size: var(--reader-font-size);
@@ -155,8 +207,6 @@ body.columns-2 .paged-stage {
   word-break: break-word;
   hyphens: auto;
   -webkit-hyphens: auto;
-  transition: none;
-  will-change: auto;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -164,29 +214,18 @@ body.columns-2 .paged-stage {
 :root.columns-2 .paged-content,
 body.columns-2 .paged-content,
 .paged-content.columns-2 {
-  column-width: calc((100% - var(--col-gap)) / 2) !important;
+  column-width: var(--reader-column-width, calc((100% - var(--col-gap)) / 2)) !important;
   column-count: 2 !important;
   column-gap: var(--col-gap) !important;
+  column-rule: 1px solid var(--reader-page-divider, rgba(0, 0, 0, 0.14));
 }
 
 /* Režimy přechodu stránek (Page Transition Modes) */
-[data-page-transition="slide"] .page-transition-animating,
-[data-page-transition="slide"] #reader-sheet.page-transition-animating,
-[data-page-transition="slide"] .reader-sheet.page-transition-animating,
-[data-page-transition="slide"] #paged-stage.page-transition-animating,
-[data-page-transition="slide"] #paged-viewport.page-transition-animating {
+[data-page-transition="slide"] .paged-content {
   transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
   will-change: transform;
 }
 
-[data-page-transition="slide"] #reader-content,
-[data-page-transition="slide"] .paged-content,
-[data-page-transition="instant"] .page-transition-animating,
-[data-page-transition="instant"] #reader-sheet,
-[data-page-transition="instant"] .reader-sheet,
-[data-page-transition="instant"] #paged-stage,
-[data-page-transition="instant"] #paged-viewport,
-[data-page-transition="instant"] #reader-content,
 [data-page-transition="instant"] .paged-content {
   transition: none !important;
   will-change: auto;

@@ -120,11 +120,9 @@
 
       <!-- Jeviště stránky s multi-column rozložením -->
       <div class="paged-stage" id="paged-stage">
-        <div class="reader-sheet" id="reader-sheet">
-          <article id="reader-content" class="reader-content paged-content">
-            <!-- Text kapitoly rozdělený do sloupců/stránek -->
-          </article>
-        </div>
+        <article id="reader-content" class="reader-content paged-content">
+          <!-- Text kapitoly rozdělený do sloupců/stránek -->
+        </article>
       </div>
     </main>
 
@@ -414,9 +412,9 @@
         <!-- Přechod stránek -->
         <div class="settings-group" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
           <div class="settings-group-title">Přechod stránek</div>
-          <div class="popover-segmented-control" id="page-transition-control">
-            <button type="button" class="segment-btn active" data-page-transition="instant">Okamžitý</button>
-            <button type="button" class="segment-btn" data-page-transition="slide">Plynulý posun</button>
+          <div class="popover-segmented-control columns-2" id="page-transition-control">
+            <button type="button" class="segment-btn active" data-page-transition="slide">Plynulý posun</button>
+            <button type="button" class="segment-btn" data-page-transition="instant">Okamžitý</button>
           </div>
         </div>
 

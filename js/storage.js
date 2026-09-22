@@ -196,7 +196,7 @@ export class StorageManager {
       showFooterBar: showProgressBar, // zobrazení spodní lišty čtečky (postup čtení, výchozí zapnuto)
       showProgressBar: showProgressBar,
       showRulerButton: true, // zobrazení tlačítka pravítka v dolní liště
-      pageTransition: "instant", // instant, slide
+      pageTransition: "slide", // "slide" | "instant"
       ruler: {
         enabled: false,
         mode: "highlight", // highlight, focus
@@ -227,7 +227,7 @@ export class StorageManager {
         merged.fastReading = !!parsed.fastReading;
         merged.pencilDoubleTapNavigation = parsed.pencilDoubleTapNavigation !== false;
         merged.showRulerButton = parsed.showRulerButton !== false;
-        merged.pageTransition = ["instant", "slide"].includes(parsed.pageTransition) ? parsed.pageTransition : "instant";
+        merged.pageTransition = parsed.pageTransition || "slide";
         if (localStorage.getItem('showProgressBar') !== null) {
           merged.showFooterBar = localStorage.getItem('showProgressBar') === 'true';
         } else if (parsed.showFooterBar !== undefined) {
