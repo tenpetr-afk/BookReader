@@ -20,8 +20,6 @@
 
   /* Výchozí světlý / teplý režim UI */
   --bg-app: #f8fafc;
-  --bg-color: var(--bg-app);
-  --reader-bg: var(--bg-app);
   --bg-surface: #ffffff;
   --bg-surface-elevated: #ffffff;
   --bg-card: #ffffff;
@@ -48,14 +46,22 @@
   --header-height: calc(var(--header-base-height) + var(--safe-area-top));
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;
+
+  /* Frosted Liquid Glass Tokens (Default / Light) */
+  --glass-bg: rgba(255, 255, 255, 0.45);
+  --glass-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.35);
+  --glass-border-hover: rgba(255, 255, 255, 0.55);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+  --glass-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7);
+  --glass-icon-color: var(--text-main);
+  --glass-divider: rgba(0, 0, 0, 0.12);
 }
 
 /* Motivy pro celou aplikaci */
 [data-theme="light"],
 .theme-light {
   --bg-app: #f8fafc;
-  --bg-color: #f8fafc;
-  --reader-bg: #f8fafc;
   --bg-surface: #ffffff;
   --bg-surface-elevated: #ffffff;
   --bg-card: #ffffff;
@@ -68,13 +74,19 @@
   --text-secondary: #64748b;
   --text-muted: #64748b;
   --text-subtle: #94a3b8;
+  --glass-bg: rgba(255, 255, 255, 0.45);
+  --glass-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.35);
+  --glass-border-hover: rgba(255, 255, 255, 0.55);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+  --glass-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7);
+  --glass-icon-color: var(--text-main);
+  --glass-divider: rgba(0, 0, 0, 0.12);
 }
 
 [data-theme="dark"],
 .theme-dark {
   --bg-app: #0f172a;
-  --bg-color: #0f172a;
-  --reader-bg: #0f172a;
   --bg-surface: #1e293b;
   --bg-surface-elevated: #334155;
   --bg-card: #1e293b;
@@ -89,13 +101,19 @@
   --text-subtle: #64748b;
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
   --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
+  --glass-bg: rgba(30, 30, 30, 0.55);
+  --glass-bg-hover: rgba(45, 45, 45, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-border-hover: rgba(255, 255, 255, 0.22);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+  --glass-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.25);
+  --glass-icon-color: #f8fafc;
+  --glass-divider: rgba(255, 255, 255, 0.15);
 }
 
 [data-theme="oled"],
 .theme-oled {
   --bg-app: #000000;
-  --bg-color: #000000;
-  --reader-bg: #000000;
   --bg-surface: #121212;
   --bg-surface-elevated: #1e1e1e;
   --bg-card: #141414;
@@ -108,13 +126,19 @@
   --text-secondary: #a3a3a3;
   --text-muted: #a3a3a3;
   --text-subtle: #737373;
+  --glass-bg: rgba(20, 20, 20, 0.65);
+  --glass-bg-hover: rgba(35, 35, 35, 0.85);
+  --glass-border: rgba(255, 255, 255, 0.15);
+  --glass-border-hover: rgba(255, 255, 255, 0.25);
+  --glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+  --glass-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.75), inset 0 1px 1px rgba(255, 255, 255, 0.25);
+  --glass-icon-color: #ffffff;
+  --glass-divider: rgba(255, 255, 255, 0.15);
 }
 
 [data-theme="sepia"],
 .theme-sepia {
   --bg-app: #f4ecd8;
-  --bg-color: #f4ecd8;
-  --reader-bg: #f4ecd8;
   --bg-surface: #faf4e6;
   --bg-surface-elevated: #ede3cb;
   --bg-card: #faf4e6;
@@ -127,13 +151,19 @@
   --text-secondary: #796652;
   --text-muted: #796652;
   --text-subtle: #9c8a75;
+  --glass-bg: rgba(255, 255, 255, 0.45);
+  --glass-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.35);
+  --glass-border-hover: rgba(255, 255, 255, 0.55);
+  --glass-shadow: 0 8px 24px rgba(80, 60, 40, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+  --glass-shadow-hover: 0 8px 28px rgba(80, 60, 40, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7);
+  --glass-icon-color: var(--text-main);
+  --glass-divider: rgba(56, 43, 32, 0.15);
 }
 
 [data-theme="warm"],
 .theme-warm {
   --bg-app: #fbf0d9;
-  --bg-color: #fbf0d9;
-  --reader-bg: #fbf0d9;
   --bg-surface: #fff8e7;
   --bg-surface-elevated: #f4ebd4;
   --bg-card: #fff8e7;
@@ -146,6 +176,14 @@
   --text-secondary: #6b5c57;
   --text-muted: #6b5c57;
   --text-subtle: #93827c;
+  --glass-bg: rgba(255, 255, 255, 0.45);
+  --glass-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.35);
+  --glass-border-hover: rgba(255, 255, 255, 0.55);
+  --glass-shadow: 0 8px 24px rgba(80, 60, 40, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+  --glass-shadow-hover: 0 8px 28px rgba(80, 60, 40, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7);
+  --glass-icon-color: var(--text-main);
+  --glass-divider: rgba(44, 37, 35, 0.15);
 }
 
 /* Reset & Základní pravidla */
@@ -1657,4 +1695,328 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   gap: 8px !important;
   pointer-events: auto !important;
   flex: none !important;
+}
+
+/* Tlačítko rozbalení menu (FAB) v liště čtečky */
+.menu-fab-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.btn-reader-menu-fab {
+  width: 36px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.45));
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
+  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5));
+  color: var(--glass-icon-color, var(--text-main));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease, color 0.15s ease;
+}
+
+.btn-reader-menu-fab svg {
+  stroke: currentColor;
+}
+
+.btn-reader-menu-fab:hover {
+  background: var(--glass-bg-hover, rgba(255, 255, 255, 0.65));
+  border-color: var(--glass-border-hover, rgba(255, 255, 255, 0.55));
+  box-shadow: var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7));
+  filter: brightness(1.08);
+  backdrop-filter: blur(14px) saturate(190%);
+  -webkit-backdrop-filter: blur(14px) saturate(190%);
+}
+
+.btn-reader-menu-fab:active {
+  transform: scale(0.94);
+}
+
+.btn-reader-menu-fab.active,
+.btn-reader-menu-fab[aria-expanded="true"] {
+  background: rgba(37, 99, 235, 0.85) !important;
+  backdrop-filter: blur(16px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+  border-color: rgba(255, 255, 255, 0.45) !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.5) !important;
+}
+
+/* Plovoucí cluster rychlých akcí */
+.reader-floating-dock {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: max-content;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  z-index: 1200;
+  transform-origin: bottom right;
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s ease;
+  pointer-events: auto;
+}
+
+.reader-floating-dock.is-hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateY(10px) scale(0.95) !important;
+}
+
+.action-cluster-top-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.action-cluster-bottom-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.dock-action-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.45));
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
+  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5));
+  color: var(--glass-icon-color, var(--text-main));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.dock-action-btn svg {
+  display: block;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+  stroke: currentColor;
+}
+
+.dock-action-btn:hover {
+  background: var(--glass-bg-hover, rgba(255, 255, 255, 0.65));
+  border-color: var(--glass-border-hover, rgba(255, 255, 255, 0.55));
+  box-shadow: var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7));
+  filter: brightness(1.08);
+  backdrop-filter: blur(14px) saturate(190%);
+  -webkit-backdrop-filter: blur(14px) saturate(190%);
+  transform: scale(1.08);
+}
+
+.dock-action-btn:active {
+  transform: scale(0.94);
+}
+
+/* -----------------------------------------------------------------------
+   Apple Books unified capsule progress scrubber
+   ----------------------------------------------------------------------- */
+
+/* Dolní široká pilulka - Kapsle posuvníku celé knihy */
+.dock-action-btn-wide,
+.pill-scrubber-capsule {
+  width: 100%;
+  height: 38px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0;
+  box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.dock-action-btn-wide:hover,
+.pill-scrubber-capsule:hover {
+  transform: scale(1.02);
+}
+
+.pill-scrubber-capsule.is-scrubbing {
+  transform: scale(1.02) !important;
+  cursor: grabbing;
+}
+
+.pill-scrubber-capsule:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+/* Skrytí horní řady tlačítek během tažení posuvníku */
+.reader-floating-dock.is-scrubbing .action-cluster-top-row {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px) scale(0.96);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+/* Plnohodnotná výplň průběhu čtení – roste od levého okraje */
+.pill-scrubber-progress-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  height: 100%;
+  width: 0%;
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+  transition: width 0.15s ease;
+  will-change: width;
+}
+
+[data-theme="dark"] .pill-scrubber-progress-fill,
+[data-theme="oled"] .pill-scrubber-progress-fill {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+[data-theme="sepia"] .pill-scrubber-progress-fill,
+[data-theme="warm"] .pill-scrubber-progress-fill {
+  background: rgba(56, 43, 32, 0.14);
+}
+
+.pill-scrubber-capsule.is-scrubbing .pill-scrubber-progress-fill {
+  transition: none !important;
+}
+
+/* Vrstva nad výplní: popisek vlevo + ikona obsahu vpravo */
+.pill-scrubber-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px 0 16px;
+  z-index: 2;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+/* Popisek: "Obsah • 58 %" */
+.pill-scrubber-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--glass-icon-color, var(--text-main));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  letter-spacing: 0.01em;
+}
+
+/* Fixní tlačítko obsahu vpravo */
+.pill-scrubber-menu-btn {
+  flex-shrink: 0;
+  pointer-events: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--glass-icon-color, var(--text-main));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  transition: opacity 0.15s ease;
+}
+
+.pill-scrubber-menu-btn:hover {
+  opacity: 0.75;
+}
+
+.pill-scrubber-menu-btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+  border-radius: 50%;
+}
+
+.pill-scrubber-menu-btn svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  pointer-events: none;
+}
+
+/* Plovoucí liquid-glass tooltip přímo nad pilulkou */
+.pill-scrubber-tooltip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.75));
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.4));
+  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.6));
+  color: var(--glass-icon-color, var(--text-main));
+  padding: 7px 14px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1300;
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  transform-origin: bottom right;
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.18s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(340px, calc(100vw - 32px));
+  box-sizing: border-box;
+}
+
+.pill-scrubber-tooltip.is-hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transform: translateY(6px) scale(0.92) !important;
+  pointer-events: none !important;
+}
+
+.pill-scrubber-tooltip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dock-action-label {
+  display: none !important;
 }

@@ -57,6 +57,7 @@ class LuminaApp {
     this.applySettings();
     this.bindEvents();
     this.initScrubber();
+    this.initPillScrubber();
     this.bindKeyboardShortcuts();
 
     // Načíst knihy z IndexedDB
@@ -139,6 +140,11 @@ class LuminaApp {
       btnMenuSettings: document.getElementById("btn-menu-settings"),
       btnMenuStats: document.getElementById("btn-menu-stats"),
       btnMenuToc: document.getElementById("btn-menu-toc"),
+      pillScrubberContainer: document.getElementById("pill-scrubber-container"),
+      pillScrubberFill: document.getElementById("pill-scrubber-fill"),
+      pillScrubberLabel: document.getElementById("pill-scrubber-label"),
+      pillScrubberTooltip: document.getElementById("pill-scrubber-tooltip"),
+      pillScrubberTooltipText: document.getElementById("pill-scrubber-tooltip-text"),
       btnMenuSearch: document.getElementById("btn-menu-search"),
       btnBackToLibrary: document.getElementById("btn-back-library"),
       btnToggleToc: document.getElementById("btn-toggle-toc"),
@@ -177,8 +183,6 @@ class LuminaApp {
       sliderPageMargin: document.getElementById("slider-page-margin"),
       valPageMargin: document.getElementById("val-page-margin"),
       columnSelects: document.querySelectorAll("[data-columns]"),
-      pageTransitionSelects: document.querySelectorAll("[data-page-transition]"),
-      pageTransitionControl: document.getElementById("page-transition-control"),
       sliderLineHeight: document.getElementById("slider-line-height"),
       valLineHeight: document.getElementById("val-line-height"),
       sliderLetterSpacing: document.getElementById("slider-letter-spacing"),
@@ -323,54 +327,20 @@ class LuminaApp {
 
   getExactColumnStep() {
     if (!this.dom.pagedStage || !this.dom.readerContent) {
-      return { stageWidth: 700, gap: 50, exactStep: 750, columnWidth: 700 };
+      return { stageWidth: 700, gap: 50, exactStep: 750 };
     }
-
-    // 1. Přesná geometrie vnitřního obsahu jeviště bez okrajů (border a padding)
     const stageRect = this.dom.pagedStage.getBoundingClientRect();
-    const compStage = window.getComputedStyle(this.dom.pagedStage);
-    const borderLeft = parseFloat(compStage.borderLeftWidth) || 0;
-    const borderRight = parseFloat(compStage.borderRightWidth) || 0;
-    const paddingLeft = parseFloat(compStage.paddingLeft) || 0;
-    const paddingRight = parseFloat(compStage.paddingRight) || 0;
-    const stageContentWidth = Math.max(0, stageRect.width - borderLeft - borderRight - paddingLeft - paddingRight);
+    const stageWidth = stageRect.width;
 
-    // 2. Skutečná mezera mezi sloupci z layout kontejneru
-    const compContent = window.getComputedStyle(this.dom.readerContent);
-    const colGap = parseFloat(compContent.columnGap);
-    const gap = (!isNaN(colGap) && colGap >= 0) ? colGap : (this.pageGap || 50);
+    const comp = getComputedStyle(this.dom.readerContent);
+    const colGap = parseFloat(comp.columnGap);
+    const gap = (!isNaN(colGap) && colGap > 0) ? colGap : (this.pageGap || 50);
 
-    // 3. Rozlišení 1 vs. 2 sloupcového režimu pro přesný krok na stránku
-    const effectiveCols = typeof this.resolveEffectiveColumnCount === "function"
-      ? this.resolveEffectiveColumnCount()
-      : (document.documentElement.classList.contains("columns-2") || document.body?.classList.contains("columns-2") ? 2 : 1);
-
-    let columnWidth = stageContentWidth;
-    let exactStep = stageContentWidth + gap;
-
-    if (effectiveCols === 2) {
-      columnWidth = Math.max(0, (stageContentWidth - gap) / 2);
-      // V režimu 2 sloupců jeden přechod stránky odpovídá 2 sloupcům + 2 mezerám
-      exactStep = stageContentWidth + gap;
-    } else {
-      columnWidth = stageContentWidth;
-      exactStep = stageContentWidth + gap;
-    }
-
-    // Synchronizace CSS proměnné pro absolutní shodu multi-column šířky s vypočítaným krokem
-    if (columnWidth > 0) {
-      const curColW = this.dom.readerContent.style.getPropertyValue("--reader-column-width");
-      const targetColW = `${columnWidth.toFixed(4)}px`;
-      if (curColW !== targetColW) {
-        this.dom.readerContent.style.setProperty("--reader-column-width", targetColW);
-      }
-    }
-
+    const exactStep = stageWidth + gap;
     return {
-      stageWidth: stageContentWidth,
+      stageWidth,
       gap,
-      exactStep,
-      columnWidth
+      exactStep
     };
   }
 
@@ -417,25 +387,6 @@ class LuminaApp {
       this.dom.columnSelects.forEach(btn => {
         btn.classList.toggle("active", btn.dataset.columns === curMode);
       });
-    }
-
-    // Přechod stránek
-    const pt = s.pageTransition || "slide";
-    document.documentElement.setAttribute("data-page-transition", pt);
-    if (this.dom.readerContainer) {
-      this.dom.readerContainer.setAttribute("data-page-transition", pt);
-    }
-    if (this.dom.pageTransitionSelects) {
-      this.dom.pageTransitionSelects.forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.pageTransition === pt);
-      });
-    }
-    if (this.dom.readerContent) {
-      if (pt === "instant") {
-        this.dom.readerContent.style.transition = "none";
-      } else if (!this._suppressSlideTransition) {
-        this.dom.readerContent.style.transition = "";
-      }
     }
 
     // Synchronizace formulářů v nastavení
@@ -636,6 +587,17 @@ class LuminaApp {
 
     this.dom.zoneTouchPrev.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+        this.closeFloatingDock();
+        e.preventDefault();
+        return;
+      }
+      if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
+        this.dom.rulerQuickPopover.classList.add("is-hidden");
+        if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+        e.preventDefault();
+        return;
+      }
       if (this.isUiOrOverlayEvent(e)) return;
       if (this.isNavigating || this.ruler?.isLineLocked) {
         e.preventDefault();
@@ -667,6 +629,17 @@ class LuminaApp {
 
     this.dom.zoneTouchNext.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+        this.closeFloatingDock();
+        e.preventDefault();
+        return;
+      }
+      if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
+        this.dom.rulerQuickPopover.classList.add("is-hidden");
+        if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+        e.preventDefault();
+        return;
+      }
       if (this.isUiOrOverlayEvent(e)) return;
       if (this.isNavigating || this.ruler?.isLineLocked) {
         e.preventDefault();
@@ -807,6 +780,11 @@ class LuminaApp {
 
       // 4. Běžné klepnutí (Tap) když je pravítko vypnuté
       if (absDeltaX < 15 && absDeltaY < 15) {
+        if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+          this.closeFloatingDock();
+          e.preventDefault();
+          return;
+        }
         if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
           return;
         }
@@ -821,6 +799,10 @@ class LuminaApp {
 
     // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
     this.dom.pagedViewport.addEventListener("click", (e) => {
+      if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+        this.closeFloatingDock();
+        return;
+      }
       if (this.isUiOrOverlayEvent(e)) return;
       if (this.isNavigating || this.ruler?.isLineLocked) return;
       if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
@@ -1228,10 +1210,9 @@ class LuminaApp {
           this.dom.readerFloatingDock.classList.remove("is-hidden");
           this.dom.btnReaderMenuFab.classList.add("active");
           this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "true");
+          this.updatePillScrubberUI();
         } else {
-          this.dom.readerFloatingDock.classList.add("is-hidden");
-          this.dom.btnReaderMenuFab.classList.remove("active");
-          this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "false");
+          this.closeFloatingDock();
         }
       });
 
@@ -1262,6 +1243,9 @@ class LuminaApp {
       this.dom.btnMenuToc.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
+        if (this.wasPillScrubbing) {
+          return;
+        }
         this.closeFloatingDock();
         this.toggleDrawer("toc");
       });
@@ -1276,23 +1260,27 @@ class LuminaApp {
       });
     }
 
-    document.addEventListener("click", (e) => {
+    const _handleOutsideTap = (e) => {
+      if (this.isPillScrubbing) return;
+      const target = (e.touches && e.touches[0]?.target) || (e.changedTouches && e.changedTouches[0]?.target) || e.target;
       if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
-        const insideRuler = (this.dom.rulerSplitPill && this.dom.rulerSplitPill.contains(e.target)) ||
-                            (this.dom.rulerBtnGroup && this.dom.rulerBtnGroup.contains(e.target));
+        const insideRuler = (this.dom.rulerSplitPill && this.dom.rulerSplitPill.contains(target)) ||
+                            (this.dom.rulerBtnGroup && this.dom.rulerBtnGroup.contains(target));
         if (!insideRuler) {
           this.dom.rulerQuickPopover.classList.add("is-hidden");
           if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
         }
       }
       if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
-        const insideDock = (this.dom.readerFloatingDock && this.dom.readerFloatingDock.contains(e.target)) ||
-                           (this.dom.btnReaderMenuFab && this.dom.btnReaderMenuFab.contains(e.target));
+        const insideDock = (this.dom.readerFloatingDock && this.dom.readerFloatingDock.contains(target)) ||
+                           (this.dom.btnReaderMenuFab && this.dom.btnReaderMenuFab.contains(target));
         if (!insideDock) {
           this.closeFloatingDock();
         }
       }
-    });
+    };
+    document.addEventListener("click", _handleOutsideTap);
+    document.addEventListener("touchend", _handleOutsideTap, { passive: true });
 
     if (this.dom.popoverRulerToggle) {
       this.dom.popoverRulerToggle.addEventListener("click", (e) => {
@@ -1544,19 +1532,6 @@ class LuminaApp {
               this.ruler?.applyPosition();
             });
           });
-        });
-      });
-    }
-
-    if (this.dom.pageTransitionSelects) {
-      this.dom.pageTransitionSelects.forEach(btn => {
-        btn.addEventListener("click", () => {
-          const mode = btn.dataset.pageTransition;
-          if (mode) {
-            this.settings.pageTransition = mode;
-            storage.saveSettings(this.settings);
-            this.applySettings();
-          }
         });
       });
     }
@@ -2451,7 +2426,6 @@ class LuminaApp {
       this.highlightActiveTocItem();
 
       // Reset transformace před měřením a okamžité změření rozložení
-      this._suppressSlideTransition = true;
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transition = "none";
         this.dom.readerContent.style.transform = "translateX(0px)";
@@ -2483,18 +2457,7 @@ class LuminaApp {
       } else {
         this.goToPage(0, 1);
       }
-
-      // Povolit plynulý posun po stabilizaci rozvržení nové kapitoly
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          this._suppressSlideTransition = false;
-          if (this.settings.pageTransition === "slide" && this.dom.readerContent) {
-            this.dom.readerContent.style.transition = "";
-          }
-        });
-      });
     } catch (e) {
-      this._suppressSlideTransition = false;
       this.isNavigating = false;
       this.isNavigatingPage = false;
       this.isLineLocked = false;
@@ -2682,15 +2645,12 @@ class LuminaApp {
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
     const { stageWidth, gap, exactStep } = this.getExactColumnStep();
     this.pageGap = gap;
-    // Výpočet cílového offsetu přímo ze základního indexu (targetOffset = pageIndex * exactStride)
-    const targetOffset = this.currentPageIndex * exactStep;
-    this.currentPageOffset = targetOffset;
+    const offset = this.currentPageIndex * exactStep;
 
     const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
     const direction = explicitDirection !== null
       ? explicitDirection
       : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
-    const isSlide = this.settings.pageTransition === "slide" && !this._suppressSlideTransition;
 
     // Post-navigation zámek pro debouncing syntetických gest a eventů na iPadu (WebKit)
     this.isNavigating = true;
@@ -2700,9 +2660,6 @@ class LuminaApp {
       this.ruler.isLineLocked = true;
       this.ruler.isNavigating = true;
       this.ruler.isNavigatingPage = true;
-      if (this.ruler.rulerEl && isSlide && isPageChanged) {
-        this.ruler.rulerEl.style.opacity = "0";
-      }
       if (direction >= 0) {
         this.ruler.activeLineIndex = 0;
         this.ruler.activeWordIndex = 0;
@@ -2721,12 +2678,9 @@ class LuminaApp {
           this.ruler.isNavigatingPage = false;
           this.ruler.isLineLocked = false;
           this.ruler.suppressLineAdvancement = false;
-          if (this.ruler.rulerEl) {
-            this.ruler.rulerEl.style.opacity = "";
-          }
         }
       }
-    }, 400); // 400ms maximum lock lifetime
+    }, 300); // 300ms maximum lock lifetime
 
     // Failsafe timeout pro zaručené odemčení navigačního zámku
     if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
@@ -2739,23 +2693,14 @@ class LuminaApp {
         this.ruler.isNavigatingPage = false;
         this.ruler.isLineLocked = false;
         this.ruler.suppressLineAdvancement = false;
-        if (this.ruler.rulerEl) {
-          this.ruler.rulerEl.style.opacity = "";
-        }
       }
       this.navigatingPageTimer = null;
-    }, isSlide && isPageChanged ? 350 : 200);
+    }, 200);
 
     try {
       if (this.dom.readerContent) {
-        if (!isSlide) {
-          this.dom.readerContent.style.transition = "none";
-          this.dom.readerContent.style.willChange = "auto";
-        } else {
-          this.dom.readerContent.style.transition = "";
-          this.dom.readerContent.style.willChange = "transform";
-        }
-        this.dom.readerContent.style.transform = `translateX(-${targetOffset}px)`;
+        this.dom.readerContent.style.transition = "none";
+        this.dom.readerContent.style.transform = `translateX(-${(this.currentPageIndex * exactStep).toFixed(3)}px)`;
       }
 
       // Měření postupu
@@ -2769,79 +2714,21 @@ class LuminaApp {
 
       // Aktualizace řádků pro pravítko na nové stránce s přesným směrem a detekcí změny
       try {
-        if (isSlide && isPageChanged && this.dom.readerContent) {
-          let synced = false;
-          const onTransEnd = (e) => {
-            if (e.target !== this.dom.readerContent || e.propertyName !== "transform") return;
-            this.dom.readerContent.removeEventListener("transitionend", onTransEnd);
-            if (!synced) {
-              synced = true;
-              clearTimeout(this._rulerSlideSyncTimer);
-              if (this.ruler?.rulerEl) {
-                this.ruler.rulerEl.style.opacity = "";
-              }
-              try {
-                this.ruler?.onPageChange(direction, isPageChanged);
-              } catch (rulerErr) {
-                console.error("[LuminaApp] Error updating ruler after transitionend:", rulerErr);
-              }
-            }
-          };
-          this.dom.readerContent.addEventListener("transitionend", onTransEnd);
-          clearTimeout(this._rulerSlideSyncTimer);
-          this._rulerSlideSyncTimer = setTimeout(() => {
-            this.dom.readerContent?.removeEventListener("transitionend", onTransEnd);
-            if (!synced) {
-              synced = true;
-              if (this.ruler?.rulerEl) {
-                this.ruler.rulerEl.style.opacity = "";
-              }
-              try {
-                this.ruler?.onPageChange(direction, isPageChanged);
-              } catch (rulerErr) {
-                console.error("[LuminaApp] Error updating ruler after slide timeout:", rulerErr);
-              }
-            }
-          }, 280);
-        } else {
-          if (this.ruler?.rulerEl) {
-            this.ruler.rulerEl.style.opacity = "";
-          }
-          this.ruler?.onPageChange(direction, isPageChanged);
-        }
+        this.ruler?.onPageChange(direction, isPageChanged);
       } catch (rulerErr) {
         console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
       }
     } catch (err) {
       console.error('Page navigation error:', err);
     } finally {
-      if (isSlide && isPageChanged) {
-        setTimeout(() => {
-          this.isNavigating = false;
-          this.isNavigatingPage = false;
-          this.isLineLocked = false;
-          if (this.ruler) {
-            this.ruler.isNavigating = false;
-            this.ruler.isNavigatingPage = false;
-            this.ruler.isLineLocked = false;
-            if (this.ruler.rulerEl) {
-              this.ruler.rulerEl.style.opacity = "";
-            }
-          }
-        }, 280);
-      } else {
-        // Synchronní uvolnění navigačního zámku ihned po vykreslení DOMu a změření řádků
-        this.isNavigating = false;
-        this.isNavigatingPage = false;
-        this.isLineLocked = false;
-        if (this.ruler) {
-          this.ruler.isNavigating = false;
-          this.ruler.isNavigatingPage = false;
-          this.ruler.isLineLocked = false;
-          if (this.ruler.rulerEl) {
-            this.ruler.rulerEl.style.opacity = "";
-          }
-        }
+      // Synchronní uvolnění navigačního zámku ihned po vykreslení DOMu a změření řádků
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      if (this.ruler) {
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
       }
     }
   }
@@ -3051,6 +2938,7 @@ class LuminaApp {
 
     this.updateEtrBadge();
     this.updateScrubberUI();
+    this.updatePillScrubberUI();
   }
 
 
@@ -3145,6 +3033,7 @@ class LuminaApp {
     this.closeDrawer("toc");
     this.closeDrawer("settings");
     this.closeStatsModal();
+    this.closeFloatingDock();
     document.body.classList.remove("immersive-reading");
     document.body.classList.remove("in-reader-view");
     document.body.classList.remove("reader-chrome-hidden");
@@ -3157,6 +3046,7 @@ class LuminaApp {
   showReaderView() {
     this.closeDrawer("toc");
     this.closeDrawer("settings");
+    this.closeFloatingDock();
     this.dom.viewLibrary.classList.add("is-hidden");
     this.dom.viewReader.classList.remove("is-hidden");
     document.body.classList.add("in-reader-view");
@@ -3477,10 +3367,7 @@ class LuminaApp {
     if (foundParent) {
       const rect = foundParent.getBoundingClientRect();
       const currentOffset = this.currentPageIndex * exactStep;
-      const compStage = window.getComputedStyle(this.dom.pagedStage);
-      const borderLeft = parseFloat(compStage.borderLeftWidth) || 0;
-      const paddingLeft = parseFloat(compStage.paddingLeft) || 0;
-      const relativeX = (rect.left - (stageRect.left + borderLeft + paddingLeft)) + currentOffset;
+      const relativeX = (rect.left - stageRect.left) + currentOffset;
       const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / exactStep)));
 
       this.goToPage(targetPage);
@@ -3783,7 +3670,6 @@ class LuminaApp {
       e.preventDefault();
 
       isScrubbing = true;
-      this._suppressSlideTransition = true;
       scrubber.classList.add("is-dragging");
 
       try {
@@ -3822,10 +3708,6 @@ class LuminaApp {
         pendingTargetPage = null;
         await this.goToBookPage(pageToNav);
       }
-
-      requestAnimationFrame(() => {
-        this._suppressSlideTransition = false;
-      });
     };
 
     scrubber.addEventListener("pointerdown", onPointerDown);
@@ -3857,6 +3739,158 @@ class LuminaApp {
       });
     }
   }
+
+  updatePillScrubberUI(customRatio = null, customTooltip = null) {
+    const metrics = this.getBookMetrics();
+    const totalPages = Math.max(1, metrics.totalBookPages);
+
+    let ratio = 0;
+    if (customRatio !== null) {
+      const norm = customRatio > 1 ? customRatio / 100 : customRatio;
+      ratio = Math.max(0, Math.min(1, norm));
+    } else if (totalPages > 1) {
+      ratio = Math.max(0, Math.min(1, (metrics.currBookPage - 1) / (totalPages - 1)));
+    }
+
+    const percent = Math.round(ratio * 100);
+
+    if (this.dom.pillScrubberFill) {
+      this.dom.pillScrubberFill.style.width = percent + "%";
+    }
+
+    if (this.dom.pillScrubberLabel) {
+      this.dom.pillScrubberLabel.textContent = "Obsah \u2022 " + percent + "\u00a0%";
+    }
+
+    const capsule = this.dom.pillScrubberContainer;
+    if (capsule) {
+      capsule.setAttribute("aria-valuemin", "1");
+      capsule.setAttribute("aria-valuemax", String(totalPages));
+      capsule.setAttribute("aria-valuenow", String(metrics.currBookPage));
+    }
+
+    if (this.dom.pillScrubberTooltipText && customTooltip) {
+      this.dom.pillScrubberTooltipText.textContent = customTooltip;
+    }
+  }
+
+
+  initPillScrubber() {
+    const capsule = this.dom.pillScrubberContainer;
+    if (!capsule) return;
+
+    let isPointerDown = false;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let pendingTargetPage = null;
+    const dragThreshold = 5;
+
+    const getRatioFromEvent = (e) => {
+      const rect = capsule.getBoundingClientRect();
+      const w = rect.width > 0 ? rect.width : 130;
+      return Math.max(0, Math.min(1, (e.clientX - rect.left) / w));
+    };
+
+    const updateOnDrag = (e) => {
+      const ratio = getRatioFromEvent(e);
+      const bookMetrics = this.getBookMetrics();
+      const totalPages = Math.max(1, bookMetrics.totalBookPages);
+      const targetPage = Math.max(1, Math.min(totalPages, Math.round(1 + ratio * (totalPages - 1))));
+      pendingTargetPage = targetPage;
+
+      const resolved = this.resolveBookPage(targetPage);
+      const tooltipText = `Strana ${resolved.targetBookPage} z ${resolved.totalBookPages} \u2022 ${resolved.chapterTitle}`;
+      this.updatePillScrubberUI(ratio, tooltipText);
+    };
+
+    capsule.addEventListener("pointerdown", (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      isPointerDown = true;
+      isDragging = false;
+      pendingTargetPage = null;
+      startX = e.clientX;
+      startY = e.clientY;
+      try { capsule.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+
+    capsule.addEventListener("pointermove", (e) => {
+      if (!isPointerDown) return;
+      const dx = Math.abs(e.clientX - startX);
+      const dy = Math.abs(e.clientY - startY);
+
+      if (!isDragging && (dx > dragThreshold || dy > dragThreshold)) {
+        isDragging = true;
+        this.isPillScrubbing = true;
+        capsule.classList.add("is-scrubbing");
+        if (this.dom.readerFloatingDock) this.dom.readerFloatingDock.classList.add("is-scrubbing");
+        if (this.dom.pillScrubberTooltip) this.dom.pillScrubberTooltip.classList.remove("is-hidden");
+      }
+
+      if (isDragging) {
+        e.preventDefault();
+        e.stopPropagation();
+        updateOnDrag(e);
+      }
+    });
+
+    const onPointerEnd = async (e) => {
+      if (!isPointerDown) return;
+      const dx = Math.abs(e.clientX - startX);
+      const dy = Math.abs(e.clientY - startY);
+      const didDrag = isDragging;
+
+      isPointerDown = false;
+      isDragging = false;
+      this.isPillScrubbing = false;
+
+      try { capsule.releasePointerCapture(e.pointerId); } catch (err) {}
+
+      capsule.classList.remove("is-scrubbing");
+      if (this.dom.readerFloatingDock) this.dom.readerFloatingDock.classList.remove("is-scrubbing");
+      if (this.dom.pillScrubberTooltip) this.dom.pillScrubberTooltip.classList.add("is-hidden");
+
+      if (didDrag) {
+        this.wasPillScrubbing = true;
+        setTimeout(() => { this.wasPillScrubbing = false; }, 120);
+        if (pendingTargetPage !== null) {
+          const pageToNav = pendingTargetPage;
+          pendingTargetPage = null;
+          await this.goToBookPage(pageToNav);
+        }
+      } else if (dx <= dragThreshold && dy <= dragThreshold) {
+        // Any tap on the capsule (not a drag) opens the TOC
+        this.wasPillScrubbing = true;
+        setTimeout(() => { this.wasPillScrubbing = false; }, 120);
+        this.closeFloatingDock();
+        this.toggleDrawer("toc");
+      }
+
+      pendingTargetPage = null;
+    };
+
+    capsule.addEventListener("pointerup", onPointerEnd);
+    capsule.addEventListener("pointercancel", onPointerEnd);
+
+    // Klávesové ovládání při fokusu posuvníku
+    capsule.addEventListener("keydown", async (e) => {
+      const metrics = this.getBookMetrics();
+      if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+        e.preventDefault(); e.stopPropagation();
+        await this.goToBookPage(metrics.currBookPage + 1);
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+        e.preventDefault(); e.stopPropagation();
+        await this.goToBookPage(metrics.currBookPage - 1);
+      } else if (e.key === "Home") {
+        e.preventDefault(); e.stopPropagation();
+        await this.goToBookPage(1);
+      } else if (e.key === "End") {
+        e.preventDefault(); e.stopPropagation();
+        await this.goToBookPage(metrics.totalBookPages);
+      }
+    });
+  }
+
 
   blobToDataUrl(blob) {
     return new Promise((resolve, reject) => {
