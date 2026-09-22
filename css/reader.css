@@ -143,8 +143,8 @@ body.columns-2 .paged-stage {
   word-break: break-word;
   hyphens: auto;
   -webkit-hyphens: auto;
-  transition: transform 0.20s cubic-bezier(0.2, 0.9, 0.3, 1);
-  will-change: transform;
+  transition: none;
+  will-change: auto;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -155,6 +155,19 @@ body.columns-2 .paged-content,
   column-width: calc((100% - var(--col-gap)) / 2) !important;
   column-count: 2 !important;
   column-gap: var(--col-gap) !important;
+}
+
+/* Režimy přechodu stránek (Page Transition Modes) */
+[data-page-transition="slide"] #reader-content,
+[data-page-transition="slide"] .paged-content {
+  transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+  will-change: transform;
+}
+
+[data-page-transition="instant"] #reader-content,
+[data-page-transition="instant"] .paged-content {
+  transition: none !important;
+  will-change: auto;
 }
 
 /* Bezpečnostní vnitřní lem sloupců (safety buffer) proti ořezu diakritiky, verzálek a kurzívy */
@@ -471,6 +484,7 @@ body.columns-2 .paged-content,
 }
 
 .ruler-split-pill.is-active .pill-action,
+#ruler-toggle-btn.is-active .pill-action,
 #btn-toggle-ruler.active {
   color: #2563eb;
   background: rgba(37, 99, 235, 0.12);

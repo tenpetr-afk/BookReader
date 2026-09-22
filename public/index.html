@@ -138,7 +138,7 @@
 
       <div class="footer-actions-group" id="footer-actions-group">
         <!-- Spojené tlačítko pravítka (Split-pill) -->
-        <div class="ruler-split-pill" id="ruler-split-pill">
+        <div class="ruler-split-pill" id="ruler-toggle-btn">
           <button id="btn-toggle-ruler" class="split-pill-btn pill-action" title="Zapnout/vypnout čtecí pravítko (klávesa R)" aria-label="Zapnout/vypnout pravítko">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 8.7 8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4z"/><path d="m14.5 3.5 2 2"/><path d="m11.5 6.5 2 2"/><path d="m8.5 9.5 2 2"/><path d="m5.5 12.5 2 2"/></svg>
           </button>
@@ -409,15 +409,13 @@
           </div>
         </div>
 
-        <!-- Apple Pencil – listování poklepáním -->
-        <div class="toggle-row" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
-          <div>
-            <span class="toggle-title">Listování poklepáním Apple Pencil</span>
-            <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0;">Dvojité poklepání Apple Pencil na obrazovku přechází na další stranu</p>
+        <!-- Přechod stránek -->
+        <div class="settings-group" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
+          <div class="settings-group-title">Přechod stránek</div>
+          <div class="popover-segmented-control" id="page-transition-control">
+            <button type="button" class="segment-btn active" data-page-transition="instant">Okamžitý</button>
+            <button type="button" class="segment-btn" data-page-transition="slide">Plynulý posun</button>
           </div>
-          <button type="button" role="switch" id="setting-pencil-doubletap" class="switch-control" aria-checked="true" aria-label="Listování poklepáním Apple Pencil">
-            <span class="switch-track"><span class="switch-thumb"></span></span>
-          </button>
         </div>
 
         <!-- Spodní lišta s postupem čtení -->
@@ -434,11 +432,14 @@
 
         <!-- NASTAVENÍ PRAVÍTKA (READING RULER) -->
         <div class="settings-group">
-          <div class="settings-group-title">Čtecí pravítko (Klávesa R)</div>
+          <div class="settings-group-title">Čtecí pravítko</div>
 
           <div class="toggle-row" style="margin-bottom: 0.75rem;">
-            <span class="toggle-title">Aktivovat pravítko</span>
-            <button type="button" role="switch" id="ruler-toggle-setting" class="switch-control" aria-checked="false" aria-label="Aktivovat pravítko">
+            <div>
+              <span class="toggle-title">Zobrazit ikonu pravítka v liště</span>
+              <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0;">Zobrazí rychlé ovládání pravítka v dolní liště</p>
+            </div>
+            <button type="button" role="switch" id="ruler-toggle-setting" class="switch-control is-checked active" aria-checked="true" aria-label="Zobrazit ikonu pravítka v liště">
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </button>
           </div>

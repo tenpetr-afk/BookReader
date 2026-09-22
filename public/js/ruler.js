@@ -221,7 +221,7 @@ export class ReadingRuler {
   isUiControl(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], [role='slider'], .btn, .btn-icon, .drawer-panel, .drawer, .drawer-backdrop, .modal-dialog, .modal-overlay, .paged-footer-bar, .reading-scrubber, .reader-header, .top-navbar, .ruler-btn-group, #ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, .ruler-quick-popover, .ruler-floating-controls, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group"
+      "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], [role='slider'], .btn, .btn-icon, .drawer-panel, .drawer, .drawer-backdrop, .modal-dialog, .modal-overlay, .paged-footer-bar, .reading-scrubber, .reader-header, .top-navbar, .ruler-btn-group, #ruler-toggle-btn, #ruler-split-pill, .ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, .ruler-quick-popover, .ruler-floating-controls, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group"
     );
   }
 
@@ -953,8 +953,16 @@ export class ReadingRuler {
               // individual lines must retain their true physical column coordinates so continuation
               // fragments across the column split (e.g. top of col 1) are never misassigned to col 0.
               const isBlock = /^(P|H[1-6]|LI|BLOCKQUOTE|DIV)$/.test(el.tagName);
-              const isMultiColumnBlock = (rect.left < stageCenterX - 30 && rect.right > stageCenterX + 30);
-              const useBlockBounds = isBlock && !isTwoColEarly && !isMultiColumnBlock;
+              // In two-column mode, a <p> can span across the column divider —
+              // suppress blockBounds only for those cross-column blocks so that
+              // individual line fragments keep their true column coordinates.
+              // In single-column mode, all full-width paragraphs naturally span
+              // the stage centre (isMultiColumnBlock would fire for nearly every
+              // paragraph), so we ALWAYS apply blockBounds in 1-col mode to ensure
+              // every fragment rect is anchored to the paragraph's true left/right
+              // and the geometric two-column detector isn't fed half-width fragments.
+              const isMultiColumnBlock = isTwoColEarly && (rect.left < stageCenterX - 30 && rect.right > stageCenterX + 30);
+              const useBlockBounds = isBlock && !isMultiColumnBlock;
               const blockLeft = useBlockBounds ? rect.left : null;
               const blockRight = useBlockBounds ? rect.right : null;
               for (let i = 0; i < rects.length; i++) {
@@ -969,12 +977,13 @@ export class ReadingRuler {
                   let lineLeft = r.left;
                   let lineRight = r.right;
                   if (useBlockBounds) {
-                    if (blockLeft != null && !(r.left >= stageCenterX - 15 && blockLeft < stageCenterX - 15)) {
-                      lineLeft = Math.min(lineLeft, blockLeft);
-                    }
-                    if (blockRight != null && !(r.right <= stageCenterX + 15 && blockRight > stageCenterX + 15)) {
-                      lineRight = Math.max(lineRight, blockRight);
-                    }
+                    // In 2-col mode only clamp to blockLeft/Right if the fragment
+                    // is in the same column as the block anchor edge.
+                    // In 1-col mode always clamp (sameLeftCol/sameRightCol = true).
+                    const sameLeftCol = !isTwoColEarly || !(r.left >= stageCenterX - 15 && blockLeft < stageCenterX - 15);
+                    const sameRightCol = !isTwoColEarly || !(r.right <= stageCenterX + 15 && blockRight > stageCenterX + 15);
+                    if (blockLeft != null && sameLeftCol) lineLeft = Math.min(lineLeft, blockLeft);
+                    if (blockRight != null && sameRightCol) lineRight = Math.max(lineRight, blockRight);
                   }
                   rawLines.push({
                     el,

@@ -195,6 +195,8 @@ export class StorageManager {
       pencilDoubleTapNavigation: true, // listování dvojitým poklepáním Apple Pencil
       showFooterBar: showProgressBar, // zobrazení spodní lišty čtečky (postup čtení, výchozí zapnuto)
       showProgressBar: showProgressBar,
+      showRulerButton: true, // zobrazení tlačítka pravítka v dolní liště
+      pageTransition: "instant", // instant, slide
       ruler: {
         enabled: false,
         mode: "highlight", // highlight, focus
@@ -223,7 +225,9 @@ export class StorageManager {
         merged.letterSpacing = parsed.letterSpacing !== undefined ? Number(parsed.letterSpacing) : 0;
         merged.wordSpacing = parsed.wordSpacing !== undefined ? Number(parsed.wordSpacing) : 0;
         merged.fastReading = !!parsed.fastReading;
-        merged.pencilDoubleTapNavigation = parsed.pencilDoubleTapNavigation !== false; // default true
+        merged.pencilDoubleTapNavigation = parsed.pencilDoubleTapNavigation !== false;
+        merged.showRulerButton = parsed.showRulerButton !== false;
+        merged.pageTransition = ["instant", "slide"].includes(parsed.pageTransition) ? parsed.pageTransition : "instant";
         if (localStorage.getItem('showProgressBar') !== null) {
           merged.showFooterBar = localStorage.getItem('showProgressBar') === 'true';
         } else if (parsed.showFooterBar !== undefined) {
