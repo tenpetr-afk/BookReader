@@ -2379,6 +2379,23 @@ class LuminaApp {
       this.showReaderView();
     }
 
+    // 1. Okamžitý reset indexu a transformace před načtením a vložením nového DOMu
+    if (targetPage !== "last") {
+      this.currentPageIndex = (typeof targetPage === "number") ? targetPage : (targetPage?.pageIndex ?? 0);
+      if (this.dom.readerContent) {
+        this.dom.readerContent.style.transition = "none";
+        this.dom.readerContent.style.transform = "translateX(0px)";
+      }
+    } else {
+      this.currentPageIndex = 0;
+    }
+
+    // 2. Vizuální skrytí během asynchronního přechodu (Visual Shielding)
+    if (this.dom.readerContent) {
+      this.dom.readerContent.style.transition = "none";
+      this.dom.readerContent.style.opacity = "0";
+    }
+
     this.isNavigating = true;
     this.isNavigatingPage = true;
     this.isLineLocked = true;
@@ -2451,12 +2468,6 @@ class LuminaApp {
       // Zvýraznění aktivní kapitoly v obsahu
       this.highlightActiveTocItem();
 
-      // Reset transformace před měřením a okamžité změření rozložení
-      if (this.dom.readerContent) {
-        this.dom.readerContent.style.transition = "none";
-        this.dom.readerContent.style.transform = "translateX(0px)";
-      }
-
       // Počkáme na stabilizaci fontů a obrázků před výpočtem rozložení stran
       await this.waitForContentReady();
 
@@ -2483,7 +2494,22 @@ class LuminaApp {
       } else {
         this.goToPage(0, 1);
       }
+
+      // 3. Obnovení viditelnosti po ukotvení cílové strany
+      if (this.dom.readerContent) {
+        void this.dom.readerContent.offsetWidth; // Vynutíme uplatnění cílové transformace před odhalením
+        this.dom.readerContent.style.opacity = "1";
+      }
+      requestAnimationFrame(() => {
+        if (this.dom.readerContent) {
+          this.dom.readerContent.style.transition = "";
+        }
+      });
     } catch (e) {
+      if (this.dom.readerContent) {
+        this.dom.readerContent.style.transition = "";
+        this.dom.readerContent.style.opacity = "1";
+      }
       this.isNavigating = false;
       this.isNavigatingPage = false;
       this.isLineLocked = false;
@@ -2510,6 +2536,10 @@ class LuminaApp {
     } finally {
       clearTimeout(chapterTimeout);
       clearTimeout(this._navSafetyTimer);
+      if (this.dom.readerContent && this.dom.readerContent.style.opacity === "0") {
+        this.dom.readerContent.style.transition = "";
+        this.dom.readerContent.style.opacity = "1";
+      }
       this.isNavigating = false;
       this.isNavigatingPage = false;
       this.isLineLocked = false;
@@ -2913,6 +2943,20 @@ class LuminaApp {
     if (!this.currentParser) return;
     const newIdx = this.currentChapterIndex + delta;
     if (newIdx >= 0 && newIdx < this.currentParser.spine.length) {
+      // Okamžité vizuální stínění a reset pozice při zahájení přechodu na jinou kapitolu
+      if (this.dom.readerContent) {
+        this.dom.readerContent.style.transition = "none";
+        this.dom.readerContent.style.opacity = "0";
+        if (targetPage !== "last") {
+          this.dom.readerContent.style.transform = "translateX(0px)";
+        }
+      }
+      if (targetPage !== "last") {
+        this.currentPageIndex = (typeof targetPage === "number") ? targetPage : (targetPage?.pageIndex ?? 0);
+      } else {
+        this.currentPageIndex = 0;
+      }
+
       await tracker.flushSession();
       this.currentChapterIndex = newIdx;
       await this.loadCurrentChapter(targetPage);
