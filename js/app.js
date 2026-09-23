@@ -2379,21 +2379,31 @@ class LuminaApp {
       this.showReaderView();
     }
 
+    // Phase 1 (Lock & Shield): Vizuální stínění během přechodu kapitoly
+    const stage = this.dom.pagedStage;
+    if (stage) {
+      stage.classList.add("is-chapter-loading");
+      stage.style.transition = "none";
+      stage.style.opacity = "0";
+    }
+    if (this.dom.readerContent) {
+      this.dom.readerContent.classList.add("is-chapter-loading");
+      this.dom.readerContent.style.transition = "none";
+      this.dom.readerContent.style.opacity = "0";
+    }
+
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.hideForPageTransition();
+    }
+
     // 1. Okamžitý reset indexu a transformace před načtením a vložením nového DOMu
     if (targetPage !== "last") {
       this.currentPageIndex = (typeof targetPage === "number") ? targetPage : (targetPage?.pageIndex ?? 0);
       if (this.dom.readerContent) {
-        this.dom.readerContent.style.transition = "none";
         this.dom.readerContent.style.transform = "translateX(0px)";
       }
     } else {
       this.currentPageIndex = 0;
-    }
-
-    // 2. Vizuální skrytí během asynchronního přechodu (Visual Shielding)
-    if (this.dom.readerContent) {
-      this.dom.readerContent.style.transition = "none";
-      this.dom.readerContent.style.opacity = "0";
     }
 
     this.isNavigating = true;
@@ -2473,40 +2483,61 @@ class LuminaApp {
 
       this.recalcPages();
 
+      let finalPageIndex = 0;
+      let navDirection = 1;
+
       if (targetPage === "last") {
-        this.goToPage(this.totalPagesInChapter - 1, -1);
+        finalPageIndex = Math.max(0, this.totalPagesInChapter - 1);
+        navDirection = -1;
       } else if (typeof targetPage === "object" && targetPage !== null) {
         if (typeof targetPage.pageIndex === "number" && targetPage.pageIndex >= 0) {
-          const targetIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, targetPage.pageIndex));
-          this.goToPage(targetIndex, targetIndex > 0 ? 1 : 0);
+          finalPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, targetPage.pageIndex));
         } else if (targetPage.ratio !== undefined) {
-          const targetIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.round(targetPage.ratio * (this.totalPagesInChapter - 1))));
-          this.goToPage(targetIndex, targetIndex > 0 ? 1 : 0);
+          finalPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.round(targetPage.ratio * (this.totalPagesInChapter - 1))));
         } else if (typeof targetPage.fallbackPage === "number") {
-          const targetIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, targetPage.fallbackPage));
-          this.goToPage(targetIndex, targetIndex > 0 ? 1 : 0);
-        } else {
-          this.goToPage(0, 1);
+          finalPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, targetPage.fallbackPage));
         }
+        navDirection = finalPageIndex > 0 ? 1 : 0;
       } else if (typeof targetPage === "number") {
-        const targetIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, targetPage));
-        this.goToPage(targetIndex, targetIndex > 0 ? 1 : 0);
-      } else {
-        this.goToPage(0, 1);
+        finalPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, targetPage));
+        navDirection = finalPageIndex > 0 ? 1 : 0;
       }
 
-      // 3. Obnovení viditelnosti po ukotvení cílové strany
+      // Phase 3 (Immediate Ruler Re-Indexing & Masking): Synchronní usazení a zamaskování
+      this.goToPage(finalPageIndex, navDirection, true);
+
+      // Pojistka synchronního refreshnutí a zamaskování pravítka pro cílovou stránku
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.resetPositionForPage(navDirection, true);
+      }
+
+      // Phase 4 (Reveal): Obnovení viditelnosti po ukotvení a zamaskování cílové strany
+      if (stage) {
+        stage.classList.remove("is-chapter-loading");
+        void stage.offsetWidth;
+        stage.style.opacity = "1";
+      }
       if (this.dom.readerContent) {
+        this.dom.readerContent.classList.remove("is-chapter-loading");
         void this.dom.readerContent.offsetWidth; // Vynutíme uplatnění cílové transformace před odhalením
         this.dom.readerContent.style.opacity = "1";
       }
       requestAnimationFrame(() => {
+        if (stage) {
+          stage.style.transition = "";
+        }
         if (this.dom.readerContent) {
           this.dom.readerContent.style.transition = "";
         }
       });
     } catch (e) {
+      if (stage) {
+        stage.classList.remove("is-chapter-loading");
+        stage.style.transition = "";
+        stage.style.opacity = "1";
+      }
       if (this.dom.readerContent) {
+        this.dom.readerContent.classList.remove("is-chapter-loading");
         this.dom.readerContent.style.transition = "";
         this.dom.readerContent.style.opacity = "1";
       }
@@ -2536,9 +2567,19 @@ class LuminaApp {
     } finally {
       clearTimeout(chapterTimeout);
       clearTimeout(this._navSafetyTimer);
-      if (this.dom.readerContent && this.dom.readerContent.style.opacity === "0") {
-        this.dom.readerContent.style.transition = "";
-        this.dom.readerContent.style.opacity = "1";
+      if (stage) {
+        stage.classList.remove("is-chapter-loading");
+        if (stage.style.opacity === "0") {
+          stage.style.transition = "";
+          stage.style.opacity = "1";
+        }
+      }
+      if (this.dom.readerContent) {
+        this.dom.readerContent.classList.remove("is-chapter-loading");
+        if (this.dom.readerContent.style.opacity === "0") {
+          this.dom.readerContent.style.transition = "";
+          this.dom.readerContent.style.opacity = "1";
+        }
       }
       this.isNavigating = false;
       this.isNavigatingPage = false;
@@ -2696,7 +2737,7 @@ class LuminaApp {
     this.updatePageUI();
   }
 
-  goToPage(pageIndex, explicitDirection = null) {
+  goToPage(pageIndex, explicitDirection = null, immediateRuler = false) {
     const oldIndex = this.currentPageIndex;
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
     const { stageWidth, gap, exactStep } = this.getExactColumnStep();
@@ -2770,7 +2811,7 @@ class LuminaApp {
 
       // Aktualizace řádků pro pravítko na nové stránce s přesným směrem a detekcí změny
       try {
-        this.ruler?.onPageChange(direction, isPageChanged);
+        this.ruler?.onPageChange(direction, isPageChanged, immediateRuler);
       } catch (rulerErr) {
         console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
       }
@@ -2944,12 +2985,22 @@ class LuminaApp {
     const newIdx = this.currentChapterIndex + delta;
     if (newIdx >= 0 && newIdx < this.currentParser.spine.length) {
       // Okamžité vizuální stínění a reset pozice při zahájení přechodu na jinou kapitolu
+      const stage = this.dom.pagedStage;
+      if (stage) {
+        stage.classList.add("is-chapter-loading");
+        stage.style.transition = "none";
+        stage.style.opacity = "0";
+      }
       if (this.dom.readerContent) {
+        this.dom.readerContent.classList.add("is-chapter-loading");
         this.dom.readerContent.style.transition = "none";
         this.dom.readerContent.style.opacity = "0";
         if (targetPage !== "last") {
           this.dom.readerContent.style.transform = "translateX(0px)";
         }
+      }
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.hideForPageTransition();
       }
       if (targetPage !== "last") {
         this.currentPageIndex = (typeof targetPage === "number") ? targetPage : (targetPage?.pageIndex ?? 0);

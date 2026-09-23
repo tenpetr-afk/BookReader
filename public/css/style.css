@@ -1597,6 +1597,50 @@ body.settings-sheet-open .drawer-backdrop {
   overflow: visible !important;
 }
 
+/* Focus Mode: dimming neaktivních obrázků a ilustrací */
+body.ruler-active.ruler-mode-focus #reader-content img,
+body.ruler-active.ruler-mode-focus #reader-content .chapter-illustration,
+body.ruler-active.ruler-mode-focus #reader-content svg,
+.paged-stage.focus-active #reader-content img,
+.paged-stage.focus-active #reader-content .chapter-illustration,
+.paged-stage.focus-active #reader-content svg,
+.focus-active img,
+.focus-active .chapter-illustration,
+.focus-active svg {
+  opacity: 0.25;
+  filter: brightness(0.7);
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+/* Active state (focused by ruler): plně rozsvíceno */
+body.ruler-active.ruler-mode-focus #reader-content img.active-focus,
+body.ruler-active.ruler-mode-focus #reader-content .chapter-illustration.active-focus,
+body.ruler-active.ruler-mode-focus #reader-content svg.active-focus,
+body.ruler-active.ruler-mode-focus #reader-content .ruler-focused-image,
+.paged-stage.focus-active #reader-content img.active-focus,
+.paged-stage.focus-active #reader-content .chapter-illustration.active-focus,
+.paged-stage.focus-active #reader-content svg.active-focus,
+.paged-stage.focus-active #reader-content .ruler-focused-image,
+.focus-active img.active-focus,
+.focus-active .chapter-illustration.active-focus,
+.focus-active svg.active-focus,
+.focus-active .ruler-focused-image {
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+/* Chapter Transition Shield: eliminace probliknutí 100% jasu při přechodu kapitol v režimu focus */
+.paged-stage.is-chapter-loading,
+.paged-stage.is-chapter-loading #reader-content,
+#reader-content.is-chapter-loading,
+body.ruler-active.ruler-mode-focus .paged-stage.is-chapter-loading,
+body.ruler-active.ruler-mode-focus .paged-stage.is-chapter-loading #reader-content,
+body.ruler-active.ruler-mode-focus #reader-content.is-chapter-loading {
+  opacity: 0 !important;
+  transition: none !important;
+}
+
+
 /* ==========================================================================
    SPODNÍ LIŠTA S POSUVNÍKEM ČTENÍ (E-READER PROGRESS SCRUBBER BAR)
    ========================================================================== */

@@ -1205,12 +1205,25 @@ body:not(.in-reader-view) .paged-stage.focus-active {
   mask-image: none !important;
 }
 
-/* Multimediální elementy a ilustrace v režimu Focus Mode zůstávají vždy 100% kontrastní a netknuté */
+/* Multimediální elementy a ilustrace v režimu Focus Mode: neaktivní stav ztmaven, aktivní zaostřen */
 .paged-stage.focus-active img,
 .paged-stage.focus-active svg,
 .paged-stage.focus-active figure,
 .paged-stage.focus-active picture,
-.paged-stage.focus-active canvas {
+.paged-stage.focus-active canvas,
+.paged-stage.focus-active .chapter-illustration {
+  opacity: 0.25;
+  filter: brightness(0.7);
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+.paged-stage.focus-active img.active-focus,
+.paged-stage.focus-active svg.active-focus,
+.paged-stage.focus-active figure.active-focus,
+.paged-stage.focus-active picture.active-focus,
+.paged-stage.focus-active canvas.active-focus,
+.paged-stage.focus-active .chapter-illustration.active-focus,
+.paged-stage.focus-active .ruler-focused-image {
   opacity: 1 !important;
   filter: none !important;
 }
