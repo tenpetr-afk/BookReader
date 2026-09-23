@@ -198,6 +198,7 @@ class LuminaApp {
       rulerToggle: document.getElementById("ruler-toggle-setting"),
       rulerSnapSetting: document.getElementById("ruler-snap-setting"),
       rulerWordTrackingSetting: document.getElementById("ruler-word-tracking-setting"),
+      settingPencilFlick: document.getElementById("setting-pencil-flick"),
       rulerAutoHeightSetting: document.getElementById("ruler-auto-height-setting"),
       settingRulerHeightContainer: document.getElementById("setting-ruler-height-container"),
       rulerModeSelects: document.querySelectorAll("[data-ruler-mode]"),
@@ -292,6 +293,17 @@ class LuminaApp {
         this.prevPage();
       }
     };
+
+    // Rychlé švihnutí stylusu (Apple Pencil Flick Gesture) pro okamžité otočení strany
+    this.ruler.onPenFlick = (dir) => {
+      if (this.isAnyModalOrMenuOpen()) return;
+      if (dir > 0) {
+        this.nextPage();
+      } else if (dir < 0) {
+        this.prevPage();
+      }
+    };
+    this.ruler.setPenFlickEnabled(this.settings.pencilFlickNavigation !== false);
 
     const isInReader = !this.dom.viewReader.classList.contains("is-hidden");
     const showRuler = this.settings.showRulerButton !== false;
@@ -431,6 +443,7 @@ class LuminaApp {
     }
     if (this.dom.rulerSnapSetting) this.setSwitchState(this.dom.rulerSnapSetting, true);
     this.setSwitchState(this.dom.rulerWordTrackingSetting, s.ruler.wordTracking ?? false);
+    if (this.dom.settingPencilFlick) this.setSwitchState(this.dom.settingPencilFlick, this.settings.pencilFlickNavigation !== false);
     if (this.dom.rulerAutoHeightSetting) this.setSwitchState(this.dom.rulerAutoHeightSetting, true);
     this.updateRulerHeightUI();
     if (this.dom.sliderRulerOpacity) {
@@ -1592,6 +1605,18 @@ class LuminaApp {
       });
     }
 
+    if (this.dom.settingPencilFlick) {
+      this.dom.settingPencilFlick.addEventListener("click", () => {
+        const nextVal = !(this.settings.pencilFlickNavigation !== false);
+        this.settings.pencilFlickNavigation = nextVal;
+        this.setSwitchState(this.dom.settingPencilFlick, nextVal);
+        if (this.ruler) {
+          this.ruler.setPenFlickEnabled(nextVal);
+        }
+        storage.saveSettings(this.settings);
+      });
+    }
+
     this.dom.rulerModeSelects.forEach(btn => {
       btn.addEventListener("click", () => {
         this.settings.ruler.mode = btn.dataset.rulerMode;
@@ -1954,6 +1979,7 @@ class LuminaApp {
     if (this.dom.popoverRulerToggle) this.setSwitchState(this.dom.popoverRulerToggle, isEnabled);
     if (this.dom.rulerToggle) this.setSwitchState(this.dom.rulerToggle, this.settings.showRulerButton !== false);
     if (this.dom.rulerWordTrackingSetting) this.setSwitchState(this.dom.rulerWordTrackingSetting, !!this.settings.ruler.wordTracking);
+    if (this.dom.settingPencilFlick) this.setSwitchState(this.dom.settingPencilFlick, this.settings.pencilFlickNavigation !== false);
 
     const showRuler = this.settings.showRulerButton !== false;
     const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;

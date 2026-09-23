@@ -193,6 +193,7 @@ export class StorageManager {
       readingMode: "scroll", // scroll, paginated
       fastReading: false, // Bionic reading (zvýraznění prvních písmen slov)
       pencilDoubleTapNavigation: true, // listování dvojitým poklepáním Apple Pencil
+      pencilFlickNavigation: true, // listování švihnutím stylusu (Apple Pencil flick gesture)
       showFooterBar: showProgressBar, // zobrazení spodní lišty čtečky (postup čtení, výchozí zapnuto)
       showProgressBar: showProgressBar,
       showRulerButton: true, // zobrazení tlačítka pravítka v dolní liště
@@ -225,6 +226,7 @@ export class StorageManager {
         merged.wordSpacing = parsed.wordSpacing !== undefined ? Number(parsed.wordSpacing) : 0;
         merged.fastReading = !!parsed.fastReading;
         merged.pencilDoubleTapNavigation = parsed.pencilDoubleTapNavigation !== false;
+        merged.pencilFlickNavigation = parsed.pencilFlickNavigation !== false;
         merged.showRulerButton = parsed.showRulerButton !== false;
         if (localStorage.getItem('showProgressBar') !== null) {
           merged.showFooterBar = localStorage.getItem('showProgressBar') === 'true';

@@ -88,6 +88,14 @@ export class ReadingRuler {
     this.lastSwipeTime = 0;
     this.onBoundary = null;
     this.onSwipe = null;
+    // Apple Pencil Flick Gestures (Listování švihnutím stylusu bez opuštění toku textu)
+    this.penFlickEnabled = true;
+    this.penHistory = []; // Posuvné okno vzorků: [{ x, y, time }]
+    this.flickHandledInStroke = false;
+    this.lastFlickNavigationTime = 0;
+    this.flickNavigationCooldown = 450; // ms (approx. 400–500 ms)
+    this.flickResyncTopLine = false;
+    this.onPenFlick = null;
     this.horizontalWordTransition = false;
     this.isWordTransitioning = false;
     this.wordTransitionTimer = null;
@@ -278,6 +286,139 @@ export class ReadingRuler {
   }
 
   /**
+   * Nastaví povolení/zakázání švihnutí Apple Pencil pro listování stránek.
+   */
+  setPenFlickEnabled(enabled) {
+    this.penFlickEnabled = !!enabled;
+  }
+
+  /**
+   * Okamžitě resynchronizuje pravítko na první (horní) řádek stránky.
+   */
+  resyncToTopLine() {
+    this.resetPositionForPage(1);
+  }
+
+  /**
+   * Detekuje rychlé švihnutí stylusu (Apple Pencil Flick Gesture).
+   * Kritéria:
+   * - Posuvné okno vzorků za posledních 100–150 ms (časový rozsah 30–150 ms)
+   * - Horizontální posun: deltaX < -60 px (další strana) nebo deltaX > 60 px (předchozí strana)
+   * - Rychlost: |deltaX| / deltaT > 0.6 px/ms
+   * - Vertikální odchylka (minimal vertical deviation): |deltaY| < 35 px
+   * - Ochrana proti návratovému pohybu řádku (Return sweep protection): maximální vertikální rozkmit dráhy < 35 px
+   * - Gesto probíhá v čtecí oblasti a ne na prvcích UI
+   * - Cooldown cca 450 ms proti vícenásobnému přeskakování
+   */
+  detectPenFlick(clientX, clientY, now) {
+    if (!this.penFlickEnabled) return null;
+    if (this.flickHandledInStroke) return null;
+
+    // Cooldown proti vícenásobnému přeskakování stránek (400–500 ms)
+    if (Date.now() - this.lastFlickNavigationTime < this.flickNavigationCooldown) {
+      return null;
+    }
+
+    // Gesto musí probíhat uvnitř čtecí oblasti knihy
+    if (!this.isPointerInStage(clientX, clientY)) {
+      return null;
+    }
+
+    const readerView = document.getElementById("view-reader");
+    if (readerView && readerView.classList.contains("is-hidden")) {
+      return null;
+    }
+
+    if (this.penHistory.length < 2) return null;
+
+    // Ochrana proti návratovému pohybu řádku (Return sweep protection):
+    // Pokud celkový vertikální rozkmit v okně dosáhne či překročí 35 px, jedná se o diagonální přechod mezi řádky
+    let windowMinY = clientY;
+    let windowMaxY = clientY;
+    for (let k = 0; k < this.penHistory.length; k++) {
+      const py = this.penHistory[k].y;
+      if (py < windowMinY) windowMinY = py;
+      if (py > windowMaxY) windowMaxY = py;
+    }
+    if ((windowMaxY - windowMinY) >= 35) {
+      return null;
+    }
+
+    // Procházíme body v posuvném okně (30 ms až 150 ms zpět)
+    for (let i = 0; i < this.penHistory.length - 1; i++) {
+      const p0 = this.penHistory[i];
+      const deltaT = now - p0.time;
+
+      // Hledáme v časovém okně 30 až 150 ms
+      if (deltaT < 30 || deltaT > 150) continue;
+
+      const deltaX = clientX - p0.x;
+      const deltaY = clientY - p0.y;
+      const absDeltaX = Math.abs(deltaX);
+      const absDeltaY = Math.abs(deltaY);
+
+      // Posun musí být alespoň 60 px v horizontální ose
+      if (absDeltaX < 60) continue;
+
+      // Vertikální odchylka koncového bodu musí být přísně omezena (< 35 px)
+      if (absDeltaY >= 35) continue;
+
+      // Rychlost musí přesáhnout 0.6 px/ms
+      const velocity = absDeltaX / deltaT;
+      if (velocity <= 0.6) continue;
+
+      // Ochrana proti návratovému pohybu řádku (Return sweep protection):
+      // Zkontrolujeme maximální vertikální rozkmit dráhy v daném časovém úseku
+      let minY = Math.min(p0.y, clientY);
+      let maxY = Math.max(p0.y, clientY);
+      for (let j = i + 1; j < this.penHistory.length; j++) {
+        const py = this.penHistory[j].y;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+      }
+      if ((maxY - minY) >= 35) continue;
+
+      // Výchozí bod gesta musel také ležet v čtecí oblasti
+      if (!this.isPointerInStage(p0.x, p0.y)) continue;
+
+      // Validní flick detekován:
+      // Forward Flick (Next Page): deltaX < -60 px
+      // Backward Flick (Previous Page): deltaX > 60 px
+      const direction = deltaX < 0 ? 1 : -1;
+      return {
+        direction,
+        deltaX,
+        deltaY,
+        deltaT,
+        velocity
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Spustí navigační akci po detekci švihnutí Apple Pencil
+   */
+  triggerPenFlick(flick) {
+    this.flickHandledInStroke = true;
+    this.lastFlickNavigationTime = Date.now();
+    this.flickResyncTopLine = true;
+
+    // 1. Zrušit plánované přemístění pravítka pro tento tah, aby nedošlo k vizuálnímu poskočení
+    this.rafPointerPending = false;
+    this.cancelHold(false);
+    this.isLineLocked = true;
+
+    // 2. Předat událost do aplikace pro otočení stránky
+    if (typeof this.onPenFlick === "function") {
+      this.onPenFlick(flick.direction);
+    } else if (typeof this.onSwipe === "function") {
+      this.onSwipe(flick.direction);
+    }
+  }
+
+  /**
    * Plynulá aktualizace pozice pravítka synchronizovaná s obnovovací frekvencí displeje (120Hz ProMotion)
    */
   schedulePointerUpdate(clientX, clientY, pointerType = "mouse") {
@@ -436,6 +577,17 @@ export class ReadingRuler {
   attachEvents() {
     // 1. POINTER EVENTS: Sjednocené sledování pro prst, Apple Pencil i myš
     const onPointerDown = (e) => {
+      if (e.pointerType === "pen") {
+        this.lastPenTime = Date.now();
+        this.isPenTouching = true;
+        this.savePenDetails(e);
+        if (this.penFlickEnabled) {
+          const now = performance.now();
+          this.penHistory = [{ x: e.clientX, y: e.clientY, time: now }];
+          this.flickHandledInStroke = false;
+        }
+      }
+
       if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
       if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
         this.holdStartTime = 0;
@@ -445,12 +597,6 @@ export class ReadingRuler {
 
       // Pro myš na PC vyžadujeme výhradně stisknuté levé tlačítko (button === 0)
       if (e.pointerType === "mouse" && e.button !== 0) return;
-
-      if (e.pointerType === "pen") {
-        this.lastPenTime = Date.now();
-        this.isPenTouching = true;
-        this.savePenDetails(e);
-      }
 
       if (this.followMode === "mouse") {
         if (e.pointerType === "touch") return;
@@ -469,12 +615,35 @@ export class ReadingRuler {
     };
 
     const onPointerMove = (e) => {
-      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
-
       if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
         this.savePenDetails(e);
+
+        if (this.penFlickEnabled) {
+          if (this.flickHandledInStroke) {
+            // Aktuální tah již aktivoval švihnutí – zablokovat přemístění pravítka pro zbytek tohoto tahu
+            return;
+          }
+
+          const now = performance.now();
+          this.penHistory.push({ x: e.clientX, y: e.clientY, time: now });
+
+          // Posuvné okno vzorků za posledních 150 ms
+          while (this.penHistory.length > 0 && (now - this.penHistory[0].time > 150)) {
+            this.penHistory.shift();
+          }
+
+          if (!this.isNavigating && !this.isNavigatingPage && Date.now() >= this.navigatingPageLockoutEndTime) {
+            const flick = this.detectPenFlick(e.clientX, e.clientY, now);
+            if (flick) {
+              this.triggerPenFlick(flick);
+              return;
+            }
+          }
+        }
       }
+
+      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
 
       // Pokud běží aktivní držení, zkontrolujeme prahový posun (tolerance 10px)
       if (this.isHoldActive) {
@@ -499,6 +668,23 @@ export class ReadingRuler {
     };
 
     const onPointerUp = (e) => {
+      if (e.pointerType === "pen") {
+        this.lastPenTime = Date.now();
+        this.isPenTouching = false;
+        this.dragCooldownEndTime = Date.now() + 350;
+
+        if (this.penFlickEnabled && !this.flickHandledInStroke && !this.isNavigating && !this.isNavigatingPage && Date.now() >= this.navigatingPageLockoutEndTime) {
+          const now = performance.now();
+          const flick = this.detectPenFlick(e.clientX, e.clientY, now);
+          if (flick) {
+            this.triggerPenFlick(flick);
+          }
+        }
+
+        this.penHistory = [];
+        this.flickHandledInStroke = false;
+      }
+
       if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
         this.cancelHold(false);
         this.isDraggingRuler = false;
@@ -509,9 +695,7 @@ export class ReadingRuler {
       if (this.followMode === "mouse") {
         if (e.pointerType === "touch") return;
         if (e.pointerType === "pen") {
-          this.lastPenTime = Date.now();
-          this.isPenTouching = false;
-          this.dragCooldownEndTime = Date.now() + 350;
+          return;
         }
         return;
       }
@@ -590,6 +774,8 @@ export class ReadingRuler {
     };
 
     const onPointerCancel = () => {
+      this.penHistory = [];
+      this.flickHandledInStroke = false;
       if (this.isHoldActive) {
         this.cancelHold(false);
       }
@@ -3261,10 +3447,15 @@ export class ReadingRuler {
     this.rulerEl?.classList.remove("is-page-transitioning");
 
     // Okamžité synchronní usazení pravítka na nové stránce podle směru listování
-    this.resetPositionForPage(direction);
+    // Pro švihnutí stylusu vždy resynchronizovat na horní řádek příchozí stránky
+    const targetDirection = this.flickResyncTopLine ? 1 : direction;
+    this.flickResyncTopLine = false;
+    this.resetPositionForPage(targetDirection);
   }
 
   destroy() {
+    this.penHistory = [];
+    this.flickHandledInStroke = false;
     if (this._navSafetyTimer) {
       clearTimeout(this._navSafetyTimer);
       this._navSafetyTimer = null;
