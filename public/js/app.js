@@ -2737,7 +2737,7 @@ class LuminaApp {
     this.updatePageUI();
   }
 
-  goToPage(pageIndex, explicitDirection = null, immediateRuler = false) {
+  goToPage(pageIndex, explicitDirection = null, immediateRuler = true) {
     const oldIndex = this.currentPageIndex;
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
     const { stageWidth, gap, exactStep } = this.getExactColumnStep();
@@ -2748,6 +2748,13 @@ class LuminaApp {
     const direction = explicitDirection !== null
       ? explicitDirection
       : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
+
+    const stage = this.dom.pagedStage;
+    if (isPageChanged) {
+      if (stage) stage.classList.add("is-turning-page");
+      if (this.dom.readerContent) this.dom.readerContent.classList.add("is-turning-page");
+      document.body.classList.add("is-turning-page");
+    }
 
     // Post-navigation zámek pro debouncing syntetických gest a eventů na iPadu (WebKit)
     this.isNavigating = true;
@@ -2770,6 +2777,9 @@ class LuminaApp {
         this.isNavigating = false;
         this.isNavigatingPage = false;
         this.isLineLocked = false;
+        if (stage) stage.classList.remove("is-turning-page");
+        if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
+        document.body.classList.remove("is-turning-page");
         if (this.ruler) {
           this.ruler.isNavigating = false;
           this.ruler.isNavigatingPage = false;
@@ -2785,6 +2795,9 @@ class LuminaApp {
       this.isNavigating = false;
       this.isNavigatingPage = false;
       this.isLineLocked = false;
+      if (stage) stage.classList.remove("is-turning-page");
+      if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
+      document.body.classList.remove("is-turning-page");
       if (this.ruler) {
         this.ruler.isNavigating = false;
         this.ruler.isNavigatingPage = false;
@@ -2815,6 +2828,12 @@ class LuminaApp {
       } catch (rulerErr) {
         console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
       }
+
+      requestAnimationFrame(() => {
+        if (stage) stage.classList.remove("is-turning-page");
+        if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
+        document.body.classList.remove("is-turning-page");
+      });
     } catch (err) {
       console.error('Page navigation error:', err);
     } finally {
@@ -2842,6 +2861,11 @@ class LuminaApp {
       return;
     }
     this.lastPageTurnTime = now;
+
+    const stage = this.dom.pagedStage;
+    if (stage) stage.classList.add("is-turning-page");
+    if (this.dom.readerContent) this.dom.readerContent.classList.add("is-turning-page");
+    document.body.classList.add("is-turning-page");
 
     this.isNavigating = true;
     this.isNavigatingPage = true;
@@ -2933,6 +2957,11 @@ class LuminaApp {
     }
     if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
     this.lastPageTurnTime = now;
+
+    const stage = this.dom.pagedStage;
+    if (stage) stage.classList.add("is-turning-page");
+    if (this.dom.readerContent) this.dom.readerContent.classList.add("is-turning-page");
+    document.body.classList.add("is-turning-page");
 
     this.isNavigating = true;
     this.isNavigatingPage = true;

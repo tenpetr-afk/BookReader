@@ -135,6 +135,12 @@ export class ReadingRuler {
   }
 
   lockAdvancement(duration = 350) {
+    const stage = this.getStageElement();
+    if (stage) stage.classList.add("is-turning-page");
+    document.body.classList.add("is-turning-page");
+    const content = document.getElementById("reader-content");
+    if (content) content.classList.add("is-turning-page");
+
     this.hideForPageTransition();
     this.pageTurnTimestamp = performance.now();
     this.suppressLineAdvancement = true;
@@ -2580,7 +2586,13 @@ export class ReadingRuler {
    * - direction >= 0 (vpřed / nová kapitola): přichytí na první řádek / první slovo (index 0)
    * - direction < 0 (vzad / konec kapitoly): přichytí na poslední řádek / poslední slovo
    */
-  resetPositionForPage(direction = 1, immediate = false) {
+  resetPositionForPage(direction = 1, immediate = true) {
+    const stage = this.getStageElement();
+    if (stage) stage.classList.add("is-turning-page");
+    document.body.classList.add("is-turning-page");
+    const content = document.getElementById("reader-content");
+    if (content) content.classList.add("is-turning-page");
+
     this.hideForPageTransition();
     this.disableWordTransition();
     this.setNoTransition(true);
@@ -2614,6 +2626,9 @@ export class ReadingRuler {
         this.isNavigatingPage = false;
         this.isLineLocked = false;
         this.suppressLineAdvancement = false;
+        if (stage) stage.classList.remove("is-turning-page");
+        document.body.classList.remove("is-turning-page");
+        if (content) content.classList.remove("is-turning-page");
       }
     }, 300); // 300ms maximum lock lifetime
 
@@ -2630,6 +2645,9 @@ export class ReadingRuler {
         this.isNavigatingPage = false;
         this.isLineLocked = false;
         this.isPageTransitioning = false;
+        if (stage) stage.classList.remove("is-turning-page");
+        document.body.classList.remove("is-turning-page");
+        if (content) content.classList.remove("is-turning-page");
         return;
       }
 
@@ -2649,7 +2667,9 @@ export class ReadingRuler {
             this.rulerEl.classList.remove("is-visible");
             this.rulerEl.classList.add("is-hidden");
           }
-          this.clearFocusTextMask();
+          if (this.mode !== "focus") {
+            this.clearFocusTextMask();
+          }
           return;
         }
 
@@ -2765,6 +2785,9 @@ export class ReadingRuler {
       }
 
       requestAnimationFrame(() => {
+        if (stage) stage.classList.remove("is-turning-page");
+        document.body.classList.remove("is-turning-page");
+        if (content) content.classList.remove("is-turning-page");
         this.setNoTransition(false);
       });
     };
@@ -3278,6 +3301,17 @@ export class ReadingRuler {
         }
       }
 
+      // Synchronizace tříd na řádky textu (reading lines)
+      const allLines = stage.querySelectorAll(".reading-line, .line-focused, .line-dimmed");
+      for (const l of allLines) {
+        l.classList.remove("line-focused", "active-focus");
+        l.classList.add("line-dimmed");
+      }
+      if (currentLine && currentLine.element && currentLine.element.classList) {
+        currentLine.element.classList.remove("line-dimmed");
+        currentLine.element.classList.add("line-focused", "active-focus");
+      }
+
       const stageRect = stage.getBoundingClientRect();
       const inactiveAlpha = Math.max(0.12, Math.min(0.65, Number((1 - this.dimOpacity).toFixed(2))));
 
@@ -3653,9 +3687,15 @@ export class ReadingRuler {
    * Vyvolá se při přechodu na jinou stránku nebo kapitolu.
    * Okamžitě a synchronně usadí pravítko na cílový řádek bez jakéhokoliv časovače či prodlevy.
    */
-  onPageChange(direction = 0, isPageChanged = true, immediate = false) {
+  onPageChange(direction = 0, isPageChanged = true, immediate = true) {
     if (!this.enabled) return;
     this.isLineLocked = true;
+
+    const stage = this.getStageElement();
+    if (stage) stage.classList.add("is-turning-page");
+    document.body.classList.add("is-turning-page");
+    const content = document.getElementById("reader-content");
+    if (content) content.classList.add("is-turning-page");
 
     clearTimeout(this._navSafetyTimer);
     this._navSafetyTimer = setTimeout(() => {
@@ -3665,6 +3705,9 @@ export class ReadingRuler {
         this.isNavigatingPage = false;
         this.isLineLocked = false;
         this.suppressLineAdvancement = false;
+        if (stage) stage.classList.remove("is-turning-page");
+        document.body.classList.remove("is-turning-page");
+        if (content) content.classList.remove("is-turning-page");
       }
     }, 300); // 300ms maximum lock lifetime
 
@@ -3680,7 +3723,6 @@ export class ReadingRuler {
       clearTimeout(this.pageChangeTimer);
       this.pageChangeTimer = null;
     }
-    const content = document.getElementById("reader-content");
     if (content && this._onTransitionEnd) {
       content.removeEventListener("transitionend", this._onTransitionEnd);
       this._onTransitionEnd = null;

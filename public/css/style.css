@@ -1640,6 +1640,39 @@ body.ruler-active.ruler-mode-focus #reader-content.is-chapter-loading {
   transition: none !important;
 }
 
+/* Page turning suppression: zamezí problikávání a přechodům při listování stran */
+.is-turning-page,
+.is-turning-page *,
+.is-turning-page .reading-line,
+.is-turning-page .line-focused,
+.is-turning-page .line-dimmed,
+.is-turning-page img,
+.is-turning-page svg,
+.is-turning-page figure,
+.is-turning-page picture,
+.is-turning-page canvas,
+.is-turning-page .chapter-illustration,
+.paged-stage.is-turning-page,
+.paged-stage.is-turning-page.focus-active,
+body.is-turning-page .paged-stage,
+body.is-turning-page .paged-stage.focus-active,
+body.is-turning-page .reading-ruler,
+body.is-turning-page .ruler-mask {
+  transition: none !important;
+  -webkit-transition: none !important;
+}
+
+.reading-line.line-focused {
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+.reading-line.line-dimmed {
+  opacity: 0.25;
+  filter: brightness(0.7);
+}
+
+
 
 /* ==========================================================================
    SPODNÍ LIŠTA S POSUVNÍKEM ČTENÍ (E-READER PROGRESS SCRUBBER BAR)
