@@ -717,7 +717,7 @@ class LuminaApp {
         isSwiping = false;
         return;
       }
-      if (this.isNavigating || this.ruler?.isLineLocked) {
+      if (this.isNavigating || this.ruler?.isLineLocked || (Date.now() - lastSwipeTime < 450) || (Date.now() - (this.ruler?.lastSwipeTime || 0) < 450)) {
         isSwiping = false;
         return;
       }
@@ -739,13 +739,22 @@ class LuminaApp {
       const absDeltaX = Math.abs(deltaX);
       const absDeltaY = Math.abs(deltaY);
       const dist = Math.hypot(deltaX, deltaY);
+      const duration = Date.now() - touchStartTime;
+      const velocity = duration > 0 ? absDeltaX / duration : 0;
 
-      // 1. Horizontální přejetí (swipe) pro otáčení stránek: |deltaX| > 30px a |deltaX| > |deltaY| * 1.5
-      if (absDeltaX > 30 && absDeltaX > absDeltaY * 1.5) {
+      // 1. Horizontální přejetí (relaxed finger swipe) pro okamžité, plynulé otáčení stránek:
+      // Ergonomické prahy: |ΔX| >= 30 px, |ΔY| <= 65 px, trvání <= 450 ms, rychlost >= 0.3 px/ms
+      if (absDeltaX >= 30 && absDeltaY <= 65 && duration <= 450 && velocity >= 0.3) {
         lastSwipeTime = Date.now();
         if (this.ruler) {
+          this.ruler.lastSwipeTime = Date.now();
           this.ruler.cancelHold(false);
           this.ruler.isHoldTriggered = false;
+          this.ruler.isDraggingRuler = false;
+          this.ruler.flickResyncTopLine = true;
+          this.ruler.isLineLocked = true;
+          this.ruler.suppressLineAdvancement = true;
+          this.ruler.lockAdvancement(400);
         }
         if (deltaX < 0) {
           this.nextPage();

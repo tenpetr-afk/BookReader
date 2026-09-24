@@ -100,6 +100,11 @@ export class ReadingRuler {
     this.flickNavigationCooldown = 450; // ms (approx. 400–500 ms)
     this.flickResyncTopLine = false;
     this.onPenFlick = null;
+    // Touch Swipe (Relaxované listování tahem prstu)
+    this.touchHistory = [];
+    this.touchStrokeStartTime = 0;
+    this.touchStrokeStartX = 0;
+    this.touchStrokeStartY = 0;
     this.horizontalWordTransition = false;
     this.isWordTransitioning = false;
     this.wordTransitionTimer = null;
@@ -332,16 +337,27 @@ export class ReadingRuler {
   }
 
   /**
-   * Detekuje rychlé švihnutí stylusu (Apple Pencil Flick Gesture).
-   * Kritéria:
-   * - Vyhodnocuje se výhradně při uvolnění hrotu z displeje (pointerup).
-   * - Časové okno: celková doba tahu od pointerdown do 320 ms (diskvalifikuje plynulé čtení).
-   * - Minimální rychlost: |ΔX| / Δt >= 0.6 px/ms.
-   * - Minimální vzdálenost: celkový horizontální posun |ΔX| >= 45 px.
-   * - Vertikální tolerance: maximální vertikální odchylka |ΔY| nesmí překročit 45 px.
+   * Detekuje rychlé švihnutí stylusu (Apple Pencil Flick Gesture) nebo přejetí prstem (Touch Swipe).
+   * 
+   * Rozlišuje typ ukazatele (Pointer Types):
+   * 1. Apple Pencil (pointerType === 'pen'):
+   *    - Vyhodnocuje se při uvolnění hrotu z displeje (pointerup).
+   *    - Časové okno: celková doba tahu od pointerdown do 320 ms.
+   *    - Minimální vzdálenost: celkový horizontální posun |ΔX| >= 45 px.
+   *    - Minimální rychlost: |ΔX| / Δt >= 0.6 px/ms.
+   *    - Vertikální tolerance: maximální vertikální odchylka |ΔY| nesmí překročit 45 px.
+   * 2. Přejetí prstem (pointerType === 'touch'):
+   *    - Uvolněné ergonomické prahy odpovídající Apple Books:
+   *    - Minimální vzdálenost: |ΔX| >= 30 px (krátké, uvolněné tahy palcem/prstem).
+   *    - Práh rychlosti: |ΔX| / Δt >= 0.3 px/ms (pomalé, ležérní tahy bez nutnosti rychlého švihu).
+   *    - Maximální doba trvání: Δt <= 450 ms (dostatečný prostor pro přirozený oblouk).
+   *    - Tolerance vertikálního driftu: |ΔY| <= 65 px (přirozený rotační oblouk palce).
    */
-  detectPenFlick(clientX, clientY, now) {
-    if (!this.penFlickEnabled) return null;
+  detectPenFlick(clientX, clientY, now, pointerType = "pen") {
+    const isTouch = pointerType === "touch";
+    const isPen = pointerType === "pen";
+
+    if (isPen && !this.penFlickEnabled) return null;
     if (this.flickHandledInStroke) return null;
 
     // Cooldown proti vícenásobnému přeskakování stránek (400–500 ms)
@@ -349,8 +365,17 @@ export class ReadingRuler {
       return null;
     }
 
-    // Gesto musí probíhat uvnitř čtecí oblasti knihy
-    if (!this.isPointerInStage(clientX, clientY)) {
+    const history = (isTouch ? this.touchHistory : this.penHistory) || this.penHistory;
+    const rawStartTime = isTouch ? this.touchStrokeStartTime : this.penStrokeStartTime;
+    const rawStartX = isTouch ? this.touchStrokeStartX : this.penStrokeStartX;
+    const rawStartY = isTouch ? this.touchStrokeStartY : this.penStrokeStartY;
+
+    const strokeStartTime = (rawStartTime && rawStartTime > 0) ? rawStartTime : (history && history[0] ? history[0].time : now);
+    const strokeStartX = (rawStartX != null && rawStartX > 0) ? rawStartX : (history && history[0] ? history[0].x : clientX);
+    const strokeStartY = (rawStartY != null && rawStartY > 0) ? rawStartY : (history && history[0] ? history[0].y : clientY);
+
+    // Gesto musí probíhat uvnitř čtecí oblasti knihy (buď výchozí nebo koncový bod)
+    if (!this.isPointerInStage(clientX, clientY) && !this.isPointerInStage(strokeStartX, strokeStartY)) {
       return null;
     }
 
@@ -359,23 +384,87 @@ export class ReadingRuler {
       return null;
     }
 
-    if (!this.penHistory || this.penHistory.length < 2) return null;
+    if (!history || (isTouch ? history.length === 0 : history.length < 2)) return null;
 
-    // 1. Časové okno (Time window):
-    // Celková doba trvání celého tahu od pointerdown do pointerup musí být do 320 ms.
-    // Trvá-li tah déle než 320 ms, jde o plynulé navádění čtení podél textu a je striktně diskvalifikován.
-    const strokeDuration = now - (this.penStrokeStartTime || now);
+    // ==========================================
+    // 1. RELAXED FINGER SWIPE (pointerType === 'touch')
+    // ==========================================
+    if (isTouch) {
+      const strokeDuration = now - (strokeStartTime || now);
+      if (strokeDuration > 450) {
+        return null;
+      }
+
+      // Tolerance vertikálního driftu: |ΔY| <= 65 px (akomoduje přirozený oblouk palce)
+      let strokeMinY = Math.min(strokeStartY, clientY);
+      let strokeMaxY = Math.max(strokeStartY, clientY);
+      for (let k = 0; k < history.length; k++) {
+        const py = history[k].y;
+        if (py < strokeMinY) strokeMinY = py;
+        if (py > strokeMaxY) strokeMaxY = py;
+      }
+      if ((strokeMaxY - strokeMinY) > 65) {
+        return null;
+      }
+
+      const startPoint = {
+        x: strokeStartX,
+        y: strokeStartY,
+        time: strokeStartTime
+      };
+      const candidates = [startPoint, ...history];
+
+      for (let i = 0; i < candidates.length; i++) {
+        const p0 = candidates[i];
+        const deltaT = now - p0.time;
+        if (deltaT < 15 || deltaT > 450) continue;
+
+        const deltaX = clientX - p0.x;
+        const deltaY = clientY - p0.y;
+        const absDeltaX = Math.abs(deltaX);
+        const absDeltaY = Math.abs(deltaY);
+
+        // Minimální vzdálenost: |ΔX| >= 30 px
+        if (absDeltaX < 30) continue;
+
+        // Tolerance vertikálního driftu: |ΔY| <= 65 px
+        if (absDeltaY > 65) continue;
+
+        // Práh rychlosti: |ΔX| / Δt >= 0.3 px/ms
+        const velocity = absDeltaX / deltaT;
+        if (velocity < 0.3) continue;
+
+        // Výchozí nebo koncový bod gesta musel ležet v čtecí oblasti
+        if (!this.isPointerInStage(p0.x, p0.y) && !this.isPointerInStage(clientX, clientY)) continue;
+
+        const direction = deltaX < 0 ? 1 : -1;
+        return {
+          pointerType: "touch",
+          direction,
+          deltaX,
+          deltaY,
+          deltaT,
+          velocity
+        };
+      }
+
+      return null;
+    }
+
+    // ==========================================
+    // 2. DEDICATED APPLE PENCIL FLICK (pointerType === 'pen')
+    // ==========================================
+    // 1. Časové okno (Time window): celková doba tahu od pointerdown do pointerup do 320 ms
+    const strokeDuration = now - (strokeStartTime || now);
     if (strokeDuration <= 0 || strokeDuration > 320) {
       return null;
     }
 
-    // 2. Vertikální tolerance (Vertical Tolerance):
-    // Maximální vertikální odchylka (|ΔY|) nesmí v žádném bodě tahu překročit 45 px
-    // (přirozený ergonomický oblouk ruky bez falešné aktivace při přesunu na další řádky).
-    let strokeMinY = Math.min(this.penStrokeStartY ?? clientY, clientY);
-    let strokeMaxY = Math.max(this.penStrokeStartY ?? clientY, clientY);
-    for (let k = 0; k < this.penHistory.length; k++) {
-      const py = this.penHistory[k].y;
+    // 2. Vertikální tolerance: nesmí překročit 45 px
+    let strokeMinY = Math.min(strokeStartY ?? clientY, clientY);
+    let strokeMaxY = Math.max(strokeStartY ?? clientY, clientY);
+    for (let k = 0; k < history.length; k++) {
+      const py = history[k].y;
       if (py < strokeMinY) strokeMinY = py;
       if (py > strokeMaxY) strokeMaxY = py;
     }
@@ -383,17 +472,16 @@ export class ReadingRuler {
       return null;
     }
 
-    // 3. Kinematika tahu:
-    // Ověříme parametry od počátku tahu nebo v rámci posuvného okna do 320 ms:
+    // 3. Kinematika tahu pera:
     // - Minimální vzdálenost: |ΔX| >= 45 px
     // - Minimální rychlost: |ΔX| / Δt >= 0.6 px/ms
     // - Vertikální odchylka koncového bodu: |ΔY| <= 45 px
     const startPoint = {
-      x: this.penStrokeStartX ?? this.penHistory[0].x,
-      y: this.penStrokeStartY ?? this.penHistory[0].y,
-      time: this.penStrokeStartTime || this.penHistory[0].time
+      x: strokeStartX ?? history[0].x,
+      y: strokeStartY ?? history[0].y,
+      time: strokeStartTime || history[0].time
     };
-    const candidates = [startPoint, ...this.penHistory];
+    const candidates = [startPoint, ...history];
 
     for (let i = 0; i < candidates.length; i++) {
       const p0 = candidates[i];
@@ -405,17 +493,12 @@ export class ReadingRuler {
       const absDeltaX = Math.abs(deltaX);
       const absDeltaY = Math.abs(deltaY);
 
-      // Minimální horizontální posun |ΔX| >= 45 px
       if (absDeltaX < 45) continue;
-
-      // Vertikální tolerance koncového bodu nesmí překročit 45 px
       if (absDeltaY > 45) continue;
 
-      // Minimální rychlost: |ΔX| / Δt >= 0.6 px/ms
       const velocity = absDeltaX / deltaT;
       if (velocity < 0.6) continue;
 
-      // Vertikální tolerance podél celého dílčího úseku
       let segMinY = Math.min(p0.y, clientY);
       let segMaxY = Math.max(p0.y, clientY);
       for (let j = i; j < candidates.length; j++) {
@@ -425,14 +508,11 @@ export class ReadingRuler {
       }
       if ((segMaxY - segMinY) > 45) continue;
 
-      // Výchozí bod gesta musel ležet v čtecí oblasti
       if (!this.isPointerInStage(p0.x, p0.y)) continue;
 
-      // Validní flick:
-      // Forward Flick (Next Page): deltaX < -45 px
-      // Backward Flick (Previous Page): deltaX > 45 px
       const direction = deltaX < 0 ? 1 : -1;
       return {
+        pointerType: "pen",
         direction,
         deltaX,
         deltaY,
@@ -445,29 +525,32 @@ export class ReadingRuler {
   }
 
   /**
-   * Spustí navigační akci po detekci švihnutí Apple Pencil
+   * Spustí navigační akci po detekci švihnutí pera nebo přejetí prstem
    */
   triggerPenFlick(flick) {
     this.flickHandledInStroke = true;
     this.lastFlickNavigationTime = Date.now();
+    this.lastSwipeTime = Date.now();
     this.flickResyncTopLine = true;
 
-    // 1. Zrušit jakékoliv plánované přemístění pravítka pro tento tah, aby nedošlo k vizuálnímu poskočení
+    // 1. Zrušit plánované přemístění pravítka a držení, aby nedošlo k vizuálnímu poskočení nebo posunutí pravítka
     if (this.pointerRafId) {
       cancelAnimationFrame(this.pointerRafId);
       this.pointerRafId = null;
     }
     this.rafPointerPending = false;
     this.cancelHold(false);
+    this.isHoldTriggered = false;
+    this.isDraggingRuler = false;
     this.isLineLocked = true;
     this.suppressLineAdvancement = true;
     this.lockAdvancement(400);
 
     // 2. Předat událost do aplikace pro otočení stránky
-    if (typeof this.onPenFlick === "function") {
-      this.onPenFlick(flick.direction);
-    } else if (typeof this.onSwipe === "function") {
+    if (typeof this.onSwipe === "function") {
       this.onSwipe(flick.direction);
+    } else if (typeof this.onPenFlick === "function") {
+      this.onPenFlick(flick.direction);
     }
   }
 
@@ -608,6 +691,12 @@ export class ReadingRuler {
           this.penHistory = [{ x: e.clientX, y: e.clientY, time: now }];
           this.flickHandledInStroke = false;
         }
+      } else if (e.pointerType === "touch") {
+        const now = performance.now();
+        this.touchStrokeStartTime = now;
+        this.touchStrokeStartX = e.clientX;
+        this.touchStrokeStartY = e.clientY;
+        this.touchHistory = [{ x: e.clientX, y: e.clientY, time: now }];
       }
 
       if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
@@ -658,6 +747,15 @@ export class ReadingRuler {
           // Kontinuální kontakt stylusu na displeji slouží výhradně pro plynulé
           // navádění čtecího pravítka bez nechtěného přetáčení stránek.
         }
+      } else if (e.pointerType === "touch") {
+        const now = performance.now();
+        if (!this.touchHistory) this.touchHistory = [];
+        this.touchHistory.push({ x: e.clientX, y: e.clientY, time: now });
+
+        // Posuvné okno vzorků za posledních 450 ms pro plynulý swipe
+        while (this.touchHistory.length > 0 && (now - this.touchHistory[0].time > 450)) {
+          this.touchHistory.shift();
+        }
       }
 
       if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
@@ -692,7 +790,7 @@ export class ReadingRuler {
 
         if (this.penFlickEnabled && !this.flickHandledInStroke && !this.isNavigating && !this.isNavigatingPage && Date.now() >= this.navigatingPageLockoutEndTime) {
           const now = performance.now();
-          const flick = this.detectPenFlick(e.clientX, e.clientY, now);
+          const flick = this.detectPenFlick(e.clientX, e.clientY, now, "pen");
           if (flick) {
             this.triggerPenFlick(flick);
             this.penHistory = [];
@@ -705,6 +803,22 @@ export class ReadingRuler {
         this.penHistory = [];
         this.penStrokeStartTime = 0;
         this.flickHandledInStroke = false;
+      } else if (e.pointerType === "touch") {
+        if (!this.isNavigating && !this.isNavigatingPage && Date.now() >= this.navigatingPageLockoutEndTime) {
+          const now = performance.now();
+          const swipe = this.detectPenFlick(e.clientX, e.clientY, now, "touch");
+          if (swipe) {
+            this.triggerPenFlick(swipe);
+            this.touchHistory = [];
+            this.touchStrokeStartTime = 0;
+            if (this.isHoldActive) this.cancelHold(false);
+            this.holdStartTime = 0;
+            this.isDraggingRuler = false;
+            return;
+          }
+        }
+        this.touchHistory = [];
+        this.touchStrokeStartTime = 0;
       }
 
       if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
@@ -747,12 +861,20 @@ export class ReadingRuler {
       const deltaY = e.clientY - this.holdStartY;
       const absX = Math.abs(deltaX);
       const absY = Math.abs(deltaY);
+      const holdDuration = Date.now() - (this.holdStartTime || 0);
+      const velocity = holdDuration > 0 ? absX / holdDuration : 0;
 
-      // Pokud pohyb překročil prahovou hodnotu pro swipe (|deltaX| > 30px a |deltaX| > |deltaY| * 1.5):
-      if (absX > 30 && absX > absY * 1.5) {
+      // Pokud pohyb překročil prahovou hodnotu pro swipe (|deltaX| >= 30px, |deltaY| <= 65px, holdDuration <= 450ms, velocity >= 0.3 px/ms):
+      if (absX >= 30 && absY <= 65 && holdDuration <= 450 && velocity >= 0.3) {
         this.cancelHold(false);
         this.holdStartTime = 0;
         this.lastSwipeTime = Date.now();
+        this.isHoldTriggered = false;
+        this.isDraggingRuler = false;
+        this.flickResyncTopLine = true;
+        this.isLineLocked = true;
+        this.suppressLineAdvancement = true;
+        this.lockAdvancement(400);
         if (this.onSwipe) {
           this.onSwipe(deltaX < 0 ? 1 : -1);
         }
@@ -799,6 +921,8 @@ export class ReadingRuler {
       this.penHistory = [];
       this.penStrokeStartTime = 0;
       this.flickHandledInStroke = false;
+      this.touchHistory = [];
+      this.touchStrokeStartTime = 0;
       if (this.isHoldActive) {
         this.cancelHold(false);
       }
@@ -869,7 +993,7 @@ export class ReadingRuler {
     };
 
     const onTouchEnd = (e) => {
-      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+      if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || Date.now() - this.lastSwipeTime < 450) {
         this.cancelHold(false);
         this.isDraggingRuler = false;
         this.isPenTouching = false;
@@ -899,12 +1023,20 @@ export class ReadingRuler {
       const deltaY = clientY - this.holdStartY;
       const absX = Math.abs(deltaX);
       const absY = Math.abs(deltaY);
+      const holdDuration = Date.now() - (this.holdStartTime || 0);
+      const velocity = holdDuration > 0 ? absX / holdDuration : 0;
 
-      // Pokud pohyb překročil prahovou hodnotu pro swipe (|deltaX| > 30px a |deltaX| > |deltaY| * 1.5):
-      if (absX > 30 && absX > absY * 1.5) {
+      // Pokud pohyb překročil prahovou hodnotu pro swipe (|deltaX| >= 30px, |deltaY| <= 65px, holdDuration <= 450ms, velocity >= 0.3 px/ms):
+      if (absX >= 30 && absY <= 65 && holdDuration <= 450 && velocity >= 0.3) {
         this.cancelHold(false);
         this.holdStartTime = 0;
         this.lastSwipeTime = Date.now();
+        this.isHoldTriggered = false;
+        this.isDraggingRuler = false;
+        this.flickResyncTopLine = true;
+        this.isLineLocked = true;
+        this.suppressLineAdvancement = true;
+        this.lockAdvancement(400);
         if (this.onSwipe) {
           this.onSwipe(deltaX < 0 ? 1 : -1);
         }
