@@ -21,6 +21,10 @@ export class ReadingRuler {
     this.maskRightEl = null;
     this.onBoundary = null; // Callback vyvolaný při překročení hranice strany (direction: 1 | -1)
 
+    // PDF Mode
+    this.isPdfMode = false;
+    this.pdfRulerHeight = 32; // px - výchozí výška mechanického pravítka pro PDF
+
     // Nastavení
     this.enabled = false;
     this.mode = "highlight"; // "highlight" | "focus"
@@ -171,8 +175,42 @@ export class ReadingRuler {
     }, 300); // 300ms maximum lock lifetime
   }
 
+  setPdfMode(enabled) {
+    this.isPdfMode = !!enabled;
+    if (this.isPdfMode) {
+      this.cachedLines = [];
+      this.cachedWords = [];
+      this.height = this.pdfRulerHeight || 32;
+      if (this.rulerEl) {
+        this.rulerEl.classList.add("pdf-ruler-overlay");
+        this.rulerEl.classList.remove("word-tracking-mode");
+      }
+      if (this.enabled) {
+        this.applyPosition();
+      }
+    } else {
+      if (this.rulerEl) {
+        this.rulerEl.classList.remove("pdf-ruler-overlay");
+      }
+      if (this.maskTopEl) this.maskTopEl.classList.remove("pdf-overlay-mask");
+      if (this.maskBottomEl) this.maskBottomEl.classList.remove("pdf-overlay-mask");
+      if (this.enabled) {
+        this.refreshLines();
+        this.applyPosition();
+      }
+    }
+  }
+
   isLastLine() {
     if (!this.enabled) return false;
+    if (this.isPdfMode) {
+      const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+      const stageRect = stage ? stage.getBoundingClientRect() : { bottom: window.innerHeight - 60 };
+      const canvas = document.querySelector("#reader-content canvas");
+      const bottomBound = canvas ? canvas.getBoundingClientRect().bottom : stageRect.bottom;
+      const h = this.height || 32;
+      return (this.currentY + h >= bottomBound - 8);
+    }
     if (this.wordTracking) {
       if (this.cachedWords.length === 0) return false;
       return this.activeWordIndex >= this.cachedWords.length - 1;
@@ -578,6 +616,7 @@ export class ReadingRuler {
   }
 
   isAlreadyAtPosition(clientX, clientY) {
+    if (this.isPdfMode) return false;
     if (this.wordTracking && this.cachedWords.length > 0 && this.activeWordIndex >= 0) {
       const effectiveY = clientY - 8;
       let minDiff = Infinity;
@@ -709,6 +748,17 @@ export class ReadingRuler {
       // Pro myš na PC vyžadujeme výhradně stisknuté levé tlačítko (button === 0)
       if (e.pointerType === "mouse" && e.button !== 0) return;
 
+      if (this.isPdfMode) {
+        if (e.pointerType === "pen" || e.pointerType === "mouse") {
+          this.activePointerId = e.pointerId;
+          this.activePointerType = e.pointerType;
+          this.isPenTouching = (e.pointerType === "pen");
+          this.isDraggingRuler = true;
+          this.handlePointerMove(e.clientX, e.clientY, e.pointerType);
+          return;
+        }
+      }
+
       if (this.followMode === "mouse") {
         if (e.pointerType === "touch") return;
         this.activePointerId = e.pointerId;
@@ -769,6 +819,16 @@ export class ReadingRuler {
         }
       }
 
+      if (this.isPdfMode) {
+        if (e.pointerType === "pen" || (e.pointerType === "mouse" && this.followMode === "mouse") || this.isDraggingRuler) {
+          if (!this.isUiControl(e.target) && this.isPointerInStage(e.clientX, e.clientY)) {
+            this.activePointerType = e.pointerType;
+            this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
+          }
+        }
+        return;
+      }
+
       // Plynulé sledování v reálném čase v režimu sledování myši ("mouse") pro myš i Apple Pencil
       if (this.followMode === "mouse") {
         if (e.pointerType === "touch") return;
@@ -783,6 +843,10 @@ export class ReadingRuler {
     };
 
     const onPointerUp = (e) => {
+      if (this.isPdfMode) {
+        this.isDraggingRuler = false;
+        this.isPenTouching = false;
+      }
       if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
         this.isPenTouching = false;
@@ -1248,6 +1312,10 @@ export class ReadingRuler {
    * Využívá standardní dotaz nad kandidátními elementy bez rekurzivního průchodu DOMem.
    */
   detectLines() {
+    if (this.isPdfMode) {
+      this.cachedLines = [];
+      return [];
+    }
     try {
       // Ensure we capture whatever typography container the reader engine actually uses:
       const content = document.querySelector('#reader-content, .page-content, .reader-text, article') || document.body;
@@ -1774,6 +1842,10 @@ export class ReadingRuler {
    * Zmapuje přesné obdélníky všech viditelných slov na aktuální stránce.
    */
   refreshWords() {
+    if (this.isPdfMode) {
+      this.cachedWords = [];
+      return [];
+    }
     try {
       const stage = this.container || document.getElementById("paged-stage");
       const content = document.getElementById("reader-content");
@@ -2154,6 +2226,11 @@ export class ReadingRuler {
   }
 
   updateEffectiveHeight(lineHeight) {
+    if (this.isPdfMode) {
+      this.height = this.pdfRulerHeight || 32;
+      this.applyPosition();
+      return;
+    }
     if (this.autoHeight) {
       const baseH = Math.round(lineHeight || 32);
       const padV = Math.max(0, Math.min(2, Math.round(baseH * 0.05)));
@@ -2320,12 +2397,33 @@ export class ReadingRuler {
     }
     const isPen = pType === "pen";
 
+    const curX = this.lastPointerX;
+    const curY = this.lastPointerY;
+
+    if (this.isPdfMode) {
+      const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+      const stageRect = stage ? stage.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const canvas = document.querySelector("#reader-content canvas");
+      let topBound = stageRect.top;
+      let bottomBound = stageRect.bottom;
+      if (canvas) {
+        const cRect = canvas.getBoundingClientRect();
+        if (cRect.height > 50) {
+          topBound = cRect.top;
+          bottomBound = cRect.bottom;
+        }
+      }
+      const h = this.height || 32;
+      const targetY = (curY != null ? curY : (topBound + 50)) - h / 2;
+      this.currentY = Math.max(topBound, Math.min(bottomBound - h, targetY));
+      this.targetY = this.currentY;
+      this.applyPosition();
+      return;
+    }
+
     if (this.cachedLines.length === 0) {
       this.refreshLines();
     }
-
-    const curX = this.lastPointerX;
-    const curY = this.lastPointerY;
 
     const stage = document.getElementById("paged-stage") || this.container || document.body;
     const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, width: window.innerWidth };
@@ -2822,6 +2920,30 @@ export class ReadingRuler {
       }
 
       try {
+        if (this.isPdfMode) {
+          const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+          const stageRect = stage ? stage.getBoundingClientRect() : { top: 60, bottom: window.innerHeight - 60 };
+          const canvas = document.querySelector("#reader-content canvas");
+          let topBound = stageRect.top;
+          let bottomBound = stageRect.bottom;
+          if (canvas) {
+            const cRect = canvas.getBoundingClientRect();
+            if (cRect.height > 50) {
+              topBound = cRect.top;
+              bottomBound = cRect.bottom;
+            }
+          }
+          this.height = this.pdfRulerHeight || 32;
+          this.targetY = isBackward ? Math.round(bottomBound - this.height) : Math.round(topBound);
+          this.currentY = this.targetY;
+          this.isPageTransitioning = false;
+          if (this.rulerEl) {
+            this.rulerEl.classList.remove("is-page-transitioning");
+          }
+          this.applyPosition();
+          return;
+        }
+
         this.refreshLines();
         if (this.wordTracking) {
           this.refreshWords();
@@ -3046,6 +3168,44 @@ export class ReadingRuler {
     this.cancelHold();
 
     try {
+      if (this.isPdfMode) {
+        const stepSize = this.height || 32;
+        const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+        const stageRect = stage ? stage.getBoundingClientRect() : { top: 60, bottom: window.innerHeight - 60 };
+        const canvas = document.querySelector("#reader-content canvas");
+        let topBound = stageRect.top;
+        let bottomBound = stageRect.bottom;
+        if (canvas) {
+          const cRect = canvas.getBoundingClientRect();
+          if (cRect.height > 50) {
+            topBound = cRect.top;
+            bottomBound = cRect.bottom;
+          }
+        }
+        const minY = Math.round(topBound);
+        const maxY = Math.round(bottomBound - (this.height || 32));
+
+        let nextY = (Number.isFinite(this.currentY) ? this.currentY : minY) + direction * stepSize;
+        if (direction > 0 && nextY > maxY) {
+          if (this.onBoundary) {
+            this.lockAdvancement(350);
+            this.onBoundary(1);
+            return;
+          }
+          nextY = maxY;
+        } else if (direction < 0 && nextY < minY) {
+          if (this.onBoundary) {
+            this.onBoundary(-1);
+            return;
+          }
+          nextY = minY;
+        }
+        this.currentY = nextY;
+        this.targetY = nextY;
+        this.applyPosition();
+        return;
+      }
+
       if (this.wordTracking) {
         if (this.isWordTransitioning) {
           if (this.wordTransitionTimer) {
@@ -3327,12 +3487,14 @@ export class ReadingRuler {
   applyPosition() {
     if (!this.rulerEl) return;
 
-    if (!this.enabled || this.cachedLines.length === 0) {
+    if (!this.enabled || (!this.isPdfMode && this.cachedLines.length === 0)) {
       this.rulerEl.classList.remove("is-visible");
       this.rulerEl.classList.add("is-hidden");
       this.rulerEl.style.display = "none";
       this.rulerEl.style.opacity = "0";
       this.rulerEl.style.visibility = "hidden";
+      if (this.maskTopEl) this.maskTopEl.style.display = "none";
+      if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
       if (this.mode === "focus") {
         this.clearFocusTextMask();
       }
@@ -3351,6 +3513,92 @@ export class ReadingRuler {
       }
       this.rulerEl.style.opacity = "1";
       this.rulerEl.style.visibility = "visible";
+    }
+
+    // --- PDF MODE CONTINUOUS MECHANICAL OVERLAY ---
+    if (this.isPdfMode) {
+      const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.pdfRulerHeight || 32);
+      this.rulerEl.style.height = `${h}px`;
+      this.rulerEl.style.transition = "none";
+
+      const canvas = document.querySelector("#reader-content canvas");
+      const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+      const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, bottom: window.innerHeight };
+
+      let targetLeft = stageRect.left;
+      let targetWidth = stageRect.width;
+      let boundsTop = stageRect.top;
+      let boundsBottom = stageRect.bottom;
+
+      if (canvas) {
+        const cRect = canvas.getBoundingClientRect();
+        if (cRect.width > 50) {
+          targetLeft = cRect.left;
+          targetWidth = cRect.width;
+          boundsTop = cRect.top;
+          boundsBottom = cRect.bottom;
+        }
+      }
+
+      // Clamp currentY within bounds
+      let y = Number.isFinite(this.currentY) ? Math.round(this.currentY) : Math.round(boundsTop + 50);
+      y = Math.max(Math.round(boundsTop), Math.min(Math.round(boundsBottom - h), y));
+      this.currentY = y;
+
+      this.rulerEl.style.top = `${y}px`;
+      this.rulerEl.style.left = `${Math.round(targetLeft)}px`;
+      this.rulerEl.style.right = "auto";
+      this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
+      this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
+      this.rulerEl.style.transform = "none";
+
+      // Dimming mode in PDF: use top and bottom semi-transparent overlay bands leaving the active line slot un-dimmed.
+      if (this.mode === "focus" && this.enabled && !this.isPageTransitioning) {
+        const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.65;
+        const dimBg = `rgba(0, 0, 0, ${dimOpacity})`;
+
+        // Top band: covers from boundsTop down to y
+        const topBandHeight = Math.max(0, y - boundsTop);
+        if (this.maskTopEl) {
+          this.maskTopEl.className = "ruler-mask ruler-mask-top pdf-overlay-mask is-visible";
+          this.maskTopEl.style.setProperty("display", "block", "important");
+          this.maskTopEl.style.setProperty("background-color", dimBg, "important");
+          this.maskTopEl.style.setProperty("opacity", "1", "important");
+          this.maskTopEl.style.top = `${Math.round(boundsTop)}px`;
+          this.maskTopEl.style.left = `${Math.round(targetLeft)}px`;
+          this.maskTopEl.style.width = `${Math.round(targetWidth)}px`;
+          this.maskTopEl.style.height = `${Math.round(topBandHeight)}px`;
+        }
+
+        // Bottom band: covers from y + h down to boundsBottom
+        const bottomBandTop = y + h;
+        const bottomBandHeight = Math.max(0, boundsBottom - bottomBandTop);
+        if (this.maskBottomEl) {
+          this.maskBottomEl.className = "ruler-mask ruler-mask-bottom pdf-overlay-mask is-visible";
+          this.maskBottomEl.style.setProperty("display", "block", "important");
+          this.maskBottomEl.style.setProperty("background-color", dimBg, "important");
+          this.maskBottomEl.style.setProperty("opacity", "1", "important");
+          this.maskBottomEl.style.top = `${Math.round(bottomBandTop)}px`;
+          this.maskBottomEl.style.left = `${Math.round(targetLeft)}px`;
+          this.maskBottomEl.style.width = `${Math.round(targetWidth)}px`;
+          this.maskBottomEl.style.height = `${Math.round(bottomBandHeight)}px`;
+        }
+
+        if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
+        if (this.maskRightEl) this.maskRightEl.style.display = "none";
+      } else {
+        if (this.maskTopEl) {
+          this.maskTopEl.style.display = "none";
+          this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible");
+        }
+        if (this.maskBottomEl) {
+          this.maskBottomEl.style.display = "none";
+          this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-visible");
+        }
+        if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
+        if (this.maskRightEl) this.maskRightEl.style.display = "none";
+      }
+      return;
     }
 
     const currentLine = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
@@ -3610,6 +3858,11 @@ export class ReadingRuler {
 
   updateRulerPosition(index = 0) {
     if (!this.rulerEl) return;
+    if (this.isPdfMode) {
+      this.height = this.pdfRulerHeight || 32;
+      this.applyPosition();
+      return;
+    }
     this.refreshLines();
     if (this.wordTracking) {
       this.refreshWords();
@@ -3765,7 +4018,11 @@ export class ReadingRuler {
     this.updateBodyClasses();
 
     if (this.enabled) {
-      this.updateRulerPosition(0);
+      if (this.isPdfMode) {
+        this.applyPosition();
+      } else {
+        this.updateRulerPosition(0);
+      }
       console.log(`[Ruler] Activated, found lines: ${this.cachedLines.length}, current position: Top ${Math.round(this.currentY)} px, Height ${Math.round(this.height)} px`);
     }
   }
