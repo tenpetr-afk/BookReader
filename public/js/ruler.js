@@ -335,10 +335,10 @@ export class ReadingRuler {
    * Detekuje rychlé švihnutí stylusu (Apple Pencil Flick Gesture).
    * Kritéria:
    * - Vyhodnocuje se výhradně při uvolnění hrotu z displeje (pointerup).
-   * - Časové okno: celková doba tahu od pointerdown pod 180 ms (diskvalifikuje plynulé čtení).
-   * - Minimální rychlost: |ΔX| / Δt > 1.2 px/ms.
-   * - Minimální vzdálenost: celkový horizontální posun |ΔX| > 70 px.
-   * - Vertikální tolerance: maximální vertikální odchylka |ΔY| nesmí překročit 25 px.
+   * - Časové okno: celková doba tahu od pointerdown do 320 ms (diskvalifikuje plynulé čtení).
+   * - Minimální rychlost: |ΔX| / Δt >= 0.6 px/ms.
+   * - Minimální vzdálenost: celkový horizontální posun |ΔX| >= 45 px.
+   * - Vertikální tolerance: maximální vertikální odchylka |ΔY| nesmí překročit 45 px.
    */
   detectPenFlick(clientX, clientY, now) {
     if (!this.penFlickEnabled) return null;
@@ -362,16 +362,16 @@ export class ReadingRuler {
     if (!this.penHistory || this.penHistory.length < 2) return null;
 
     // 1. Časové okno (Time window):
-    // Celková doba trvání celého tahu od pointerdown do pointerup musí být pod 180 ms.
-    // Trvá-li tah 180 ms a déle, jde o plynulé navádění čtení podél textu a je striktně diskvalifikován.
+    // Celková doba trvání celého tahu od pointerdown do pointerup musí být do 320 ms.
+    // Trvá-li tah déle než 320 ms, jde o plynulé navádění čtení podél textu a je striktně diskvalifikován.
     const strokeDuration = now - (this.penStrokeStartTime || now);
-    if (strokeDuration <= 0 || strokeDuration >= 180) {
+    if (strokeDuration <= 0 || strokeDuration > 320) {
       return null;
     }
 
     // 2. Vertikální tolerance (Vertical Tolerance):
-    // Maximální vertikální odchylka (|ΔY|) nesmí v žádném bodě tahu překročit 25 px
-    // (zamezí aktivaci při diagonálním posunu na další řádek či návratovém pohybu).
+    // Maximální vertikální odchylka (|ΔY|) nesmí v žádném bodě tahu překročit 45 px
+    // (přirozený ergonomický oblouk ruky bez falešné aktivace při přesunu na další řádky).
     let strokeMinY = Math.min(this.penStrokeStartY ?? clientY, clientY);
     let strokeMaxY = Math.max(this.penStrokeStartY ?? clientY, clientY);
     for (let k = 0; k < this.penHistory.length; k++) {
@@ -379,15 +379,15 @@ export class ReadingRuler {
       if (py < strokeMinY) strokeMinY = py;
       if (py > strokeMaxY) strokeMaxY = py;
     }
-    if ((strokeMaxY - strokeMinY) > 25) {
+    if ((strokeMaxY - strokeMinY) > 45) {
       return null;
     }
 
     // 3. Kinematika tahu:
-    // Ověříme parametry od počátku tahu nebo v rámci posuvného okna do 180 ms:
-    // - Minimální vzdálenost: |ΔX| > 70 px
-    // - Minimální rychlost: |ΔX| / Δt > 1.2 px/ms
-    // - Vertikální odchylka koncového bodu: |ΔY| <= 25 px
+    // Ověříme parametry od počátku tahu nebo v rámci posuvného okna do 320 ms:
+    // - Minimální vzdálenost: |ΔX| >= 45 px
+    // - Minimální rychlost: |ΔX| / Δt >= 0.6 px/ms
+    // - Vertikální odchylka koncového bodu: |ΔY| <= 45 px
     const startPoint = {
       x: this.penStrokeStartX ?? this.penHistory[0].x,
       y: this.penStrokeStartY ?? this.penHistory[0].y,
@@ -398,22 +398,22 @@ export class ReadingRuler {
     for (let i = 0; i < candidates.length; i++) {
       const p0 = candidates[i];
       const deltaT = now - p0.time;
-      if (deltaT < 20 || deltaT >= 180) continue;
+      if (deltaT < 20 || deltaT > 320) continue;
 
       const deltaX = clientX - p0.x;
       const deltaY = clientY - p0.y;
       const absDeltaX = Math.abs(deltaX);
       const absDeltaY = Math.abs(deltaY);
 
-      // Minimální horizontální posun |ΔX| > 70 px
-      if (absDeltaX <= 70) continue;
+      // Minimální horizontální posun |ΔX| >= 45 px
+      if (absDeltaX < 45) continue;
 
-      // Vertikální tolerance koncového bodu nesmí překročit 25 px
-      if (absDeltaY > 25) continue;
+      // Vertikální tolerance koncového bodu nesmí překročit 45 px
+      if (absDeltaY > 45) continue;
 
-      // Minimální rychlost: |ΔX| / Δt > 1.2 px/ms
+      // Minimální rychlost: |ΔX| / Δt >= 0.6 px/ms
       const velocity = absDeltaX / deltaT;
-      if (velocity <= 1.2) continue;
+      if (velocity < 0.6) continue;
 
       // Vertikální tolerance podél celého dílčího úseku
       let segMinY = Math.min(p0.y, clientY);
@@ -423,14 +423,14 @@ export class ReadingRuler {
         if (py < segMinY) segMinY = py;
         if (py > segMaxY) segMaxY = py;
       }
-      if ((segMaxY - segMinY) > 25) continue;
+      if ((segMaxY - segMinY) > 45) continue;
 
       // Výchozí bod gesta musel ležet v čtecí oblasti
       if (!this.isPointerInStage(p0.x, p0.y)) continue;
 
       // Validní flick:
-      // Forward Flick (Next Page): deltaX < -70 px
-      // Backward Flick (Previous Page): deltaX > 70 px
+      // Forward Flick (Next Page): deltaX < -45 px
+      // Backward Flick (Previous Page): deltaX > 45 px
       const direction = deltaX < 0 ? 1 : -1;
       return {
         direction,
@@ -650,8 +650,8 @@ export class ReadingRuler {
           const now = performance.now();
           this.penHistory.push({ x: e.clientX, y: e.clientY, time: now });
 
-          // Posuvné okno vzorků za posledních 180 ms
-          while (this.penHistory.length > 0 && (now - this.penHistory[0].time > 180)) {
+          // Posuvné okno vzorků za posledních 320 ms
+          while (this.penHistory.length > 0 && (now - this.penHistory[0].time > 320)) {
             this.penHistory.shift();
           }
 
