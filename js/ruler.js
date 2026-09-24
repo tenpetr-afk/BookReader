@@ -71,6 +71,7 @@ export class ReadingRuler {
     this.lastValidPointerX = null;
     this.lastValidPointerY = null;
     this.rafPointerPending = false;
+    this.pointerRafId = null;
     this.pendingPointerX = 300;
     this.pendingPointerY = 200;
 
@@ -91,6 +92,9 @@ export class ReadingRuler {
     // Apple Pencil Flick Gestures (Listování švihnutím stylusu bez opuštění toku textu)
     this.penFlickEnabled = true;
     this.penHistory = []; // Posuvné okno vzorků: [{ x, y, time }]
+    this.penStrokeStartTime = 0;
+    this.penStrokeStartX = 0;
+    this.penStrokeStartY = 0;
     this.flickHandledInStroke = false;
     this.lastFlickNavigationTime = 0;
     this.flickNavigationCooldown = 450; // ms (approx. 400–500 ms)
@@ -330,13 +334,11 @@ export class ReadingRuler {
   /**
    * Detekuje rychlé švihnutí stylusu (Apple Pencil Flick Gesture).
    * Kritéria:
-   * - Posuvné okno vzorků za posledních 100–150 ms (časový rozsah 30–150 ms)
-   * - Horizontální posun: deltaX < -60 px (další strana) nebo deltaX > 60 px (předchozí strana)
-   * - Rychlost: |deltaX| / deltaT > 0.6 px/ms
-   * - Vertikální odchylka (minimal vertical deviation): |deltaY| < 35 px
-   * - Ochrana proti návratovému pohybu řádku (Return sweep protection): maximální vertikální rozkmit dráhy < 35 px
-   * - Gesto probíhá v čtecí oblasti a ne na prvcích UI
-   * - Cooldown cca 450 ms proti vícenásobnému přeskakování
+   * - Vyhodnocuje se výhradně při uvolnění hrotu z displeje (pointerup).
+   * - Časové okno: celková doba tahu od pointerdown pod 180 ms (diskvalifikuje plynulé čtení).
+   * - Minimální rychlost: |ΔX| / Δt > 1.2 px/ms.
+   * - Minimální vzdálenost: celkový horizontální posun |ΔX| > 70 px.
+   * - Vertikální tolerance: maximální vertikální odchylka |ΔY| nesmí překročit 25 px.
    */
   detectPenFlick(clientX, clientY, now) {
     if (!this.penFlickEnabled) return null;
@@ -357,61 +359,78 @@ export class ReadingRuler {
       return null;
     }
 
-    if (this.penHistory.length < 2) return null;
+    if (!this.penHistory || this.penHistory.length < 2) return null;
 
-    // Ochrana proti návratovému pohybu řádku (Return sweep protection):
-    // Pokud celkový vertikální rozkmit v okně dosáhne či překročí 35 px, jedná se o diagonální přechod mezi řádky
-    let windowMinY = clientY;
-    let windowMaxY = clientY;
-    for (let k = 0; k < this.penHistory.length; k++) {
-      const py = this.penHistory[k].y;
-      if (py < windowMinY) windowMinY = py;
-      if (py > windowMaxY) windowMaxY = py;
-    }
-    if ((windowMaxY - windowMinY) >= 35) {
+    // 1. Časové okno (Time window):
+    // Celková doba trvání celého tahu od pointerdown do pointerup musí být pod 180 ms.
+    // Trvá-li tah 180 ms a déle, jde o plynulé navádění čtení podél textu a je striktně diskvalifikován.
+    const strokeDuration = now - (this.penStrokeStartTime || now);
+    if (strokeDuration <= 0 || strokeDuration >= 180) {
       return null;
     }
 
-    // Procházíme body v posuvném okně (30 ms až 150 ms zpět)
-    for (let i = 0; i < this.penHistory.length - 1; i++) {
-      const p0 = this.penHistory[i];
-      const deltaT = now - p0.time;
+    // 2. Vertikální tolerance (Vertical Tolerance):
+    // Maximální vertikální odchylka (|ΔY|) nesmí v žádném bodě tahu překročit 25 px
+    // (zamezí aktivaci při diagonálním posunu na další řádek či návratovém pohybu).
+    let strokeMinY = Math.min(this.penStrokeStartY ?? clientY, clientY);
+    let strokeMaxY = Math.max(this.penStrokeStartY ?? clientY, clientY);
+    for (let k = 0; k < this.penHistory.length; k++) {
+      const py = this.penHistory[k].y;
+      if (py < strokeMinY) strokeMinY = py;
+      if (py > strokeMaxY) strokeMaxY = py;
+    }
+    if ((strokeMaxY - strokeMinY) > 25) {
+      return null;
+    }
 
-      // Hledáme v časovém okně 30 až 150 ms
-      if (deltaT < 30 || deltaT > 150) continue;
+    // 3. Kinematika tahu:
+    // Ověříme parametry od počátku tahu nebo v rámci posuvného okna do 180 ms:
+    // - Minimální vzdálenost: |ΔX| > 70 px
+    // - Minimální rychlost: |ΔX| / Δt > 1.2 px/ms
+    // - Vertikální odchylka koncového bodu: |ΔY| <= 25 px
+    const startPoint = {
+      x: this.penStrokeStartX ?? this.penHistory[0].x,
+      y: this.penStrokeStartY ?? this.penHistory[0].y,
+      time: this.penStrokeStartTime || this.penHistory[0].time
+    };
+    const candidates = [startPoint, ...this.penHistory];
+
+    for (let i = 0; i < candidates.length; i++) {
+      const p0 = candidates[i];
+      const deltaT = now - p0.time;
+      if (deltaT < 20 || deltaT >= 180) continue;
 
       const deltaX = clientX - p0.x;
       const deltaY = clientY - p0.y;
       const absDeltaX = Math.abs(deltaX);
       const absDeltaY = Math.abs(deltaY);
 
-      // Posun musí být alespoň 60 px v horizontální ose
-      if (absDeltaX < 60) continue;
+      // Minimální horizontální posun |ΔX| > 70 px
+      if (absDeltaX <= 70) continue;
 
-      // Vertikální odchylka koncového bodu musí být přísně omezena (< 35 px)
-      if (absDeltaY >= 35) continue;
+      // Vertikální tolerance koncového bodu nesmí překročit 25 px
+      if (absDeltaY > 25) continue;
 
-      // Rychlost musí přesáhnout 0.6 px/ms
+      // Minimální rychlost: |ΔX| / Δt > 1.2 px/ms
       const velocity = absDeltaX / deltaT;
-      if (velocity <= 0.6) continue;
+      if (velocity <= 1.2) continue;
 
-      // Ochrana proti návratovému pohybu řádku (Return sweep protection):
-      // Zkontrolujeme maximální vertikální rozkmit dráhy v daném časovém úseku
-      let minY = Math.min(p0.y, clientY);
-      let maxY = Math.max(p0.y, clientY);
-      for (let j = i + 1; j < this.penHistory.length; j++) {
-        const py = this.penHistory[j].y;
-        if (py < minY) minY = py;
-        if (py > maxY) maxY = py;
+      // Vertikální tolerance podél celého dílčího úseku
+      let segMinY = Math.min(p0.y, clientY);
+      let segMaxY = Math.max(p0.y, clientY);
+      for (let j = i; j < candidates.length; j++) {
+        const py = candidates[j].y;
+        if (py < segMinY) segMinY = py;
+        if (py > segMaxY) segMaxY = py;
       }
-      if ((maxY - minY) >= 35) continue;
+      if ((segMaxY - segMinY) > 25) continue;
 
-      // Výchozí bod gesta musel také ležet v čtecí oblasti
+      // Výchozí bod gesta musel ležet v čtecí oblasti
       if (!this.isPointerInStage(p0.x, p0.y)) continue;
 
-      // Validní flick detekován:
-      // Forward Flick (Next Page): deltaX < -60 px
-      // Backward Flick (Previous Page): deltaX > 60 px
+      // Validní flick:
+      // Forward Flick (Next Page): deltaX < -70 px
+      // Backward Flick (Previous Page): deltaX > 70 px
       const direction = deltaX < 0 ? 1 : -1;
       return {
         direction,
@@ -433,10 +452,16 @@ export class ReadingRuler {
     this.lastFlickNavigationTime = Date.now();
     this.flickResyncTopLine = true;
 
-    // 1. Zrušit plánované přemístění pravítka pro tento tah, aby nedošlo k vizuálnímu poskočení
+    // 1. Zrušit jakékoliv plánované přemístění pravítka pro tento tah, aby nedošlo k vizuálnímu poskočení
+    if (this.pointerRafId) {
+      cancelAnimationFrame(this.pointerRafId);
+      this.pointerRafId = null;
+    }
     this.rafPointerPending = false;
     this.cancelHold(false);
     this.isLineLocked = true;
+    this.suppressLineAdvancement = true;
+    this.lockAdvancement(400);
 
     // 2. Předat událost do aplikace pro otočení stránky
     if (typeof this.onPenFlick === "function") {
@@ -459,8 +484,9 @@ export class ReadingRuler {
     this.activePointerType = pointerType;
     if (!this.rafPointerPending) {
       this.rafPointerPending = true;
-      requestAnimationFrame(() => {
+      this.pointerRafId = requestAnimationFrame(() => {
         this.rafPointerPending = false;
+        this.pointerRafId = null;
         if (this.enabled && !this.isLineLocked && !this.isPageTransitioning) {
           this.handlePointerMove(this.pendingPointerX, this.pendingPointerY, this.pendingPointerType);
         }
@@ -576,6 +602,9 @@ export class ReadingRuler {
         this.savePenDetails(e);
         if (this.penFlickEnabled) {
           const now = performance.now();
+          this.penStrokeStartTime = now;
+          this.penStrokeStartX = e.clientX;
+          this.penStrokeStartY = e.clientY;
           this.penHistory = [{ x: e.clientX, y: e.clientY, time: now }];
           this.flickHandledInStroke = false;
         }
@@ -621,18 +650,13 @@ export class ReadingRuler {
           const now = performance.now();
           this.penHistory.push({ x: e.clientX, y: e.clientY, time: now });
 
-          // Posuvné okno vzorků za posledních 150 ms
-          while (this.penHistory.length > 0 && (now - this.penHistory[0].time > 150)) {
+          // Posuvné okno vzorků za posledních 180 ms
+          while (this.penHistory.length > 0 && (now - this.penHistory[0].time > 180)) {
             this.penHistory.shift();
           }
 
-          if (!this.isNavigating && !this.isNavigatingPage && Date.now() >= this.navigatingPageLockoutEndTime) {
-            const flick = this.detectPenFlick(e.clientX, e.clientY, now);
-            if (flick) {
-              this.triggerPenFlick(flick);
-              return;
-            }
-          }
+          // Kontinuální kontakt stylusu na displeji slouží výhradně pro plynulé
+          // navádění čtecího pravítka bez nechtěného přetáčení stránek.
         }
       }
 
@@ -671,10 +695,15 @@ export class ReadingRuler {
           const flick = this.detectPenFlick(e.clientX, e.clientY, now);
           if (flick) {
             this.triggerPenFlick(flick);
+            this.penHistory = [];
+            this.penStrokeStartTime = 0;
+            this.flickHandledInStroke = false;
+            return;
           }
         }
 
         this.penHistory = [];
+        this.penStrokeStartTime = 0;
         this.flickHandledInStroke = false;
       }
 
@@ -768,6 +797,7 @@ export class ReadingRuler {
 
     const onPointerCancel = () => {
       this.penHistory = [];
+      this.penStrokeStartTime = 0;
       this.flickHandledInStroke = false;
       if (this.isHoldActive) {
         this.cancelHold(false);
@@ -3767,7 +3797,12 @@ export class ReadingRuler {
 
   destroy() {
     this.penHistory = [];
+    this.penStrokeStartTime = 0;
     this.flickHandledInStroke = false;
+    if (this.pointerRafId) {
+      cancelAnimationFrame(this.pointerRafId);
+      this.pointerRafId = null;
+    }
     if (this._navSafetyTimer) {
       clearTimeout(this._navSafetyTimer);
       this._navSafetyTimer = null;
