@@ -48,6 +48,7 @@ export class ReadingRuler {
     this.cachedLines = []; // Seznam řádků na aktuální stránce [{ top, bottom, height, centerY }]
     this.cachedWords = []; // Seznam slov na aktuální stránce [{ text, left, right, top, bottom, width, height, centerX, centerY }]
     this.activeLineIndex = -1;
+    this.previousActiveLineIndex = -1;
     this.activeWordIndex = -1;
     this.animFrameId = null;
     this.isDragging = false;
@@ -1165,6 +1166,7 @@ export class ReadingRuler {
                   }
                   rawLines.push({
                     el,
+                    element: el,
                     rect: r,
                     top: r.top,
                     bottom: r.bottom,
@@ -1186,6 +1188,7 @@ export class ReadingRuler {
               if (inStage && rect.height >= 8 && rect.width >= 8) {
                 rawLines.push({
                   el,
+                  element: el,
                   rect,
                   top: rect.top,
                   bottom: rect.bottom,
@@ -1207,6 +1210,7 @@ export class ReadingRuler {
             if (inStage && rect.height >= 8 && rect.width >= 8) {
               rawLines.push({
                 el,
+                element: el,
                 rect,
                 top: rect.top,
                 bottom: rect.bottom,
@@ -1245,6 +1249,7 @@ export class ReadingRuler {
                 if (r.width >= 8 && r.height >= 8) {
                   rawLines.push({
                     el: textNode.parentElement,
+                    element: textNode.parentElement,
                     rect: r,
                     top: r.top,
                     bottom: r.bottom,
@@ -1350,7 +1355,7 @@ export class ReadingRuler {
         const colClustered = [];
         for (const r of colLines) {
           if (colClustered.length === 0) {
-            colClustered.push({ ...r, columnIndex: colIdx });
+            colClustered.push({ ...r, columnIndex: colIdx, element: r.element || r.el });
           } else {
             const prev = colClustered[colClustered.length - 1];
             const shouldMerge = !r.isMedia && !prev.isMedia && (
@@ -1364,8 +1369,9 @@ export class ReadingRuler {
               prev.right = Math.max(prev.right ?? r.right, r.right);
               prev.height = prev.bottom - prev.top;
               prev.centerY = prev.top + prev.height / 2;
+              prev.element = prev.element || r.element || r.el;
             } else {
-              colClustered.push({ ...r, columnIndex: colIdx });
+              colClustered.push({ ...r, columnIndex: colIdx, element: r.element || r.el });
             }
           }
         }
@@ -1382,6 +1388,7 @@ export class ReadingRuler {
       }
 
       this.cachedLines = clustered.filter(l => (l.hasText || l.isMedia) && l.height >= 8 && (l.right - l.left) >= 8);
+      this.previousActiveLineIndex = -1;
 
       // Pokud na stránce není detekován žádný řádek textu, pravítko nesmí vytvářet náhodné záchranné souřadnice
       if (this.cachedLines.length === 0) {
@@ -2596,6 +2603,7 @@ export class ReadingRuler {
     this.hideForPageTransition();
     this.disableWordTransition();
     this.setNoTransition(true);
+    this.previousActiveLineIndex = -1;
     if (this.rulerEl) {
       this.rulerEl.style.transition = "none";
     }
@@ -3076,6 +3084,9 @@ export class ReadingRuler {
         this.maskBottomEl.classList.add("is-snapped");
         this.maskLeftEl.classList.add("is-snapped");
         this.maskRightEl.classList.add("is-snapped");
+        if (this.rulerEl) {
+          this.rulerEl.style.transition = "none";
+        }
         this.applyPosition();
         return;
       } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0) {
@@ -3194,6 +3205,10 @@ export class ReadingRuler {
     }
     this.rulerEl.style.height = `${h}px`;
 
+    if (this.mode === "focus" || !this.wordTracking) {
+      this.rulerEl.style.transition = "none";
+    }
+
     if (this.wordTracking && !isCurrentMedia) {
       const x = Number.isFinite(this.wordLeft) ? Math.round(this.wordLeft) : 0;
       const w = Number.isFinite(this.totalWidth) && this.totalWidth > 0 ? Math.round(this.totalWidth) : 100;
@@ -3301,16 +3316,29 @@ export class ReadingRuler {
         }
       }
 
-      // Synchronizace tříd na řádky textu (reading lines)
-      const allLines = stage.querySelectorAll(".reading-line, .line-focused, .line-dimmed");
-      for (const l of allLines) {
-        l.classList.remove("line-focused", "active-focus");
-        l.classList.add("line-dimmed");
+      // Synchronní výměna tříd na řádcích textu (reading lines)
+      const prevIdx = this.previousActiveLineIndex;
+      const curIdx = this.activeLineIndex;
+      if (prevIdx != null && prevIdx >= 0 && prevIdx < this.cachedLines.length && prevIdx !== curIdx) {
+        const prevLine = this.cachedLines[prevIdx];
+        const prevEl = prevLine ? (prevLine.element || prevLine.el) : null;
+        if (prevEl && prevEl.classList) {
+          prevEl.classList.remove("line-focused", "active-focus");
+          prevEl.classList.add("line-dimmed");
+        }
+      } else {
+        const allLines = stage.querySelectorAll(".reading-line, .line-focused, .line-dimmed");
+        for (const l of allLines) {
+          l.classList.remove("line-focused", "active-focus");
+          l.classList.add("line-dimmed");
+        }
       }
-      if (currentLine && currentLine.element && currentLine.element.classList) {
-        currentLine.element.classList.remove("line-dimmed");
-        currentLine.element.classList.add("line-focused", "active-focus");
+      const curEl = currentLine ? (currentLine.element || currentLine.el) : null;
+      if (curEl && curEl.classList) {
+        curEl.classList.remove("line-dimmed");
+        curEl.classList.add("line-focused", "active-focus");
       }
+      this.previousActiveLineIndex = curIdx;
 
       const stageRect = stage.getBoundingClientRect();
       const inactiveAlpha = Math.max(0.12, Math.min(0.65, Number((1 - this.dimOpacity).toFixed(2))));

@@ -1609,7 +1609,8 @@ body.ruler-active.ruler-mode-focus #reader-content svg,
 .focus-active svg {
   opacity: 0.25;
   filter: brightness(0.7);
-  transition: opacity 0.2s ease, filter 0.2s ease;
+  transition: none !important;
+  -webkit-transition: none !important;
 }
 
 /* Active state (focused by ruler): plně rozsvíceno */
@@ -1627,6 +1628,8 @@ body.ruler-active.ruler-mode-focus #reader-content .ruler-focused-image,
 .focus-active .ruler-focused-image {
   opacity: 1 !important;
   filter: none !important;
+  transition: none !important;
+  -webkit-transition: none !important;
 }
 
 /* Chapter Transition Shield: eliminace probliknutí 100% jasu při přechodu kapitol v režimu focus */
@@ -1662,14 +1665,41 @@ body.is-turning-page .ruler-mask {
   -webkit-transition: none !important;
 }
 
+/* Okamžité přepínání aktivních a ztlumených řádků bez animací */
 .reading-line.line-focused {
   opacity: 1 !important;
   filter: none !important;
+  transition: none !important;
+  -webkit-transition: none !important;
 }
 
 .reading-line.line-dimmed {
   opacity: 0.25;
   filter: brightness(0.7);
+  transition: none !important;
+  -webkit-transition: none !important;
+}
+
+/* Vypnutí veškerých animací a přechodů pravítka i řádků pro okamžité krokování */
+.reading-ruler,
+#reading-ruler,
+.reading-ruler.is-snapped,
+.ruler-mask,
+.ruler-mask.is-snapped,
+.paged-stage.focus-active,
+body.ruler-active.ruler-mode-focus .paged-stage,
+body.ruler-active.ruler-mode-focus .paged-stage.focus-active {
+  transition: none !important;
+  -webkit-transition: none !important;
+}
+
+.reading-line,
+.reading-line.line-focused,
+.reading-line.line-dimmed,
+.line-focused,
+.line-dimmed {
+  transition: none !important;
+  -webkit-transition: none !important;
 }
 
 
