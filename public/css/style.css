@@ -2190,6 +2190,52 @@ body.is-pdf-mode #reader-content,
   transition: none !important;
 }
 
+/* ==========================================================================
+   Vertikální režim pro PDF dokumenty
+   ========================================================================== */
+
+body.is-pdf-mode.mode-vertical .paged-viewport {
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  display: block !important;
+}
+
+body.is-pdf-mode.mode-vertical #reader-stage,
+body.is-pdf-mode.mode-vertical #paged-stage,
+body.is-pdf-mode.mode-vertical .paged-stage {
+  height: auto !important;
+  min-height: 100% !important;
+  max-height: none !important;
+  overflow: visible !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  padding-bottom: max(5rem, calc(60px + env(safe-area-inset-bottom, 0px))) !important;
+}
+
+body.is-pdf-mode.mode-vertical #reader-content,
+body.is-pdf-mode.mode-vertical #reader-content.is-pdf-mode {
+  height: auto !important;
+  min-height: 100% !important;
+  max-height: none !important;
+  overflow: visible !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  column-count: 1 !important;
+  column-width: auto !important;
+  transform: none !important;
+  transition: none !important;
+  padding-bottom: max(5rem, calc(60px + env(safe-area-inset-bottom, 0px))) !important;
+}
+
+body.is-pdf-mode.mode-vertical .pdf-page-container {
+  margin-bottom: 24px !important;
+  flex-shrink: 0 !important;
+  max-height: none !important;
+}
+
 /* 100% Edge-to-edge canvas bez simulovaného papíru, stínů či zaoblení */
 body.is-pdf-mode #reader-content canvas,
 #reader-content.is-pdf-mode canvas,

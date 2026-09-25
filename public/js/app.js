@@ -40,6 +40,10 @@ class LuminaApp {
     this.navigatingPageTimer = null;
     this._navSafetyTimer = null;
 
+    // Směr čtení (horizontal paged vs continuous vertical scroll)
+    this.readingMode = localStorage.getItem("lumina_reading_mode") || "horizontal";
+    this._verticalScrollBound = false;
+
     // DOM elementy
     this.dom = {};
   }
@@ -232,6 +236,8 @@ class LuminaApp {
       popoverRulerFollowSelect: document.getElementById("popover-ruler-follow-select"),
 
       settingShowFooter: document.getElementById("setting-show-footer"),
+      readingModeControl: document.getElementById("reading-mode-control"),
+      readingModeSelects: document.querySelectorAll("[data-reading-mode]"),
 
       // Vyhledávání v knize
       btnToggleSearch: document.getElementById("btn-toggle-search"),
@@ -279,6 +285,7 @@ class LuminaApp {
 
     // Automatický přechod na další/předchozí stránku při překročení hranice textu pravítkem
     this.ruler.onBoundary = (dir) => {
+      if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
         this.nextPage();
@@ -289,6 +296,7 @@ class LuminaApp {
 
     // Horizontální přejetí (swipe) zachycené pravítkem
     this.ruler.onSwipe = (dir) => {
+      if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
         this.nextPage();
@@ -299,6 +307,7 @@ class LuminaApp {
 
     // Rychlé švihnutí stylusu (Apple Pencil Flick Gesture) pro okamžité otočení strany
     this.ruler.onPenFlick = (dir) => {
+      if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
         this.nextPage();
@@ -540,8 +549,11 @@ class LuminaApp {
       this.dom.popoverRulerFollowSelect.value = s.ruler.followMode;
     }
 
-    // Pokud čteme knihu, přepočítat stránkování
-    if (this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
+    // Aplikace režimu čtení (vodorovně vs svisle)
+    this.applyReadingMode(this.readingMode);
+
+    // Pokud čteme knihu, přepočítat stránkování (pouze v horizontálním režimu)
+    if (!this.isVerticalReadingMode() && this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
       requestAnimationFrame(() => {
         this.recomputeGlobalPagination();
         this.recalcPages();
@@ -551,6 +563,94 @@ class LuminaApp {
     }
 
     this.updateTouchZonesUI();
+  }
+
+  applyReadingMode(mode = null) {
+    if (!mode) {
+      mode = localStorage.getItem("lumina_reading_mode") || "horizontal";
+    }
+    this.readingMode = mode;
+    try {
+      localStorage.setItem("lumina_reading_mode", mode);
+    } catch (e) {}
+
+    const isVertical = mode === "vertical";
+    document.body.classList.toggle("mode-vertical", isVertical);
+    if (this.dom.viewReader) {
+      this.dom.viewReader.classList.toggle("mode-vertical", isVertical);
+    }
+    if (this.dom.pagedViewport) {
+      this.dom.pagedViewport.classList.toggle("mode-vertical", isVertical);
+    }
+
+    if (this.dom.readingModeSelects) {
+      this.dom.readingModeSelects.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.readingMode === mode);
+      });
+    }
+
+    if (this.dom.readerContent) {
+      if (isVertical) {
+        this.dom.readerContent.style.transform = "none";
+      } else {
+        if (this.dom.pagedViewport) {
+          this.dom.pagedViewport.scrollTop = 0;
+        }
+      }
+    }
+
+    if (isVertical) {
+      this.bindVerticalScrollListener();
+    }
+
+    if (this.isPdfMode && this.pdfLoader && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
+      requestAnimationFrame(async () => {
+        await this.pdfLoader.switchReadingMode(mode);
+        this.updatePageUI();
+        if (this.ruler && this.ruler.enabled) {
+          this.ruler.applyPosition();
+        }
+      });
+      return;
+    }
+
+    if (this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
+      requestAnimationFrame(() => {
+        if (isVertical) {
+          this.updatePageUI();
+        } else {
+          this.recomputeGlobalPagination();
+          this.recalcPages();
+          this.goToPage(this.currentPageIndex || 0);
+          this.renderScrubberTicks();
+        }
+        if (this.ruler && this.ruler.enabled) {
+          this.ruler.refreshLines();
+          if (this.ruler.wordTracking) this.ruler.refreshWords();
+          this.ruler.applyPosition();
+        }
+      });
+    }
+  }
+
+  isVerticalReadingMode() {
+    return this.readingMode === "vertical" || document.body.classList.contains("mode-vertical");
+  }
+
+  bindVerticalScrollListener() {
+    if (this._verticalScrollBound || !this.dom.pagedViewport) return;
+    this._verticalScrollBound = true;
+
+    let rafId = null;
+    this.dom.pagedViewport.addEventListener("scroll", () => {
+      if (!this.isVerticalReadingMode()) return;
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        this.updatePageUI();
+        this.saveProgress();
+      });
+    }, { passive: true });
   }
 
   bindEvents() {
@@ -693,6 +793,7 @@ class LuminaApp {
     let isSwiping = false;
 
     this.dom.pagedViewport.addEventListener("touchstart", (e) => {
+      if (this.isVerticalReadingMode()) return;
       if (this.isUiOrOverlayEvent(e)) {
         isSwiping = false;
         return;
@@ -717,6 +818,7 @@ class LuminaApp {
     }, { passive: true });
 
     this.dom.pagedViewport.addEventListener("touchend", (e) => {
+      if (this.isVerticalReadingMode()) return;
       if (this.isUiOrOverlayEvent(e)) {
         isSwiping = false;
         return;
@@ -873,6 +975,7 @@ class LuminaApp {
     let wheelMomentumTimer = null;
 
     this.dom.pagedViewport.addEventListener("wheel", (e) => {
+      if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
       if (this.isNavigating || this.ruler?.isLineLocked) return;
       this.ruler?.cancelHold();
@@ -914,7 +1017,11 @@ class LuminaApp {
         }
       }
       if (this.isPdfMode && this.pdfLoader && !this.dom.viewReader.classList.contains("is-hidden")) {
-        this.pdfLoader.renderPage(this.pdfLoader.currentPage);
+        if (this.isVerticalReadingMode()) {
+          this.pdfLoader.renderAllPagesVertical(this.pdfLoader.currentPage);
+        } else {
+          this.pdfLoader.renderPage(this.pdfLoader.currentPage);
+        }
         this.ruler?.applyPosition();
         return;
       }
@@ -1567,6 +1674,15 @@ class LuminaApp {
       });
     }
 
+    if (this.dom.readingModeSelects) {
+      this.dom.readingModeSelects.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const mode = btn.dataset.readingMode || "horizontal";
+          this.applyReadingMode(mode);
+        });
+      });
+    }
+
 
     if (this.dom.sliderContentWidth) {
       this.dom.sliderContentWidth.addEventListener("input", (e) => {
@@ -1884,6 +2000,20 @@ class LuminaApp {
         // 2. KROKOVÁNÍ PRAVÍTKA: Mezerník a Šipka dolů (vpřed +1), Šipka nahoru (vzad -1)
         // Pokud pravítko není zapnuto, automaticky jej aktivujeme a ihned posuneme
         if (e.code === "Space" || e.key === " " || e.key === "Spacebar" || e.key === "ArrowDown") {
+          if (this.isVerticalReadingMode()) {
+            e.preventDefault();
+            if (this.ruler && this.ruler.enabled) {
+              this.ruler.stepLine(1, true);
+            } else {
+              const vp = this.dom.pagedViewport || document.getElementById("paged-viewport");
+              if (vp) {
+                const stride = (e.key === "ArrowDown") ? 80 : Math.round(vp.clientHeight * 0.85);
+                vp.scrollBy({ top: stride, behavior: "smooth" });
+              }
+            }
+            return;
+          }
+
           if (isLastLine) {
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -1910,6 +2040,19 @@ class LuminaApp {
         }
 
         if (e.key === "ArrowUp") {
+          if (this.isVerticalReadingMode()) {
+            e.preventDefault();
+            if (this.ruler && this.ruler.enabled) {
+              this.ruler.stepLine(-1, true);
+            } else {
+              const vp = this.dom.pagedViewport || document.getElementById("paged-viewport");
+              if (vp) {
+                vp.scrollBy({ top: -80, behavior: "smooth" });
+              }
+            }
+            return;
+          }
+
           e.preventDefault();
           if (this.ruler) {
             if (!this.ruler.enabled) {
@@ -2536,7 +2679,9 @@ class LuminaApp {
     const totalPages = this.isPdfMode
       ? (this.pdfLoader ? this.pdfLoader.numPages : 1)
       : Math.max(1, this.totalPagesInChapter || 1);
-    const pageIndex = Math.max(0, Math.min(totalPages - 1, this.currentPageIndex || 0));
+    const pageIndex = this.isPdfMode
+      ? (this.pdfLoader ? Math.max(0, Math.min(totalPages - 1, this.pdfLoader.currentPage - 1)) : 0)
+      : Math.max(0, Math.min(totalPages - 1, this.currentPageIndex || 0));
     const pageProgress = (pageIndex + 1) / totalPages;
     const pageRatio = totalPages > 1 ? pageIndex / (totalPages - 1) : 0;
 
@@ -2554,6 +2699,16 @@ class LuminaApp {
     this.currentBook.pageRatio = pageRatio;
     this.currentBook.scrollPercent = pageProgress;
     this.currentBook.lastReadAt = progressData.lastReadAt;
+
+    if (this.isVerticalReadingMode() && this.dom.pagedViewport) {
+      const vp = this.dom.pagedViewport;
+      const maxScroll = Math.max(1, vp.scrollHeight - vp.clientHeight);
+      const vRatio = Math.max(0, Math.min(1, vp.scrollTop / maxScroll));
+      progressData.pageRatio = vRatio;
+      progressData.scrollPercent = vRatio;
+      this.currentBook.pageRatio = vRatio;
+      this.currentBook.scrollPercent = vRatio;
+    }
 
     // 1. Okamžitý synchronní zápis do localStorage pro ochranu před reloadem/pádem záložky
     try {
@@ -2930,6 +3085,12 @@ class LuminaApp {
   }
 
   recalcPages() {
+    if (this.isVerticalReadingMode()) {
+      const vp = this.dom.pagedViewport;
+      this.totalPagesInChapter = Math.max(1, Math.ceil((vp?.scrollHeight || 1) / Math.max(1, vp?.clientHeight || 1)));
+      this.updatePageUI();
+      return;
+    }
     if (!this.dom.pagedStage || !this.dom.readerContent) return;
     const { stageWidth, gap, exactStep } = this.getExactColumnStep();
     if (stageWidth <= 0 || exactStep <= 0) return;
@@ -2953,6 +3114,19 @@ class LuminaApp {
     if (this.isPdfMode && this.pdfLoader) {
       const targetPage = Math.max(1, Math.min(this.pdfLoader.numPages, pageIndex + 1));
       this.pdfLoader.goToPage(targetPage, explicitDirection);
+      return;
+    }
+    if (this.isVerticalReadingMode()) {
+      if (this.dom.readerContent) {
+        this.dom.readerContent.style.transform = "none";
+      }
+      this.updatePageUI();
+      this.saveProgress();
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.refreshLines();
+        if (this.ruler.wordTracking) this.ruler.refreshWords();
+        this.ruler.applyPosition();
+      }
       return;
     }
     const oldIndex = this.currentPageIndex;
@@ -3067,6 +3241,21 @@ class LuminaApp {
   }
 
   async nextPage() {
+    if (this.isVerticalReadingMode()) {
+      const vp = this.dom.pagedViewport || document.getElementById("paged-viewport");
+      if (vp) {
+        const stride = Math.round(vp.clientHeight * 0.85);
+        const maxScroll = vp.scrollHeight - vp.clientHeight;
+        if (vp.scrollTop + stride >= maxScroll - 20) {
+          if (!this.isPdfMode && this.currentParser && this.currentChapterIndex < this.currentParser.spine.length - 1) {
+            await this.navigateChapter(1, 0);
+            return;
+          }
+        }
+        vp.scrollBy({ top: stride, behavior: "smooth" });
+      }
+      return;
+    }
     if (this.isPdfMode && this.pdfLoader) {
       const now = Date.now();
       if (this.isNavigating) return;
@@ -3174,6 +3363,20 @@ class LuminaApp {
   }
 
   async prevPage() {
+    if (this.isVerticalReadingMode()) {
+      const vp = this.dom.pagedViewport || document.getElementById("paged-viewport");
+      if (vp) {
+        const stride = Math.round(vp.clientHeight * 0.85);
+        if (vp.scrollTop <= 20) {
+          if (!this.isPdfMode && this.currentParser && this.currentChapterIndex > 0) {
+            await this.navigateChapter(-1, "last");
+            return;
+          }
+        }
+        vp.scrollBy({ top: -stride, behavior: "smooth" });
+      }
+      return;
+    }
     if (this.isPdfMode && this.pdfLoader) {
       const now = Date.now();
       if (this.isNavigating) return;
@@ -3299,19 +3502,75 @@ class LuminaApp {
         this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
       }
 
-      const hasPrev = currBookPage > 1;
-      const hasNext = currBookPage < totalBookPages;
-      if (this.dom.btnPagePrev) this.dom.btnPagePrev.disabled = !hasPrev;
-      if (this.dom.btnPageNext) this.dom.btnPageNext.disabled = !hasNext;
+      if (this.isVerticalReadingMode()) {
+        const vp = this.dom.pagedViewport;
+        const scrollTop = vp ? vp.scrollTop : 0;
+        const maxScroll = vp ? Math.max(1, vp.scrollHeight - vp.clientHeight) : 1;
+        const hasPrev = scrollTop > 20 || currBookPage > 1;
+        const hasNext = (scrollTop < maxScroll - 20) || currBookPage < totalBookPages;
+        if (this.dom.btnPagePrev) this.dom.btnPagePrev.disabled = !hasPrev;
+        if (this.dom.btnPageNext) this.dom.btnPageNext.disabled = !hasNext;
 
-      const overallProgress = totalBookPages > 0 ? Math.min(100, Math.round((currBookPage / totalBookPages) * 100)) : 0;
-      if (this.dom.progressBar) this.dom.progressBar.style.width = `${overallProgress}%`;
-      if (this.dom.progressText) this.dom.progressText.textContent = `${overallProgress}%`;
+        const progressRatio = totalBookPages > 1 ? (currBookPage - 1) / (totalBookPages - 1) : 0;
+        const overallProgress = Math.min(100, Math.round(progressRatio * 100));
+        if (this.dom.progressBar) this.dom.progressBar.style.width = `${overallProgress}%`;
+        if (this.dom.progressText) this.dom.progressText.textContent = `${overallProgress}%`;
+      } else {
+        const hasPrev = currBookPage > 1;
+        const hasNext = currBookPage < totalBookPages;
+        if (this.dom.btnPagePrev) this.dom.btnPagePrev.disabled = !hasPrev;
+        if (this.dom.btnPageNext) this.dom.btnPageNext.disabled = !hasNext;
+
+        const overallProgress = totalBookPages > 0 ? Math.min(100, Math.round((currBookPage / totalBookPages) * 100)) : 0;
+        if (this.dom.progressBar) this.dom.progressBar.style.width = `${overallProgress}%`;
+        if (this.dom.progressText) this.dom.progressText.textContent = `${overallProgress}%`;
+      }
 
       this.updateEtrBadge();
       this.updateScrubberUI();
       this.updatePillScrubberUI();
       return;
+    }
+
+    if (this.isVerticalReadingMode()) {
+      const vp = this.dom.pagedViewport;
+      if (vp) {
+        const scrollTop = vp.scrollTop;
+        const maxScroll = Math.max(1, vp.scrollHeight - vp.clientHeight);
+        const progressRatio = Math.max(0, Math.min(1, scrollTop / maxScroll));
+        const totalPages = Math.max(1, Math.ceil(vp.scrollHeight / Math.max(1, vp.clientHeight)));
+        const currentPage = Math.max(1, Math.min(totalPages, Math.round(progressRatio * (totalPages - 1)) + 1));
+        const remainingPages = Math.max(0, totalPages - currentPage);
+
+        if (this.dom.footerRemainingChapter) {
+          this.dom.footerRemainingChapter.textContent = `konec kapitoly za: ${remainingPages} stran`;
+        }
+        if (this.dom.chapterPageCounter) {
+          this.dom.chapterPageCounter.textContent = `strana ${currentPage} z ${totalPages}`;
+        } else if (this.dom.pageCounterText) {
+          this.dom.pageCounterText.textContent = `strana ${currentPage} z ${totalPages}`;
+        }
+        if (this.dom.footerBookPages) {
+          this.dom.footerBookPages.textContent = `${currentPage} z ${totalPages}`;
+        }
+        if (this.dom.bookPageCounter) {
+          this.dom.bookPageCounter.textContent = `strana ${currentPage} z ${totalPages}`;
+        }
+
+        const hasPrev = scrollTop > 20 || (this.currentChapterIndex > 0);
+        const hasNext = (scrollTop < maxScroll - 20) || (this.currentParser && this.currentChapterIndex < this.currentParser.spine.length - 1);
+        if (this.dom.btnPagePrev) this.dom.btnPagePrev.disabled = !hasPrev;
+        if (this.dom.btnPageNext) this.dom.btnPageNext.disabled = !hasNext;
+
+        const overallProgress = Math.min(100, Math.round(progressRatio * 100));
+        if (this.dom.progressBar) this.dom.progressBar.style.width = `${overallProgress}%`;
+        if (this.dom.progressText) this.dom.progressText.textContent = `${overallProgress}%`;
+
+        this.updateEtrBadge();
+        this.updateScrubberUI();
+        this.updatePillScrubberUI();
+        return;
+      }
     }
 
     const currChapterPage = this.currentPageIndex + 1;
@@ -4019,7 +4278,15 @@ class LuminaApp {
 
     const resolved = this.resolveBookPage(targetBookPage);
     if (resolved.chapterIndex === this.currentChapterIndex) {
-      this.goToPage(resolved.pageInChapter);
+      if (this.isVerticalReadingMode()) {
+        const vp = this.dom.pagedViewport;
+        if (vp) {
+          const maxScroll = Math.max(0, vp.scrollHeight - vp.clientHeight);
+          vp.scrollTop = Math.round(resolved.pageRatio * maxScroll);
+        }
+      } else {
+        this.goToPage(resolved.pageInChapter);
+      }
     } else {
       await tracker.flushSession();
       this.currentChapterIndex = resolved.chapterIndex;

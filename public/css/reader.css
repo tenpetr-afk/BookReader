@@ -96,7 +96,7 @@ b.bionic-bold {
 }
 
 /* Jeviště stránky: přesně ohraničený prostor pro jednu stranu */
-.paged-stage {
+body:not(.mode-vertical) .paged-stage {
   position: relative;
   width: var(--reader-stage-width, 80vw) !important;
   max-width: calc(100vw - 32px) !important;
@@ -105,8 +105,8 @@ b.bionic-bold {
   margin: 0 auto;
 }
 
-:root.columns-2 .paged-stage,
-body.columns-2 .paged-stage {
+:root.columns-2 body:not(.mode-vertical) .paged-stage,
+body.columns-2:not(.mode-vertical) .paged-stage {
   width: calc(100vw - (2 * var(--col-gap))) !important;
   max-width: calc(100vw - (2 * var(--col-gap))) !important;
   margin: 0 auto !important;
@@ -120,21 +120,15 @@ body.columns-2 .paged-stage {
     --footer-base-height: 52px;
     --footer-height: calc(var(--footer-base-height) + var(--safe-area-bottom, 0px));
   }
-  .paged-stage {
+  body:not(.mode-vertical) .paged-stage {
     height: calc(100% - 30px);
   }
 }
 
 /* Multi-column layout: prohlížeč automaticky rozdělí text kapitoly do stran */
 .paged-content {
-  height: 100%;
-  width: 100%;
   margin: 0;
   padding: 0;
-  column-count: 1 !important;
-  column-width: var(--reader-stage-width, 80vw) !important;
-  column-gap: var(--page-gap, 50px);
-  column-fill: auto;
   font-family: var(--font-book, Georgia, serif);
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
@@ -143,15 +137,24 @@ body.columns-2 .paged-stage {
   word-break: break-word;
   hyphens: auto;
   -webkit-hyphens: auto;
-  transition: transform 0.20s cubic-bezier(0.2, 0.9, 0.3, 1);
-  will-change: transform;
   user-select: text;
   -webkit-user-select: text;
 }
 
-:root.columns-2 .paged-content,
-body.columns-2 .paged-content,
-.paged-content.columns-2 {
+body:not(.mode-vertical) .paged-content {
+  height: 100%;
+  width: 100%;
+  column-count: 1 !important;
+  column-width: var(--reader-stage-width, 80vw) !important;
+  column-gap: var(--page-gap, 50px);
+  column-fill: auto;
+  transition: transform 0.20s cubic-bezier(0.2, 0.9, 0.3, 1);
+  will-change: transform;
+}
+
+:root.columns-2 body:not(.mode-vertical) .paged-content,
+body.columns-2:not(.mode-vertical) .paged-content,
+body:not(.mode-vertical) .paged-content.columns-2 {
   column-width: calc((100% - var(--col-gap)) / 2) !important;
   column-count: 2 !important;
   column-gap: var(--col-gap) !important;
@@ -1943,5 +1946,39 @@ body.settings-sheet-open .drawer-backdrop {
   -webkit-backdrop-filter: none !important;
 }
 
+/* ==========================================================================
+   Vertikální plynulé čtení (Continuous Vertical Scroll Mode)
+   ========================================================================== */
 
+body.mode-vertical .paged-viewport {
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  display: block !important;
+}
 
+body.mode-vertical .paged-stage {
+  height: auto !important;
+  min-height: 100% !important;
+  overflow: visible !important;
+  width: var(--reader-stage-width, 80vw) !important;
+  max-width: 820px !important;
+  margin: 0 auto !important;
+  padding: 24px 0 80px 0 !important;
+}
+
+body.mode-vertical .paged-content {
+  height: auto !important;
+  width: 100% !important;
+  column-count: 1 !important;
+  column-width: auto !important;
+  column-gap: 0 !important;
+  transform: none !important;
+  transition: none !important;
+  overflow: visible !important;
+}
+
+body.mode-vertical .page-touch-zone {
+  display: none !important;
+  pointer-events: none !important;
+}

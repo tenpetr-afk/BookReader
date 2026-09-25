@@ -1239,6 +1239,12 @@ export class ReadingRuler {
         this.applyPosition();
       }
     });
+
+    window.addEventListener("scroll", () => {
+      if (this.enabled && document.body.classList.contains("mode-vertical")) {
+        this.applyPosition();
+      }
+    }, { passive: true, capture: true });
   }
 
   /**
@@ -1333,6 +1339,9 @@ export class ReadingRuler {
 
       const stageCenterX = stageRect.left + stageRect.width / 2;
       const isTwoColEarly = this.checkTwoColumnLayout(content, stageRect, null);
+      const isVertical = document.body.classList.contains('mode-vertical');
+      const viewport = isVertical ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
+      const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
 
       const rawLines = [];
 
@@ -1355,28 +1364,14 @@ export class ReadingRuler {
             range.selectNodeContents(el);
             const rects = range.getClientRects();
             if (rects && rects.length > 0) {
-              // For block elements (p, h1-h6, li, etc.) in single-column mode, the element's
-              // own bounding rect anchors the left/right of each raw line rect so inline fragment
-              // rects (e.g. Bionic markup) don't truncate the measured column width.
-              // In multi-column mode or for blocks spanning across columns, NEVER apply blockLeft/Right:
-              // individual lines must retain their true physical column coordinates so continuation
-              // fragments across the column split (e.g. top of col 1) are never misassigned to col 0.
               const isBlock = /^(P|H[1-6]|LI|BLOCKQUOTE|DIV)$/.test(el.tagName);
-              // In two-column mode, a <p> can span across the column divider —
-              // suppress blockBounds only for those cross-column blocks so that
-              // individual line fragments keep their true column coordinates.
-              // In single-column mode, all full-width paragraphs naturally span
-              // the stage centre (isMultiColumnBlock would fire for nearly every
-              // paragraph), so we ALWAYS apply blockBounds in 1-col mode to ensure
-              // every fragment rect is anchored to the paragraph's true left/right
-              // and the geometric two-column detector isn't fed half-width fragments.
               const isMultiColumnBlock = isTwoColEarly && (rect.left < stageCenterX - 30 && rect.right > stageCenterX + 30);
               const useBlockBounds = isBlock && !isMultiColumnBlock;
               const blockLeft = useBlockBounds ? rect.left : null;
               const blockRight = useBlockBounds ? rect.right : null;
               for (let i = 0; i < rects.length; i++) {
                 const r = rects[i];
-                const inStage = !hasValidStageBounds || (
+                const inStage = !hasValidStageBounds || isVertical || (
                   r.right > stageLeft - 4 &&
                   r.left < stageRight + 4 &&
                   r.bottom > stageTop + 2 &&
@@ -1386,9 +1381,6 @@ export class ReadingRuler {
                   let lineLeft = r.left;
                   let lineRight = r.right;
                   if (useBlockBounds) {
-                    // In 2-col mode only clamp to blockLeft/Right if the fragment
-                    // is in the same column as the block anchor edge.
-                    // In 1-col mode always clamp (sameLeftCol/sameRightCol = true).
                     const sameLeftCol = !isTwoColEarly || !(r.left >= stageCenterX - 15 && blockLeft < stageCenterX - 15);
                     const sameRightCol = !isTwoColEarly || !(r.right <= stageCenterX + 15 && blockRight > stageCenterX + 15);
                     if (blockLeft != null && sameLeftCol) lineLeft = Math.min(lineLeft, blockLeft);
@@ -1398,18 +1390,18 @@ export class ReadingRuler {
                     el,
                     element: el,
                     rect: r,
-                    top: r.top,
-                    bottom: r.bottom,
+                    top: r.top + vScrollTop,
+                    bottom: r.bottom + vScrollTop,
                     left: lineLeft,
                     right: lineRight,
                     height: r.height,
-                    centerY: r.top + r.height / 2,
+                    centerY: r.top + r.height / 2 + vScrollTop,
                     hasText: true
                   });
                 }
               }
             } else {
-              const inStage = !hasValidStageBounds || (
+              const inStage = !hasValidStageBounds || isVertical || (
                 rect.right > stageLeft - 4 &&
                 rect.left < stageRight + 4 &&
                 rect.bottom > stageTop + 2 &&
@@ -1420,18 +1412,18 @@ export class ReadingRuler {
                   el,
                   element: el,
                   rect,
-                  top: rect.top,
-                  bottom: rect.bottom,
+                  top: rect.top + vScrollTop,
+                  bottom: rect.bottom + vScrollTop,
                   left: rect.left,
                   right: rect.right,
                   height: rect.height,
-                  centerY: rect.top + rect.height / 2,
+                  centerY: rect.top + rect.height / 2 + vScrollTop,
                   hasText: true
                 });
               }
             }
           } catch (e) {
-            const inStage = !hasValidStageBounds || (
+            const inStage = !hasValidStageBounds || isVertical || (
               rect.right > stageLeft - 4 &&
               rect.left < stageRight + 4 &&
               rect.bottom > stageTop + 2 &&
@@ -1442,12 +1434,12 @@ export class ReadingRuler {
                 el,
                 element: el,
                 rect,
-                top: rect.top,
-                bottom: rect.bottom,
+                top: rect.top + vScrollTop,
+                bottom: rect.bottom + vScrollTop,
                 left: rect.left,
                 right: rect.right,
                 height: rect.height,
-                centerY: rect.top + rect.height / 2,
+                centerY: rect.top + rect.height / 2 + vScrollTop,
                 hasText: true
               });
             }
@@ -1481,12 +1473,12 @@ export class ReadingRuler {
                     el: textNode.parentElement,
                     element: textNode.parentElement,
                     rect: r,
-                    top: r.top,
-                    bottom: r.bottom,
+                    top: r.top + vScrollTop,
+                    bottom: r.bottom + vScrollTop,
                     left: r.left,
                     right: r.right,
                     height: r.height,
-                    centerY: r.top + r.height / 2,
+                    centerY: r.top + r.height / 2 + vScrollTop,
                     hasText: true
                   });
                 }
@@ -1514,7 +1506,7 @@ export class ReadingRuler {
 
         const r = mEl.getBoundingClientRect();
         if (r.width >= 10 && r.height >= 10) {
-          const inStage = !hasValidStageBounds || (
+          const inStage = !hasValidStageBounds || isVertical || (
             r.bottom > stageTop + 2 &&
             r.top < stageBottom - 2 &&
             r.right > stageLeft - 10 &&
@@ -1525,13 +1517,13 @@ export class ReadingRuler {
               el: mEl,
               element: mEl,
               rect: r,
-              top: r.top,
-              bottom: r.bottom,
+              top: r.top + vScrollTop,
+              bottom: r.bottom + vScrollTop,
               left: r.left,
               right: r.right,
               width: r.width,
               height: r.height,
-              centerY: r.top + r.height / 2,
+              centerY: r.top + r.height / 2 + vScrollTop,
               hasText: true,
               isMedia: true
             });
@@ -1859,6 +1851,9 @@ export class ReadingRuler {
       const stageRight = stageRect.right;
       const stageTop = stageRect.top;
       const stageBottom = stageRect.bottom;
+      const isVertical = document.body.classList.contains('mode-vertical');
+      const viewport = isVertical ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
+      const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
 
       const words = [];
       const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
@@ -1898,8 +1893,7 @@ export class ReadingRuler {
                 rect.height > 2 &&
                 rect.right > stageLeft &&
                 rect.left < stageRight &&
-                rect.bottom > stageTop - 40 &&
-                rect.top < stageBottom + 40
+                (isVertical || (rect.bottom > stageTop - 40 && rect.top < stageBottom + 40))
               ) {
                 subRects.push(rect);
               }
@@ -1953,12 +1947,12 @@ export class ReadingRuler {
                 text: cleanToken,
                 left: r.left,
                 right: r.right,
-                top: r.top,
-                bottom: r.bottom,
+                top: r.top + vScrollTop,
+                bottom: r.bottom + vScrollTop,
                 width: r.width,
                 height: r.height,
                 centerX: r.left + r.width / 2,
-                centerY: r.top + r.height / 2
+                centerY: r.top + r.height / 2 + vScrollTop
               });
             }
           } catch (e) {
@@ -1994,8 +1988,7 @@ export class ReadingRuler {
                 rect.height > 2 &&
                 rect.right > stageLeft &&
                 rect.left < stageRight &&
-                rect.bottom > stageTop - 40 &&
-                rect.top < stageBottom + 40
+                (isVertical || (rect.bottom > stageTop - 40 && rect.top < stageBottom + 40))
               ) {
                 subRects.push(rect);
               }
@@ -2051,12 +2044,12 @@ export class ReadingRuler {
                 text: cleanToken,
                 left: r.left,
                 right: r.right,
-                top: r.top,
-                bottom: r.bottom,
+                top: r.top + vScrollTop,
+                bottom: r.bottom + vScrollTop,
                 width: r.width,
                 height: r.height,
                 centerX: r.left + r.width / 2,
-                centerY: r.top + r.height / 2
+                centerY: r.top + r.height / 2 + vScrollTop
               });
             }
           } catch (e) {}
@@ -2266,6 +2259,12 @@ export class ReadingRuler {
     }
     if (this.cachedLines.length === 0) return 0;
 
+    const isVertical = document.body.classList.contains("mode-vertical");
+    const viewport = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
+    if (isVertical && viewport) {
+      curY += viewport.scrollTop;
+    }
+
     // Filtrování řádků podle aktivního sloupce
     const candidates = [];
     for (let i = 0; i < this.cachedLines.length; i++) {
@@ -2401,6 +2400,20 @@ export class ReadingRuler {
     const curY = this.lastPointerY;
 
     if (this.isPdfMode) {
+      const isVertical = document.body.classList.contains("mode-vertical");
+      const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
+      const h = this.height || 32;
+
+      if (isVertical && vp) {
+        const vScrollTop = vp.scrollTop;
+        const targetY = (curY != null ? (curY + vScrollTop) : (vScrollTop + 50)) - h / 2;
+        const maxScrollHeight = Math.max(vp.scrollHeight, vp.clientHeight);
+        this.currentY = Math.max(0, Math.min(maxScrollHeight - h, targetY));
+        this.targetY = this.currentY;
+        this.applyPosition();
+        return;
+      }
+
       const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
       const stageRect = stage ? stage.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
       const canvas = document.querySelector("#reader-content canvas");
@@ -2413,7 +2426,6 @@ export class ReadingRuler {
           bottomBound = cRect.bottom;
         }
       }
-      const h = this.height || 32;
       const targetY = (curY != null ? curY : (topBound + 50)) - h / 2;
       this.currentY = Math.max(topBound, Math.min(bottomBound - h, targetY));
       this.targetY = this.currentY;
@@ -2921,6 +2933,28 @@ export class ReadingRuler {
 
       try {
         if (this.isPdfMode) {
+          const isVertical = document.body.classList.contains("mode-vertical");
+          const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
+
+          if (isVertical && vp) {
+            this.height = this.pdfRulerHeight || 32;
+            const targetContainer = document.querySelector(`.pdf-page-container[data-page-number="${this.app?.pdfLoader?.currentPage || 1}"]`);
+            if (targetContainer) {
+              const cRect = targetContainer.getBoundingClientRect();
+              const offsetTop = targetContainer.offsetTop || (cRect.top + vp.scrollTop);
+              this.targetY = isBackward ? Math.round(offsetTop + cRect.height - this.height) : Math.round(offsetTop + 20);
+            } else {
+              this.targetY = isBackward ? Math.round(vp.scrollTop + vp.clientHeight - 80) : Math.round(vp.scrollTop + 80);
+            }
+            this.currentY = this.targetY;
+            this.isPageTransitioning = false;
+            if (this.rulerEl) {
+              this.rulerEl.classList.remove("is-page-transitioning");
+            }
+            this.applyPosition();
+            return;
+          }
+
           const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
           const stageRect = stage ? stage.getBoundingClientRect() : { top: 60, bottom: window.innerHeight - 60 };
           const canvas = document.querySelector("#reader-content canvas");
@@ -3170,6 +3204,31 @@ export class ReadingRuler {
     try {
       if (this.isPdfMode) {
         const stepSize = this.height || 32;
+        const isVertical = document.body.classList.contains("mode-vertical");
+        const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
+
+        if (isVertical && vp) {
+          const vScrollTop = vp.scrollTop;
+          const h = this.height || 32;
+          const maxScrollHeight = Math.max(vp.scrollHeight, vp.clientHeight);
+
+          let nextY = (Number.isFinite(this.currentY) ? this.currentY : (vScrollTop + 100)) + direction * stepSize;
+          nextY = Math.max(0, Math.min(maxScrollHeight - h, nextY));
+          this.currentY = nextY;
+          this.targetY = nextY;
+
+          // Kontrola přiblížení k okraji viewportu a plynulé odscrollování
+          const screenY = this.currentY - vp.scrollTop;
+          if (screenY < 80) {
+            vp.scrollBy({ top: screenY - 120, behavior: "smooth" });
+          } else if (screenY > vp.clientHeight - 120) {
+            vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: "smooth" });
+          }
+
+          this.applyPosition();
+          return;
+        }
+
         const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
         const stageRect = stage ? stage.getBoundingClientRect() : { top: 60, bottom: window.innerHeight - 60 };
         const canvas = document.querySelector("#reader-content canvas");
@@ -3187,14 +3246,14 @@ export class ReadingRuler {
 
         let nextY = (Number.isFinite(this.currentY) ? this.currentY : minY) + direction * stepSize;
         if (direction > 0 && nextY > maxY) {
-          if (this.onBoundary) {
+          if (this.onBoundary && !document.body.classList.contains("mode-vertical")) {
             this.lockAdvancement(350);
             this.onBoundary(1);
             return;
           }
           nextY = maxY;
         } else if (direction < 0 && nextY < minY) {
-          if (this.onBoundary) {
+          if (this.onBoundary && !document.body.classList.contains("mode-vertical")) {
             this.onBoundary(-1);
             return;
           }
@@ -3222,13 +3281,13 @@ export class ReadingRuler {
         if (currentActiveLine && currentActiveLine.isMedia) {
           const nextLineIdx = this.activeLineIndex + direction;
           if (direction > 0 && nextLineIdx >= this.cachedLines.length) {
-            if (this.onBoundary) {
+            if (this.onBoundary && !document.body.classList.contains("mode-vertical")) {
               this.lockAdvancement(350);
               this.onBoundary(1);
               return;
             }
           } else if (direction < 0 && nextLineIdx < 0) {
-            if (this.onBoundary) {
+            if (this.onBoundary && !document.body.classList.contains("mode-vertical")) {
               this.onBoundary(-1);
               return;
             }
@@ -3320,13 +3379,13 @@ export class ReadingRuler {
             }
 
             if (direction > 0 && curIdx >= this.cachedWords.length - 1) {
-              if (this.onBoundary) {
+              if (this.onBoundary && !document.body.classList.contains("mode-vertical")) {
                 this.lockAdvancement(350);
                 this.onBoundary(1);
                 return;
               }
             } else if (direction < 0 && curIdx <= 0) {
-              if (this.onBoundary) {
+              if (this.onBoundary && !document.body.classList.contains("mode-vertical")) {
                 this.onBoundary(-1);
                 return;
               }
@@ -3346,6 +3405,17 @@ export class ReadingRuler {
 
           this.disableWordTransition();
           this.applyPosition();
+          if (document.body.classList.contains("mode-vertical")) {
+            const vp = document.querySelector(".paged-viewport") || document.getElementById("paged-viewport");
+            if (vp && Number.isFinite(this.targetY)) {
+              const screenY = this.targetY - vp.scrollTop;
+              if (screenY < 80) {
+                vp.scrollBy({ top: screenY - 120, behavior: "smooth" });
+              } else if (screenY > vp.clientHeight - 120) {
+                vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: "smooth" });
+              }
+            }
+          }
           return;
         }
       }
@@ -3370,13 +3440,13 @@ export class ReadingRuler {
         } else {
           const curIdx = this.activeLineIndex;
           if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
-            if (this.onBoundary) {
+            if (this.onBoundary && !document.body.classList.contains("mode-vertical")) {
               this.lockAdvancement(350);
               this.onBoundary(1);
               return;
             }
           } else if (direction < 0 && curIdx <= 0) {
-            if (this.onBoundary) {
+            if (this.onBoundary && !document.body.classList.contains("mode-vertical")) {
               this.onBoundary(-1);
               return;
             }
@@ -3410,8 +3480,19 @@ export class ReadingRuler {
           this.rulerEl.style.transition = "none";
         }
         this.applyPosition();
+        if (document.body.classList.contains("mode-vertical")) {
+          const vp = document.querySelector(".paged-viewport") || document.getElementById("paged-viewport");
+          if (vp && Number.isFinite(this.targetY)) {
+            const screenY = this.targetY - vp.scrollTop;
+            if (screenY < 80) {
+              vp.scrollBy({ top: screenY - 120, behavior: "smooth" });
+            } else if (screenY > vp.clientHeight - 120) {
+              vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: "smooth" });
+            }
+          }
+        }
         return;
-      } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0) {
+      } else if (this.cachedLines.length === 0 && this.onBoundary && direction !== 0 && !document.body.classList.contains("mode-vertical")) {
         if (direction > 0) {
           this.lockAdvancement(350);
         }
@@ -3521,15 +3602,110 @@ export class ReadingRuler {
       this.rulerEl.style.height = `${h}px`;
       this.rulerEl.style.transition = "none";
 
-      const canvas = document.querySelector("#reader-content canvas");
+      const isVertical = document.body.classList.contains("mode-vertical");
+      const viewport = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
+      const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
+
       const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
       const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, bottom: window.innerHeight };
 
       let targetLeft = stageRect.left;
       let targetWidth = stageRect.width;
+
+      if (isVertical && viewport) {
+        const containers = document.querySelectorAll("#reader-content .pdf-page-container");
+        let activeContainer = null;
+        const vMid = window.innerHeight / 2;
+        let minMidDist = Infinity;
+
+        for (const c of containers) {
+          const r = c.getBoundingClientRect();
+          if (r.bottom >= 0 && r.top <= window.innerHeight) {
+            const dist = Math.abs((r.top + r.bottom) / 2 - vMid);
+            if (dist < minMidDist) {
+              minMidDist = dist;
+              activeContainer = c;
+            }
+          }
+        }
+        if (!activeContainer && containers.length > 0) {
+          activeContainer = containers[0];
+        }
+
+        if (activeContainer) {
+          const cRect = activeContainer.getBoundingClientRect();
+          if (cRect.width > 50) {
+            targetLeft = cRect.left;
+            targetWidth = cRect.width;
+          }
+        }
+
+        const maxScrollHeight = Math.max(viewport.scrollHeight, stageRect.height);
+        if (!Number.isFinite(this.currentY)) {
+          this.currentY = vScrollTop + Math.round(window.innerHeight * 0.3);
+        }
+        this.currentY = Math.max(0, Math.min(maxScrollHeight - h, this.currentY));
+
+        const screenY = Math.round(this.currentY - vScrollTop);
+
+        this.rulerEl.style.top = `${screenY}px`;
+        this.rulerEl.style.left = `${Math.round(targetLeft)}px`;
+        this.rulerEl.style.right = "auto";
+        this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
+        this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
+        this.rulerEl.style.transform = "none";
+
+        // Dimming mask ve vertikálním PDF módu
+        if (this.mode === "focus" && this.enabled && !this.isPageTransitioning) {
+          const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.65;
+          const dimBg = `rgba(0, 0, 0, ${dimOpacity})`;
+
+          const topBandHeight = Math.max(0, screenY);
+          if (this.maskTopEl) {
+            this.maskTopEl.className = "ruler-mask ruler-mask-top pdf-overlay-mask is-visible";
+            this.maskTopEl.style.setProperty("display", "block", "important");
+            this.maskTopEl.style.setProperty("background-color", dimBg, "important");
+            this.maskTopEl.style.setProperty("opacity", "1", "important");
+            this.maskTopEl.style.top = "0px";
+            this.maskTopEl.style.left = `${Math.round(targetLeft)}px`;
+            this.maskTopEl.style.width = `${Math.round(targetWidth)}px`;
+            this.maskTopEl.style.height = `${Math.round(topBandHeight)}px`;
+          }
+
+          const bottomBandTop = screenY + h;
+          const bottomBandHeight = Math.max(0, window.innerHeight - bottomBandTop);
+          if (this.maskBottomEl) {
+            this.maskBottomEl.className = "ruler-mask ruler-mask-bottom pdf-overlay-mask is-visible";
+            this.maskBottomEl.style.setProperty("display", "block", "important");
+            this.maskBottomEl.style.setProperty("background-color", dimBg, "important");
+            this.maskBottomEl.style.setProperty("opacity", "1", "important");
+            this.maskBottomEl.style.top = `${Math.round(bottomBandTop)}px`;
+            this.maskBottomEl.style.left = `${Math.round(targetLeft)}px`;
+            this.maskBottomEl.style.width = `${Math.round(targetWidth)}px`;
+            this.maskBottomEl.style.height = `${Math.round(bottomBandHeight)}px`;
+          }
+
+          if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
+          if (this.maskRightEl) this.maskRightEl.style.display = "none";
+        } else {
+          if (this.maskTopEl) {
+            this.maskTopEl.style.display = "none";
+            this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible");
+          }
+          if (this.maskBottomEl) {
+            this.maskBottomEl.style.display = "none";
+            this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-visible");
+          }
+          if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
+          if (this.maskRightEl) this.maskRightEl.style.display = "none";
+        }
+        return;
+      }
+
+      // Horizontální režim PDF (jedna strana)
       let boundsTop = stageRect.top;
       let boundsBottom = stageRect.bottom;
-
+      const canvas = document.querySelector("#reader-content canvas");
       if (canvas) {
         const cRect = canvas.getBoundingClientRect();
         if (cRect.width > 50) {
@@ -3606,6 +3782,10 @@ export class ReadingRuler {
       : null;
     const isCurrentMedia = !!(currentLine && currentLine.isMedia);
 
+    const isVertical = document.body.classList.contains("mode-vertical");
+    const viewport = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
+    const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
+
     let y = Number.isFinite(this.currentY) ? Math.round(this.currentY) : 150;
     let h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
 
@@ -3614,6 +3794,8 @@ export class ReadingRuler {
       h = Math.round(currentLine.height);
     }
     this.rulerEl.style.height = `${h}px`;
+
+    const screenY = isVertical ? Math.round(y - vScrollTop) : y;
 
     if (this.mode === "focus" || !this.wordTracking) {
       this.rulerEl.style.transition = "none";
@@ -3627,7 +3809,7 @@ export class ReadingRuler {
       this.rulerEl.style.right = "auto";
       this.rulerEl.style.width = `${w}px`;
       this.rulerEl.style.maxWidth = "100%";
-      this.rulerEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      this.rulerEl.style.transform = `translate3d(${x}px, ${screenY}px, 0)`;
 
       const aw = Number.isFinite(this.activeWordWidth) && this.activeWordWidth > 0 ? Math.round(this.activeWordWidth) : w;
       const pw = Number.isFinite(this.previewWidth) ? Math.round(this.previewWidth) : Math.max(0, w - aw);
@@ -3692,7 +3874,7 @@ export class ReadingRuler {
         }
       }
 
-      this.rulerEl.style.top = `${y}px`;
+      this.rulerEl.style.top = `${screenY}px`;
       this.rulerEl.style.left = `${Math.round(colLeft)}px`;
       this.rulerEl.style.right = "auto";
       this.rulerEl.style.width = `${Math.round(colWidth)}px`;
@@ -3753,7 +3935,7 @@ export class ReadingRuler {
       const stageRect = stage.getBoundingClientRect();
       const inactiveAlpha = Math.max(0.12, Math.min(0.65, Number((1 - this.dimOpacity).toFixed(2))));
 
-      const relY = Math.max(0, Math.round(y - stageRect.top));
+      const relY = Math.max(0, Math.round(screenY - stageRect.top));
       const relH = Math.max(10, Math.round(h));
 
       let activeGradient = "";
