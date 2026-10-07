@@ -56,7 +56,40 @@ export class StorageManager {
   // --- KNIHY (BOOKS) ---
 
   async saveBook(bookData) {
-    if (bookData && (bookData.isPdf || bookData.format === "pdf")) {
+    if (!bookData) return null;
+
+    // Normalizace názvu a formátu souboru
+    if (!bookData.fileName && bookData.file_name) {
+      bookData.fileName = bookData.file_name;
+    }
+    const isPdf = !!(bookData.isPdf || bookData.format === "pdf" || bookData.fileName?.toLowerCase().endsWith(".pdf"));
+    const format = isPdf ? "pdf" : "epub";
+    bookData.format = format;
+    bookData.isPdf = isPdf;
+
+    if (!bookData.fileName) {
+      const cleanTitle = (bookData.title || bookData.id || "book")
+        .replace(/[^a-zA-Z0-9_\-\u00C0-\u017F]/g, "_")
+        .slice(0, 40);
+      bookData.fileName = `${cleanTitle}.${format}`;
+    }
+    bookData.file_name = bookData.fileName;
+
+    // Zachování a normalizace surových binárních dat (ArrayBuffer, Uint8Array nebo Blob)
+    const rawBinary = bookData.data || bookData.fileData;
+    if (rawBinary) {
+      bookData.data = rawBinary;
+      bookData.fileData = rawBinary;
+    }
+
+    // Normalizace autora a tvůrce
+    if (!bookData.author && bookData.creator) {
+      bookData.author = bookData.creator;
+    } else if (!bookData.creator && bookData.author) {
+      bookData.creator = bookData.author;
+    }
+
+    if (isPdf) {
       if (!bookData.pdfRulerConfig) {
         bookData.pdfRulerConfig = { height: 32, stepSize: 32 };
       } else {
@@ -75,6 +108,16 @@ export class StorageManager {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
+  }
+
+  async uploadBook(book) {
+    const { supabaseSync } = await import("./supabase-sync.js");
+    return await supabaseSync.uploadBook(book);
+  }
+
+  async syncWithCloud(options) {
+    const { supabaseSync } = await import("./supabase-sync.js");
+    return await supabaseSync.syncAll(options);
   }
 
   async getBook(id) {
@@ -304,3 +347,11 @@ export class StorageManager {
 }
 
 export const storage = new StorageManager();
+
+export async function uploadBook(book) {
+  return await storage.uploadBook(book);
+}
+
+export async function syncWithCloud(options) {
+  return await storage.syncWithCloud(options);
+}

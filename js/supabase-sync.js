@@ -71,77 +71,108 @@ export class SupabaseSync {
   /**
    * Nahraje knihu a její binární soubor do Supabase Storage a zapíše metadata do tabulky books
    */
-  async uploadBook(bookData) {
+  /**
+   * Nahraje knihu a její binární soubor do Supabase Storage a zapíše metadata do tabulky books
+   */
+  async uploadBook(book) {
     if (!this.isOnline()) {
-      console.warn("[SupabaseSync] Nelze nahrát knihu: zařízení je offline.");
+      console.warn("[Supabase Sync] Nelze nahrát knihu: zařízení je offline.");
       return null;
     }
 
-    if (!bookData || !bookData.fileData) {
-      console.warn("[SupabaseSync] Kniha neobsahuje data souboru pro zálohu.");
+    if (!book) {
+      console.warn("[Supabase Sync] Kniha nebyla zadána.");
       return null;
     }
 
     try {
-      const isPdf = !!(bookData.isPdf || bookData.format === "pdf");
-      const ext = isPdf ? "pdf" : "epub";
-      const mime = isPdf ? "application/pdf" : "application/epub+zip";
-      
-      // Bezpečný název souboru
-      const safeTitle = (bookData.title || bookData.id)
-        .replace(/[^a-zA-Z0-9_\-\u00C0-\u017F]/g, "_")
-        .slice(0, 40);
-      const fileName = `${safeTitle}.${ext}`;
-      const filePath = `books/${bookData.id}/${fileName}`;
+      // Normalizace fileName
+      if (!book.fileName && book.file_name) {
+        book.fileName = book.file_name;
+      }
+      if (!book.fileName) {
+        const isPdf = !!(book.isPdf || book.format === 'pdf');
+        const fallbackExt = isPdf ? 'pdf' : 'epub';
+        const cleanTitle = (book.title || book.id || 'book')
+          .replace(/[^a-zA-Z0-9_\-\u00C0-\u017F]/g, '_')
+          .slice(0, 40);
+        book.fileName = `${cleanTitle}.${fallbackExt}`;
+      }
+      book.file_name = book.fileName;
 
-      const blob = new Blob([bookData.fileData], { type: mime });
+      // Normalizace typu souboru dle požadavků
+      const ext = book.fileName.split('.').pop().toLowerCase();
+      const fileType = ext === 'pdf' ? 'pdf' : 'epub'; // striktně malá písmena
+      const mimeType = fileType === 'pdf' ? 'application/pdf' : 'application/epub+zip';
 
-      console.log(`[SupabaseSync] Nahrávám soubor knihy "${bookData.title}" (${blob.size} B) do Storage...`);
-      const { data: uploadRes, error: uploadErr } = await supabase.storage
+      // Surová binární data (ArrayBuffer, Uint8Array nebo Blob)
+      const rawBinary = book.data || book.fileData;
+      if (!rawBinary) {
+        const missingDataErr = new Error("Kniha neobsahuje surová binární data (book.data / book.fileData)");
+        console.error("[Supabase Sync] EPUB upload failed:", missingDataErr);
+        throw missingDataErr;
+      }
+
+      // Vytvoření správně otypovaného Blobu
+      let uploadBlob;
+      if (rawBinary instanceof Blob) {
+        uploadBlob = rawBinary.type === mimeType ? rawBinary : new Blob([rawBinary], { type: mimeType });
+      } else if (rawBinary instanceof ArrayBuffer) {
+        uploadBlob = new Blob([rawBinary.slice(0)], { type: mimeType });
+      } else if (ArrayBuffer.isView(rawBinary)) {
+        uploadBlob = new Blob([rawBinary.buffer.slice(rawBinary.byteOffset, rawBinary.byteOffset + rawBinary.byteLength)], { type: mimeType });
+      } else {
+        uploadBlob = new Blob([rawBinary], { type: mimeType });
+      }
+
+      const storagePath = `${book.id}/${book.fileName}`;
+
+      console.log(`[Supabase Sync] Nahrávám ${fileType.toUpperCase()} "${book.title}" (${uploadBlob.size} B, mime: ${mimeType}) do ${storagePath}...`);
+
+      const { data, error } = await supabase.storage
         .from(STORAGE_BUCKET)
-        .upload(filePath, blob, {
-          contentType: mime,
+        .upload(storagePath, uploadBlob, {
+          contentType: mimeType,
           upsert: true
         });
 
-      if (uploadErr) {
-        console.error("[SupabaseSync] Chyba při nahrávání do Storage:", uploadErr);
-        throw uploadErr;
+      if (error) {
+        console.error("[Supabase Sync] EPUB upload failed:", error);
+        throw error;
       }
 
-      console.log(`[SupabaseSync] Soubor nahrán do ${filePath}. Ukládám metadata do tabulky books...`);
-
-      const scrollProg = Number(bookData.scrollPercent ?? bookData.pageRatio ?? 0) || 0;
-      const chIdx = Number(bookData.currentChapterIndex) || 0;
-      const pIdx = Math.max(1, (Number(bookData.currentPageIndex) || 0) + 1);
-      const rulerH = Number(bookData.pdfRulerConfig?.height) || 32;
+      // Zápis / aktualizace metadat v databázi (tabulka books)
+      const scrollProg = Number(book.scrollPercent ?? book.pageRatio ?? 0) || 0;
+      const chIdx = Number(book.currentChapterIndex) || 0;
+      const pIdx = Math.max(1, (Number(book.currentPageIndex) || 0) + 1);
+      const rulerH = Number(book.pdfRulerConfig?.height) || 32;
 
       const row = {
-        id: bookData.id,
-        title: bookData.title || "Bez názvu",
-        file_name: fileName,
-        file_type: ext,
-        file_path: filePath,
+        id: book.id,
+        title: book.title || "Bez názvu",
+        file_name: book.fileName,
+        file_type: fileType, // striktně malá písmena 'epub' nebo 'pdf' (pro check constraint books_file_type_check)
+        file_path: storagePath,
         current_chapter: chIdx,
         current_page: pIdx,
         scroll_progress: scrollProg,
         pdf_ruler_height: rulerH,
-        updated_at: new Date(bookData.lastReadAt || Date.now()).toISOString()
+        updated_at: new Date(book.lastReadAt || Date.now()).toISOString()
       };
 
-      const { error: dbErr } = await supabase
+      const { error: dbError } = await supabase
         .from("books")
         .upsert(row, { onConflict: "id" });
 
-      if (dbErr) {
-        console.error("[SupabaseSync] Chyba při zápisu metadat knihy do tabulky books:", dbErr);
-        throw dbErr;
+      if (dbError) {
+        console.error("[Supabase Sync] EPUB upload failed:", dbError);
+        throw dbError;
       }
 
-      console.log(`[SupabaseSync] Kniha "${bookData.title}" byla úspěšně zálohována do cloudu.`);
-      return { success: true, filePath };
+      console.log(`[Supabase Sync] Kniha "${book.title}" byla úspěšně nahrána do cloudu.`);
+      return { success: true, filePath: storagePath };
     } catch (err) {
-      console.warn("[SupabaseSync] Selhání uploadu knihy:", err);
+      console.error("[Supabase Sync] EPUB upload failed:", err);
       return null;
     }
   }
@@ -276,70 +307,114 @@ export class SupabaseSync {
 
         if (!localBook) {
           // Kniha existuje v cloudu, ale ne lokálně -> STÁHNOUT
-          if (cloudBook.file_path) {
-            try {
-              console.log(`[SupabaseSync] Stahuji novou knihu z cloudu: "${cloudBook.title}"...`);
-              const { data: blob, error: dlErr } = await supabase.storage
-                .from(STORAGE_BUCKET)
-                .download(cloudBook.file_path);
+          try {
+            let storagePath = cloudBook.file_path || `${cloudBook.id}/${cloudBook.file_name}`;
+            if (!storagePath) {
+              const ext = cloudBook.file_type === "pdf" ? "pdf" : "epub";
+              storagePath = `${cloudBook.id}/${cloudBook.id}.${ext}`;
+            }
 
-              if (dlErr) throw dlErr;
+            console.log(`[Supabase Sync] Stahuji knihu z cloudu: "${cloudBook.title}" (${storagePath})...`);
+            let { data: blob, error: dlErr } = await supabase.storage
+              .from(STORAGE_BUCKET)
+              .download(storagePath);
 
-              const arrayBuffer = await blob.arrayBuffer();
-              const isPdf = cloudBook.file_type === "pdf" || cloudBook.file_path.toLowerCase().endsWith(".pdf");
+            // Fallback na alternativní prefixy v úložišti
+            if (dlErr && storagePath.startsWith("books/")) {
+              const altPath = storagePath.replace(/^books\//, "");
+              const altRes = await supabase.storage.from(STORAGE_BUCKET).download(altPath);
+              if (!altRes.error && altRes.data) {
+                blob = altRes.data;
+                dlErr = null;
+                storagePath = altPath;
+              }
+            } else if (dlErr && !storagePath.startsWith("books/")) {
+              const altPath = `books/${storagePath}`;
+              const altRes = await supabase.storage.from(STORAGE_BUCKET).download(altPath);
+              if (!altRes.error && altRes.data) {
+                blob = altRes.data;
+                dlErr = null;
+                storagePath = altPath;
+              }
+            }
 
-              let newBookData = null;
+            if (dlErr || !blob) {
+              console.error("[Supabase Sync] Nepodařilo se stáhnout soubor knihy z cloudu:", storagePath, dlErr);
+              continue;
+            }
 
-              if (isPdf) {
-                let coverDataUrl = null;
-                let numPages = 1;
-                try {
-                  if (window.pdfjsLib) {
-                    const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
-                    const pdfDoc = await loadingTask.promise;
-                    numPages = pdfDoc.numPages || 1;
-                    const page = await pdfDoc.getPage(1);
-                    const viewport = page.getViewport({ scale: 0.5 });
-                    const canvas = document.createElement("canvas");
-                    canvas.width = viewport.width;
-                    canvas.height = viewport.height;
-                    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-                    coverDataUrl = canvas.toDataURL("image/jpeg", 0.75);
-                  }
-                } catch (pe) {
-                  console.warn("Chyba při renderu náhledu PDF z cloudu:", pe);
+            // Převod staženého Blobu na čistý ArrayBuffer
+            const arrayBuffer = await blob.arrayBuffer();
+            const isPdf = cloudBook.file_type === "pdf" || storagePath.toLowerCase().endsWith(".pdf");
+            const finalFileName = cloudBook.file_name || `${cloudBook.id}.${isPdf ? "pdf" : "epub"}`;
+
+            let newBookData = null;
+
+            if (isPdf) {
+              let coverDataUrl = null;
+              let numPages = 1;
+              try {
+                if (window.pdfjsLib) {
+                  const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
+                  const pdfDoc = await loadingTask.promise;
+                  numPages = pdfDoc.numPages || 1;
+                  const page = await pdfDoc.getPage(1);
+                  const viewport = page.getViewport({ scale: 0.5 });
+                  const canvas = document.createElement("canvas");
+                  canvas.width = viewport.width;
+                  canvas.height = viewport.height;
+                  await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+                  coverDataUrl = canvas.toDataURL("image/jpeg", 0.75);
                 }
+              } catch (pe) {
+                console.warn("[Supabase Sync] Varování při náhledu PDF z cloudu:", pe);
+              }
 
-                newBookData = {
-                  id: cloudBook.id,
-                  title: cloudBook.title || "PDF Dokument",
-                  creator: "PDF Dokument",
-                  language: "cs",
-                  description: `PDF dokument (${numPages} stran)`,
-                  coverDataUrl,
-                  fileData: arrayBuffer,
-                  format: "pdf",
-                  isPdf: true,
-                  addedAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
-                  lastReadAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
-                  currentChapterIndex: cloudBook.current_chapter || 0,
-                  currentPageIndex: Math.max(0, (cloudBook.current_page || 1) - 1),
-                  totalChapters: 1,
-                  totalWords: numPages * 250,
-                  wordsRead: 0,
-                  progressPercent: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
-                  scrollPercent: Number(cloudBook.scroll_progress) || 0,
-                  pageRatio: Number(cloudBook.scroll_progress) || 0,
-                  pdfRulerConfig: {
-                    height: cloudBook.pdf_ruler_height || 32,
-                    stepSize: cloudBook.pdf_ruler_height || 32
-                  }
-                };
-              } else {
-                // EPUB
+              newBookData = {
+                id: cloudBook.id,
+                title: cloudBook.title || "PDF Dokument",
+                author: "PDF Dokument",
+                creator: "PDF Dokument",
+                fileName: finalFileName,
+                file_name: finalFileName,
+                format: "pdf",
+                isPdf: true,
+                language: "cs",
+                description: `PDF dokument (${numPages} stran)`,
+                coverDataUrl,
+                fileData: arrayBuffer,
+                data: arrayBuffer,
+                addedAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
+                lastReadAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
+                currentChapterIndex: Number(cloudBook.current_chapter) || 0,
+                currentPageIndex: Math.max(0, (Number(cloudBook.current_page) || 1) - 1),
+                totalChapters: 1,
+                totalWords: numPages * 250,
+                wordsRead: 0,
+                progressPercent: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
+                scrollPercent: Number(cloudBook.scroll_progress) || 0,
+                pageRatio: Number(cloudBook.scroll_progress) || 0,
+                pdfRulerConfig: {
+                  height: Number(cloudBook.pdf_ruler_height) || 32,
+                  stepSize: Number(cloudBook.pdf_ruler_height) || 32
+                }
+              };
+            } else {
+              // EPUB
+              let coverDataUrl = null;
+              let parsedTitle = "";
+              let parsedAuthor = "";
+              let totalChapters = 1;
+              let totalWords = 0;
+
+              try {
                 const parser = await EpubParser.parse(arrayBuffer.slice(0));
-                const wordStats = await parser.calculateTotalWords();
-                let coverDataUrl = null;
+                parsedTitle = parser.metadata?.title || "";
+                parsedAuthor = parser.metadata?.creator || "";
+                totalChapters = parser.spine?.length || 1;
+                const wordStats = await parser.calculateTotalWords().catch(() => ({ totalWords: 0 }));
+                totalWords = wordStats.totalWords || 0;
+
                 if (parser.coverBlobUrl) {
                   try {
                     const res = await fetch(parser.coverBlobUrl);
@@ -351,36 +426,47 @@ export class SupabaseSync {
                     });
                   } catch (e) {}
                 }
-
-                newBookData = {
-                  id: cloudBook.id,
-                  title: cloudBook.title || parser.metadata.title || "Kniha EPUB",
-                  creator: parser.metadata.creator || "",
-                  language: parser.metadata.language || "cs",
-                  description: parser.metadata.description || "",
-                  coverDataUrl,
-                  fileData: arrayBuffer,
-                  addedAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
-                  lastReadAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
-                  currentChapterIndex: cloudBook.current_chapter || 0,
-                  currentPageIndex: Math.max(0, (cloudBook.current_page || 1) - 1),
-                  totalChapters: parser.spine.length || 1,
-                  totalWords: wordStats.totalWords || 0,
-                  wordsRead: 0,
-                  progressPercent: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
-                  scrollPercent: Number(cloudBook.scroll_progress) || 0,
-                  pageRatio: Number(cloudBook.scroll_progress) || 0
-                };
+              } catch (parseErr) {
+                console.warn("[Supabase Sync] Varování při parsování staženého EPUB:", parseErr);
               }
 
-              if (newBookData) {
-                await storage.saveBook(newBookData);
-                stats.downloaded++;
-                console.log(`[SupabaseSync] Kniha "${newBookData.title}" stažena a uložena do IndexedDB.`);
-              }
-            } catch (dlErr) {
-              console.warn(`[SupabaseSync] Nepodařilo se stáhnout knihu ${cloudBook.id}:`, dlErr);
+              const author = cloudBook.author || cloudBook.creator || parsedAuthor || "Neznámý autor";
+              const title = cloudBook.title || parsedTitle || "Kniha EPUB";
+
+              newBookData = {
+                id: cloudBook.id,
+                title: title,
+                author: author,
+                creator: author,
+                fileName: finalFileName,
+                file_name: finalFileName,
+                format: "epub",
+                isPdf: false,
+                language: "cs",
+                description: "",
+                coverDataUrl,
+                fileData: arrayBuffer,
+                data: arrayBuffer,
+                addedAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
+                lastReadAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
+                currentChapterIndex: Number(cloudBook.current_chapter) || 0,
+                currentPageIndex: Math.max(0, (Number(cloudBook.current_page) || 1) - 1),
+                totalChapters: totalChapters,
+                totalWords: totalWords,
+                wordsRead: 0,
+                progressPercent: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
+                scrollPercent: Number(cloudBook.scroll_progress) || 0,
+                pageRatio: Number(cloudBook.scroll_progress) || 0
+              };
             }
+
+            if (newBookData) {
+              await storage.saveBook(newBookData);
+              stats.downloaded++;
+              console.log(`[Supabase Sync] Kniha "${newBookData.title}" stažena a uložena do IndexedDB.`);
+            }
+          } catch (dlErr) {
+            console.error(`[Supabase Sync] Nepodařilo se stáhnout a zpracovat knihu ${cloudBook.id}:`, dlErr);
           }
         } else {
           // Kniha existuje v obou úložištích -> Synchronizace postupu čtení

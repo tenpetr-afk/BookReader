@@ -76,11 +76,21 @@ export class LuminaApp {
     this.bindKeyboardShortcuts();
     this.initCloudSync();
 
-    // Načíst knihy z IndexedDB
-    const books = await storage.getAllBooks();
+    // Načíst knihy z IndexedDB s cloudovou hydratací
+    let books = await storage.getAllBooks();
     if (books.length === 0) {
-      // Automaticky nabídnout nebo nahrát vzorovou knihu
-      await this.loadBundledSampleBook();
+      if (supabaseSync.isOnline()) {
+        try {
+          await this.loadLibrary();
+          books = await storage.getAllBooks();
+        } catch (e) {
+          console.warn("[Supabase Sync] Nepodařilo se hydratovat knihy z cloudu:", e);
+        }
+      }
+      if (books.length === 0) {
+        // Automaticky nabídnout nebo nahrát vzorovou knihu
+        await this.loadBundledSampleBook();
+      }
     } else {
       this.renderLibrary();
     }
@@ -2492,13 +2502,17 @@ export class LuminaApp {
         const bookData = {
           id: bookId,
           title: title,
+          author: "PDF Dokument",
           creator: "PDF Dokument",
+          fileName: file.name,
+          file_name: file.name,
+          format: "pdf",
+          isPdf: true,
           language: "cs",
           description: `PDF dokument (${this.pdfLoader.numPages} stran)`,
           coverDataUrl,
           fileData: storageBuffer,
-          format: "pdf",
-          isPdf: true,
+          data: storageBuffer,
           addedAt: Date.now(),
           lastReadAt: Date.now(),
           currentChapterIndex: 0,
@@ -2512,7 +2526,7 @@ export class LuminaApp {
 
         await storage.saveBook(bookData);
         supabaseSync.uploadBook(bookData).catch(err => {
-          console.warn("[SupabaseSync] Zálohování PDF do cloudu selhalo:", err);
+          console.error("[Supabase Sync] PDF upload failed:", err);
         });
         this.currentBook = bookData;
         storage.setLastActiveBookId(bookId);
@@ -2549,6 +2563,8 @@ export class LuminaApp {
     this.showToast("Zpracovávám EPUB soubor...", "info");
     try {
       const buffer = await file.arrayBuffer();
+      // Nezávislá kopie pro IndexedDB a cloud synchronizaci, aby nedošlo k chybě detached ArrayBuffer
+      const storageBuffer = buffer.slice(0);
       const parser = await EpubParser.parse(buffer);
 
       // Spočítáme slova
@@ -2568,14 +2584,21 @@ export class LuminaApp {
         }
       }
 
+      const author = parser.metadata.creator || "Neznámý autor";
       const bookData = {
         id: bookId,
-        title: parser.metadata.title,
-        creator: parser.metadata.creator,
-        language: parser.metadata.language,
-        description: parser.metadata.description,
+        title: parser.metadata.title || file.name.replace(/\.epub$/i, ""),
+        author: author,
+        creator: author,
+        fileName: file.name,
+        file_name: file.name,
+        format: "epub",
+        isPdf: false,
+        language: parser.metadata.language || "cs",
+        description: parser.metadata.description || "",
         coverDataUrl,
-        fileData: buffer,
+        fileData: storageBuffer,
+        data: storageBuffer,
         addedAt: Date.now(),
         lastReadAt: Date.now(),
         currentChapterIndex: 0,
@@ -2588,7 +2611,7 @@ export class LuminaApp {
 
       await storage.saveBook(bookData);
       supabaseSync.uploadBook(bookData).catch(err => {
-        console.warn("[SupabaseSync] Zálohování EPUB do cloudu selhalo:", err);
+        console.error("[Supabase Sync] EPUB upload failed:", err);
       });
       this.showToast(`Kniha „${bookData.title}“ byla úspěšně přidána!`, "success");
       await this.renderLibrary();
@@ -2614,6 +2637,15 @@ export class LuminaApp {
       this.showToast("Vzorovou knihu se nepodařilo načíst.", "error");
       this.renderLibrary();
     }
+  }
+
+  async loadLibrary() {
+    try {
+      await supabaseSync.syncAll({ silent: true });
+    } catch (e) {
+      console.error("[Supabase Sync] Chyba při načítání knihovny z cloudu:", e);
+    }
+    return await this.renderLibrary();
   }
 
   async renderLibrary() {
@@ -2657,7 +2689,7 @@ export class LuminaApp {
         </div>
         <div class="book-info">
           <h3 class="book-title" title="${book.title}">${book.title}</h3>
-          <p class="book-author">${book.creator}</p>
+          <p class="book-author">${book.author || book.creator || ""}</p>
           <div class="book-meta">
             <div class="book-progress-bar-small">
               <div class="fill" style="width: ${progress}%"></div>
@@ -2856,9 +2888,20 @@ export class LuminaApp {
         this.showReaderView();
         if (this.dom.bookTitleEl) this.dom.bookTitleEl.textContent = book.title;
 
-        const fileBuffer = (book.fileData instanceof ArrayBuffer)
-          ? book.fileData.slice(0)
-          : book.fileData;
+        const rawPdf = book.fileData || book.data;
+        if (!rawPdf) {
+          throw new Error("PDF dokument neobsahuje žádná data souboru.");
+        }
+        let fileBuffer;
+        if (rawPdf instanceof ArrayBuffer) {
+          fileBuffer = rawPdf.slice(0);
+        } else if (rawPdf instanceof Blob) {
+          fileBuffer = await rawPdf.arrayBuffer();
+        } else if (ArrayBuffer.isView(rawPdf)) {
+          fileBuffer = rawPdf.buffer.slice(rawPdf.byteOffset, rawPdf.byteOffset + rawPdf.byteLength);
+        } else {
+          fileBuffer = rawPdf;
+        }
         await this.pdfLoader.load(fileBuffer);
         if (targetPage > 1) {
           await this.pdfLoader.goToPage(targetPage);
@@ -2876,7 +2919,22 @@ export class LuminaApp {
       if (this.ruler) this.ruler.setPdfMode(false);
       this.setPdfRulerUIVisibility(false);
 
-      this.currentParser = await EpubParser.parse(book.fileData);
+      const rawBuffer = book.fileData || book.data;
+      if (!rawBuffer) {
+        throw new Error("Kniha neobsahuje žádná data souboru.");
+      }
+      let epubBuffer;
+      if (rawBuffer instanceof ArrayBuffer) {
+        epubBuffer = rawBuffer.slice(0);
+      } else if (rawBuffer instanceof Blob) {
+        epubBuffer = await rawBuffer.arrayBuffer();
+      } else if (ArrayBuffer.isView(rawBuffer)) {
+        epubBuffer = rawBuffer.buffer.slice(rawBuffer.byteOffset, rawBuffer.byteOffset + rawBuffer.byteLength);
+      } else {
+        epubBuffer = rawBuffer;
+      }
+
+      this.currentParser = await EpubParser.parse(epubBuffer);
 
       if (this.dom.bookTitleEl) this.dom.bookTitleEl.textContent = book.title;
       this.renderToc();
