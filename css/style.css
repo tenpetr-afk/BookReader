@@ -335,6 +335,63 @@ body {
   border-color: var(--color-primary);
 }
 
+/* Cloud Sync Tlačítko & Indikátor */
+.btn-cloud-sync {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sync-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sync-icon-wrap svg {
+  display: block;
+}
+
+.sync-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+  display: inline-block;
+  margin-left: 0.1rem;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.btn-cloud-sync.status-synced .sync-status-dot {
+  background-color: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.45);
+}
+
+.btn-cloud-sync.status-syncing .sync-status-dot {
+  background-color: #3b82f6;
+  animation: pulse-dot 1.2s infinite ease-in-out;
+}
+
+.btn-cloud-sync.status-error .sync-status-dot,
+.btn-cloud-sync.status-offline .sync-status-dot {
+  background-color: #f59e0b;
+}
+
+.icon-sync-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
+}
+
 /* Drop Zone pro nahrávání */
 .drop-zone-overlay {
   display: none;
@@ -1688,7 +1745,10 @@ body.is-turning-page .ruler-mask {
 .ruler-mask.is-snapped,
 .paged-stage.focus-active,
 body.ruler-active.ruler-mode-focus .paged-stage,
-body.ruler-active.ruler-mode-focus .paged-stage.focus-active {
+body.ruler-active.ruler-mode-focus .paged-stage.focus-active,
+body.mode-vertical .paged-stage.focus-active,
+body.mode-vertical #reader-content.focus-active,
+body.mode-vertical .reader-content.focus-active {
   transition: none !important;
   -webkit-transition: none !important;
 }

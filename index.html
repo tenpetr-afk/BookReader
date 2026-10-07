@@ -19,6 +19,9 @@
     }
   </script>
 
+  <!-- Supabase JS Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <!-- Webová písma Google Fonts (Lora, Atkinson Hyperlegible, Merriweather, Inter) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -61,6 +64,27 @@
         </div>
 
         <div class="library-actions">
+          <button id="btn-cloud-sync" class="btn btn-secondary btn-cloud-sync" title="Synchronizovat knihy a postup čtení s cloudem" aria-label="Synchronizovat s cloudem">
+            <span class="sync-icon-wrap" id="sync-icon-wrap">
+              <svg class="icon-sync-idle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+              </svg>
+              <svg class="icon-sync-spin is-hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+              </svg>
+              <svg class="icon-sync-done is-hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+                <polyline points="9 13 12 16 16 11"></polyline>
+              </svg>
+              <svg class="icon-sync-offline is-hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="1" y1="1" x2="23" y2="23"></line>
+                <path d="M17.5 19H9a7 7 0 0 1-6.73-5.07M4.62 4.62A8 8 0 0 0 1.27 12"></path>
+                <path d="M18.83 18.83A5 5 0 0 0 18 10h-1.26a8 8 0 0 0-7.07-5.93"></path>
+              </svg>
+            </span>
+            <span id="sync-status-text" class="sync-status-text">Cloud Sync</span>
+            <span id="sync-status-dot" class="sync-status-dot" aria-hidden="true"></span>
+          </button>
           <button id="btn-toggle-stats-lib" class="btn btn-secondary">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
             Statistiky
@@ -217,6 +241,27 @@
               </div>
               <div class="popover-slider-wrapper">
                 <input type="range" id="popover-slider-ruler-opacity" class="slider-input" min="20" max="90" value="65">
+              </div>
+            </div>
+
+            <!-- Kalibrace pravítka pro PDF (výška a krok posunu) -->
+            <div class="popover-section is-hidden" id="popover-pdf-ruler-section">
+              <div class="popover-row-between">
+                <span class="popover-section-label">Výška pravítka (PDF)</span>
+                <span id="popover-val-pdf-height" class="popover-val-badge">32 px</span>
+              </div>
+              <div class="popover-slider-wrapper">
+                <input type="range" id="popover-slider-pdf-height" class="slider-input" min="16" max="120" value="32" step="1" aria-label="Výška pravítka pro PDF">
+              </div>
+            </div>
+
+            <div class="popover-section is-hidden" id="popover-pdf-step-section">
+              <div class="popover-row-between">
+                <span class="popover-section-label">Krok posunu (PDF)</span>
+                <span id="popover-val-pdf-step" class="popover-val-badge">32 px</span>
+              </div>
+              <div class="popover-slider-wrapper">
+                <input type="range" id="popover-slider-pdf-step" class="slider-input" min="10" max="120" value="32" step="1" aria-label="Krok posunu pravítka pro PDF">
               </div>
             </div>
           </div>
@@ -527,6 +572,24 @@
               <span id="val-ruler-opacity">65%</span>
             </div>
             <input type="range" id="slider-ruler-opacity" class="slider-input" min="20" max="90" value="65" />
+          </div>
+
+          <!-- Kalibrace PDF pravítka v postranním panelu nastavení -->
+          <div id="drawer-pdf-ruler-section" class="is-hidden" style="margin-top: 1rem; margin-bottom: 0.5rem;">
+            <div class="slider-setting" style="margin-bottom: 0.75rem;">
+              <div class="slider-label">
+                <span>Výška pravítka (PDF)</span>
+                <span id="val-pdf-ruler-height">32 px</span>
+              </div>
+              <input type="range" id="slider-pdf-ruler-height" class="slider-input" min="16" max="120" value="32" step="1" aria-label="Výška pravítka pro PDF" />
+            </div>
+            <div class="slider-setting">
+              <div class="slider-label">
+                <span>Krok posunu (PDF)</span>
+                <span id="val-pdf-ruler-step">32 px</span>
+              </div>
+              <input type="range" id="slider-pdf-ruler-step" class="slider-input" min="10" max="120" value="32" step="1" aria-label="Krok posunu pravítka pro PDF" />
+            </div>
           </div>
 
         </div>

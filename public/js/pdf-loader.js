@@ -31,6 +31,62 @@ export class PDFLoader {
     this.intersectionObserver = null;
     this._boundOnScroll = null;
     this._boundOnResize = null;
+
+    // Režim zobrazení sloupců (Two-Page Spread pro PDF)
+    this.columnsMode = this.app?.settings?.columnsMode || "auto";
+    this.spreadContainer = null;
+    this.pageSlots = [];
+    this.canvases = [];
+    this.currentRenderTasks = [];
+  }
+
+  setColumnsMode(mode) {
+    this.columnsMode = mode || "auto";
+  }
+
+  setSpreadMode(mode) {
+    this.setColumnsMode(mode);
+  }
+
+  isSpreadActive() {
+    if (this.isVerticalMode()) return false;
+    if (window.innerWidth < 768) return false;
+    if (this.columnsMode === "2") return true;
+    if (this.columnsMode === "1") return false;
+    return window.innerWidth >= 920 && window.innerWidth > window.innerHeight;
+  }
+
+  isDoubleSpreadActive() {
+    return this.isSpreadActive();
+  }
+
+  getSpreadPageLabel(pageNumber = this.currentPage) {
+    const p = Math.max(1, Math.min(this.numPages || 1, pageNumber || 1));
+    if (!this.isSpreadActive() || (this.numPages && this.numPages <= 1)) {
+      return String(p);
+    }
+    let leftPage, rightPage;
+    if (p % 2 === 0) {
+      leftPage = p;
+      rightPage = Math.min(this.numPages || 1, p + 1);
+    } else {
+      leftPage = Math.max(1, p - 1);
+      rightPage = p;
+    }
+    if (rightPage > leftPage && rightPage <= (this.numPages || 1)) {
+      return `${leftPage}–${rightPage}`;
+    }
+    return String(leftPage);
+  }
+
+  updatePageCounterBadge() {
+    const pageStr = this.getSpreadPageLabel();
+    const total = this.numPages || 1;
+    const text = `${pageStr} z ${total}`;
+    const elFooter = document.getElementById("footer-book-pages");
+    if (elFooter) elFooter.textContent = text;
+    const elCounter = document.getElementById("page-counter");
+    if (elCounter) elCounter.textContent = text;
   }
 
   isVerticalMode() {
@@ -115,7 +171,7 @@ export class PDFLoader {
 
   /**
    * Vykreslí zadanou stranu PDF do elementu <canvas>
-   * respektujícího rozměry kontejneru a Retina / HiDPI rozlišení obrazovky
+   * V horizontálním režimu při aktivním isSpreadActive() vykreslí dvoustranu (Two-Page Spread)
    */
   async renderPage(pageNumber) {
     if (!this.pdfDoc || pageNumber < 1 || pageNumber > this.numPages) return;
@@ -131,106 +187,239 @@ export class PDFLoader {
         try {
           this.currentRenderTask.cancel();
         } catch (e) {}
+        this.currentRenderTask = null;
+      }
+      if (this.currentRenderTasks && this.currentRenderTasks.length > 0) {
+        for (const task of this.currentRenderTasks) {
+          try {
+            task.cancel();
+          } catch (e) {}
+        }
+        this.currentRenderTasks = [];
       }
       return;
     }
 
     this.isRendering = true;
-    this.currentPage = pageNumber;
 
     try {
-      const page = await this.pdfDoc.getPage(pageNumber);
-
       const container = this.container || document.getElementById("reader-content");
+      if (!container) return;
 
-      // Cílové rozměry striktně podle celého okna viewportu (Edge-to-Edge full screen)
-      const targetWidth = window.innerWidth;
-      const targetHeight = window.innerHeight;
-
-      // Původní velikost strany při měřítku 1.0 (respektuje page.view i případnou rotaci dokumentu)
-      const unscaledViewport = page.getViewport({ scale: 1 });
-      const rawWidth = (page.rotate === 90 || page.rotate === 270)
-        ? (page.view?.[3] || unscaledViewport.width)
-        : (page.view?.[2] || unscaledViewport.width);
-      const rawHeight = (page.rotate === 90 || page.rotate === 270)
-        ? (page.view?.[2] || unscaledViewport.height)
-        : (page.view?.[3] || unscaledViewport.height);
-      const pageWidth = unscaledViewport.width || rawWidth || targetWidth;
-      const pageHeight = unscaledViewport.height || rawHeight || targetHeight;
-
-      // Dynamické měřítko pro 100% zobrazení bez okrajů a odsazení
-      const scaleX = targetWidth / pageWidth;
-      const scaleY = targetHeight / pageHeight;
-      const scale = Math.min(scaleX, scaleY);
-
-      const viewport = page.getViewport({ scale });
       const dpr = window.devicePixelRatio || 1;
 
-      // Připravíme kontejner a canvas bez simulovaného papíru, stínů či zaoblení
-      container.innerHTML = "";
+      if (this.isSpreadActive()) {
+        // --- Režim dvoustrany (Two-Page Spread) ---
+        let leftPage, rightPage;
+        if (pageNumber % 2 === 0) {
+          leftPage = pageNumber;
+          rightPage = Math.min(this.numPages, pageNumber + 1);
+        } else {
+          leftPage = Math.max(1, pageNumber - 1);
+          rightPage = pageNumber;
+        }
 
-      const pageContainer = document.createElement("div");
-      pageContainer.className = "pdf-page-container";
-      this.pageContainer = pageContainer;
+        const hasRight = rightPage > leftPage && rightPage <= this.numPages;
+        this.currentPage = leftPage;
 
-      pageContainer.style.position = "relative";
-      pageContainer.style.width = `${Math.floor(viewport.width)}px`;
-      pageContainer.style.height = `${Math.floor(viewport.height)}px`;
-      pageContainer.style.maxWidth = "100vw";
-      pageContainer.style.maxHeight = "100vh";
-      pageContainer.style.margin = "auto";
-      pageContainer.style.display = "flex";
-      pageContainer.style.justifyContent = "center";
-      pageContainer.style.alignItems = "center";
-      pageContainer.style.boxShadow = "none";
-      pageContainer.style.border = "none";
-      pageContainer.style.borderRadius = "0";
-      pageContainer.style.padding = "0";
+        const pagesToLoad = hasRight ? [leftPage, rightPage] : [leftPage];
+        const pages = await Promise.all(pagesToLoad.map(num => this.pdfDoc.getPage(num)));
 
-      const canvas = document.createElement("canvas");
-      canvas.className = "pdf-page-canvas";
-      this.canvas = canvas;
+        const vpEl = document.getElementById("paged-viewport");
+        const maxSlotW = hasRight ? Math.floor((window.innerWidth - 64) / 2) : Math.floor(window.innerWidth - 64);
+        const availVpH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : (window.innerHeight - 32);
+        const maxSlotH = Math.min(window.innerHeight - 32, availVpH);
 
-      canvas.style.boxShadow = "none";
-      canvas.style.border = "none";
-      canvas.style.borderRadius = "0";
-      canvas.style.margin = "0";
-      canvas.style.padding = "0";
+        const unscaledViewports = pages.map(p => {
+          const uv = p.getViewport({ scale: 1 });
+          const rawW = (p.rotate === 90 || p.rotate === 270)
+            ? (p.view?.[3] || uv.width)
+            : (p.view?.[2] || uv.width);
+          const rawH = (p.rotate === 90 || p.rotate === 270)
+            ? (p.view?.[2] || uv.height)
+            : (p.view?.[3] || uv.height);
+          return {
+            width: uv.width || rawW,
+            height: uv.height || rawH,
+            page: p
+          };
+        });
 
-      // Fyzické rozlišení canvasu pro ostrý text na Retina/HiDPI displejích iPadu
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
+        const scales = unscaledViewports.map(uv => {
+          const sX = maxSlotW / uv.width;
+          const sY = maxSlotH / uv.height;
+          return Math.min(sX, sY);
+        });
+        const uniformScale = Math.min(...scales);
 
-      // CSS rozměry odpovídající logickým pixelům viewportu
-      canvas.style.width = `${Math.floor(viewport.width)}px`;
-      canvas.style.height = `${Math.floor(viewport.height)}px`;
+        container.innerHTML = "";
 
-      const imageLayer = document.createElement("div");
-      imageLayer.className = "pdf-image-layer";
-      this.imageLayer = imageLayer;
+        const spreadContainer = document.createElement("div");
+        spreadContainer.className = "pdf-spread-container";
+        this.spreadContainer = spreadContainer;
 
-      const ctx = canvas.getContext("2d");
-      const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
+        const pageSlots = [];
+        const canvases = [];
+        const imageLayers = [];
+        const renderTasks = [];
 
-      pageContainer.appendChild(canvas);
-      pageContainer.appendChild(imageLayer);
-      container.appendChild(pageContainer);
+        for (let i = 0; i < pages.length; i++) {
+          const p = pages[i];
+          const pageNum = pagesToLoad[i];
+          const viewport = p.getViewport({ scale: uniformScale });
+          const floorW = Math.floor(viewport.width);
+          const floorH = Math.floor(viewport.height);
 
-      const renderContext = {
-        canvasContext: ctx,
-        transform: transform,
-        viewport: viewport
-      };
+          const slot = document.createElement("div");
+          slot.className = "pdf-page-slot pdf-page-container";
+          slot.dataset.pageNumber = String(pageNum);
+          slot.style.width = `${floorW}px`;
+          slot.style.height = `${floorH}px`;
+          slot.style.position = "relative";
+          slot.style.display = "flex";
+          slot.style.justifyContent = "center";
+          slot.style.alignItems = "center";
 
-      this.currentRenderTask = page.render(renderContext);
-      await this.currentRenderTask.promise;
-      this.currentRenderTask = null;
+          const canvas = document.createElement("canvas");
+          canvas.className = "pdf-page-canvas";
+          canvas.width = Math.floor(viewport.width * dpr);
+          canvas.height = Math.floor(viewport.height * dpr);
+          canvas.style.width = `${floorW}px`;
+          canvas.style.height = `${floorH}px`;
+          canvas.style.display = "block";
 
-      // Inteligentní extrakce a označení obrázků pro zachování přirozených barev ve smart dark mode
-      try {
-        await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
-      } catch (imgErr) {
-        console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
+          const imageLayer = document.createElement("div");
+          imageLayer.className = "pdf-image-layer";
+
+          const ctx = canvas.getContext("2d");
+          const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
+
+          slot.appendChild(canvas);
+          slot.appendChild(imageLayer);
+          spreadContainer.appendChild(slot);
+
+          pageSlots.push(slot);
+          canvases.push(canvas);
+          imageLayers.push(imageLayer);
+
+          const rTask = p.render({
+            canvasContext: ctx,
+            transform: transform,
+            viewport: viewport
+          });
+          renderTasks.push({ rTask, page: p, viewport, canvas, imageLayer });
+        }
+
+        container.appendChild(spreadContainer);
+
+        this.currentRenderTasks = renderTasks.map(t => t.rTask);
+        this.currentRenderTask = this.currentRenderTasks[0] || null;
+        this.canvas = canvases[0] || null;
+        this.pageContainer = pageSlots[0] || null;
+        this.imageLayer = imageLayers[0] || null;
+        this.pageSlots = pageSlots;
+        this.canvases = canvases;
+
+        await Promise.all(renderTasks.map(t => t.rTask.promise));
+        this.currentRenderTasks = [];
+        this.currentRenderTask = null;
+
+        await Promise.all(renderTasks.map(t =>
+          this._extractAndTagImages(t.page, t.viewport, t.canvas, dpr, t.imageLayer).catch(imgErr => {
+            console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
+          })
+        ));
+      } else {
+        // --- Režim jedné strany (Single-Page Canvas Rendering) ---
+        this.currentPage = pageNumber;
+        const page = await this.pdfDoc.getPage(pageNumber);
+
+        const targetWidth = window.innerWidth;
+        const targetHeight = window.innerHeight;
+
+        const unscaledViewport = page.getViewport({ scale: 1 });
+        const rawWidth = (page.rotate === 90 || page.rotate === 270)
+          ? (page.view?.[3] || unscaledViewport.width)
+          : (page.view?.[2] || unscaledViewport.width);
+        const rawHeight = (page.rotate === 90 || page.rotate === 270)
+          ? (page.view?.[2] || unscaledViewport.height)
+          : (page.view?.[3] || unscaledViewport.height);
+        const pageWidth = unscaledViewport.width || rawWidth || targetWidth;
+        const pageHeight = unscaledViewport.height || rawHeight || targetHeight;
+
+        const vpEl = document.getElementById("paged-viewport");
+        const availH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : targetHeight;
+
+        const scaleX = (targetWidth - 32) / pageWidth;
+        const scaleY = availH / pageHeight;
+        const scale = Math.min(scaleX, scaleY);
+
+        const viewport = page.getViewport({ scale });
+        const floorW = Math.floor(viewport.width);
+        const floorH = Math.floor(viewport.height);
+
+        container.innerHTML = "";
+
+        const pageContainer = document.createElement("div");
+        pageContainer.className = "pdf-page-container";
+        this.pageContainer = pageContainer;
+
+        pageContainer.style.position = "relative";
+        pageContainer.style.width = `${floorW}px`;
+        pageContainer.style.height = `${floorH}px`;
+        pageContainer.style.maxWidth = "100vw";
+        pageContainer.style.maxHeight = "100vh";
+        pageContainer.style.margin = "auto";
+        pageContainer.style.display = "flex";
+        pageContainer.style.justifyContent = "center";
+        pageContainer.style.alignItems = "center";
+        pageContainer.style.boxShadow = "none";
+        pageContainer.style.border = "none";
+        pageContainer.style.borderRadius = "0";
+        pageContainer.style.padding = "0";
+
+        const canvas = document.createElement("canvas");
+        canvas.className = "pdf-page-canvas";
+        this.canvas = canvas;
+
+        canvas.style.boxShadow = "none";
+        canvas.style.border = "none";
+        canvas.style.borderRadius = "0";
+        canvas.style.margin = "0";
+        canvas.style.padding = "0";
+        canvas.style.display = "block";
+
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = `${floorW}px`;
+        canvas.style.height = `${floorH}px`;
+
+        const imageLayer = document.createElement("div");
+        imageLayer.className = "pdf-image-layer";
+        this.imageLayer = imageLayer;
+
+        const ctx = canvas.getContext("2d");
+        const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
+
+        pageContainer.appendChild(canvas);
+        pageContainer.appendChild(imageLayer);
+        container.appendChild(pageContainer);
+
+        const renderContext = {
+          canvasContext: ctx,
+          transform: transform,
+          viewport: viewport
+        };
+
+        this.currentRenderTask = page.render(renderContext);
+        await this.currentRenderTask.promise;
+        this.currentRenderTask = null;
+
+        try {
+          await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
+        } catch (imgErr) {
+          console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
+        }
       }
     } catch (err) {
       if (err?.name !== "RenderingCancelledException") {
@@ -244,6 +433,8 @@ export class PDFLoader {
         await this.renderPage(next);
       }
     }
+
+    this.updatePageCounterBadge();
 
     // Provázání do globálního stavu aplikace LuminaReader
     if (this.app && typeof this.app.onPdfPageRendered === "function") {
@@ -603,9 +794,19 @@ export class PDFLoader {
   }
 
   /**
-   * Přechod na následující stranu
+   * Přechod na následující stranu (v režimu dvoustrany o +2 strany)
    */
   async nextPage() {
+    if (!this.pdfDoc) return false;
+    if (this.isSpreadActive()) {
+      const step = (this.currentPage === 1) ? 1 : 2;
+      const target = Math.min(this.numPages, this.currentPage + step);
+      if (target > this.currentPage) {
+        await this.goToPage(target, 1);
+        return true;
+      }
+      return false;
+    }
     if (this.currentPage < this.numPages) {
       await this.goToPage(this.currentPage + 1, 1);
       return true;
@@ -614,9 +815,19 @@ export class PDFLoader {
   }
 
   /**
-   * Přechod na předchozí stranu
+   * Přechod na předchozí stranu (v režimu dvoustrany o -2 strany)
    */
   async prevPage() {
+    if (!this.pdfDoc) return false;
+    if (this.isSpreadActive()) {
+      const step = (this.currentPage <= 3) ? (this.currentPage - 1) : 2;
+      const target = Math.max(1, this.currentPage - step);
+      if (target < this.currentPage) {
+        await this.goToPage(target, -1);
+        return true;
+      }
+      return false;
+    }
     if (this.currentPage > 1) {
       await this.goToPage(this.currentPage - 1, -1);
       return true;
@@ -810,6 +1021,14 @@ export class PDFLoader {
       } catch (e) {}
       this.currentRenderTask = null;
     }
+    if (this.currentRenderTasks && this.currentRenderTasks.length > 0) {
+      for (const task of this.currentRenderTasks) {
+        try {
+          task.cancel();
+        } catch (e) {}
+      }
+      this.currentRenderTasks = [];
+    }
     if (this.pdfDoc) {
       try {
         this.pdfDoc.destroy();
@@ -820,7 +1039,10 @@ export class PDFLoader {
       this.container.innerHTML = "";
     }
     this.canvas = null;
+    this.canvases = [];
     this.pageContainer = null;
+    this.pageSlots = [];
+    this.spreadContainer = null;
     this.imageLayer = null;
   }
 }

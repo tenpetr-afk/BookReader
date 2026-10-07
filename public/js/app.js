@@ -10,10 +10,12 @@ import { PDFLoader } from "./pdf-loader.js";
 import { tracker, ReadingTracker } from "./tracker.js";
 import { ReadingRuler } from "./ruler.js";
 import { StatsCharts } from "./charts.js";
+import { supabaseSync } from "./supabase-sync.js";
+import { supabase } from "./supabase-client.js";
 
 export const APP_VERSION = "v1.21.0";
 
-class LuminaApp {
+export class LuminaApp {
   constructor() {
     this.currentBook = null;
     this.currentParser = null;
@@ -44,6 +46,12 @@ class LuminaApp {
     this.readingMode = localStorage.getItem("lumina_reading_mode") || "horizontal";
     this._verticalScrollBound = false;
 
+    // Kontinuální vertikální čtení kapitol
+    this._chapterDataCache = new Map();
+    this._isLoadingNextChapter = false;
+    this._isLoadingPrevChapter = false;
+    this._isModeTransitioning = false;
+
     // DOM elementy
     this.dom = {};
   }
@@ -66,6 +74,7 @@ class LuminaApp {
     this.initScrubber();
     this.initPillScrubber();
     this.bindKeyboardShortcuts();
+    this.initCloudSync();
 
     // Načíst knihy z IndexedDB
     const books = await storage.getAllBooks();
@@ -75,6 +84,11 @@ class LuminaApp {
     } else {
       this.renderLibrary();
     }
+
+    // Spuštění asynchronní synchronizace s cloudem v pozadí
+    setTimeout(() => {
+      this.syncWithCloud(false);
+    }, 1000);
 
     // Zkontrolovat naposledy čtenou knihu a obnovit stav čtení při znovunačtení
     const lastBookId = storage.getLastActiveBookId();
@@ -101,6 +115,9 @@ class LuminaApp {
       btnLoadSample: document.getElementById("btn-load-sample"),
       btnToggleSettingsLib: document.getElementById("btn-toggle-settings-lib"),
       btnToggleStatsLib: document.getElementById("btn-toggle-stats-lib"),
+      btnCloudSync: document.getElementById("btn-cloud-sync"),
+      syncStatusText: document.getElementById("sync-status-text"),
+      syncStatusDot: document.getElementById("sync-status-dot"),
       drawerBackdrop: document.getElementById("drawer-backdrop"),
       versionBadge: document.getElementById("app-version-badge"),
 
@@ -165,6 +182,12 @@ class LuminaApp {
       btnCloseToc: document.getElementById("btn-close-toc"),
       settingsDrawer: document.getElementById("settings-drawer"),
       btnCloseSettings: document.getElementById("btn-close-settings"),
+      tabBtnFont: document.getElementById("tab-btn-font"),
+      tabPaneFont: document.getElementById("tab-pane-font"),
+      tabBtnAppearance: document.getElementById("tab-btn-appearance"),
+      tabPaneAppearance: document.getElementById("tab-pane-appearance"),
+      tabBtnReading: document.getElementById("tab-btn-reading"),
+      tabPaneReading: document.getElementById("tab-pane-reading"),
       statsModal: document.getElementById("stats-modal"),
       btnCloseStats: document.getElementById("btn-close-stats"),
 
@@ -209,7 +232,7 @@ class LuminaApp {
       rulerAutoHeightSetting: document.getElementById("ruler-auto-height-setting"),
       settingRulerHeightContainer: document.getElementById("setting-ruler-height-container"),
       rulerModeSelects: document.querySelectorAll("[data-ruler-mode]"),
-      rulerColorSelects: document.querySelectorAll("[data-ruler-color]"),
+      rulerColorSelects: document.querySelectorAll("#settings-drawer [data-ruler-color]"),
       sliderRulerHeight: document.getElementById("slider-ruler-height"),
       valRulerHeight: document.getElementById("val-ruler-height"),
       sliderRulerOpacity: document.getElementById("slider-ruler-opacity"),
@@ -234,6 +257,19 @@ class LuminaApp {
       popoverSliderRulerOpacity: document.getElementById("popover-slider-ruler-opacity"),
       popoverValRulerOpacity: document.getElementById("popover-val-ruler-opacity"),
       popoverRulerFollowSelect: document.getElementById("popover-ruler-follow-select"),
+
+      // Kalibrace pravítka pro PDF (popover & drawer)
+      popoverPdfRulerSection: document.getElementById("popover-pdf-ruler-section"),
+      popoverPdfStepSection: document.getElementById("popover-pdf-step-section"),
+      popoverSliderPdfHeight: document.getElementById("popover-slider-pdf-height"),
+      popoverValPdfHeight: document.getElementById("popover-val-pdf-height"),
+      popoverSliderPdfStep: document.getElementById("popover-slider-pdf-step"),
+      popoverValPdfStep: document.getElementById("popover-val-pdf-step"),
+      drawerPdfRulerSection: document.getElementById("drawer-pdf-ruler-section"),
+      sliderPdfRulerHeight: document.getElementById("slider-pdf-ruler-height"),
+      valPdfRulerHeight: document.getElementById("val-pdf-ruler-height"),
+      sliderPdfRulerStep: document.getElementById("slider-pdf-ruler-step"),
+      valPdfRulerStep: document.getElementById("val-pdf-ruler-step"),
 
       settingShowFooter: document.getElementById("setting-show-footer"),
       readingModeControl: document.getElementById("reading-mode-control"),
@@ -278,6 +314,7 @@ class LuminaApp {
 
   initRuler() {
     this.ruler = new ReadingRuler(this.dom.pagedStage);
+    this.ruler.readingMode = this.readingMode;
 
     // Callback pro ruler.js: vrátí true pokud je otevřen jakýkoliv panel/zásuvka,
     // aby ruler neinterferoval s kliknutím na backdrop (zavření panelu).
@@ -317,7 +354,7 @@ class LuminaApp {
     };
     this.ruler.setPenFlickEnabled(this.settings.pencilFlickNavigation !== false);
 
-    const isInReader = !this.dom.viewReader.classList.contains("is-hidden");
+    const isInReader = this.dom.viewReader ? !this.dom.viewReader.classList.contains("is-hidden") : true;
     const showRuler = this.settings.showRulerButton !== false;
     this.ruler.setEnabled(isInReader && showRuler && this.settings.ruler.enabled);
     this.ruler.setMode(this.settings.ruler.mode);
@@ -473,6 +510,10 @@ class LuminaApp {
         btn.classList.toggle("active", btn.dataset.rulerFollow === s.ruler.followMode);
       });
     }
+    this.setPdfRulerUIVisibility(this.isPdfMode);
+    if (this.isPdfMode && this.currentBook?.pdfRulerConfig) {
+      this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
+    }
     // Tlačítka témat
     this.dom.themeSelects.forEach(btn => {
       btn.classList.toggle("active", btn.dataset.theme === s.theme);
@@ -569,6 +610,7 @@ class LuminaApp {
     if (!mode) {
       mode = localStorage.getItem("lumina_reading_mode") || "horizontal";
     }
+    const prevMode = this.readingMode;
     this.readingMode = mode;
     try {
       localStorage.setItem("lumina_reading_mode", mode);
@@ -581,6 +623,9 @@ class LuminaApp {
     }
     if (this.dom.pagedViewport) {
       this.dom.pagedViewport.classList.toggle("mode-vertical", isVertical);
+    }
+    if (this.ruler) {
+      this.ruler.setReadingMode?.(mode);
     }
 
     if (this.dom.readingModeSelects) {
@@ -603,7 +648,9 @@ class LuminaApp {
       this.bindVerticalScrollListener();
     }
 
-    if (this.isPdfMode && this.pdfLoader && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
+    const isInReader = this.dom.viewReader ? !this.dom.viewReader.classList.contains("is-hidden") : true;
+
+    if (this.isPdfMode && this.pdfLoader && isInReader) {
       requestAnimationFrame(async () => {
         await this.pdfLoader.switchReadingMode(mode);
         this.updatePageUI();
@@ -614,20 +661,46 @@ class LuminaApp {
       return;
     }
 
-    if (this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
-      requestAnimationFrame(() => {
-        if (isVertical) {
-          this.updatePageUI();
-        } else {
-          this.recomputeGlobalPagination();
-          this.recalcPages();
-          this.goToPage(this.currentPageIndex || 0);
-          this.renderScrubberTicks();
-        }
-        if (this.ruler && this.ruler.enabled) {
-          this.ruler.refreshLines();
-          if (this.ruler.wordTracking) this.ruler.refreshWords();
-          this.ruler.applyPosition();
+    if (this.currentBook && !this.isPdfMode && this.currentParser && isInReader) {
+      this._isModeTransitioning = true;
+      requestAnimationFrame(async () => {
+        try {
+          if (isVertical) {
+            // Přechod do vertikálního kontinuálního režimu
+            const ratio = (this.totalPagesInChapter > 1 && this.currentPageIndex > 0)
+              ? this.currentPageIndex / (this.totalPagesInChapter - 1)
+              : 0;
+            await this.loadVerticalCurrentChapter({ ratio });
+          } else {
+            // Přechod zpět do horizontálního paged režimu:
+            // Čistě odpojit všechny připojené extra kapitoly a vykreslit pouze jedinou aktivní kapitolu
+            const activeChapter = await this.getOrLoadChapter(this.currentChapterIndex);
+            this.currentRawChapterHtml = activeChapter.html;
+            this.renderChapterHtml();
+
+            if (this.dom.pagedViewport) {
+              this.dom.pagedViewport.scrollTop = 0;
+            }
+            if (this.dom.readerContent) {
+              this.dom.readerContent.style.transform = "translateX(0px)";
+            }
+
+            await this.waitForContentReady();
+            this.recomputeGlobalPagination();
+            this.recalcPages();
+            this.goToPage(this.currentPageIndex || 0);
+            this.renderScrubberTicks();
+
+            if (this.ruler && this.ruler.enabled) {
+              this.ruler.refreshLines();
+              if (this.ruler.wordTracking) this.ruler.refreshWords();
+              this.ruler.applyPosition();
+            }
+          }
+        } catch (err) {
+          console.error("Chyba při přepnutí režimu čtení:", err);
+        } finally {
+          this._isModeTransitioning = false;
         }
       });
     }
@@ -647,10 +720,22 @@ class LuminaApp {
       if (rafId) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
-        this.updatePageUI();
-        this.saveProgress();
+        this.onVerticalScroll();
       });
     }, { passive: true });
+  }
+
+  onVerticalScroll() {
+    if (!this.isVerticalReadingMode()) return;
+    if (this.isPdfMode) {
+      this.updatePageUI();
+      this.saveProgress();
+      return;
+    }
+
+    this.checkVerticalInfiniteScroll();
+    this.updatePageUI();
+    this.saveProgress();
   }
 
   bindEvents() {
@@ -1022,6 +1107,7 @@ class LuminaApp {
         } else {
           this.pdfLoader.renderPage(this.pdfLoader.currentPage);
         }
+        this.updatePageUI();
         this.ruler?.applyPosition();
         return;
       }
@@ -1109,6 +1195,10 @@ class LuminaApp {
       this.dom.btnToggleStatsLib.addEventListener("click", () => this.openStatsModal());
     }
 
+    if (this.dom.btnCloudSync) {
+      this.dom.btnCloudSync.addEventListener("click", () => this.handleManualCloudSync());
+    }
+
     if (this.dom.btnToggleToc) {
       this.dom.btnToggleToc.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -1141,25 +1231,12 @@ class LuminaApp {
 
     // Přepínání záložek v panelu nastavení (Bottom Sheet Tabs)
     const settingsTabs = this.dom.settingsDrawer?.querySelectorAll(".settings-tab-btn");
-    const settingsPanes = this.dom.settingsDrawer?.querySelectorAll(".settings-tab-pane");
-    if (settingsTabs && settingsPanes) {
+    if (settingsTabs) {
       settingsTabs.forEach(tabBtn => {
         tabBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           const targetPaneId = tabBtn.dataset.tab;
-          settingsTabs.forEach(b => {
-            b.classList.remove("active");
-            b.setAttribute("aria-selected", "false");
-          });
-          settingsPanes.forEach(pane => {
-            pane.classList.remove("active");
-          });
-          tabBtn.classList.add("active");
-          tabBtn.setAttribute("aria-selected", "true");
-          const targetPane = document.getElementById(targetPaneId);
-          if (targetPane) {
-            targetPane.classList.add("active");
-          }
+          this.switchToSettingsTab(targetPaneId);
         });
       });
     }
@@ -1278,6 +1355,10 @@ class LuminaApp {
           }
           this.dom.rulerQuickPopover.classList.remove("is-hidden");
           this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "true");
+          this.setPdfRulerUIVisibility(this.isPdfMode);
+          if (this.isPdfMode && this.currentBook?.pdfRulerConfig) {
+            this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
+          }
         } else {
           this.dom.rulerQuickPopover.classList.add("is-hidden");
           this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
@@ -1456,8 +1537,13 @@ class LuminaApp {
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
         btn.addEventListener("click", (e) => {
+          e.preventDefault();
           e.stopPropagation();
-          this.settings.ruler.mode = btn.dataset.rulerStyle;
+          const targetBtn = e.target.closest('[data-ruler-style]') || btn;
+          const newMode = targetBtn ? targetBtn.dataset.rulerStyle : null;
+          if (!newMode) return;
+          if (!this.settings.ruler) this.settings.ruler = {};
+          this.settings.ruler.mode = newMode;
           this.ruler.setMode(this.settings.ruler.mode);
           this.updateRulerToggleButtonUI();
           storage.saveSettings(this.settings);
@@ -1468,9 +1554,16 @@ class LuminaApp {
     if (this.dom.popoverColorButtons) {
       this.dom.popoverColorButtons.forEach(btn => {
         btn.addEventListener("click", (e) => {
+          e.preventDefault();
           e.stopPropagation();
-          this.settings.ruler.color = btn.dataset.rulerColor;
-          this.ruler.setColor(this.settings.ruler.color);
+          const targetBtn = e.target.closest('[data-ruler-color]') || btn;
+          const newColor = targetBtn ? targetBtn.dataset.rulerColor : null;
+          if (!newColor) return;
+          if (!this.settings.ruler) this.settings.ruler = {};
+          this.settings.ruler.color = newColor;
+          if (this.ruler) {
+            this.ruler.setColor(newColor);
+          }
           this.updateRulerToggleButtonUI();
           storage.saveSettings(this.settings);
         });
@@ -1513,6 +1606,21 @@ class LuminaApp {
         if (this.dom.rulerFollowSelect) this.dom.rulerFollowSelect.value = val;
         this.updateTouchZonesUI();
         storage.saveSettings(this.settings);
+      });
+    }
+
+    // Popover rozšířené nastavení: Kalibrace pravítka pro PDF (výška a krok)
+    if (this.dom.popoverSliderPdfHeight) {
+      this.dom.popoverSliderPdfHeight.addEventListener("input", (e) => {
+        e.stopPropagation();
+        this.updatePdfRulerHeight(parseInt(e.target.value, 10));
+      });
+    }
+
+    if (this.dom.popoverSliderPdfStep) {
+      this.dom.popoverSliderPdfStep.addEventListener("input", (e) => {
+        e.stopPropagation();
+        this.updatePdfRulerStepSize(parseInt(e.target.value, 10));
       });
     }
 
@@ -1656,10 +1764,20 @@ class LuminaApp {
 
     if (this.dom.columnSelects) {
       this.dom.columnSelects.forEach(btn => {
-        btn.addEventListener("click", () => {
-          this.settings.columnsMode = btn.dataset.columns || "auto";
+        btn.addEventListener("click", async () => {
+          const mode = btn.dataset.columns || "auto";
+          this.settings.columnsMode = mode;
           storage.saveSettings(this.settings);
           this.applySettings();
+
+          if (this.isPdfMode && this.pdfLoader) {
+            this.pdfLoader.setColumnsMode(mode);
+            await this.pdfLoader.renderPage(this.pdfLoader.currentPage);
+            this.updatePageUI();
+            this.ruler?.applyPosition();
+            return;
+          }
+
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               this.recomputeGlobalPagination();
@@ -1752,22 +1870,38 @@ class LuminaApp {
     }
 
     this.dom.rulerModeSelects.forEach(btn => {
-      btn.addEventListener("click", () => {
-        this.settings.ruler.mode = btn.dataset.rulerMode;
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const targetBtn = e.target.closest('[data-ruler-mode]') || btn;
+        const newMode = targetBtn ? targetBtn.dataset.rulerMode : null;
+        if (!newMode) return;
+        if (!this.settings.ruler) this.settings.ruler = {};
+        this.settings.ruler.mode = newMode;
         this.ruler.setMode(this.settings.ruler.mode);
-        this.applySettings();
+        this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       });
     });
 
-    this.dom.rulerColorSelects.forEach(btn => {
-      btn.addEventListener("click", () => {
-        this.settings.ruler.color = btn.dataset.rulerColor;
-        this.ruler.setColor(this.settings.ruler.color);
-        this.applySettings();
-        storage.saveSettings(this.settings);
+    if (this.dom.rulerColorSelects) {
+      this.dom.rulerColorSelects.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const targetBtn = e.target.closest('[data-ruler-color]') || btn;
+          const newColor = targetBtn ? targetBtn.dataset.rulerColor : null;
+          if (!newColor) return;
+          if (!this.settings.ruler) this.settings.ruler = {};
+          this.settings.ruler.color = newColor;
+          if (this.ruler) {
+            this.ruler.setColor(newColor);
+          }
+          this.updateRulerToggleButtonUI();
+          storage.saveSettings(this.settings);
+        });
       });
-    });
+    }
 
     if (this.dom.sliderRulerHeight) {
       this.dom.sliderRulerHeight.addEventListener("input", (e) => {
@@ -1785,8 +1919,8 @@ class LuminaApp {
         this.settings.ruler.dimOpacity = val / 100;
         this.ruler.setDimOpacity(this.settings.ruler.dimOpacity);
         if (this.dom.popoverSliderRulerOpacity) this.dom.popoverSliderRulerOpacity.value = val;
+        if (this.dom.valRulerOpacity) this.dom.valRulerOpacity.textContent = `${val}%`;
         if (this.dom.popoverValRulerOpacity) this.dom.popoverValRulerOpacity.textContent = `${val}%`;
-        this.applySettings();
         storage.saveSettings(this.settings);
       });
     }
@@ -1814,6 +1948,18 @@ class LuminaApp {
           this.updateTouchZonesUI();
           storage.saveSettings(this.settings);
         });
+      });
+    }
+
+    if (this.dom.sliderPdfRulerHeight) {
+      this.dom.sliderPdfRulerHeight.addEventListener("input", (e) => {
+        this.updatePdfRulerHeight(parseInt(e.target.value, 10));
+      });
+    }
+
+    if (this.dom.sliderPdfRulerStep) {
+      this.dom.sliderPdfRulerStep.addEventListener("input", (e) => {
+        this.updatePdfRulerStepSize(parseInt(e.target.value, 10));
       });
     }
 
@@ -2214,6 +2360,95 @@ class LuminaApp {
     }
   }
 
+  syncPdfRulerUI(config) {
+    if (!config) return;
+    const height = Math.max(16, Math.min(120, Math.round(Number(config.height) || 32)));
+    const stepSize = Math.max(10, Math.min(120, Math.round(Number(config.stepSize) || 32)));
+
+    if (this.dom.popoverSliderPdfHeight) this.dom.popoverSliderPdfHeight.value = height;
+    if (this.dom.popoverValPdfHeight) this.dom.popoverValPdfHeight.textContent = `${height} px`;
+    if (this.dom.sliderPdfRulerHeight) this.dom.sliderPdfRulerHeight.value = height;
+    if (this.dom.valPdfRulerHeight) this.dom.valPdfRulerHeight.textContent = `${height} px`;
+
+    if (this.dom.popoverSliderPdfStep) this.dom.popoverSliderPdfStep.value = stepSize;
+    if (this.dom.popoverValPdfStep) this.dom.popoverValPdfStep.textContent = `${stepSize} px`;
+    if (this.dom.sliderPdfRulerStep) this.dom.sliderPdfRulerStep.value = stepSize;
+    if (this.dom.valPdfRulerStep) this.dom.valPdfRulerStep.textContent = `${stepSize} px`;
+  }
+
+  setPdfRulerUIVisibility(isPdf) {
+    this.updateSettingsTabsVisibility(isPdf);
+    if (this.dom.popoverPdfRulerSection) {
+      this.dom.popoverPdfRulerSection.classList.toggle("is-hidden", !isPdf);
+    }
+    if (this.dom.popoverPdfStepSection) {
+      this.dom.popoverPdfStepSection.classList.toggle("is-hidden", !isPdf);
+    }
+    if (this.dom.drawerPdfRulerSection) {
+      this.dom.drawerPdfRulerSection.classList.toggle("is-hidden", !isPdf);
+    }
+    // V PDF režimu skrýt volbu sledování slov v popoveru (pokud je element dostupný)
+    if (this.dom.popoverModeWord) {
+      const modeSegmented = this.dom.popoverModeWord.closest(".popover-section");
+      if (modeSegmented) {
+        modeSegmented.classList.toggle("is-hidden", isPdf);
+      }
+    }
+    // V PDF režimu skrýt přepínač sledování slov v postranním panelu
+    if (this.dom.rulerWordTrackingSetting) {
+      const wordTrackingRow = this.dom.rulerWordTrackingSetting.closest(".toggle-row")?.parentElement;
+      if (wordTrackingRow) {
+        wordTrackingRow.style.display = isPdf ? "none" : "";
+      }
+    }
+  }
+
+  async updatePdfRulerHeight(height) {
+    const clamped = Math.max(16, Math.min(120, Math.round(Number(height) || 32)));
+    if (this.ruler) {
+      this.ruler.setPdfRulerHeight(clamped);
+    }
+    if (this.dom.popoverSliderPdfHeight) this.dom.popoverSliderPdfHeight.value = clamped;
+    if (this.dom.popoverValPdfHeight) this.dom.popoverValPdfHeight.textContent = `${clamped} px`;
+    if (this.dom.sliderPdfRulerHeight) this.dom.sliderPdfRulerHeight.value = clamped;
+    if (this.dom.valPdfRulerHeight) this.dom.valPdfRulerHeight.textContent = `${clamped} px`;
+
+    if (this.currentBook && (this.currentBook.isPdf || this.currentBook.format === "pdf")) {
+      if (!this.currentBook.pdfRulerConfig) {
+        this.currentBook.pdfRulerConfig = { height: 32, stepSize: 32 };
+      }
+      this.currentBook.pdfRulerConfig.height = clamped;
+      try {
+        await storage.updateBookPdfRulerConfig(this.currentBook.id, this.currentBook.pdfRulerConfig);
+      } catch (err) {
+        console.warn("[LuminaApp] Nelze uložit pdfRulerConfig výšku:", err);
+      }
+    }
+  }
+
+  async updatePdfRulerStepSize(stepSize) {
+    const clamped = Math.max(10, Math.min(120, Math.round(Number(stepSize) || 32)));
+    if (this.ruler) {
+      this.ruler.setPdfRulerStepSize(clamped);
+    }
+    if (this.dom.popoverSliderPdfStep) this.dom.popoverSliderPdfStep.value = clamped;
+    if (this.dom.popoverValPdfStep) this.dom.popoverValPdfStep.textContent = `${clamped} px`;
+    if (this.dom.sliderPdfRulerStep) this.dom.sliderPdfRulerStep.value = clamped;
+    if (this.dom.valPdfRulerStep) this.dom.valPdfRulerStep.textContent = `${clamped} px`;
+
+    if (this.currentBook && (this.currentBook.isPdf || this.currentBook.format === "pdf")) {
+      if (!this.currentBook.pdfRulerConfig) {
+        this.currentBook.pdfRulerConfig = { height: 32, stepSize: 32 };
+      }
+      this.currentBook.pdfRulerConfig.stepSize = clamped;
+      try {
+        await storage.updateBookPdfRulerConfig(this.currentBook.id, this.currentBook.pdfRulerConfig);
+      } catch (err) {
+        console.warn("[LuminaApp] Nelze uložit pdfRulerConfig krok:", err);
+      }
+    }
+  }
+
   // --- KNIHOVNA & NAHRÁVÁNÍ ---
 
   async handleFileUpload(file) {
@@ -2253,6 +2488,7 @@ class LuminaApp {
           console.warn("Nepodařilo se vytvořit náhled obálky PDF:", e);
         }
 
+        const pdfRulerConfig = { height: 32, stepSize: 32 };
         const bookData = {
           id: bookId,
           title: title,
@@ -2270,12 +2506,20 @@ class LuminaApp {
           totalChapters: 1,
           totalWords: this.pdfLoader.numPages * 250,
           wordsRead: 0,
-          progressPercent: 0
+          progressPercent: 0,
+          pdfRulerConfig
         };
 
         await storage.saveBook(bookData);
+        supabaseSync.uploadBook(bookData).catch(err => {
+          console.warn("[SupabaseSync] Zálohování PDF do cloudu selhalo:", err);
+        });
         this.currentBook = bookData;
         storage.setLastActiveBookId(bookId);
+
+        if (this.ruler) this.ruler.setPdfMode(true, pdfRulerConfig);
+        this.syncPdfRulerUI(pdfRulerConfig);
+        this.setPdfRulerUIVisibility(true);
 
         this.showToast(`Dokument „${title}“ byl úspěšně přidán!`, "success");
         await this.renderLibrary();
@@ -2296,6 +2540,7 @@ class LuminaApp {
     document.body.classList.remove("is-pdf-mode");
     if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-pdf-mode");
     if (this.ruler) this.ruler.setPdfMode(false);
+    this.setPdfRulerUIVisibility(false);
     if (this.pdfLoader) {
       this.pdfLoader.destroy();
       this.pdfLoader = null;
@@ -2342,6 +2587,9 @@ class LuminaApp {
       };
 
       await storage.saveBook(bookData);
+      supabaseSync.uploadBook(bookData).catch(err => {
+        console.warn("[SupabaseSync] Zálohování EPUB do cloudu selhalo:", err);
+      });
       this.showToast(`Kniha „${bookData.title}“ byla úspěšně přidána!`, "success");
       await this.renderLibrary();
 
@@ -2434,6 +2682,9 @@ class LuminaApp {
         e.stopPropagation();
         if (confirm(`Opravdu chcete odebrat knihu „${book.title}“ z knihovny?`)) {
           await storage.deleteBook(book.id);
+          supabaseSync.deleteBook(book.id).catch(err => {
+            console.warn("[SupabaseSync] Smazání knihy z cloudu selhalo:", err);
+          });
           this.showToast(`Kniha byla odebrána`, "info");
           await this.renderLibrary();
         }
@@ -2441,6 +2692,98 @@ class LuminaApp {
 
       this.dom.bookGrid.appendChild(card);
     });
+  }
+
+  // --- CLOUD SYNC & ZÁLOHOVÁNÍ (SUPABASE) ---
+
+  initCloudSync() {
+    supabaseSync.onStatusChange((status) => {
+      this.updateSyncUI(status);
+    });
+  }
+
+  updateSyncUI(status) {
+    const btn = this.dom.btnCloudSync;
+    if (!btn) return;
+
+    btn.classList.remove("status-idle", "status-syncing", "status-synced", "status-error", "status-offline");
+    btn.classList.add(`status-${status}`);
+
+    const iconIdle = btn.querySelector(".icon-sync-idle");
+    const iconSpin = btn.querySelector(".icon-sync-spin");
+    const iconDone = btn.querySelector(".icon-sync-done");
+    const iconOffline = btn.querySelector(".icon-sync-offline");
+
+    if (iconIdle) iconIdle.classList.toggle("is-hidden", status !== "idle");
+    if (iconSpin) iconSpin.classList.toggle("is-hidden", status !== "syncing");
+    if (iconDone) iconDone.classList.toggle("is-hidden", status !== "synced");
+    if (iconOffline) iconOffline.classList.toggle("is-hidden", status !== "offline" && status !== "error");
+
+    const textEl = this.dom.syncStatusText;
+    if (textEl) {
+      if (status === "syncing") {
+        textEl.textContent = "Synchronizuji...";
+      } else if (status === "synced") {
+        textEl.textContent = "Synchronizováno";
+      } else if (status === "offline") {
+        textEl.textContent = "Offline";
+      } else if (status === "error") {
+        textEl.textContent = "Chyba syncu";
+      } else {
+        textEl.textContent = "Cloud Sync";
+      }
+    }
+
+    if (status === "synced") {
+      btn.title = "Všechny knihy a postup čtení jsou synchronizovány se Supabase";
+    } else if (status === "syncing") {
+      btn.title = "Probíhá synchronizace se Supabase cloudem...";
+    } else if (status === "offline") {
+      btn.title = "Aplikace běží offline. Veškerá data jsou bezpečně v zařízení.";
+    } else if (status === "error") {
+      btn.title = "Při synchronizaci došlo k chybě. Klikněte pro opakování.";
+    } else {
+      btn.title = "Synchronizovat knihy a postup čtení s cloudem";
+    }
+  }
+
+  async handleManualCloudSync() {
+    this.showToast("Zahajuji synchronizaci s cloudem...", "info");
+    const res = await supabaseSync.syncAll();
+    if (res?.success) {
+      const stats = res.stats || {};
+      const parts = [];
+      if (stats.downloaded > 0) parts.push(`staženo: ${stats.downloaded}`);
+      if (stats.uploaded > 0) parts.push(`nahráno: ${stats.uploaded}`);
+      if (stats.updatedFromCloud > 0) parts.push(`postup z cloudu`);
+      if (stats.uploadedToCloud > 0) parts.push(`postup odeslán`);
+      
+      const msg = parts.length > 0
+        ? `Cloudová synchronizace dokončena (${parts.join(", ")})`
+        : "Všechny knihy a postup čtení jsou aktuální.";
+      this.showToast(msg, "success");
+      await this.renderLibrary();
+    } else if (res?.reason === "offline") {
+      this.showToast("Zařízení je offline. Knihovna funguje plně lokálně.", "warning");
+    } else if (res?.reason === "already_syncing") {
+      this.showToast("Synchronizace již probíhá...", "info");
+    } else {
+      this.showToast("Synchronizace se nezdařila. Zkontrolujte připojení k internetu.", "error");
+    }
+  }
+
+  async syncWithCloud(interactive = false) {
+    const res = await supabaseSync.syncAll({ silent: !interactive });
+    if (res?.success && (res.stats?.downloaded > 0 || res.stats?.updatedFromCloud > 0)) {
+      await this.renderLibrary();
+      if (this.currentBook) {
+        const refreshed = await storage.getBook(this.currentBook.id);
+        if (refreshed && (refreshed.lastReadAt || 0) > (this.currentBook.lastReadAt || 0)) {
+          this.currentBook = refreshed;
+        }
+      }
+    }
+    return res;
   }
 
   // --- ČTENÍ KNIHY ---
@@ -2464,6 +2807,10 @@ class LuminaApp {
 
     try {
       this.currentBook = book;
+      this._chapterDataCache = new Map();
+      this._isLoadingNextChapter = false;
+      this._isLoadingPrevChapter = false;
+      this._isModeTransitioning = false;
       this.searchIndexCache = new Map();
       this.clearSearch();
       storage.setLastActiveBookId(book.id);
@@ -2493,7 +2840,10 @@ class LuminaApp {
         this.isPdfMode = true;
         document.body.classList.add("is-pdf-mode");
         if (this.dom.readerContent) this.dom.readerContent.classList.add("is-pdf-mode");
-        if (this.ruler) this.ruler.setPdfMode(true);
+        const pdfConfig = book.pdfRulerConfig || { height: 32, stepSize: 32 };
+        if (this.ruler) this.ruler.setPdfMode(true, pdfConfig);
+        this.syncPdfRulerUI(pdfConfig);
+        this.setPdfRulerUIVisibility(true);
 
         if (!this.pdfLoader) {
           this.pdfLoader = new PDFLoader(this, this.dom.readerContent);
@@ -2524,6 +2874,7 @@ class LuminaApp {
       document.body.classList.remove("is-pdf-mode");
       if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-pdf-mode");
       if (this.ruler) this.ruler.setPdfMode(false);
+      this.setPdfRulerUIVisibility(false);
 
       this.currentParser = await EpubParser.parse(book.fileData);
 
@@ -2701,13 +3052,32 @@ class LuminaApp {
     this.currentBook.lastReadAt = progressData.lastReadAt;
 
     if (this.isVerticalReadingMode() && this.dom.pagedViewport) {
-      const vp = this.dom.pagedViewport;
-      const maxScroll = Math.max(1, vp.scrollHeight - vp.clientHeight);
-      const vRatio = Math.max(0, Math.min(1, vp.scrollTop / maxScroll));
-      progressData.pageRatio = vRatio;
-      progressData.scrollPercent = vRatio;
-      this.currentBook.pageRatio = vRatio;
-      this.currentBook.scrollPercent = vRatio;
+      if (this.isPdfMode) {
+        const vp = this.dom.pagedViewport;
+        const maxScroll = Math.max(1, vp.scrollHeight - vp.clientHeight);
+        const vRatio = Math.max(0, Math.min(1, vp.scrollTop / maxScroll));
+        progressData.pageRatio = vRatio;
+        progressData.scrollPercent = vRatio;
+        this.currentBook.pageRatio = vRatio;
+        this.currentBook.scrollPercent = vRatio;
+      } else {
+        const activeSection = this.getActiveVerticalChapterSection();
+        if (activeSection) {
+          const vp = this.dom.pagedViewport;
+          const secHeight = Math.max(1, activeSection.offsetHeight);
+          const maxSecScroll = Math.max(1, secHeight - vp.clientHeight);
+          const scrollIntoSec = Math.max(0, Math.min(maxSecScroll, vp.scrollTop - activeSection.offsetTop));
+          const chapterRatio = maxSecScroll > 0 ? scrollIntoSec / maxSecScroll : 0;
+
+          const chIdx = parseInt(activeSection.dataset.chapterIndex, 10);
+          progressData.currentChapterIndex = chIdx;
+          progressData.pageRatio = chapterRatio;
+          progressData.scrollPercent = chapterRatio;
+          this.currentBook.currentChapterIndex = chIdx;
+          this.currentBook.pageRatio = chapterRatio;
+          this.currentBook.scrollPercent = chapterRatio;
+        }
+      }
     }
 
     // 1. Okamžitý synchronní zápis do localStorage pro ochranu před reloadem/pádem záložky
@@ -2729,6 +3099,7 @@ class LuminaApp {
       storage.updateBookProgress(this.currentBook.id, progressData).catch(err => {
         console.warn("[LuminaApp] Chyba při ukládání postupu do IndexedDB:", err);
       });
+      supabaseSync.syncProgress(this.currentBook.id, progressData, { immediate });
     };
 
     if (immediate) {
@@ -2738,12 +3109,375 @@ class LuminaApp {
     }
   }
 
+  // --- KONTINUÁLNÍ ČTENÍ A SPRÁVA KAPITOL PRO EPUB (MODE-VERTICAL) ---
+
+  async getOrLoadChapter(index) {
+    if (!this.currentParser) throw new Error("Parser není k dispozici");
+    if (!this._chapterDataCache) {
+      this._chapterDataCache = new Map();
+    }
+    if (this._chapterDataCache.has(index)) {
+      return this._chapterDataCache.get(index);
+    }
+    const chapterData = await this.currentParser.loadChapter(index);
+    this._chapterDataCache.set(index, chapterData);
+    return chapterData;
+  }
+
+  getChapterTitle(index) {
+    if (this._chapterDataCache?.has(index)) {
+      const data = this._chapterDataCache.get(index);
+      if (data?.title) return data.title;
+    }
+    if (this.currentParser?.spine && this.currentParser.spine[index]) {
+      const spineEntry = this.currentParser.spine[index];
+      if (spineEntry.title) return spineEntry.title;
+      if (this.currentParser.toc) {
+        const cleanSpine = (spineEntry.fullPath || "").split("#")[0].split("?")[0];
+        const found = this.currentParser.toc.find(t => {
+          if (!t?.fullHref) return false;
+          const cleanToc = t.fullHref.split("#")[0].split("?")[0];
+          return cleanToc === cleanSpine;
+        });
+        if (found?.title) return found.title;
+      }
+    }
+    return `Kapitola ${index + 1}`;
+  }
+
+  createChapterSectionElement(chapterIndex, rawHtml) {
+    const section = document.createElement("section");
+    section.className = "epub-chapter-section";
+    section.dataset.chapterIndex = String(chapterIndex);
+
+    let html = rawHtml || "";
+    if (this.settings.fastReading) {
+      html = this.toBionicReadingHtml(html);
+    }
+    section.innerHTML = html;
+
+    const imgs = section.querySelectorAll("img");
+    imgs.forEach(img => {
+      img.loading = "eager";
+      img.decoding = "async";
+    });
+
+    return section;
+  }
+
+  attachImageLoadHandlers(sectionEl, isPrepended = false) {
+    if (!sectionEl) return;
+    const vp = this.dom.pagedViewport;
+    const imgs = sectionEl.querySelectorAll("img");
+    imgs.forEach(img => {
+      if (!img.complete) {
+        let prevImgHeight = img.offsetHeight;
+        img.addEventListener("load", () => {
+          if (isPrepended && vp && vp.scrollTop > 0) {
+            const hDiff = img.offsetHeight - prevImgHeight;
+            if (hDiff !== 0) {
+              vp.scrollTop += hDiff;
+              if (this.ruler && this.ruler.enabled && Number.isFinite(this.ruler.currentY)) {
+                this.ruler.currentY += hDiff;
+              }
+            }
+          }
+          if (this.ruler && this.ruler.enabled) {
+            if (typeof this.ruler.refreshLinesDebounced === "function") {
+              this.ruler.refreshLinesDebounced(100);
+            } else {
+              this.ruler.refreshLines();
+            }
+          }
+        }, { once: true });
+      }
+    });
+  }
+
+  getActiveVerticalChapterSection() {
+    if (!this.dom.readerContent || !this.dom.pagedViewport) return null;
+    const sections = this.dom.readerContent.querySelectorAll(".epub-chapter-section");
+    if (sections.length === 0) return null;
+    if (sections.length === 1) return sections[0];
+
+    const vpRect = this.dom.pagedViewport.getBoundingClientRect();
+    const vpCenterY = vpRect.top + vpRect.height / 2;
+
+    let activeSection = null;
+    let minDistance = Infinity;
+
+    for (const sec of sections) {
+      const rect = sec.getBoundingClientRect();
+      if (rect.top <= vpCenterY && rect.bottom >= vpCenterY) {
+        return sec;
+      }
+      const dist = Math.abs((rect.top + rect.bottom) / 2 - vpCenterY);
+      if (dist < minDistance) {
+        minDistance = dist;
+        activeSection = sec;
+      }
+    }
+
+    return activeSection || sections[0];
+  }
+
+  getLastLoadedChapterSection() {
+    if (!this.dom.readerContent) return null;
+    const sections = this.dom.readerContent.querySelectorAll(".epub-chapter-section");
+    if (sections.length === 0) return null;
+    let maxIdx = -1;
+    let lastSection = null;
+    sections.forEach(sec => {
+      const idx = parseInt(sec.dataset.chapterIndex, 10);
+      if (idx > maxIdx) {
+        maxIdx = idx;
+        lastSection = sec;
+      }
+    });
+    return lastSection;
+  }
+
+  getFirstLoadedChapterSection() {
+    if (!this.dom.readerContent) return null;
+    const sections = this.dom.readerContent.querySelectorAll(".epub-chapter-section");
+    if (sections.length === 0) return null;
+    let minIdx = Infinity;
+    let firstSection = null;
+    sections.forEach(sec => {
+      const idx = parseInt(sec.dataset.chapterIndex, 10);
+      if (idx < minIdx) {
+        minIdx = idx;
+        firstSection = sec;
+      }
+    });
+    return firstSection;
+  }
+
+  checkVerticalInfiniteScroll() {
+    if (!this.isVerticalReadingMode() || this.isPdfMode || !this.currentParser || this._isModeTransitioning) return;
+    const vp = this.dom.pagedViewport;
+    if (!vp) return;
+
+    const sections = this.dom.readerContent?.querySelectorAll(".epub-chapter-section");
+    if (!sections || sections.length === 0) return;
+
+    // 1. Spodní práh pro dynamické postupné připojování (Forward Appending - 600px)
+    if (!this._isLoadingNextChapter) {
+      const lastSection = this.getLastLoadedChapterSection();
+      if (lastSection) {
+        const maxIdx = parseInt(lastSection.dataset.chapterIndex, 10);
+        if (maxIdx < this.currentParser.spine.length - 1) {
+          const lastRect = lastSection.getBoundingClientRect();
+          const vpRect = vp.getBoundingClientRect();
+          const distToBottom = lastRect.bottom - vpRect.bottom;
+          if (distToBottom <= 600) {
+            this.appendNextChapter(maxIdx + 1);
+          }
+        }
+      }
+    }
+
+    // 2. Horní práh pro dynamické zpětné předřazování (Backward Prepending - 600px)
+    if (!this._isLoadingPrevChapter) {
+      const firstSection = this.getFirstLoadedChapterSection();
+      if (firstSection) {
+        const minIdx = parseInt(firstSection.dataset.chapterIndex, 10);
+        if (minIdx > 0) {
+          const firstRect = firstSection.getBoundingClientRect();
+          const vpRect = vp.getBoundingClientRect();
+          const distToTop = vpRect.top - firstRect.top;
+          if (vp.scrollTop <= 600 || distToTop <= 600) {
+            this.prependPrevChapter(minIdx - 1);
+          }
+        }
+      }
+    }
+  }
+
+  async appendNextChapter(nextIdx) {
+    if (this._isLoadingNextChapter || !this.isVerticalReadingMode() || this.isPdfMode || !this.currentParser || this._isModeTransitioning) return;
+    if (nextIdx >= this.currentParser.spine.length) return;
+
+    this._isLoadingNextChapter = true;
+    try {
+      const chapterData = await this.getOrLoadChapter(nextIdx);
+      if (!this.isVerticalReadingMode() || !this.currentParser || this._isModeTransitioning) return;
+
+      if (!this.dom.readerContent.querySelector(`.epub-chapter-section[data-chapter-index="${nextIdx}"]`)) {
+        const sectionEl = this.createChapterSectionElement(nextIdx, chapterData.html);
+        this.dom.readerContent.appendChild(sectionEl);
+
+        this.attachImageLoadHandlers(sectionEl, false);
+
+        if (this.ruler && this.ruler.enabled) {
+          if (typeof this.ruler.refreshLinesDebounced === "function") {
+            this.ruler.refreshLinesDebounced(150);
+          } else {
+            this.ruler.refreshLines();
+          }
+        }
+
+        requestAnimationFrame(() => {
+          this.checkVerticalInfiniteScroll();
+        });
+      }
+    } catch (err) {
+      console.error(`Chyba při načítání následující kapitoly ${nextIdx}:`, err);
+    } finally {
+      this._isLoadingNextChapter = false;
+    }
+  }
+
+  async prependPrevChapter(prevIdx) {
+    if (this._isLoadingPrevChapter || !this.isVerticalReadingMode() || this.isPdfMode || !this.currentParser || this._isModeTransitioning) return;
+    if (prevIdx < 0) return;
+
+    this._isLoadingPrevChapter = true;
+    const vp = this.dom.pagedViewport;
+    try {
+      const chapterData = await this.getOrLoadChapter(prevIdx);
+      if (!this.isVerticalReadingMode() || !this.currentParser || this._isModeTransitioning) return;
+
+      if (!this.dom.readerContent.querySelector(`.epub-chapter-section[data-chapter-index="${prevIdx}"]`)) {
+        const sectionEl = this.createChapterSectionElement(prevIdx, chapterData.html);
+
+        const prevScrollHeight = vp.scrollHeight;
+        const prevScrollTop = vp.scrollTop;
+
+        this.dom.readerContent.prepend(sectionEl);
+
+        const addedHeight = vp.scrollHeight - prevScrollHeight;
+        vp.scrollTop = prevScrollTop + addedHeight;
+
+        if (this.ruler && this.ruler.enabled && Number.isFinite(this.ruler.currentY)) {
+          this.ruler.currentY += addedHeight;
+        }
+
+        this.attachImageLoadHandlers(sectionEl, true);
+
+        if (this.ruler && this.ruler.enabled) {
+          if (typeof this.ruler.refreshLinesDebounced === "function") {
+            this.ruler.refreshLinesDebounced(150);
+          } else {
+            this.ruler.refreshLines();
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`Chyba při přednačítání předchozí kapitoly ${prevIdx}:`, err);
+    } finally {
+      this._isLoadingPrevChapter = false;
+    }
+  }
+
+  async loadVerticalCurrentChapter(targetPage = 0) {
+    const stage = this.dom.pagedStage;
+    if (stage) {
+      stage.classList.add("is-chapter-loading");
+      stage.style.transition = "none";
+      stage.style.opacity = "0";
+    }
+    if (this.dom.readerContent) {
+      this.dom.readerContent.classList.add("is-chapter-loading");
+      this.dom.readerContent.style.transition = "none";
+      this.dom.readerContent.style.opacity = "0";
+      this.dom.readerContent.style.transform = "none";
+    }
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.hideForPageTransition();
+    }
+
+    this.isNavigating = true;
+    this.isNavigatingPage = true;
+    this.isLineLocked = true;
+
+    try {
+      const chapterData = await this.getOrLoadChapter(this.currentChapterIndex);
+      this.currentRawChapterHtml = chapterData.html;
+
+      const title = chapterData.title || this.getChapterTitle(this.currentChapterIndex);
+      if (this.dom.chapterTitleEl) this.dom.chapterTitleEl.textContent = title;
+      if (this.dom.pagedChapterName) this.dom.pagedChapterName.textContent = title;
+      if (this.dom.footerTitleText) this.dom.footerTitleText.textContent = title;
+      if (this.dom.bookTitleEl && this.currentBook?.title) this.dom.bookTitleEl.textContent = this.currentBook.title;
+
+      // Vyprázdníme #reader-content a vložíme pouze sekci cílové kapitoly
+      this.dom.readerContent.innerHTML = "";
+      const sectionEl = this.createChapterSectionElement(this.currentChapterIndex, chapterData.html);
+      this.dom.readerContent.appendChild(sectionEl);
+
+      this.attachImageLoadHandlers(sectionEl, false);
+
+      tracker.startSession(
+        this.currentBook.id,
+        this.currentBook.title,
+        this.currentChapterIndex,
+        chapterData.wordCount,
+        0
+      );
+
+      this.highlightActiveTocItem();
+
+      await this.waitForContentReady();
+
+      const vp = this.dom.pagedViewport;
+      if (vp) {
+        if (targetPage === "last") {
+          vp.scrollTop = Math.max(0, vp.scrollHeight - vp.clientHeight);
+        } else if (typeof targetPage === "object" && targetPage !== null && targetPage.ratio !== undefined) {
+          vp.scrollTop = Math.round(targetPage.ratio * Math.max(0, vp.scrollHeight - vp.clientHeight));
+        } else if (typeof targetPage === "number" && targetPage > 0) {
+          vp.scrollTop = Math.round(targetPage * vp.clientHeight);
+        } else {
+          vp.scrollTop = 0;
+        }
+      }
+
+      this.updatePageUI();
+
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.refreshLines();
+        if (this.ruler.wordTracking) this.ruler.refreshWords();
+        if (this.ruler.followMode === "keyboard" && this.ruler.stationaryScreenY === null) {
+          this.ruler.initDefaultStationaryAnchor();
+        } else {
+          this.ruler.applyPosition();
+        }
+      }
+    } catch (e) {
+      console.error("Chyba při načítání kapitoly ve vertikálním režimu:", e);
+      this.showToast(`Chyba při načítání kapitoly: ${e.message}`, "error");
+    } finally {
+      if (stage) {
+        stage.classList.remove("is-chapter-loading");
+        stage.style.opacity = "1";
+      }
+      if (this.dom.readerContent) {
+        this.dom.readerContent.classList.remove("is-chapter-loading");
+        this.dom.readerContent.style.opacity = "1";
+      }
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      if (this.ruler) {
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
+        this.ruler.suppressLineAdvancement = false;
+      }
+    }
+  }
+
   async loadCurrentChapter(targetPage = 0) {
     if (!this.currentParser) return;
 
     // Pojistka: pokud je čtečka skrytá, zobrazíme ji před měřením
     if (this.dom.viewReader && this.dom.viewReader.classList.contains("is-hidden")) {
       this.showReaderView();
+    }
+
+    if (this.isVerticalReadingMode()) {
+      return await this.loadVerticalCurrentChapter(targetPage);
     }
 
     // Phase 1 (Lock & Shield): Vizuální stínění během přechodu kapitoly
@@ -2975,7 +3709,37 @@ class LuminaApp {
   }
 
   applyFastReadingMode() {
-    if (!this.currentBook || !this.currentRawChapterHtml || !this.dom.readerContent) return;
+    if (!this.currentBook || !this.dom.readerContent) return;
+
+    if (this.isVerticalReadingMode() && !this.isPdfMode) {
+      const sections = this.dom.readerContent.querySelectorAll(".epub-chapter-section");
+      sections.forEach(sec => {
+        const idx = parseInt(sec.dataset.chapterIndex, 10);
+        const chData = this._chapterDataCache?.get(idx);
+        if (chData) {
+          let html = chData.html;
+          if (this.settings.fastReading) {
+            html = this.toBionicReadingHtml(html);
+          }
+          sec.innerHTML = html;
+          const imgs = sec.querySelectorAll("img");
+          imgs.forEach(img => {
+            img.loading = "eager";
+            img.decoding = "async";
+          });
+        }
+      });
+      if (this.ruler && this.ruler.enabled) {
+        if (typeof this.ruler.refreshLinesDebounced === "function") {
+          this.ruler.refreshLinesDebounced(100);
+        } else {
+          this.ruler.refreshLines();
+        }
+      }
+      return;
+    }
+
+    if (!this.currentRawChapterHtml) return;
     const curPageIndex = this.currentPageIndex;
     this.renderChapterHtml();
     requestAnimationFrame(() => {
@@ -3086,8 +3850,11 @@ class LuminaApp {
 
   recalcPages() {
     if (this.isVerticalReadingMode()) {
+      const activeSection = this.getActiveVerticalChapterSection();
       const vp = this.dom.pagedViewport;
-      this.totalPagesInChapter = Math.max(1, Math.ceil((vp?.scrollHeight || 1) / Math.max(1, vp?.clientHeight || 1)));
+      const vpHeight = Math.max(1, vp?.clientHeight || 1);
+      const secHeight = Math.max(1, activeSection ? activeSection.offsetHeight : (vp?.scrollHeight || 1));
+      this.totalPagesInChapter = Math.max(1, Math.ceil(secHeight / vpHeight));
       this.updatePageUI();
       return;
     }
@@ -3247,8 +4014,12 @@ class LuminaApp {
         const stride = Math.round(vp.clientHeight * 0.85);
         const maxScroll = vp.scrollHeight - vp.clientHeight;
         if (vp.scrollTop + stride >= maxScroll - 20) {
-          if (!this.isPdfMode && this.currentParser && this.currentChapterIndex < this.currentParser.spine.length - 1) {
-            await this.navigateChapter(1, 0);
+          const lastSec = this.getLastLoadedChapterSection();
+          const lastIdx = lastSec ? parseInt(lastSec.dataset.chapterIndex, 10) : this.currentChapterIndex;
+          if (!this.isPdfMode && this.currentParser && lastIdx < this.currentParser.spine.length - 1) {
+            await this.appendNextChapter(lastIdx + 1);
+          } else if (vp.scrollTop >= maxScroll - 5) {
+            this.showToast("Dočetli jste knihu až do konce! 🎉", "success");
             return;
           }
         }
@@ -3368,9 +4139,10 @@ class LuminaApp {
       if (vp) {
         const stride = Math.round(vp.clientHeight * 0.85);
         if (vp.scrollTop <= 20) {
-          if (!this.isPdfMode && this.currentParser && this.currentChapterIndex > 0) {
-            await this.navigateChapter(-1, "last");
-            return;
+          const firstSec = this.getFirstLoadedChapterSection();
+          const firstIdx = firstSec ? parseInt(firstSec.dataset.chapterIndex, 10) : this.currentChapterIndex;
+          if (!this.isPdfMode && this.currentParser && firstIdx > 0) {
+            await this.prependPrevChapter(firstIdx - 1);
           }
         }
         vp.scrollBy({ top: -stride, behavior: "smooth" });
@@ -3449,6 +4221,24 @@ class LuminaApp {
     if (!this.currentParser) return;
     const newIdx = this.currentChapterIndex + delta;
     if (newIdx >= 0 && newIdx < this.currentParser.spine.length) {
+      if (this.isVerticalReadingMode() && !this.isPdfMode) {
+        const targetSec = this.dom.readerContent?.querySelector(`.epub-chapter-section[data-chapter-index="${newIdx}"]`);
+        if (targetSec && Math.abs(delta) === 1) {
+          await tracker.flushSession();
+          this.currentChapterIndex = newIdx;
+          const vp = this.dom.pagedViewport;
+          if (vp) {
+            let targetScrollTop = targetSec.offsetTop;
+            if (targetPage === "last") {
+              targetScrollTop = Math.max(0, targetSec.offsetTop + targetSec.offsetHeight - vp.clientHeight);
+            }
+            vp.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+          }
+          this.updatePageUI();
+          return;
+        }
+      }
+
       // Okamžité vizuální stínění a reset pozice při zahájení přechodu na jinou kapitolu
       const stage = this.dom.pagedStage;
       if (stage) {
@@ -3487,19 +4277,27 @@ class LuminaApp {
       const totalBookPages = Math.max(1, this.pdfLoader.numPages || 1);
       const remainingPages = Math.max(0, totalBookPages - currBookPage);
 
+      const pageLabel = (typeof this.pdfLoader.getSpreadPageLabel === "function")
+        ? this.pdfLoader.getSpreadPageLabel(currBookPage)
+        : String(currBookPage);
+
       if (this.dom.footerRemainingChapter) {
         this.dom.footerRemainingChapter.textContent = `zbývá: ${remainingPages} stran`;
       }
       if (this.dom.chapterPageCounter) {
-        this.dom.chapterPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
+        this.dom.chapterPageCounter.textContent = `strana ${pageLabel} z ${totalBookPages}`;
       } else if (this.dom.pageCounterText) {
-        this.dom.pageCounterText.textContent = `strana ${currBookPage} z ${totalBookPages}`;
+        this.dom.pageCounterText.textContent = `strana ${pageLabel} z ${totalBookPages}`;
       }
       if (this.dom.footerBookPages) {
-        this.dom.footerBookPages.textContent = `${currBookPage} z ${totalBookPages}`;
+        this.dom.footerBookPages.textContent = `${pageLabel} z ${totalBookPages}`;
       }
       if (this.dom.bookPageCounter) {
-        this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
+        this.dom.bookPageCounter.textContent = `strana ${pageLabel} z ${totalBookPages}`;
+      }
+      const elCounter = document.getElementById("page-counter");
+      if (elCounter) {
+        elCounter.textContent = `${pageLabel} z ${totalBookPages}`;
       }
 
       if (this.isVerticalReadingMode()) {
@@ -3516,8 +4314,15 @@ class LuminaApp {
         if (this.dom.progressBar) this.dom.progressBar.style.width = `${overallProgress}%`;
         if (this.dom.progressText) this.dom.progressText.textContent = `${overallProgress}%`;
       } else {
-        const hasPrev = currBookPage > 1;
-        const hasNext = currBookPage < totalBookPages;
+        let hasPrev, hasNext;
+        if (this.pdfLoader.isSpreadActive?.()) {
+          hasPrev = currBookPage > 1;
+          const step = (currBookPage === 1) ? 1 : 2;
+          hasNext = currBookPage + step <= totalBookPages;
+        } else {
+          hasPrev = currBookPage > 1;
+          hasNext = currBookPage < totalBookPages;
+        }
         if (this.dom.btnPagePrev) this.dom.btnPagePrev.disabled = !hasPrev;
         if (this.dom.btnPageNext) this.dom.btnPageNext.disabled = !hasNext;
 
@@ -3537,32 +4342,70 @@ class LuminaApp {
       if (vp) {
         const scrollTop = vp.scrollTop;
         const maxScroll = Math.max(1, vp.scrollHeight - vp.clientHeight);
-        const progressRatio = Math.max(0, Math.min(1, scrollTop / maxScroll));
-        const totalPages = Math.max(1, Math.ceil(vp.scrollHeight / Math.max(1, vp.clientHeight)));
-        const currentPage = Math.max(1, Math.min(totalPages, Math.round(progressRatio * (totalPages - 1)) + 1));
-        const remainingPages = Math.max(0, totalPages - currentPage);
+
+        const activeSection = this.getActiveVerticalChapterSection();
+        let activeIdx = this.currentChapterIndex;
+        let totalPagesInCh = 1;
+        let currPageInCh = 1;
+        let remainingPagesInCh = 0;
+
+        if (activeSection) {
+          activeIdx = parseInt(activeSection.dataset.chapterIndex, 10);
+          if (this.currentChapterIndex !== activeIdx) {
+            this.currentChapterIndex = activeIdx;
+            if (this.currentBook) this.currentBook.currentChapterIndex = activeIdx;
+            this.highlightActiveTocItem();
+            const chData = this._chapterDataCache?.get(activeIdx);
+            if (chData && this.currentBook) {
+              tracker.startSession(this.currentBook.id, this.currentBook.title, activeIdx, chData.wordCount, 0);
+            }
+          }
+
+          const chTitle = this.getChapterTitle(activeIdx);
+          if (this.dom.chapterTitleEl) this.dom.chapterTitleEl.textContent = chTitle;
+          if (this.dom.pagedChapterName) this.dom.pagedChapterName.textContent = chTitle;
+          if (this.dom.footerTitleText) this.dom.footerTitleText.textContent = chTitle;
+          if (this.dom.bookTitleEl && this.currentBook?.title) this.dom.bookTitleEl.textContent = this.currentBook.title;
+
+          const secHeight = Math.max(1, activeSection.offsetHeight);
+          const vpHeight = Math.max(1, vp.clientHeight);
+          totalPagesInCh = Math.max(1, Math.ceil(secHeight / vpHeight));
+          const scrollIntoSec = Math.max(0, scrollTop - activeSection.offsetTop);
+          const maxSecScroll = Math.max(1, secHeight - vpHeight);
+          const chapterScrollRatio = Math.max(0, Math.min(1, scrollIntoSec / maxSecScroll));
+          currPageInCh = Math.max(1, Math.min(totalPagesInCh, Math.round(chapterScrollRatio * (totalPagesInCh - 1)) + 1));
+          remainingPagesInCh = Math.max(0, totalPagesInCh - currPageInCh);
+
+          this.currentPageIndex = currPageInCh - 1;
+          this.totalPagesInChapter = totalPagesInCh;
+        }
 
         if (this.dom.footerRemainingChapter) {
-          this.dom.footerRemainingChapter.textContent = `konec kapitoly za: ${remainingPages} stran`;
+          this.dom.footerRemainingChapter.textContent = `konec kapitoly za: ${remainingPagesInCh} stran`;
         }
         if (this.dom.chapterPageCounter) {
-          this.dom.chapterPageCounter.textContent = `strana ${currentPage} z ${totalPages}`;
+          this.dom.chapterPageCounter.textContent = `strana ${currPageInCh} z ${totalPagesInCh}`;
         } else if (this.dom.pageCounterText) {
-          this.dom.pageCounterText.textContent = `strana ${currentPage} z ${totalPages}`;
-        }
-        if (this.dom.footerBookPages) {
-          this.dom.footerBookPages.textContent = `${currentPage} z ${totalPages}`;
-        }
-        if (this.dom.bookPageCounter) {
-          this.dom.bookPageCounter.textContent = `strana ${currentPage} z ${totalPages}`;
+          this.dom.pageCounterText.textContent = `strana ${currPageInCh} z ${totalPagesInCh}`;
         }
 
-        const hasPrev = scrollTop > 20 || (this.currentChapterIndex > 0);
-        const hasNext = (scrollTop < maxScroll - 20) || (this.currentParser && this.currentChapterIndex < this.currentParser.spine.length - 1);
+        const metrics = this.getBookMetrics();
+        const currBookPage = metrics.currBookPage;
+        const totalBookPages = metrics.totalBookPages;
+
+        if (this.dom.footerBookPages) {
+          this.dom.footerBookPages.textContent = `${currBookPage} z ${totalBookPages}`;
+        }
+        if (this.dom.bookPageCounter) {
+          this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
+        }
+
+        const hasPrev = scrollTop > 20 || (activeIdx > 0);
+        const hasNext = (scrollTop < maxScroll - 20) || (this.currentParser && activeIdx < this.currentParser.spine.length - 1);
         if (this.dom.btnPagePrev) this.dom.btnPagePrev.disabled = !hasPrev;
         if (this.dom.btnPageNext) this.dom.btnPageNext.disabled = !hasNext;
 
-        const overallProgress = Math.min(100, Math.round(progressRatio * 100));
+        const overallProgress = totalBookPages > 0 ? Math.min(100, Math.round((currBookPage / totalBookPages) * 100)) : 0;
         if (this.dom.progressBar) this.dom.progressBar.style.width = `${overallProgress}%`;
         if (this.dom.progressText) this.dom.progressText.textContent = `${overallProgress}%`;
 
@@ -3652,6 +4495,14 @@ class LuminaApp {
         if (spineIdx !== -1) {
           await tracker.flushSession();
           this.currentChapterIndex = spineIdx;
+          if (this.isVerticalReadingMode() && !this.isPdfMode) {
+            const existingSec = this.dom.readerContent?.querySelector(`.epub-chapter-section[data-chapter-index="${spineIdx}"]`);
+            if (existingSec) {
+              existingSec.scrollIntoView({ behavior: "smooth", block: "start" });
+              this.closeDrawer("toc");
+              return;
+            }
+          }
           await this.loadCurrentChapter(0);
           this.closeDrawer("toc");
         }
@@ -3662,6 +4513,7 @@ class LuminaApp {
   }
 
   highlightActiveTocItem() {
+    if (!this.dom.tocList) return;
     const currentSpine = this.currentParser?.spine[this.currentChapterIndex];
     if (!currentSpine || !currentSpine.fullPath) return;
     const cleanSpine = currentSpine.fullPath.split("#")[0].split("?")[0];
@@ -3720,6 +4572,7 @@ class LuminaApp {
     this.dom.viewLibrary.classList.remove("is-hidden");
     this.ruler.setEnabled(false);
     if (this.ruler) this.ruler.setPdfMode(false);
+    this.setPdfRulerUIVisibility(false);
     if (this.pdfLoader) {
       this.pdfLoader.destroy();
       this.pdfLoader = null;
@@ -3755,7 +4608,12 @@ class LuminaApp {
     document.body.classList.toggle("hide-footer-bar", !showProgressBar);
     document.body.classList.remove("reader-chrome-hidden");
     if (this.ruler) {
-      this.ruler.setPdfMode(this.isPdfMode);
+      const pdfConfig = (this.isPdfMode && this.currentBook) ? (this.currentBook.pdfRulerConfig || { height: 32, stepSize: 32 }) : null;
+      this.ruler.setPdfMode(this.isPdfMode, pdfConfig);
+    }
+    this.setPdfRulerUIVisibility(this.isPdfMode);
+    if (this.isPdfMode && this.currentBook?.pdfRulerConfig) {
+      this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
     }
     const showRuler = this.settings.showRulerButton !== false;
     const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;
@@ -3805,6 +4663,13 @@ class LuminaApp {
         this.dom.drawerBackdrop.classList.toggle("backdrop-transparent", willOpen);
         this.dom.drawerBackdrop.classList.toggle("active", willOpen);
       }
+      if (willOpen) {
+        this.updateSettingsTabsVisibility(this.isPdfMode);
+        this.setPdfRulerUIVisibility(this.isPdfMode);
+        if (this.isPdfMode && this.currentBook?.pdfRulerConfig) {
+          this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
+        }
+      }
     } else if (name === "search") {
       const willOpen = !this.dom.searchDrawer?.classList.contains("open");
       this.dom.searchDrawer?.classList.toggle("open", willOpen);
@@ -3838,6 +4703,102 @@ class LuminaApp {
     if (this.dom.drawerBackdrop) {
       this.dom.drawerBackdrop.classList.toggle("active", isAnyOpen);
       this.dom.drawerBackdrop.classList.toggle("backdrop-transparent", !!isSettingsOpen);
+    }
+  }
+
+  openSettings(targetTab = null) {
+    this.closeFloatingDock();
+    if (this.dom.tocDrawer) this.dom.tocDrawer.classList.remove("open");
+    if (this.dom.searchDrawer) this.dom.searchDrawer.classList.remove("open");
+    if (this.dom.settingsDrawer) {
+      this.dom.settingsDrawer.classList.add("open");
+      document.body.classList.add("settings-sheet-open");
+      if (this.dom.drawerBackdrop) {
+        this.dom.drawerBackdrop.classList.add("backdrop-transparent", "active");
+      }
+      this.updateSettingsTabsVisibility(this.isPdfMode);
+      if (targetTab) {
+        this.switchToSettingsTab(targetTab);
+      }
+      this.setPdfRulerUIVisibility(this.isPdfMode);
+      if (this.isPdfMode && this.currentBook?.pdfRulerConfig) {
+        this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
+      }
+    }
+  }
+
+  switchToSettingsTab(targetPaneId) {
+    if (!this.dom.settingsDrawer) return;
+
+    // V PDF režimu záložka Písmo není dostupná - přesměrovat na Vzhled
+    if (this.isPdfMode && targetPaneId === "tab-pane-font") {
+      targetPaneId = "tab-pane-appearance";
+    }
+
+    const settingsTabs = this.dom.settingsDrawer.querySelectorAll(".settings-tab-btn");
+    const settingsPanes = this.dom.settingsDrawer.querySelectorAll(".settings-tab-pane");
+
+    let targetBtn = this.dom.settingsDrawer.querySelector(`.settings-tab-btn[data-tab="${targetPaneId}"]`);
+    let targetPane = document.getElementById(targetPaneId);
+
+    // Fallback pokud cílový tab neexistuje nebo je skrytý
+    if (!targetBtn || targetBtn.style.display === "none") {
+      targetBtn = this.isPdfMode
+        ? (this.dom.tabBtnAppearance || this.dom.settingsDrawer.querySelector('.settings-tab-btn[data-tab="tab-pane-appearance"]'))
+        : (this.dom.tabBtnFont || settingsTabs[0]);
+      if (targetBtn) {
+        targetPaneId = targetBtn.dataset.tab;
+        targetPane = document.getElementById(targetPaneId);
+      }
+    }
+
+    settingsTabs.forEach(b => {
+      b.classList.remove("active");
+      b.setAttribute("aria-selected", "false");
+    });
+    settingsPanes.forEach(pane => {
+      pane.classList.remove("active");
+    });
+
+    if (targetBtn) {
+      targetBtn.classList.add("active");
+      targetBtn.setAttribute("aria-selected", "true");
+    }
+    if (targetPane) {
+      targetPane.classList.add("active");
+    }
+  }
+
+  updateSettingsTabsVisibility(isPdf = this.isPdfMode) {
+    const tabBtnFont = this.dom?.tabBtnFont || document.getElementById("tab-btn-font");
+    const tabPaneFont = this.dom?.tabPaneFont || document.getElementById("tab-pane-font");
+
+    if (isPdf) {
+      if (tabBtnFont) {
+        tabBtnFont.style.display = "none";
+      }
+      // Pokud je záložka Písmo aktivní, automaticky přepneme na Vzhled
+      const isFontActive = (tabBtnFont && tabBtnFont.classList.contains("active")) ||
+                           (tabPaneFont && tabPaneFont.classList.contains("active"));
+      if (isFontActive) {
+        if (tabPaneFont) {
+          tabPaneFont.classList.remove("active");
+        }
+        if (tabBtnFont) {
+          tabBtnFont.classList.remove("active");
+          tabBtnFont.setAttribute("aria-selected", "false");
+        }
+        this.switchToSettingsTab("tab-pane-appearance");
+      }
+    } else {
+      if (tabBtnFont) {
+        tabBtnFont.style.display = "";
+      }
+      // Kontrola, zda je nějaký tab aktivní, případně nastavit výchozí Písmo
+      const activeBtn = this.dom?.settingsDrawer?.querySelector(".settings-tab-btn.active:not([style*='display: none'])");
+      if (!activeBtn) {
+        this.switchToSettingsTab("tab-pane-font");
+      }
     }
   }
 
@@ -4021,6 +4982,17 @@ class LuminaApp {
 
   async navigateToSearchResult(chapterIndex, matchQuery) {
     this.closeDrawer("search");
+    if (this.isVerticalReadingMode() && !this.isPdfMode) {
+      const existingSec = this.dom.readerContent?.querySelector(`.epub-chapter-section[data-chapter-index="${chapterIndex}"]`);
+      if (existingSec) {
+        if (matchQuery) {
+          this.locateAndScrollToSearchQuery(matchQuery);
+        } else {
+          existingSec.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return;
+      }
+    }
     if (this.currentChapterIndex !== chapterIndex) {
       await tracker.flushSession();
       this.currentChapterIndex = chapterIndex;
@@ -4060,6 +5032,13 @@ class LuminaApp {
     }
 
     if (foundParent) {
+      if (this.isVerticalReadingMode()) {
+        foundParent.scrollIntoView({ behavior: "smooth", block: "center" });
+        foundParent.classList.add("search-highlight-flash");
+        setTimeout(() => foundParent.classList.remove("search-highlight-flash"), 2200);
+        return;
+      }
+
       const rect = foundParent.getBoundingClientRect();
       const currentOffset = this.currentPageIndex * exactStep;
       const relativeX = (rect.left - stageRect.left) + currentOffset;
@@ -4277,16 +5256,24 @@ class LuminaApp {
     }
 
     const resolved = this.resolveBookPage(targetBookPage);
-    if (resolved.chapterIndex === this.currentChapterIndex) {
-      if (this.isVerticalReadingMode()) {
-        const vp = this.dom.pagedViewport;
-        if (vp) {
-          const maxScroll = Math.max(0, vp.scrollHeight - vp.clientHeight);
-          vp.scrollTop = Math.round(resolved.pageRatio * maxScroll);
-        }
-      } else {
-        this.goToPage(resolved.pageInChapter);
+    if (this.isVerticalReadingMode()) {
+      const vp = this.dom.pagedViewport;
+      const targetSec = this.dom.readerContent?.querySelector(`.epub-chapter-section[data-chapter-index="${resolved.chapterIndex}"]`);
+      if (targetSec && vp) {
+        this.currentChapterIndex = resolved.chapterIndex;
+        const maxSecScroll = Math.max(0, targetSec.offsetHeight - vp.clientHeight);
+        vp.scrollTop = targetSec.offsetTop + Math.round(resolved.pageRatio * maxSecScroll);
+        this.updatePageUI();
+        return;
       }
+      await tracker.flushSession();
+      this.currentChapterIndex = resolved.chapterIndex;
+      await this.loadCurrentChapter({ ratio: resolved.pageRatio, fallbackPage: resolved.pageInChapter });
+      return;
+    }
+
+    if (resolved.chapterIndex === this.currentChapterIndex) {
+      this.goToPage(resolved.pageInChapter);
     } else {
       await tracker.flushSession();
       this.currentChapterIndex = resolved.chapterIndex;
@@ -4640,7 +5627,9 @@ class LuminaApp {
 
 // Spuštění aplikace po načtení DOM
 document.addEventListener("DOMContentLoaded", () => {
-  const app = new LuminaApp();
-  app.init();
-  window.luminaApp = app;
+  if (document.getElementById("view-library")) {
+    const app = new LuminaApp();
+    app.init();
+    window.luminaApp = app;
+  }
 });

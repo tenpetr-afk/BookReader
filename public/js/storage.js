@@ -56,6 +56,16 @@ export class StorageManager {
   // --- KNIHY (BOOKS) ---
 
   async saveBook(bookData) {
+    if (bookData && (bookData.isPdf || bookData.format === "pdf")) {
+      if (!bookData.pdfRulerConfig) {
+        bookData.pdfRulerConfig = { height: 32, stepSize: 32 };
+      } else {
+        bookData.pdfRulerConfig = {
+          height: Math.max(16, Math.min(120, Math.round(Number(bookData.pdfRulerConfig.height) || 32))),
+          stepSize: Math.max(10, Math.min(120, Math.round(Number(bookData.pdfRulerConfig.stepSize) || 32)))
+        };
+      }
+    }
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction("books", "readwrite");
@@ -125,6 +135,16 @@ export class StorageManager {
     if (!book) return;
     Object.assign(book, updates, { lastReadAt: Date.now() });
     return await this.saveBook(book);
+  }
+
+  async updateBookPdfRulerConfig(bookId, config) {
+    const book = await this.getBook(bookId);
+    if (!book) return null;
+    const height = Math.max(16, Math.min(120, Math.round(Number(config?.height) || 32)));
+    const stepSize = Math.max(10, Math.min(120, Math.round(Number(config?.stepSize) || 32)));
+    book.pdfRulerConfig = { height, stepSize };
+    await this.saveBook(book);
+    return book.pdfRulerConfig;
   }
 
   // --- ČTECÍ RELACE A STATISTIKY (SESSIONS) ---
