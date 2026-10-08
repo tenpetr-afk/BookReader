@@ -57,6 +57,7 @@ export class StorageManager {
 
   async saveBook(bookData) {
     if (!bookData) return null;
+    this.normalizeBookProgress(bookData);
 
     // Normalizace názvu a formátu souboru
     if (!bookData.fileName && bookData.file_name) {
@@ -120,6 +121,34 @@ export class StorageManager {
     return await supabaseSync.syncAll(options);
   }
 
+  normalizeBookProgress(book) {
+    if (!book) return 0;
+    let progressValue = 0;
+
+    if (typeof book.progress === "number" && !isNaN(book.progress)) {
+      progressValue = (book.progress > 0 && book.progress < 1) ? book.progress * 100 : book.progress;
+    } else if (typeof book.scroll_progress === "number" && !isNaN(book.scroll_progress)) {
+      progressValue = (book.scroll_progress > 0 && book.scroll_progress <= 1) ? book.scroll_progress * 100 : book.scroll_progress;
+    } else if (typeof book.progressPercent === "number" && !isNaN(book.progressPercent)) {
+      progressValue = (book.progressPercent > 0 && book.progressPercent < 1) ? book.progressPercent * 100 : book.progressPercent;
+    } else if (typeof book.scrollPercent === "number" && !isNaN(book.scrollPercent)) {
+      progressValue = (book.scrollPercent > 0 && book.scrollPercent <= 1) ? book.scrollPercent * 100 : book.scrollPercent;
+    } else if (book.currentPage && book.numPages) {
+      progressValue = Math.round((book.currentPage / book.numPages) * 100);
+    } else if (book.current_page && book.total_pages) {
+      progressValue = Math.round((book.current_page / book.total_pages) * 100);
+    } else if (typeof book.currentPageIndex === "number" && book.numPages) {
+      progressValue = Math.round(((book.currentPageIndex + 1) / book.numPages) * 100);
+    } else if (book.wordsRead && book.totalWords) {
+      progressValue = Math.round((book.wordsRead / book.totalWords) * 100);
+    }
+
+    progressValue = Math.max(0, Math.min(100, Math.round(progressValue)));
+    book.progress = progressValue;
+    book.progressPercent = progressValue;
+    return progressValue;
+  }
+
   async getBook(id) {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
@@ -127,7 +156,13 @@ export class StorageManager {
       const store = tx.objectStore("books");
       const request = store.get(id);
 
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const book = request.result;
+        if (book) {
+          this.normalizeBookProgress(book);
+        }
+        resolve(book);
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -141,6 +176,9 @@ export class StorageManager {
 
       request.onsuccess = () => {
         const books = request.result || [];
+        for (const book of books) {
+          this.normalizeBookProgress(book);
+        }
         // Seřadit podle naposledy čtených
         books.sort((a, b) => (b.lastReadAt || b.addedAt || 0) - (a.lastReadAt || a.addedAt || 0));
         resolve(books);
@@ -177,6 +215,21 @@ export class StorageManager {
     const book = await this.getBook(bookId);
     if (!book) return;
     Object.assign(book, updates, { lastReadAt: Date.now() });
+
+    const isPdf = !!(book.isPdf || book.format === "pdf" || updates.isPdf);
+    const currentPage = updates.currentPage ?? (updates.currentPageIndex !== undefined ? updates.currentPageIndex + 1 : (book.currentPage ?? (book.currentPageIndex !== undefined ? book.currentPageIndex + 1 : (updates.current_page ?? book.current_page))));
+    const numPages = updates.numPages ?? book.numPages ?? updates.total_pages ?? book.total_pages ?? updates.totalPages ?? book.totalPages ?? (book.description ? (book.description.match(/(\d+)\s*stran/)?.[1] ? parseInt(book.description.match(/(\d+)\s*stran/)[1], 10) : undefined) : undefined);
+
+    if (isPdf && currentPage && numPages) {
+      const progress = Math.max(0, Math.min(100, Math.round((currentPage / numPages) * 100)));
+      book.progress = progress;
+      book.progressPercent = progress;
+      book.currentPage = currentPage;
+      book.numPages = numPages;
+    } else {
+      this.normalizeBookProgress(book);
+    }
+
     return await this.saveBook(book);
   }
 
@@ -354,4 +407,8 @@ export async function uploadBook(book) {
 
 export async function syncWithCloud(options) {
   return await storage.syncWithCloud(options);
+}
+
+export function normalizeBookProgress(book) {
+  return storage.normalizeBookProgress(book);
 }

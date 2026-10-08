@@ -214,6 +214,7 @@ export class ReadingTracker {
             scrollPercent: this.currentScrollPercent,
             wordsRead: totalWordsRead,
             progressPercent: progressPercent,
+            progress: progressPercent,
             lastWpm: wpm
           });
         }

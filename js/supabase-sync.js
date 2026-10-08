@@ -391,7 +391,10 @@ export class SupabaseSync {
                 totalChapters: 1,
                 totalWords: numPages * 250,
                 wordsRead: 0,
+                progress: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
                 progressPercent: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
+                currentPage: Number(cloudBook.current_page) || 1,
+                numPages: numPages,
                 scrollPercent: Number(cloudBook.scroll_progress) || 0,
                 pageRatio: Number(cloudBook.scroll_progress) || 0,
                 pdfRulerConfig: {
@@ -454,7 +457,9 @@ export class SupabaseSync {
                 totalChapters: totalChapters,
                 totalWords: totalWords,
                 wordsRead: 0,
+                progress: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
                 progressPercent: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
+                currentPage: Number(cloudBook.current_page) || 1,
                 scrollPercent: Number(cloudBook.scroll_progress) || 0,
                 pageRatio: Number(cloudBook.scroll_progress) || 0
               };
@@ -478,12 +483,22 @@ export class SupabaseSync {
             const chIdx = cloudBook.current_chapter || 0;
             const pIdx = Math.max(0, (cloudBook.current_page || 1) - 1);
             const scroll = Number(cloudBook.scroll_progress) || 0;
+            const currPage = pIdx + 1;
+            const totalPages = localBook.numPages || cloudBook.total_pages || localBook.total_pages;
+            const computedProgress = (totalPages && totalPages > 0)
+              ? Math.max(0, Math.min(100, Math.round((currPage / totalPages) * 100)))
+              : Math.max(0, Math.min(100, Math.round((scroll > 0 && scroll <= 1) ? scroll * 100 : scroll)));
 
             const updates = {
               currentChapterIndex: chIdx,
               currentPageIndex: pIdx,
+              currentPage: currPage,
+              numPages: totalPages,
               scrollPercent: scroll,
+              scroll_progress: scroll,
               pageRatio: scroll,
+              progress: computedProgress,
+              progressPercent: computedProgress,
               lastReadAt: cloudTime
             };
             if (cloudBook.pdf_ruler_height && localBook.pdfRulerConfig) {

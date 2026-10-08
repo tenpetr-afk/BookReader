@@ -2387,3 +2387,33 @@ body.is-pdf-mode:not(.mode-vertical) .paged-content {
   }
 }
 
+/* ==========================================================================
+   Dark / OLED Mode Filter pro PDF Canvas
+   ========================================================================== */
+
+[data-theme="dark"] .pdf-page-canvas {
+  filter: invert(0.92) hue-rotate(180deg) contrast(0.95) brightness(0.95) !important;
+}
+
+[data-theme="oled"] .pdf-page-canvas {
+  filter: invert(1) hue-rotate(180deg) contrast(1.05) !important;
+}
+
+[data-theme="dark"] .pdf-page-container canvas,
+.theme-dark .pdf-page-canvas,
+.theme-dark .pdf-page-container canvas {
+  filter: invert(0.92) hue-rotate(180deg) contrast(0.95) brightness(0.95) !important;
+}
+
+[data-theme="oled"] .pdf-page-container canvas,
+.theme-oled .pdf-page-canvas,
+.theme-oled .pdf-page-container canvas {
+  filter: invert(1) hue-rotate(180deg) contrast(1.05) !important;
+}
+
+/* Skenované dokumenty – ochranná vrstva obrázků se nezobrazuje, aby nepřekryla invertovaný canvas */
+.pdf-page-container.is-scanned-page .pdf-image-layer,
+.pdf-page-slot.is-scanned-page .pdf-image-layer {
+  display: none !important;
+}
+

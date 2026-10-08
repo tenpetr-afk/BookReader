@@ -613,6 +613,7 @@ export class PDFLoader {
       pageContainer.style.width = `${floorW}px`;
       pageContainer.style.height = `${floorH}px`;
       pageContainer.style.minHeight = `${floorH}px`;
+      pageContainer.classList.remove("is-scanned-page");
       pageContainer.innerHTML = "";
 
       const canvas = document.createElement("canvas");
@@ -943,6 +944,22 @@ export class PDFLoader {
         // Ignorujeme neviditelné nebo miniaturní dekorativní body (pattern masky apod.)
         if (vWidth < 8 || vHeight < 8) continue;
         if (maxVx <= 0 || maxVy <= 0 || minVx >= viewport.width || minVy >= viewport.height) continue;
+
+        // Rozpoznání celostránkového skenu (skenovaný / rastrový dokument vs. vložená ilustrace):
+        // Pokud detekovaný obrázek pokrývá téměř celou stranu, jde o naskenovanou stránku dokumentu.
+        // V takovém případě obrázek neizolujeme do .pdf-image-layer (aby se neneutralizoval CSS dark mode filtr)
+        // a označíme kontejner třídou 'is-scanned-page'.
+        const isFullPageScan = (vWidth / viewport.width > 0.85) && (vHeight / viewport.height > 0.85);
+        if (isFullPageScan) {
+          const pageParent = imageLayer.parentElement || imageLayer.closest(".pdf-page-container");
+          if (pageParent) {
+            pageParent.classList.add("is-scanned-page");
+          }
+          if (sourceCanvas) {
+            sourceCanvas.classList.add("is-scanned-page");
+          }
+          continue;
+        }
 
         // Klíč pro eliminaci duplicitních překryvů
         const boxKey = `${Math.round(minVx)},${Math.round(minVy)},${Math.round(vWidth)},${Math.round(vHeight)}`;

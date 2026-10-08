@@ -2645,85 +2645,139 @@ export class LuminaApp {
     } catch (e) {
       console.error("[Supabase Sync] Chyba při načítání knihovny z cloudu:", e);
     }
-    return await this.renderLibrary();
+    const books = await storage.getAllBooks();
+    if (books && Array.isArray(books)) {
+      books.forEach(b => storage.normalizeBookProgress(b));
+    }
+    return this.renderBookGrid(books);
   }
 
   async renderLibrary() {
     const books = await storage.getAllBooks();
+    return this.renderBookGrid(books);
+  }
+
+  renderBookGrid(books) {
+    if (!this.dom.bookGrid) return;
     this.dom.bookGrid.innerHTML = "";
 
-    if (books.length === 0) {
-      this.dom.emptyLibrary.classList.remove("is-hidden");
+    if (!books || books.length === 0) {
+      if (this.dom.emptyLibrary) this.dom.emptyLibrary.classList.remove("is-hidden");
       this.dom.bookGrid.classList.add("is-hidden");
       return;
     }
 
-    this.dom.emptyLibrary.classList.add("is-hidden");
+    if (this.dom.emptyLibrary) this.dom.emptyLibrary.classList.add("is-hidden");
     this.dom.bookGrid.classList.remove("is-hidden");
 
     books.forEach(book => {
-      const card = document.createElement("div");
-      card.className = "book-card";
-      card.setAttribute("tabindex", "0");
-
-      const coverHtml = book.coverDataUrl
-        ? `<img src="${book.coverDataUrl}" alt="${book.title}" class="book-cover-img" />`
-        : `<div class="book-cover-placeholder">
-             <span class="cover-icon">📖</span>
-             <span class="cover-title">${book.title}</span>
-           </div>`;
-
-      const progress = book.progressPercent || 0;
-      const lastReadText = book.lastReadAt
-        ? new Date(book.lastReadAt).toLocaleDateString("cs-CZ")
-        : "Nová";
-
-      card.innerHTML = `
-        <div class="book-cover-wrapper">
-          ${coverHtml}
-          <div class="book-card-actions">
-            <button class="btn-delete-book" title="Odebrat knihu" data-id="${book.id}">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-          </div>
-        </div>
-        <div class="book-info">
-          <h3 class="book-title" title="${book.title}">${book.title}</h3>
-          <p class="book-author">${book.author || book.creator || ""}</p>
-          <div class="book-meta">
-            <div class="book-progress-bar-small">
-              <div class="fill" style="width: ${progress}%"></div>
-            </div>
-            <div class="book-meta-text">
-              <span>${progress}%</span>
-              <span>${lastReadText}</span>
-            </div>
-          </div>
-        </div>
-      `;
-
-      // Otevření knihy
-      card.addEventListener("click", (e) => {
-        if (e.target.closest(".btn-delete-book")) return;
-        this.openBook(book.id);
-      });
-
-      // Smazání knihy
-      const btnDelete = card.querySelector(".btn-delete-book");
-      btnDelete.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        if (confirm(`Opravdu chcete odebrat knihu „${book.title}“ z knihovny?`)) {
-          await storage.deleteBook(book.id);
-          supabaseSync.deleteBook(book.id).catch(err => {
-            console.warn("[SupabaseSync] Smazání knihy z cloudu selhalo:", err);
-          });
-          this.showToast(`Kniha byla odebrána`, "info");
-          await this.renderLibrary();
-        }
-      });
-
+      const card = this.createBookCard(book);
       this.dom.bookGrid.appendChild(card);
     });
+  }
+
+  createBookCard(book) {
+    let progressValue = 0;
+    if (typeof book.progress === 'number' && !isNaN(book.progress)) {
+      progressValue = (book.progress > 0 && book.progress < 1) ? book.progress * 100 : book.progress;
+    } else if (typeof book.scroll_progress === 'number' && !isNaN(book.scroll_progress)) {
+      progressValue = (book.scroll_progress > 0 && book.scroll_progress <= 1) ? book.scroll_progress * 100 : book.scroll_progress;
+    } else if (typeof book.progressPercent === 'number' && !isNaN(book.progressPercent)) {
+      progressValue = (book.progressPercent > 0 && book.progressPercent < 1) ? book.progressPercent * 100 : book.progressPercent;
+    } else if (typeof book.scrollPercent === 'number' && !isNaN(book.scrollPercent)) {
+      progressValue = (book.scrollPercent > 0 && book.scrollPercent <= 1) ? book.scrollPercent * 100 : book.scrollPercent;
+    } else if (book.currentPage && book.numPages) {
+      progressValue = Math.round((book.currentPage / book.numPages) * 100);
+    } else if (book.current_page && book.total_pages) {
+      progressValue = Math.round((book.current_page / book.total_pages) * 100);
+    } else if (typeof book.currentPageIndex === 'number' && book.numPages) {
+      progressValue = Math.round(((book.currentPageIndex + 1) / book.numPages) * 100);
+    }
+
+    if (progressValue === 0 && book.id) {
+      try {
+        const cachedStr = localStorage.getItem(`lumina_progress_${book.id}`);
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (cached) {
+            if (typeof cached.progress === 'number' && !isNaN(cached.progress)) {
+              progressValue = (cached.progress > 0 && cached.progress < 1) ? cached.progress * 100 : cached.progress;
+            } else if (typeof cached.scrollPercent === 'number' && !isNaN(cached.scrollPercent)) {
+              progressValue = (cached.scrollPercent > 0 && cached.scrollPercent <= 1) ? cached.scrollPercent * 100 : cached.scrollPercent;
+            } else if (typeof cached.scroll_progress === 'number' && !isNaN(cached.scroll_progress)) {
+              progressValue = (cached.scroll_progress > 0 && cached.scroll_progress <= 1) ? cached.scroll_progress * 100 : cached.scroll_progress;
+            } else if (cached.currentPage && cached.numPages) {
+              progressValue = Math.round((cached.currentPage / cached.numPages) * 100);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    progressValue = Math.max(0, Math.min(100, Math.round(progressValue)));
+    book.progress = progressValue;
+    book.progressPercent = progressValue;
+
+    const card = document.createElement("div");
+    card.className = "book-card";
+    card.setAttribute("tabindex", "0");
+
+    const coverHtml = book.coverDataUrl
+      ? `<img src="${book.coverDataUrl}" alt="${book.title}" class="book-cover-img" />`
+      : `<div class="book-cover-placeholder">
+           <span class="cover-icon">📖</span>
+           <span class="cover-title">${book.title}</span>
+         </div>`;
+
+    const lastReadText = book.lastReadAt
+      ? new Date(book.lastReadAt).toLocaleDateString("cs-CZ")
+      : "Nová";
+
+    card.innerHTML = `
+      <div class="book-cover-wrapper">
+        ${coverHtml}
+        <div class="book-card-actions">
+          <button class="btn-delete-book" title="Odebrat knihu" data-id="${book.id}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="book-info">
+        <h3 class="book-title" title="${book.title}">${book.title}</h3>
+        <p class="book-author">${book.author || book.creator || ""}</p>
+        <div class="book-meta">
+          <div class="book-progress-bar-small book-card-progress-bar">
+            <div class="fill book-progress-fill progress-fill" style="width: ${progressValue}%;"></div>
+          </div>
+          <div class="book-meta-text">
+            <span class="book-progress-text">${progressValue}%</span>
+            <span>${lastReadText}</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Otevření knihy
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".btn-delete-book")) return;
+      this.openBook(book.id);
+    });
+
+    // Smazání knihy
+    const btnDelete = card.querySelector(".btn-delete-book");
+    btnDelete.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (confirm(`Opravdu chcete odebrat knihu „${book.title}“ z knihovny?`)) {
+        await storage.deleteBook(book.id);
+        supabaseSync.deleteBook(book.id).catch(err => {
+          console.warn("[SupabaseSync] Smazání knihy z cloudu selhalo:", err);
+        });
+        this.showToast(`Kniha byla odebrána`, "info");
+        await this.renderLibrary();
+      }
+    });
+
+    return card;
   }
 
   // --- CLOUD SYNC & ZÁLOHOVÁNÍ (SUPABASE) ---
@@ -3094,11 +3148,33 @@ export class LuminaApp {
     const pageProgress = (pageIndex + 1) / totalPages;
     const pageRatio = totalPages > 1 ? pageIndex / (totalPages - 1) : 0;
 
+    let computedProgress = 0;
+    let currBookPageNum = 1;
+    let totalBookPagesNum = 1;
+
+    if (this.isPdfMode && this.pdfLoader) {
+      currBookPageNum = this.pdfLoader.currentPage || (pageIndex + 1);
+      totalBookPagesNum = this.pdfLoader.numPages || totalPages;
+      computedProgress = totalBookPagesNum > 0 ? Math.round((currBookPageNum / totalBookPagesNum) * 100) : 0;
+    } else {
+      const metrics = this.getBookMetrics();
+      currBookPageNum = metrics?.currBookPage || (pageIndex + 1);
+      totalBookPagesNum = metrics?.totalBookPages || totalPages;
+      computedProgress = (totalBookPagesNum > 0)
+        ? Math.round((currBookPageNum / totalBookPagesNum) * 100)
+        : 0;
+    }
+    computedProgress = Math.max(0, Math.min(100, Math.round(computedProgress)));
+
     const progressData = {
       currentChapterIndex: this.currentChapterIndex || 0,
       currentPageIndex: pageIndex,
       pageRatio: pageRatio,
       scrollPercent: pageProgress,
+      progress: computedProgress,
+      progressPercent: computedProgress,
+      currentPage: currBookPageNum,
+      numPages: totalBookPagesNum,
       lastReadAt: Date.now()
     };
 
@@ -3107,6 +3183,10 @@ export class LuminaApp {
     this.currentBook.currentPageIndex = pageIndex;
     this.currentBook.pageRatio = pageRatio;
     this.currentBook.scrollPercent = pageProgress;
+    this.currentBook.progress = computedProgress;
+    this.currentBook.progressPercent = computedProgress;
+    this.currentBook.currentPage = currBookPageNum;
+    this.currentBook.numPages = totalBookPagesNum;
     this.currentBook.lastReadAt = progressData.lastReadAt;
 
     if (this.isVerticalReadingMode() && this.dom.pagedViewport) {
@@ -3118,6 +3198,24 @@ export class LuminaApp {
         progressData.scrollPercent = vRatio;
         this.currentBook.pageRatio = vRatio;
         this.currentBook.scrollPercent = vRatio;
+
+        if (this.pdfLoader && this.pdfLoader.currentPage && this.pdfLoader.numPages) {
+          const vProg = Math.max(0, Math.min(100, Math.round((this.pdfLoader.currentPage / this.pdfLoader.numPages) * 100)));
+          progressData.progress = vProg;
+          progressData.progressPercent = vProg;
+          progressData.currentPage = this.pdfLoader.currentPage;
+          progressData.numPages = this.pdfLoader.numPages;
+          this.currentBook.progress = vProg;
+          this.currentBook.progressPercent = vProg;
+          this.currentBook.currentPage = this.pdfLoader.currentPage;
+          this.currentBook.numPages = this.pdfLoader.numPages;
+        } else {
+          const vProg = Math.max(0, Math.min(100, Math.round(vRatio * 100)));
+          progressData.progress = vProg;
+          progressData.progressPercent = vProg;
+          this.currentBook.progress = vProg;
+          this.currentBook.progressPercent = vProg;
+        }
       } else {
         const activeSection = this.getActiveVerticalChapterSection();
         if (activeSection) {
@@ -3134,6 +3232,17 @@ export class LuminaApp {
           this.currentBook.currentChapterIndex = chIdx;
           this.currentBook.pageRatio = chapterRatio;
           this.currentBook.scrollPercent = chapterRatio;
+
+          const metrics = this.getBookMetrics();
+          const vProg = (metrics && metrics.totalBookPages > 0) ? Math.min(100, Math.round((metrics.currBookPage / metrics.totalBookPages) * 100)) : 0;
+          progressData.progress = vProg;
+          progressData.progressPercent = vProg;
+          progressData.currentPage = metrics.currBookPage;
+          progressData.numPages = metrics.totalBookPages;
+          this.currentBook.progress = vProg;
+          this.currentBook.progressPercent = vProg;
+          this.currentBook.currentPage = metrics.currBookPage;
+          this.currentBook.numPages = metrics.totalBookPages;
         }
       }
     }
