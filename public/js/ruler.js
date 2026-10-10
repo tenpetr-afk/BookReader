@@ -275,6 +275,12 @@ export class ReadingRuler {
       return this.activeWordIndex >= this.cachedWords.length - 1;
     }
     if (this.cachedLines.length === 0) return false;
+    if (this.isVerticalMode()) {
+      for (let i = this.activeLineIndex + 1; i < this.cachedLines.length; i++) {
+        if (!this.cachedLines[i].isMedia) return false;
+      }
+      return true;
+    }
     return this.activeLineIndex >= this.cachedLines.length - 1;
   }
 
@@ -1506,13 +1512,13 @@ export class ReadingRuler {
       }
     });
 
-    let resizeDebounceTimer = null;
+    this._resizeDebounceTimer = null;
     window.addEventListener("resize", () => {
       if (this.enabled) {
         this.cancelHold();
-        if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
-        resizeDebounceTimer = setTimeout(() => {
-          resizeDebounceTimer = null;
+        if (this._resizeDebounceTimer) clearTimeout(this._resizeDebounceTimer);
+        this._resizeDebounceTimer = setTimeout(() => {
+          this._resizeDebounceTimer = null;
           if (!this.enabled) return;
           this.refreshLines();
           if (this.wordTracking) this.refreshWords();
@@ -1521,6 +1527,7 @@ export class ReadingRuler {
       }
     });
 
+    this._scrollDebounceTimer = null;
     const onScroll = () => {
       if (this.enabled && this.isVerticalMode()) {
         if (this.followMode === "mouse" && !this._isProgrammaticScroll && !this.isPdfMode) {
@@ -1533,6 +1540,18 @@ export class ReadingRuler {
           this.handlePointerMove(curX, curY, "mouse");
         } else {
           this.applyPosition();
+        }
+
+        if (!this.isPdfMode && !this._isProgrammaticScroll) {
+          if (this._scrollDebounceTimer) clearTimeout(this._scrollDebounceTimer);
+          this._scrollDebounceTimer = setTimeout(() => {
+            this._scrollDebounceTimer = null;
+            if (this.enabled && this.isVerticalMode() && !this.isPdfMode) {
+              this.refreshLines();
+              if (this.wordTracking) this.refreshWords();
+              this.applyPosition();
+            }
+          }, 150);
         }
       }
     };
@@ -1663,6 +1682,9 @@ export class ReadingRuler {
 
       const stageCenterX = stageRect.left + stageRect.width / 2;
       const isVertical = this.isVerticalMode();
+      if (isVertical) {
+        return this.detectVerticalLines(content, stageRect);
+      }
       const isTwoColEarly = !isVertical && this.checkTwoColumnLayout(content, stageRect, null);
       const viewport = isVertical ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
       const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
@@ -2246,6 +2268,269 @@ export class ReadingRuler {
     }
   }
 
+  getVisibleLineRects(container) {
+    const rects = [];
+    if (!container) return rects;
+    const viewport = document.getElementById("paged-viewport") || document.querySelector(".paged-viewport");
+    const vScrollTop = viewport ? viewport.scrollTop : (window.scrollY || 0);
+
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
+    let node;
+    const range = document.createRange();
+    while ((node = walker.nextNode())) {
+      if (!node.textContent || !node.textContent.trim()) continue;
+      const parent = node.parentElement;
+      if (!parent || parent.closest('.hidden, script, style, head, noscript')) continue;
+      if (parent.closest('svg, figure, picture') && !parent.closest('figcaption')) continue;
+      if (parent.tagName === 'IMG' || parent.tagName === 'HR' || parent.tagName === 'CANVAS') continue;
+
+      try {
+        range.selectNodeContents(node);
+        const clientRects = range.getClientRects();
+        for (let i = 0; i < clientRects.length; i++) {
+          const cr = clientRects[i];
+          if (cr.height >= 8 && cr.width >= 8) {
+            rects.push({
+              top: cr.top + vScrollTop,
+              bottom: cr.bottom + vScrollTop,
+              left: cr.left,
+              right: cr.right,
+              width: cr.width,
+              height: cr.height,
+              centerY: cr.top + cr.height / 2 + vScrollTop,
+              element: parent,
+              hasText: true,
+              isMedia: false
+            });
+          }
+        }
+      } catch (e) {}
+    }
+    return rects;
+  }
+
+  detectVerticalLines(content, stageRect) {
+    try {
+      const stage = document.getElementById("paged-stage") || document.getElementById("paged-viewport") || this.container || document.body;
+      const sRect = stageRect || (stage ? stage.getBoundingClientRect() : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight });
+      this.stageLeft = Math.round(sRect.left);
+      this.stageWidth = Math.round(sRect.width);
+
+      const viewport = document.getElementById("paged-viewport") || document.querySelector(".paged-viewport");
+      const vScrollTop = viewport ? viewport.scrollTop : (window.scrollY || 0);
+
+      const container = content || document.querySelector('#reader-content, .page-content, .reader-text, article') || document.body;
+
+      // 1. DOM-aware text line extraction via TreeWalker and Range.getClientRects()
+      const rawTextRects = this.getVisibleLineRects(container);
+
+      // Sort text rects by vertical position
+      rawTextRects.sort((a, b) => {
+        if (Math.abs(a.top - b.top) > 3) {
+          return a.top - b.top;
+        }
+        return a.centerY - b.centerY;
+      });
+
+      // Merge inline segments that belong to the same rendered visual line
+      const textLines = [];
+      for (const r of rawTextRects) {
+        if (textLines.length === 0) {
+          textLines.push({ ...r });
+        } else {
+          const prev = textLines[textLines.length - 1];
+          const isSameLine = (
+            (Math.abs(r.top - prev.top) <= 6 || Math.abs(r.centerY - prev.centerY) <= 6) &&
+            Math.min(prev.bottom, r.bottom) > Math.max(prev.top, r.top)
+          );
+          if (isSameLine) {
+            prev.top = Math.min(prev.top, r.top);
+            prev.bottom = Math.max(prev.bottom, r.bottom);
+            prev.left = Math.min(prev.left, r.left);
+            prev.right = Math.max(prev.right, r.right);
+            prev.height = prev.bottom - prev.top;
+            prev.centerY = prev.top + prev.height / 2;
+            prev.width = prev.right - prev.left;
+            prev.element = prev.element || r.element;
+          } else {
+            textLines.push({ ...r });
+          }
+        }
+      }
+
+      // 2. Detection of non-text media elements (images, SVGs, figures)
+      const mediaCandidates = Array.from(container.querySelectorAll('img, svg, canvas, figure, picture, .chapter-illustration'));
+      const processedMedia = new Set();
+      const rawMedia = [];
+
+      for (const mEl of mediaCandidates) {
+        if (mEl.tagName === 'HR') continue;
+        if ((mEl.tagName === 'FIGURE' || mEl.tagName === 'PICTURE' || mEl.classList.contains('chapter-illustration')) &&
+            mEl.querySelector('img, svg, canvas')) {
+          continue;
+        }
+        if (mEl.tagName !== 'svg' && mEl.tagName !== 'SVG' && mEl.closest('svg')) {
+          continue;
+        }
+        if (processedMedia.has(mEl)) continue;
+        processedMedia.add(mEl);
+
+        const r = mEl.getBoundingClientRect();
+        if (r.width >= 10 && r.height >= 10) {
+          rawMedia.push({
+            el: mEl,
+            element: mEl,
+            rect: r,
+            top: r.top + vScrollTop,
+            bottom: r.bottom + vScrollTop,
+            left: r.left,
+            right: r.right,
+            width: r.width,
+            height: r.height,
+            centerY: r.top + r.height / 2 + vScrollTop,
+            hasText: false,
+            isMedia: true
+          });
+        }
+      }
+
+      // Combine text lines and media items, sorted top to bottom
+      const allLines = [...textLines, ...rawMedia];
+      allLines.sort((a, b) => {
+        if (Math.abs(a.top - b.top) > 2) {
+          return a.top - b.top;
+        }
+        return a.centerY - b.centerY;
+      });
+
+      this.isTwoCol = false;
+      this.colGap = 0;
+
+      const textContainer = document.getElementById("reader-content") || container || stage;
+      const textContainerRect = textContainer ? textContainer.getBoundingClientRect() : sRect;
+      const tcLeft = textContainerRect ? Math.round(textContainerRect.left) : Math.round(sRect.left);
+      const tcRight = textContainerRect ? Math.round(textContainerRect.right) : Math.round(sRect.right);
+
+      let minLeft0 = Infinity, maxRight0 = -Infinity;
+      for (const line of allLines) {
+        if (line.isMedia) continue;
+        if (line.left != null && line.left < minLeft0) minLeft0 = line.left;
+        if (line.right != null && line.right > maxRight0) maxRight0 = line.right;
+      }
+
+      const horizontalPadding = 12;
+      const textMinL = minLeft0 < Infinity ? Math.round(minLeft0 - horizontalPadding) : tcLeft;
+      const textMaxR = maxRight0 > -Infinity ? Math.round(maxRight0 + horizontalPadding) : tcRight;
+      let c0Left = Math.min(tcLeft, textMinL);
+      let c0Right = Math.max(tcRight, textMaxR);
+      c0Left = Math.max(0, c0Left);
+      c0Right = Math.min(window.innerWidth, c0Right);
+      const c0Width = Math.max(80, Math.round(c0Right - c0Left));
+
+      for (const line of allLines) {
+        line.textLeft = line.left;
+        line.textRight = line.right;
+        line.textWidth = (line.right != null && line.left != null) ? (line.right - line.left) : null;
+        line.columnIndex = 0;
+        line.columnLeft = c0Left;
+        line.columnWidth = c0Width;
+        line.columnRight = c0Right;
+        line.colBoundaryLeft = c0Left;
+        line.colBoundaryRight = c0Right;
+        if (line.isMedia) {
+          line.width = line.width ?? (line.right - line.left);
+          line.height = line.height ?? (line.bottom - line.top);
+        } else {
+          line.left = line.columnLeft;
+          line.width = line.columnWidth;
+        }
+      }
+
+      this.column0Left = c0Left;
+      this.column0Width = c0Width;
+      this.column0Right = c0Right;
+      this.textBlockLeft = c0Left;
+      this.textBlockWidth = c0Width;
+      this.lastKnownColumnLeft = c0Left;
+      this.lastKnownColumnWidth = c0Width;
+
+      this.cachedLines = allLines.filter(l => (l.hasText || l.isMedia) && l.height >= 8 && (l.right - l.left) >= 8);
+
+      if (this.cachedLines.length === 0) {
+        const height = this.manualHeight || 36;
+        const lineTop = Math.round(sRect.top + 20 + vScrollTop);
+        const colLeft = c0Left;
+        const colWidth = c0Width;
+        const colRight = colLeft + colWidth;
+        this.cachedLines = [{
+          top: lineTop,
+          bottom: lineTop + height,
+          left: colLeft,
+          right: colRight,
+          height,
+          centerY: lineTop + height / 2,
+          hasText: true,
+          isMedia: false,
+          columnIndex: 0,
+          columnLeft: colLeft,
+          columnWidth: colWidth,
+          columnRight: colRight,
+          colBoundaryLeft: colLeft,
+          colBoundaryRight: colRight
+        }];
+        this.activeLineIndex = 0;
+        return this.cachedLines;
+      }
+
+      if (Number.isFinite(this.currentY) && this.cachedLines.length > 0) {
+        const targetCenter = this.currentY + (this.height || 30) / 2;
+        let bestIdx = 0;
+        let minDiff = Infinity;
+        for (let i = 0; i < this.cachedLines.length; i++) {
+          const diff = Math.abs(this.cachedLines[i].centerY - targetCenter);
+          if (diff < minDiff) {
+            minDiff = diff;
+            bestIdx = i;
+          }
+        }
+        this.activeLineIndex = bestIdx;
+      } else if (this.activeLineIndex >= this.cachedLines.length) {
+        this.activeLineIndex = Math.max(0, this.cachedLines.length - 1);
+      }
+
+      if (this.autoHeight) {
+        let baseH = 0;
+        const sortedHeights = this.cachedLines.filter(l => !l.isMedia).map(l => l.height).filter(h => h > 0).sort((a, b) => a - b);
+        if (sortedHeights.length > 0) {
+          baseH = sortedHeights[Math.floor(sortedHeights.length / 2)];
+        }
+        if (!baseH || baseH < 12) {
+          try {
+            const cs = container ? window.getComputedStyle(container) : null;
+            if (cs) {
+              const lh = parseFloat(cs.lineHeight);
+              if (Number.isFinite(lh) && lh > 12) baseH = lh;
+              else {
+                const fs = parseFloat(cs.fontSize) || 16;
+                baseH = fs * 1.5;
+              }
+            }
+          } catch (e) {}
+        }
+        if (baseH && baseH >= 12) {
+          this.height = Math.round(baseH);
+        }
+      }
+
+      this.previousActiveLineIndex = -1;
+      this.updateStyles();
+      return this.cachedLines;
+    } catch (err) {
+      console.error("[ReadingRuler] Error in detectVerticalLines:", err);
+      return [];
+    }
+  }
+
   refreshLines() {
     return this.detectLines();
   }
@@ -2581,10 +2866,10 @@ export class ReadingRuler {
     const line = this.cachedLines[clampedIdx];
 
     if (line.isMedia) {
-      const mediaH = Math.round(line.rect?.height ?? line.height ?? (line.bottom - line.top) ?? 100);
-      const mediaW = Math.round(line.rect?.width ?? line.width ?? (line.right - line.left) ?? (line.columnWidth || 200));
-      const mediaTop = Math.round(line.rect?.top ?? line.top);
-      const mediaLeft = Math.round(line.rect?.left ?? line.left);
+      const mediaH = Math.round(line.height ?? line.rect?.height ?? (line.bottom - line.top) ?? 100);
+      const mediaW = Math.round(line.width ?? line.rect?.width ?? (line.right - line.left) ?? (line.columnWidth || 200));
+      const mediaTop = Math.round(line.top ?? line.rect?.top);
+      const mediaLeft = Math.round(line.left ?? line.rect?.left);
       return {
         height: mediaH,
         targetY: mediaTop,
@@ -2597,6 +2882,27 @@ export class ReadingRuler {
         colBoundaryRight: mediaLeft + mediaW,
         columnIndex: line.columnIndex ?? 0,
         isMedia: true,
+        element: line.element
+      };
+    }
+
+    if (this.isVerticalMode()) {
+      const textH = Math.round(line.height ?? (line.bottom - line.top) ?? (this.manualHeight || 36));
+      const textTop = Math.round(line.top);
+      const left = line.columnLeft ?? line.left ?? this.column0Left ?? this.textBlockLeft ?? 0;
+      const width = line.columnWidth ?? line.width ?? this.column0Width ?? this.textBlockWidth ?? 200;
+      return {
+        height: textH,
+        targetY: textTop,
+        left,
+        width,
+        columnLeft: left,
+        columnWidth: width,
+        columnRight: left + width,
+        colBoundaryLeft: left,
+        colBoundaryRight: left + width,
+        columnIndex: 0,
+        isMedia: false,
         element: line.element
       };
     }
@@ -3646,7 +3952,7 @@ export class ReadingRuler {
   stepLine(direction, force = false) {
     // Pokud probíhá přechod strany, aktivní tažení nebo dobíhá lockout přechodu strany, ignorovat krokování
     if (!this.enabled || this.isPdfMode || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
-    if (direction > 0 && (this.suppressLineAdvancement || (performance.now() - this.pageTurnTimestamp < 350))) {
+    if (!force && direction > 0 && (this.suppressLineAdvancement || (this.pageTurnTimestamp > 0 && performance.now() - this.pageTurnTimestamp < 350))) {
       return;
     }
     if (!force && this.isInteracting()) return;
@@ -3779,7 +4085,7 @@ export class ReadingRuler {
 
             if (direction > 0) {
               const nextLineIdx = curLineIdx != null ? curLineIdx + 1 : -1;
-              if (nextLineIdx >= 0 && nextLineIdx < this.cachedLines.length && this.cachedLines[nextLineIdx].isMedia) {
+              if (!this.isVerticalMode() && nextLineIdx >= 0 && nextLineIdx < this.cachedLines.length && this.cachedLines[nextLineIdx].isMedia) {
                 const isLastWordOnLine = (curIdx === this.cachedWords.length - 1) || (this.cachedWords[curIdx + 1].lineIndex !== curLineIdx);
                 if (isLastWordOnLine) {
                   this.activeLineIndex = nextLineIdx;
@@ -3817,7 +4123,7 @@ export class ReadingRuler {
               }
             } else if (direction < 0) {
               const prevLineIdx = curLineIdx != null ? curLineIdx - 1 : -1;
-              if (prevLineIdx >= 0 && prevLineIdx < this.cachedLines.length && this.cachedLines[prevLineIdx].isMedia) {
+              if (!this.isVerticalMode() && prevLineIdx >= 0 && prevLineIdx < this.cachedLines.length && this.cachedLines[prevLineIdx].isMedia) {
                 const isFirstWordOnLine = (curIdx === 0) || (this.cachedWords[curIdx - 1].lineIndex !== curLineIdx);
                 if (isFirstWordOnLine) {
                   this.activeLineIndex = prevLineIdx;
@@ -3963,34 +4269,103 @@ export class ReadingRuler {
 
       if (this.cachedLines.length > 0) {
         let newIdx;
-        if (this.activeLineIndex < 0) {
+        const isVertical = this.isVerticalMode();
+
+        if (isVertical) {
+          const curLine = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
+            ? this.cachedLines[this.activeLineIndex]
+            : null;
+          const currentRulerTop = curLine ? curLine.top : (Number.isFinite(this.targetY) ? this.targetY : (this.cachedLines[0].top - 10));
+
           if (direction > 0) {
-            newIdx = 0;
+            let foundIdx = -1;
+            for (let i = 0; i < this.cachedLines.length; i++) {
+              const l = this.cachedLines[i];
+              if (!l.isMedia && l.top > currentRulerTop + 2) {
+                foundIdx = i;
+                break;
+              }
+            }
+            if (foundIdx === -1) {
+              for (let i = this.activeLineIndex + 1; i < this.cachedLines.length; i++) {
+                if (!this.cachedLines[i].isMedia) {
+                  foundIdx = i;
+                  break;
+                }
+              }
+            }
+            if (foundIdx !== -1) {
+              newIdx = foundIdx;
+            } else {
+              newIdx = this.activeLineIndex;
+            }
           } else if (direction < 0) {
-            newIdx = this.cachedLines.length - 1;
+            let foundIdx = -1;
+            for (let i = this.cachedLines.length - 1; i >= 0; i--) {
+              const l = this.cachedLines[i];
+              if (!l.isMedia && l.top < currentRulerTop - 2) {
+                foundIdx = i;
+                break;
+              }
+            }
+            if (foundIdx === -1) {
+              for (let i = this.activeLineIndex - 1; i >= 0; i--) {
+                if (!this.cachedLines[i].isMedia) {
+                  foundIdx = i;
+                  break;
+                }
+              }
+            }
+            if (foundIdx !== -1) {
+              newIdx = foundIdx;
+            } else {
+              newIdx = this.activeLineIndex;
+            }
           } else {
-            newIdx = 0;
+            if (curLine && !curLine.isMedia) {
+              newIdx = this.activeLineIndex;
+            } else {
+              let closest = 0;
+              let minDiff = Infinity;
+              for (let i = 0; i < this.cachedLines.length; i++) {
+                if (this.cachedLines[i].isMedia) continue;
+                const d = Math.abs(this.cachedLines[i].top - currentRulerTop);
+                if (d < minDiff) {
+                  minDiff = d;
+                  closest = i;
+                }
+              }
+              newIdx = closest;
+            }
           }
         } else {
-          const curIdx = this.activeLineIndex;
-          if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
-            if (this.onBoundary && !this.isVerticalMode()) {
-              this.lockAdvancement(350);
-              this.onBoundary(1);
-              return;
+          if (this.activeLineIndex < 0) {
+            if (direction > 0) {
+              newIdx = 0;
+            } else if (direction < 0) {
+              newIdx = this.cachedLines.length - 1;
+            } else {
+              newIdx = 0;
             }
-          } else if (direction < 0 && curIdx <= 0) {
-            if (this.onBoundary && !this.isVerticalMode()) {
-              this.onBoundary(-1);
-              return;
+          } else {
+            const curIdx = this.activeLineIndex;
+            if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
+              if (this.onBoundary) {
+                this.lockAdvancement(350);
+                this.onBoundary(1);
+                return;
+              }
+            } else if (direction < 0 && curIdx <= 0) {
+              if (this.onBoundary) {
+                this.onBoundary(-1);
+                return;
+              }
             }
+            newIdx = curIdx + direction;
           }
-          newIdx = curIdx + direction;
         }
 
         newIdx = Math.max(0, Math.min(this.cachedLines.length - 1, newIdx));
-
-        const isVertical = this.isVerticalMode();
 
         if (isVertical && this.followMode === "keyboard") {
           if (this.stationaryScreenY === null) {
@@ -4063,6 +4438,7 @@ export class ReadingRuler {
         }
 
         const line = this.cachedLines[newIdx];
+        const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
         this.lastPointerX = line.left != null ? line.left : 100;
         this.lastPointerY = isVertical ? Math.round(line.centerY - (vp ? vp.scrollTop : 0)) : line.centerY;
         this.lastValidPointerX = this.lastPointerX;
@@ -4077,15 +4453,12 @@ export class ReadingRuler {
           this.rulerEl.style.transition = "none";
         }
         this.applyPosition();
-        if (isVertical) {
-          const vp = document.querySelector(".paged-viewport") || document.getElementById("paged-viewport");
-          if (vp && Number.isFinite(this.targetY)) {
-            const screenY = this.targetY - vp.scrollTop;
-            if (screenY < 80) {
-              vp.scrollBy({ top: screenY - 120, behavior: "smooth" });
-            } else if (screenY > vp.clientHeight - 120) {
-              vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: "smooth" });
-            }
+        if (isVertical && vp && Number.isFinite(this.targetY)) {
+          const screenY = this.targetY - vp.scrollTop;
+          if (screenY < 80) {
+            vp.scrollBy({ top: screenY - 120, behavior: "smooth" });
+          } else if (screenY > vp.clientHeight - 120) {
+            vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: "smooth" });
           }
         }
         return;
@@ -4140,6 +4513,7 @@ export class ReadingRuler {
     if (this.container) targets.add(this.container);
 
     for (const el of targets) {
+      if (!el || !el.classList) continue;
       el.classList.remove("focus-active");
       el.style.webkitMaskImage = "";
       el.style.maskImage = "";
@@ -4413,6 +4787,9 @@ export class ReadingRuler {
     let h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
 
     if (isCurrentMedia) {
+      y = Math.round(currentLine.top);
+      h = Math.round(currentLine.height);
+    } else if (isVertical && currentLine && this.snapToLines) {
       y = Math.round(currentLine.top);
       h = Math.round(currentLine.height);
     }
@@ -5165,6 +5542,14 @@ export class ReadingRuler {
   }
 
   destroy() {
+    if (this._resizeDebounceTimer) {
+      clearTimeout(this._resizeDebounceTimer);
+      this._resizeDebounceTimer = null;
+    }
+    if (this._scrollDebounceTimer) {
+      clearTimeout(this._scrollDebounceTimer);
+      this._scrollDebounceTimer = null;
+    }
     if (this._refreshLinesDebounceTimer) {
       clearTimeout(this._refreshLinesDebounceTimer);
       this._refreshLinesDebounceTimer = null;

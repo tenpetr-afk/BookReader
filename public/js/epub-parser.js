@@ -17,6 +17,10 @@ export class EpubParser {
     this.toc = [];
     this.coverBlobUrl = null;
     this.blobUrlsToRevoke = [];
+    this.chapterPageCounts = [];
+    this.estimatedPagesPerChapter = [];
+    this.lockedTotalBookPages = null;
+    this.wordStats = null;
   }
 
   /**
@@ -159,6 +163,7 @@ export class EpubParser {
     this.parseSpine(opfDoc);
     await this.parseCover(opfDoc);
     await this.parseToc(opfDoc);
+    this.initPageMap();
   }
 
   parseMetadata(opfDoc) {
@@ -444,17 +449,23 @@ export class EpubParser {
   }
 
   /**
-   * Spočítá odhad celkového počtu slov v knize
+   * Spočítá odhad celkového počtu slov a znaků v knize
    */
   async calculateTotalWords() {
+    if (this.wordStats) {
+      return this.wordStats;
+    }
     let totalWords = 0;
+    let totalChars = 0;
     const chapterWords = [];
+    const chapterChars = [];
 
     for (let i = 0; i < this.spine.length; i++) {
       try {
         const spineEntry = this.spine[i];
         if (!spineEntry || !spineEntry.fullPath) {
           chapterWords.push(0);
+          chapterChars.push(0);
           continue;
         }
         const rawHtml = await this.archive.getFileAsText(spineEntry.fullPath);
@@ -466,15 +477,160 @@ export class EpubParser {
           .replace(/&[a-z0-9#]+;/gi, " ");
         const words = cleanText.trim().split(/\s+/).filter(w => w.length > 0);
         const count = words.length;
+        const charCount = cleanText.trim().length;
         chapterWords.push(count);
+        chapterChars.push(charCount);
         totalWords += count;
+        totalChars += charCount;
       } catch (e) {
         console.warn(`Nepodařilo se spočítat slova v kapitole ${i}:`, e);
         chapterWords.push(0);
+        chapterChars.push(0);
       }
     }
 
-    return { totalWords, chapterWords };
+    this.wordStats = { totalWords, chapterWords, totalChars, chapterChars };
+    return this.wordStats;
+  }
+
+  /**
+   * Inicializuje mapu stránek pro knihu na základě odhadu hustoty znaků a slov.
+   * Počítá stabilní odhad počtu stran na kapitolu a uzamkne celkový počet stran knihy.
+   * @param {Object} settings
+   * @param {Object} [wordStats]
+   */
+  initPageMap(settings = {}, wordStats = null) {
+    const totalChapters = this.spine?.length || 1;
+    const stats = wordStats || this.wordStats;
+    const hasCharCounts = !!(stats && Array.isArray(stats.chapterChars) && stats.chapterChars.length > 0);
+    const hasWordCounts = !!(stats && Array.isArray(stats.chapterWords) && stats.chapterWords.length > 0);
+    const hasValidStats = hasCharCounts || hasWordCounts;
+
+    const fontSize = settings.fontSize || 19;
+    const lineHeight = settings.lineHeight || 1.6;
+    const fontFactor = Math.pow(19 / fontSize, 1.7);
+    const lineFactor = 1.6 / lineHeight;
+
+    const baseCharsPerPage = 1100;
+    const baseWordsPerPage = 260;
+    let charsPerPage = Math.round(baseCharsPerPage * fontFactor * lineFactor);
+    charsPerPage = Math.max(300, Math.min(3000, charsPerPage));
+    let wordsPerPage = Math.round(baseWordsPerPage * fontFactor * lineFactor);
+    wordsPerPage = Math.max(80, Math.min(800, wordsPerPage));
+
+    this.estimatedPagesPerChapter = [];
+    for (let i = 0; i < totalChapters; i++) {
+      let est = 1;
+      if (hasCharCounts) {
+        const chars = stats.chapterChars[i] != null ? stats.chapterChars[i] : 0;
+        est = chars < 200 ? 1 : Math.max(1, Math.round(chars / charsPerPage));
+      } else if (hasWordCounts) {
+        const words = stats.chapterWords[i] != null ? stats.chapterWords[i] : 0;
+        est = words < 50 ? 1 : Math.max(1, Math.round(words / wordsPerPage));
+      } else {
+        est = 1;
+      }
+      this.estimatedPagesPerChapter.push(est);
+    }
+
+    if (!this.lockedTotalBookPages && hasValidStats) {
+      let total = 0;
+      for (let i = 0; i < totalChapters; i++) {
+        total += (this.chapterPageCounts && this.chapterPageCounts[i]) || this.estimatedPagesPerChapter[i];
+      }
+      this.lockedTotalBookPages = Math.max(1, total);
+    }
+  }
+
+  /**
+   * Vrátí deterministickou startovní stránku kapitoly i v knize
+   * @param {number} chapterIndex
+   * @returns {number}
+   */
+  getChapterStartPage(chapterIndex) {
+    let start = 1;
+    for (let i = 0; i < chapterIndex; i++) {
+      start += (this.chapterPageCounts && this.chapterPageCounts[i]) || (this.estimatedPagesPerChapter && this.estimatedPagesPerChapter[i]) || 1;
+    }
+    return start;
+  }
+
+  /**
+   * Vrátí počet stran kapitoly (změřený nebo odhadnutý)
+   * @param {number} chapterIndex
+   * @returns {number}
+   */
+  getChapterPageCount(chapterIndex) {
+    return (this.chapterPageCounts && this.chapterPageCounts[chapterIndex]) || (this.estimatedPagesPerChapter && this.estimatedPagesPerChapter[chapterIndex]) || 1;
+  }
+
+  /**
+   * Uloží naměřený počet obrazovek/stran pro danou kapitolu
+   * @param {number} chapterIndex
+   * @param {number} count
+   */
+  setChapterPageCount(chapterIndex, count) {
+    if (typeof count === "number" && count > 0) {
+      if (!this.chapterPageCounts) this.chapterPageCounts = [];
+      this.chapterPageCounts[chapterIndex] = count;
+    }
+  }
+
+  /**
+   * Vrátí stabilní celkový počet stran knihy
+   * @returns {number}
+   */
+  getTotalBookPages() {
+    if (this.lockedTotalBookPages) {
+      return this.lockedTotalBookPages;
+    }
+    if (this.estimatedPagesPerChapter && this.estimatedPagesPerChapter.length > 0) {
+      let total = 0;
+      const totalChapters = this.spine?.length || this.estimatedPagesPerChapter.length;
+      for (let i = 0; i < totalChapters; i++) {
+        total += (this.chapterPageCounts && this.chapterPageCounts[i]) || (this.estimatedPagesPerChapter && this.estimatedPagesPerChapter[i]) || 1;
+      }
+      return Math.max(1, total);
+    }
+    return Math.max(1, this.spine?.length || 1);
+  }
+
+  /**
+   * Resetuje mapu stránek (např. při změně velikosti písma, okrajů nebo počtu sloupců)
+   */
+  resetPageMap() {
+    this.chapterPageCounts = [];
+    this.estimatedPagesPerChapter = [];
+    this.lockedTotalBookPages = null;
+  }
+
+  /**
+   * Vrátí strukturovaná data pro indikátor stránek
+   * @param {number} chapterIndex
+   * @param {number} pageIndex
+   * @param {boolean} isTwoPageSpread
+   */
+  getPageIndicator(chapterIndex, pageIndex, isTwoPageSpread = false) {
+    const startPage = this.getChapterStartPage(chapterIndex);
+    const chPages = this.getChapterPageCount(chapterIndex);
+    const currBookPage = startPage + Math.min(pageIndex, chPages - 1);
+    const currBookPageEnd = (isTwoPageSpread && pageIndex + 1 < chPages)
+      ? (startPage + pageIndex + 1)
+      : null;
+    const totalBookPages = this.getTotalBookPages();
+    const bookPageLabel = currBookPageEnd ? `${currBookPage}–${currBookPageEnd}` : `${currBookPage}`;
+    return {
+      startPage,
+      currBookPage,
+      currBookPageEnd,
+      totalBookPages,
+      bookPageLabel,
+      fullLabel: `${bookPageLabel} z ${totalBookPages}`
+    };
+  }
+
+  updatePageIndicator(chapterIndex, pageIndex, isTwoPageSpread = false) {
+    return this.getPageIndicator(chapterIndex, pageIndex, isTwoPageSpread);
   }
 
   resolvePath(baseDir, relativePath) {
@@ -519,5 +675,9 @@ export class EpubParser {
       } catch (e) {}
     }
     this.blobUrlsToRevoke = [];
+    this.chapterPageCounts = [];
+    this.estimatedPagesPerChapter = [];
+    this.lockedTotalBookPages = null;
+    this.wordStats = null;
   }
 }

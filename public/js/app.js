@@ -612,7 +612,7 @@ export class LuminaApp {
     // Pokud čteme knihu, přepočítat stránkování (pouze v horizontálním režimu)
     if (!this.isVerticalReadingMode() && this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
       requestAnimationFrame(() => {
-        this.recomputeGlobalPagination();
+        this.recomputeGlobalPagination(true);
         this.recalcPages();
         this.goToPage(this.currentPageIndex);
         this.renderScrubberTicks();
@@ -702,7 +702,7 @@ export class LuminaApp {
             }
 
             await this.waitForContentReady();
-            this.recomputeGlobalPagination();
+            this.recomputeGlobalPagination(true);
             this.recalcPages();
             this.goToPage(this.currentPageIndex || 0);
             this.renderScrubberTicks();
@@ -752,6 +752,9 @@ export class LuminaApp {
     this.checkVerticalInfiniteScroll();
     this.updatePageUI();
     this.saveProgress();
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.refreshLinesDebounced?.(150);
+    }
   }
 
   bindEvents() {
@@ -1753,7 +1756,7 @@ export class LuminaApp {
     const triggerReflowSync = () => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          this.recomputeGlobalPagination();
+          this.recomputeGlobalPagination(true);
           this.recalcPages();
           this.goToPage(this.currentPageIndex);
           this.renderScrubberTicks();
@@ -1821,7 +1824,7 @@ export class LuminaApp {
 
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            this.recomputeGlobalPagination();
+            this.recomputeGlobalPagination(true);
             this.recalcPages();
             this.goToPage(this.currentPageIndex);
             this.renderScrubberTicks();
@@ -1850,7 +1853,7 @@ export class LuminaApp {
 
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
-              this.recomputeGlobalPagination();
+              this.recomputeGlobalPagination(true);
               this.recalcPages();
               this.goToPage(this.currentPageIndex);
               this.renderScrubberTicks();
@@ -3074,6 +3077,9 @@ export class LuminaApp {
       this.recomputeGlobalPagination();
       this.currentParser.calculateTotalWords().then(counts => {
         this.bookWordCounts = counts;
+        if (typeof this.currentParser.initPageMap === "function") {
+          this.currentParser.initPageMap(this.settings, counts);
+        }
         this.recomputeGlobalPagination();
         this.renderScrubberTicks();
         this.updatePageUI();
@@ -3987,7 +3993,7 @@ export class LuminaApp {
     const curPageIndex = this.currentPageIndex;
     this.renderChapterHtml();
     requestAnimationFrame(() => {
-      this.recomputeGlobalPagination();
+      this.recomputeGlobalPagination(true);
       this.recalcPages();
       this.goToPage(Math.min(curPageIndex, Math.max(0, this.totalPagesInChapter - 1)));
       this.renderScrubberTicks();
@@ -4101,6 +4107,9 @@ export class LuminaApp {
       this.totalPagesInChapter = Math.max(1, Math.ceil(secHeight / vpHeight));
       this.totalScreensInChapter = this.totalPagesInChapter;
       this.currentScreenIndex = this.currentPageIndex;
+      if (this.currentParser?.setChapterPageCount) {
+        this.currentParser.setChapterPageCount(this.currentChapterIndex, this.totalPagesInChapter);
+      }
       this.updatePageUI();
       return;
     }
@@ -4143,6 +4152,10 @@ export class LuminaApp {
     this.totalScreensInChapter = Math.max(1, Math.ceil(this.totalPagesInChapter / colsPerScreen));
     this.currentScreenIndex = Math.max(0, Math.min(this.totalScreensInChapter - 1, Math.floor((this.currentPageIndex || 0) / colsPerScreen)));
     this.currentPageIndex = Math.min(this.totalPagesInChapter - 1, this.currentScreenIndex * colsPerScreen);
+
+    if (this.currentParser?.setChapterPageCount) {
+      this.currentParser.setChapterPageCount(this.currentChapterIndex, this.totalPagesInChapter);
+    }
 
     this.recomputeGlobalPagination();
     this.updatePageUI();
@@ -4572,6 +4585,11 @@ export class LuminaApp {
     }
   }
 
+  updatePageIndicator() {
+    this.updatePageUI();
+    return this.getBookMetrics();
+  }
+
   updatePageUI() {
     if (this.isPdfMode && this.pdfLoader) {
       const currBookPage = Math.max(1, Math.min(this.pdfLoader.numPages, this.pdfLoader.currentPage || 1));
@@ -4699,6 +4717,10 @@ export class LuminaApp {
         }
         if (this.dom.bookPageCounter) {
           this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
+        }
+        const elCounter = document.getElementById("page-counter");
+        if (elCounter) {
+          elCounter.textContent = `${currBookPage} z ${totalBookPages}`;
         }
 
         const hasPrev = scrollTop > 20 || (activeIdx > 0);
@@ -5403,7 +5425,7 @@ export class LuminaApp {
     document.body.classList.toggle("reader-chrome-hidden", willHide);
   }
 
-  recomputeGlobalPagination() {
+  recomputeGlobalPagination(force = false) {
     if (!this.currentParser) {
       this.bookPagination = {
         wordsPerPage: 260,
@@ -5414,48 +5436,39 @@ export class LuminaApp {
       return;
     }
 
-    const totalChapters = this.currentParser?.spine?.length || 1;
-    const baseWordsPerPage = 260;
-    const fontSize = this.settings.fontSize || 19;
-    const lineHeight = this.settings.lineHeight || 1.6;
-
-    // Škálování hustoty slov podle velikosti písma (plošné) a výšky řádku na 1 sloupec (stranu)
-    const fontFactor = Math.pow(19 / fontSize, 1.7);
-    const lineFactor = 1.6 / lineHeight;
-    let wordsPerPage = Math.round(baseWordsPerPage * fontFactor * lineFactor);
-    // Bezpečnostní mantinely, aby nedošlo k dělení 0 nebo extrémním hodnotám
-    wordsPerPage = Math.max(80, Math.min(800, wordsPerPage));
-
-    const hasWordCounts = !!(this.bookWordCounts && Array.isArray(this.bookWordCounts.chapterWords) && this.bookWordCounts.chapterWords.length > 0);
-    const chapterPageCounts = [];
-    const chapterStarts = [];
-    let runningTotal = 0;
-
-    for (let i = 0; i < totalChapters; i++) {
-      let chPages = 1;
-      if (i === this.currentChapterIndex && this.totalPagesInChapter) {
-        chPages = this.totalPagesInChapter;
-      } else if (hasWordCounts) {
-        const words = this.bookWordCounts.chapterWords[i] != null ? this.bookWordCounts.chapterWords[i] : 0;
-        // Titulní strany, obálky, celostránkové ilustrace či kapitoly s minimem slov mají vždy min. 1 stranu
-        if (words < 50) {
-          chPages = 1;
-        } else {
-          chPages = Math.max(1, Math.round(words / wordsPerPage));
-        }
-      } else {
-        chPages = 1;
-      }
-
-      chapterPageCounts.push(chPages);
-      chapterStarts.push(runningTotal + 1);
-      runningTotal += chPages;
+    if (force && typeof this.currentParser.resetPageMap === "function") {
+      this.currentParser.resetPageMap();
     }
 
-    const totalBookPages = Math.max(1, runningTotal);
+    if (typeof this.currentParser.initPageMap === "function") {
+      this.currentParser.initPageMap(this.settings, this.bookWordCounts);
+    }
+
+    if (this.totalPagesInChapter && typeof this.currentParser.setChapterPageCount === "function") {
+      this.currentParser.setChapterPageCount(this.currentChapterIndex, this.totalPagesInChapter);
+    }
+
+    const totalChapters = this.currentParser?.spine?.length || 1;
+    const chapterPageCounts = [];
+    const chapterStarts = [];
+
+    for (let i = 0; i < totalChapters; i++) {
+      const start = typeof this.currentParser.getChapterStartPage === "function"
+        ? this.currentParser.getChapterStartPage(i)
+        : 1;
+      const count = typeof this.currentParser.getChapterPageCount === "function"
+        ? this.currentParser.getChapterPageCount(i)
+        : 1;
+      chapterStarts.push(start);
+      chapterPageCounts.push(count);
+    }
+
+    const totalBookPages = typeof this.currentParser.getTotalBookPages === "function"
+      ? this.currentParser.getTotalBookPages()
+      : Math.max(1, chapterStarts[totalChapters - 1] + chapterPageCounts[totalChapters - 1] - 1);
 
     this.bookPagination = {
-      wordsPerPage,
+      wordsPerPage: 260,
       chapterPageCounts,
       chapterStarts,
       totalBookPages
@@ -5481,38 +5494,36 @@ export class LuminaApp {
     }
     const p = this.bookPagination;
     const totalChapters = this.currentParser?.spine?.length || 1;
-    const chAllocated = p.chapterPageCounts[this.currentChapterIndex] || 1;
-    const startPage = p.chapterStarts[this.currentChapterIndex] || 1;
-    const totalPagesInCh = Math.max(1, this.totalPagesInChapter || 1);
-
-    let currBookPage = startPage;
-    if (chAllocated === totalPagesInCh) {
-      currBookPage = startPage + Math.min(this.currentPageIndex, totalPagesInCh - 1);
-    } else if (totalPagesInCh > 1 && chAllocated > 1) {
-      const fraction = this.currentPageIndex / (totalPagesInCh - 1);
-      currBookPage = startPage + Math.round(fraction * (chAllocated - 1));
-    } else {
-      currBookPage = startPage + Math.min(this.currentPageIndex, chAllocated - 1);
-    }
-    currBookPage = Math.max(1, Math.min(p.totalBookPages, currBookPage));
-
     const isTwoCol = (typeof this.resolveEffectiveColumnCount === "function" && this.resolveEffectiveColumnCount() === 2);
+
+    const startPage = this.currentParser?.getChapterStartPage
+      ? this.currentParser.getChapterStartPage(this.currentChapterIndex)
+      : (p.chapterStarts[this.currentChapterIndex] || 1);
+
+    const chAllocated = this.currentParser?.getChapterPageCount
+      ? this.currentParser.getChapterPageCount(this.currentChapterIndex)
+      : (p.chapterPageCounts[this.currentChapterIndex] || 1);
+
+    const totalPagesInCh = Math.max(1, this.totalPagesInChapter || chAllocated || 1);
+
+    const currBookPage = startPage + Math.min(this.currentPageIndex, totalPagesInCh - 1);
+
     let currBookPageEnd = null;
     if (isTwoCol && this.currentPageIndex + 1 < totalPagesInCh) {
-      if (chAllocated === totalPagesInCh) {
-        currBookPageEnd = Math.min(p.totalBookPages, startPage + this.currentPageIndex + 1);
-      } else if (totalPagesInCh > 1 && chAllocated > 1) {
-        const fractionNext = (this.currentPageIndex + 1) / (totalPagesInCh - 1);
-        currBookPageEnd = Math.max(currBookPage, Math.min(p.totalBookPages, startPage + Math.round(fractionNext * (chAllocated - 1))));
-      } else {
-        currBookPageEnd = Math.min(p.totalBookPages, currBookPage + 1);
-      }
+      currBookPageEnd = startPage + this.currentPageIndex + 1;
     }
+
+    const parserTotal = this.currentParser?.getTotalBookPages
+      ? this.currentParser.getTotalBookPages()
+      : (p.totalBookPages || 1);
+
+    const effectivePage = currBookPageEnd || currBookPage;
+    const totalBookPages = Math.max(effectivePage, parserTotal);
 
     return {
       currBookPage,
       currBookPageEnd,
-      totalBookPages: p.totalBookPages,
+      totalBookPages,
       chapterStarts: p.chapterStarts,
       chapterPageCounts: p.chapterPageCounts,
       totalChapters
