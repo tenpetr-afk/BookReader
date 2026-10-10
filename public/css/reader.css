@@ -145,7 +145,7 @@ body:not(.mode-vertical) .paged-content {
   height: 100%;
   width: 100%;
   column-count: 1 !important;
-  column-width: var(--reader-stage-width, 80vw) !important;
+  column-width: 100% !important;
   column-gap: var(--page-gap, 50px);
   column-fill: auto;
   transition: transform 0.20s cubic-bezier(0.2, 0.9, 0.3, 1);

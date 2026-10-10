@@ -175,6 +175,14 @@ export class ReadingRuler {
   }
 
   lockAdvancement(duration = 350) {
+    if (!this.enabled) {
+      this.isLineLocked = false;
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.suppressLineAdvancement = false;
+      return;
+    }
+
     const stage = this.getStageElement();
     if (stage) stage.classList.add("is-turning-page");
     document.body.classList.add("is-turning-page");
@@ -187,18 +195,25 @@ export class ReadingRuler {
     if (this.suppressTimer) clearTimeout(this.suppressTimer);
     this.suppressTimer = setTimeout(() => {
       this.suppressLineAdvancement = false;
+      this.isLineLocked = false;
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
       this.suppressTimer = null;
     }, duration);
 
     clearTimeout(this._navSafetyTimer);
     this._navSafetyTimer = setTimeout(() => {
-      if (this.isNavigating || this.isLineLocked) {
+      if (this.isNavigating || this.isLineLocked || this.isNavigatingPage || this.suppressLineAdvancement) {
         console.warn('Navigation lock timed out. Forcing release.');
         this.isNavigating = false;
+        this.isNavigatingPage = false;
         this.isLineLocked = false;
         this.suppressLineAdvancement = false;
+        if (stage) stage.classList.remove("is-turning-page");
+        document.body.classList.remove("is-turning-page");
+        if (content) content.classList.remove("is-turning-page");
       }
-    }, 300); // 300ms maximum lock lifetime
+    }, Math.max(300, duration)); // 300ms maximum lock lifetime
   }
 
   setPdfMode(enabled, height = null) {
@@ -348,7 +363,7 @@ export class ReadingRuler {
   isUiControl(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], [role='slider'], .btn, .btn-icon, .drawer-panel, .drawer, .drawer-backdrop, .modal-dialog, .modal-overlay, .paged-footer-bar, .reading-scrubber, .reader-header, .top-navbar, .ruler-btn-group, #ruler-toggle-btn, #ruler-split-pill, .ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, .ruler-quick-popover, .ruler-floating-controls, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group"
+      "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], [role='slider'], .btn, .btn-icon, .drawer-panel, .drawer, .drawer-backdrop, .modal-dialog, .modal-overlay, .paged-footer-bar, .reading-scrubber, .reader-header, .top-navbar, .ruler-btn-group, #ruler-toggle-btn, #ruler-split-pill, .ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, .ruler-quick-popover, .ruler-floating-controls, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group, #library-view, .book-card, .book-grid, .theme-toggle, .popover, .toast, #toast-container"
     );
   }
 
@@ -1429,16 +1444,21 @@ export class ReadingRuler {
 
     // Zachycení kliknutí pro zabránění nežádoucího resetu nebo odskoku pravítka po dokončení podržení či jeho zrušení
     window.addEventListener("click", (e) => {
-      if (!this.enabled) return;
-      // When any drawer/panel is open, do NOT swallow the event — let the backdrop handler close it.
+      // 1. UI prvky (tlačítka, dialogy, menu, lišty) nesmí být NIKDY blokovány pravítkem!
+      if (this.isUiControl(e.target)) return;
+
+      // 2. Kliknutí na panely, šuplíky a jejich backdropy neblokovat
       if (typeof this.isAnyDrawerOpen === "function" && this.isAnyDrawerOpen()) return;
+
+      // 3. Kliknutí mimo čtecí plochu (stage) neblokovat
+      if (!this.isPointerInStage(e.clientX, e.clientY)) return;
+
+      if (!this.enabled) return;
+
+      // 4. Během navigace nebo zamknutí řádku pouze ignorovat klik v rámci pravítka (NESTOPUJEME propagaci globálně!)
       if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
-        e.stopPropagation();
-        e.stopImmediatePropagation();
         return;
       }
-      if (this.isUiControl(e.target)) return;
-      if (!this.isPointerInStage(e.clientX, e.clientY)) return;
 
       // Pokud klik proběhl krátce po swipu nebo krokování tapem, zamezíme opětovnému spuštění a probublání
       if (Date.now() - this.lastSwipeTime < 500 || Date.now() - this.lastTapStepTime < 350) {
@@ -3306,12 +3326,14 @@ export class ReadingRuler {
     this.navigatingPageTimer = setTimeout(() => {
       this.isNavigating = false;
       this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      this.suppressLineAdvancement = false;
       this.navigatingPageTimer = null;
     }, 250);
 
     clearTimeout(this._navSafetyTimer);
     this._navSafetyTimer = setTimeout(() => {
-      if (this.isNavigating || this.isLineLocked) {
+      if (this.isNavigating || this.isLineLocked || this.isNavigatingPage || this.suppressLineAdvancement) {
         console.warn('Navigation lock timed out. Forcing release.');
         this.isNavigating = false;
         this.isNavigatingPage = false;
@@ -3335,6 +3357,7 @@ export class ReadingRuler {
         this.isNavigating = false;
         this.isNavigatingPage = false;
         this.isLineLocked = false;
+        this.suppressLineAdvancement = false;
         this.isPageTransitioning = false;
         if (stage) stage.classList.remove("is-turning-page");
         document.body.classList.remove("is-turning-page");
@@ -4830,6 +4853,10 @@ export class ReadingRuler {
     this.disableWordTransition();
     this.enabled = !!val;
     if (!this.enabled) {
+      this.isLineLocked = false;
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.suppressLineAdvancement = false;
       this.cancelHold();
       this.stationaryScreenY = null;
       if (this._programmaticScrollTimer) {
@@ -5082,7 +5109,13 @@ export class ReadingRuler {
    * Okamžitě a synchronně usadí pravítko na cílový řádek bez jakéhokoliv časovače či prodlevy.
    */
   onPageChange(direction = 0, isPageChanged = true, immediate = true) {
-    if (!this.enabled) return;
+    if (!this.enabled) {
+      this.isLineLocked = false;
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.suppressLineAdvancement = false;
+      return;
+    }
     this.isLineLocked = true;
 
     const stage = this.getStageElement();
@@ -5093,7 +5126,7 @@ export class ReadingRuler {
 
     clearTimeout(this._navSafetyTimer);
     this._navSafetyTimer = setTimeout(() => {
-      if (this.isNavigating || this.isLineLocked) {
+      if (this.isNavigating || this.isLineLocked || this.isNavigatingPage || this.suppressLineAdvancement) {
         console.warn('Navigation lock timed out. Forcing release.');
         this.isNavigating = false;
         this.isNavigatingPage = false;
