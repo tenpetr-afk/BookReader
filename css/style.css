@@ -1646,6 +1646,12 @@ body.settings-sheet-open .drawer-backdrop {
   pointer-events: none !important;
 }
 
+/* Okamžité přichycení bez animací při rychlém krokování */
+#reading-ruler.is-rapid-stepping,
+.reading-ruler.is-rapid-stepping {
+  transition: none !important;
+}
+
 .reading-ruler.is-visible {
   display: block !important;
   opacity: 1 !important;

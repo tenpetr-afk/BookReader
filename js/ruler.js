@@ -136,6 +136,12 @@ export class ReadingRuler {
     this._lastAppliedTop = null;
     this._focusedMediaEl = null;
 
+    // Adaptive velocity-based stepping animation
+    this.lastStepTime = 0;
+    this.rapidThresholdMs = 160; // Taps faster than 160ms are treated as rapid skipping
+    this.isRapidStepping = false;
+    this.rapidResetTimer = null;
+
     this.createDomElements();
     this.attachEvents();
   }
@@ -3972,6 +3978,43 @@ export class ReadingRuler {
     this.cancelHold();
 
     try {
+      // Adaptive velocity-based stepping detection
+      const now = (typeof performance !== "undefined" && performance.now && performance.now() > 0) ? performance.now() : Date.now();
+      let isRapid = false;
+      if (direction !== 0) {
+        const timeDelta = (this.lastStepTime > 0) ? (now - this.lastStepTime) : Infinity;
+        this.lastStepTime = now;
+        isRapid = timeDelta >= 0 && timeDelta < this.rapidThresholdMs;
+        this.isRapidStepping = isRapid;
+
+        if (this.rapidResetTimer) {
+          clearTimeout(this.rapidResetTimer);
+          this.rapidResetTimer = null;
+        }
+        this.rapidResetTimer = setTimeout(() => {
+          this.isRapidStepping = false;
+          this.rapidResetTimer = null;
+          if (this.rulerEl) {
+            this.rulerEl.classList.remove("is-rapid-stepping");
+            if (!document.body.classList.contains("ruler-mouse-follow-active")) {
+              this.rulerEl.style.transition = "";
+            }
+          }
+        }, this.rapidThresholdMs + 40);
+      } else {
+        isRapid = this.isRapidStepping;
+      }
+
+      if (this.rulerEl) {
+        if (isRapid) {
+          this.rulerEl.classList.add("is-rapid-stepping");
+          this.rulerEl.style.transition = "none";
+        } else if (this.rulerEl.style.transition === "none" && !document.body.classList.contains("ruler-mouse-follow-active")) {
+          this.rulerEl.classList.remove("is-rapid-stepping");
+          this.rulerEl.style.transition = "";
+        }
+      }
+
       if (this.wordTracking) {
         if (this.isWordTransitioning) {
           if (this.wordTransitionTimer) {
@@ -4018,13 +4061,15 @@ export class ReadingRuler {
                   const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
                   const scrollDelta = clampedScrollTop - vp.scrollTop;
                   if (Math.abs(scrollDelta) > 0.5) {
-                    vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
+                    const scrollBehavior = isRapid ? "auto" : "smooth";
+                    vp.scrollBy({ top: scrollDelta, behavior: scrollBehavior });
                     this._isProgrammaticScroll = true;
                     if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
+                    const lockout = isRapid ? 60 : 350;
                     this._programmaticScrollTimer = setTimeout(() => {
                       this._isProgrammaticScroll = false;
                       this._programmaticScrollTimer = null;
-                    }, 350);
+                    }, lockout);
                   }
                 }
               }
@@ -4047,13 +4092,15 @@ export class ReadingRuler {
                     const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
                     const scrollDelta = clampedScrollTop - vp.scrollTop;
                     if (Math.abs(scrollDelta) > 0.5) {
-                      vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
+                      const scrollBehavior = isRapid ? "auto" : "smooth";
+                      vp.scrollBy({ top: scrollDelta, behavior: scrollBehavior });
                       this._isProgrammaticScroll = true;
                       if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
+                      const lockout = isRapid ? 60 : 350;
                       this._programmaticScrollTimer = setTimeout(() => {
                         this._isProgrammaticScroll = false;
                         this._programmaticScrollTimer = null;
-                      }, 350);
+                      }, lockout);
                     }
                   }
                 }
@@ -4404,13 +4451,15 @@ export class ReadingRuler {
             const scrollDelta = clampedScrollTop - vp.scrollTop;
 
             if (Math.abs(scrollDelta) > 0.5) {
-              vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
+              const scrollBehavior = isRapid ? "auto" : "smooth";
+              vp.scrollBy({ top: scrollDelta, behavior: scrollBehavior });
               this._isProgrammaticScroll = true;
               if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
+              const lockout = isRapid ? 60 : 350;
               this._programmaticScrollTimer = setTimeout(() => {
                 this._isProgrammaticScroll = false;
                 this._programmaticScrollTimer = null;
-              }, 350);
+              }, lockout);
             }
 
             this.activeLineIndex = newIdx;
@@ -4432,8 +4481,14 @@ export class ReadingRuler {
             this.maskBottomEl.classList.add("is-snapped");
             this.maskLeftEl.classList.add("is-snapped");
             this.maskRightEl.classList.add("is-snapped");
-            if (this.rulerEl && this.rulerEl.style.transition === "none") {
-              this.rulerEl.style.transition = "";
+            if (this.rulerEl) {
+              if (isRapid) {
+                this.rulerEl.classList.add("is-rapid-stepping");
+                this.rulerEl.style.transition = "none";
+              } else if (this.rulerEl.style.transition === "none" && !document.body.classList.contains("ruler-mouse-follow-active")) {
+                this.rulerEl.classList.remove("is-rapid-stepping");
+                this.rulerEl.style.transition = "";
+              }
             }
             this.applyPosition();
             return;
@@ -4462,16 +4517,23 @@ export class ReadingRuler {
         this.maskBottomEl.classList.add("is-snapped");
         this.maskLeftEl.classList.add("is-snapped");
         this.maskRightEl.classList.add("is-snapped");
-        if (this.rulerEl && this.rulerEl.style.transition === "none") {
-          this.rulerEl.style.transition = "";
+        if (this.rulerEl) {
+          if (isRapid) {
+            this.rulerEl.classList.add("is-rapid-stepping");
+            this.rulerEl.style.transition = "none";
+          } else if (this.rulerEl.style.transition === "none" && !document.body.classList.contains("ruler-mouse-follow-active")) {
+            this.rulerEl.classList.remove("is-rapid-stepping");
+            this.rulerEl.style.transition = "";
+          }
         }
         this.applyPosition();
         if (isVertical && vp && Number.isFinite(this.targetY)) {
           const screenY = this.targetY - vp.scrollTop;
+          const scrollBehavior = isRapid ? "auto" : "smooth";
           if (screenY < 80) {
-            vp.scrollBy({ top: screenY - 120, behavior: "smooth" });
+            vp.scrollBy({ top: screenY - 120, behavior: scrollBehavior });
           } else if (screenY > vp.clientHeight - 120) {
-            vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: "smooth" });
+            vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: scrollBehavior });
           }
         }
         return;
@@ -4876,7 +4938,11 @@ export class ReadingRuler {
       }
     }
 
-    if (this.rulerEl.style.transition === "none" && !document.body.classList.contains("ruler-mouse-follow-active")) {
+    if (this.isRapidStepping) {
+      this.rulerEl.classList.add("is-rapid-stepping");
+      this.rulerEl.style.transition = "none";
+    } else if (this.rulerEl.style.transition === "none" && !document.body.classList.contains("ruler-mouse-follow-active")) {
+      this.rulerEl.classList.remove("is-rapid-stepping");
       this.rulerEl.style.transition = "";
     }
 
@@ -5626,6 +5692,11 @@ export class ReadingRuler {
       cancelAnimationFrame(this._rafApplyPositionId);
       this._rafApplyPositionId = null;
     }
+    if (this.rapidResetTimer) {
+      clearTimeout(this.rapidResetTimer);
+      this.rapidResetTimer = null;
+    }
+    this.isRapidStepping = false;
     if (this._navSafetyTimer) {
       clearTimeout(this._navSafetyTimer);
       this._navSafetyTimer = null;

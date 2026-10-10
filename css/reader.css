@@ -1118,6 +1118,12 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
   transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), height 120ms ease, background-color 0.2s ease;
 }
 
+/* Okamžité přichycení bez animací při rychlém krokování */
+#reading-ruler.is-rapid-stepping,
+.reading-ruler.is-rapid-stepping {
+  transition: none !important;
+}
+
 .ruler-mask.is-snapped {
   transition: top 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
               height 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
