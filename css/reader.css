@@ -1626,9 +1626,9 @@ body.ruler-mouse-follow-active [role="button"] {
   cursor: pointer !important;
 }
 
-/* Zamezení nechtěného označování textu při tažení tužkou přes čtecí plochu se zapnutým pravítkem */
-body.ruler-active .reader-content,
-body.ruler-active .paged-viewport {
+/* Zamezení nechtěného označování textu při tažení tužkou přes čtecí plochu se zapnutým pravítkem (pouze v horizontálním režimu) */
+body.ruler-active:not(.mode-vertical) .reader-content,
+body.ruler-active:not(.mode-vertical) .paged-viewport {
   -webkit-user-select: none;
   user-select: none;
   touch-action: none;
@@ -1992,6 +1992,7 @@ body.is-pdf-mode.mode-vertical .paged-viewport {
   overflow-x: hidden !important;
   overflow-y: auto !important;
   -webkit-overflow-scrolling: touch !important;
+  overscroll-behavior-y: contain !important;
   display: block !important;
   touch-action: pan-y !important;
 }
@@ -2052,6 +2053,14 @@ body.mode-vertical.is-pdf-mode .page-touch-zone {
   pointer-events: none !important;
 }
 
+body.mode-vertical #reader-stage,
+body.mode-vertical #paged-stage,
+body.mode-vertical .paged-stage,
+body.mode-vertical #reader-content,
+body.mode-vertical .reader-content,
+body.mode-vertical .paged-content,
+body.mode-vertical .epub-chapter-section,
+body.mode-vertical .epub-chapter-section *,
 body.mode-vertical.ruler-active #paged-viewport,
 body.mode-vertical.ruler-active .paged-viewport,
 body.mode-vertical.ruler-active #reader-content,

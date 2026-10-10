@@ -2297,7 +2297,19 @@ body.mode-vertical .paged-viewport {
   overflow-x: hidden !important;
   overflow-y: auto !important;
   -webkit-overflow-scrolling: touch !important;
+  overscroll-behavior-y: contain !important;
   display: block !important;
+  touch-action: pan-y !important;
+}
+
+body.mode-vertical #reader-stage,
+body.mode-vertical #paged-stage,
+body.mode-vertical .paged-stage,
+body.mode-vertical #reader-content,
+body.mode-vertical .reader-content,
+body.mode-vertical .paged-content,
+body.mode-vertical .epub-chapter-section,
+body.mode-vertical .epub-chapter-section * {
   touch-action: pan-y !important;
 }
 

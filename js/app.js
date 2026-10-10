@@ -1005,7 +1005,6 @@ export class LuminaApp {
         if (absDeltaX < 15 && absDeltaY < 15 && this.isCenterTap(touchEndX, touchEndY)) {
           lastTapTime = Date.now();
           this.toggleReaderChrome();
-          e.preventDefault();
         }
         return;
       }
@@ -1025,14 +1024,12 @@ export class LuminaApp {
           const handled = this.ruler.handleTap(touchEndX, touchEndY, "touch", dist);
           if (handled) {
             lastTapTime = Date.now();
-            e.preventDefault();
           }
           return;
         }
         lastTapTime = Date.now();
         const dir = this.getRulerTapDirection(touchEndX, touchEndY);
         this.ruler.stepLine(dir, true);
-        e.preventDefault();
         return;
       }
 
@@ -1040,7 +1037,6 @@ export class LuminaApp {
       if (absDeltaX < 15 && absDeltaY < 15) {
         if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
           this.closeFloatingDock();
-          e.preventDefault();
           return;
         }
         if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
@@ -1049,11 +1045,10 @@ export class LuminaApp {
         if (this.isCenterTap(touchEndX, touchEndY)) {
           lastTapTime = Date.now();
           this.toggleReaderChrome();
-          e.preventDefault();
           return;
         }
       }
-    }, { passive: false });
+    }, { passive: true });
 
     // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
     this.dom.pagedViewport.addEventListener("click", (e) => {
@@ -1228,6 +1223,7 @@ export class LuminaApp {
 
     uiContainers.forEach((container) => {
       ["pointerdown", "touchstart", "click"].forEach((eventType) => {
+        const opts = eventType === "touchstart" ? { passive: true } : undefined;
         container.addEventListener(eventType, (e) => {
           if (eventType === "click" && container.id === "reader-header") {
             if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
@@ -1238,13 +1234,13 @@ export class LuminaApp {
             }
           }
           e.stopPropagation();
-        });
+        }, opts);
       });
     });
 
     if (this.dom.drawerBackdrop) {
       const _closeAllDrawers = (e) => {
-        e.preventDefault();
+        if (e.cancelable) e.preventDefault();
         e.stopPropagation();
         // Suppress any leaked page-turn gesture that follows the closing tap/click
         this.isNavigating = true;
@@ -1257,7 +1253,14 @@ export class LuminaApp {
       this.dom.drawerBackdrop.addEventListener("click", _closeAllDrawers);
       // "touchend" as fallback: iOS can suppress the synthesised click when
       // a prior touchstart on a different element called stopPropagation
-      this.dom.drawerBackdrop.addEventListener("touchend", _closeAllDrawers, { passive: false });
+      this.dom.drawerBackdrop.addEventListener("touchend", (e) => {
+        e.stopPropagation();
+        this.isNavigating = true;
+        setTimeout(() => { this.isNavigating = false; }, 300);
+        this.closeDrawer("toc");
+        this.closeDrawer("settings");
+        this.closeDrawer("search");
+      }, { passive: true });
     }
 
     if (this.dom.btnToggleSettingsLib) {
@@ -1460,22 +1463,19 @@ export class LuminaApp {
         setTimeout(() => { this.isNavigating = false; }, 300);
       }, { capture: true });
 
-      // Stejný handler pro touchstart (iPad – pointerdown může být passive v některých kontextech)
+      // Stejný handler pro touchstart (iPad – bez blokování kompozitoru, pasivní s přímým targetem)
       document.addEventListener("touchstart", (e) => {
         if (!this.dom.rulerQuickPopover || this.dom.rulerQuickPopover.classList.contains("is-hidden")) return;
-        const touch = e.touches[0];
-        if (!touch) return;
-        const target = document.elementFromPoint(touch.clientX, touch.clientY);
+        const target = (e.touches && e.touches[0]?.target) || e.target;
+        if (!target) return;
         const insidePopover = this.dom.rulerQuickPopover.contains(target);
         const insideBtn = this.dom.btnRulerQuickMenu && this.dom.btnRulerQuickMenu.contains(target);
         if (insidePopover || insideBtn) return;
-        e.preventDefault();
-        e.stopPropagation();
         this.dom.rulerQuickPopover.classList.add("is-hidden");
         if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
         this.isNavigating = true;
         setTimeout(() => { this.isNavigating = false; }, 300);
-      }, { capture: true, passive: false });
+      }, { capture: true, passive: true });
     }
 
     // Plovoucí dock rychlých akcí (Menu FAB & Dock)
