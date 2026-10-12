@@ -128,19 +128,6 @@ export class ReadingRuler {
     this.stationaryScreenY = null;
     this._isProgrammaticScroll = false;
     this._programmaticScrollTimer = null;
-    this._scrollRafId = null;
-    this._rafApplyPositionId = null;
-    this._lastAppliedHeight = null;
-    this._lastAppliedLeft = null;
-    this._lastAppliedWidth = null;
-    this._lastAppliedTop = null;
-    this._focusedMediaEl = null;
-
-    // Adaptive velocity-based stepping animation
-    this.lastStepTime = 0;
-    this.rapidThresholdMs = 160; // Taps faster than 160ms are treated as rapid skipping
-    this.isRapidStepping = false;
-    this.rapidResetTimer = null;
 
     this.createDomElements();
     this.attachEvents();
@@ -1541,37 +1528,31 @@ export class ReadingRuler {
     });
 
     this._scrollDebounceTimer = null;
-    this._scrollRafId = null;
     const onScroll = () => {
-      if (!this.enabled || !this.isVerticalMode()) return;
-      if (!this._scrollRafId) {
-        this._scrollRafId = requestAnimationFrame(() => {
-          this._scrollRafId = null;
-          if (!this.enabled || !this.isVerticalMode()) return;
-          if (this.followMode === "mouse" && !this._isProgrammaticScroll && !this.isPdfMode) {
-            const curX = this.lastPointerX ?? Math.round(window.innerWidth / 2);
-            const curY = this.lastPointerY ?? Math.round(window.innerHeight * 0.38);
-            if (this.rulerEl) {
-              this.rulerEl.classList.remove("is-snapped");
-              this.rulerEl.style.transition = "none";
-            }
-            this.handlePointerMove(curX, curY, "mouse");
-          } else {
-            this.applyPosition();
+      if (this.enabled && this.isVerticalMode()) {
+        if (this.followMode === "mouse" && !this._isProgrammaticScroll && !this.isPdfMode) {
+          const curX = this.lastPointerX ?? Math.round(window.innerWidth / 2);
+          const curY = this.lastPointerY ?? Math.round(window.innerHeight * 0.38);
+          if (this.rulerEl) {
+            this.rulerEl.classList.remove("is-snapped");
+            this.rulerEl.style.transition = "none";
           }
-        });
-      }
+          this.handlePointerMove(curX, curY, "mouse");
+        } else {
+          this.applyPosition();
+        }
 
-      if (!this.isPdfMode && !this._isProgrammaticScroll) {
-        if (this._scrollDebounceTimer) clearTimeout(this._scrollDebounceTimer);
-        this._scrollDebounceTimer = setTimeout(() => {
-          this._scrollDebounceTimer = null;
-          if (this.enabled && this.isVerticalMode() && !this.isPdfMode) {
-            this.refreshLines();
-            if (this.wordTracking) this.refreshWords();
-            this.applyPosition();
-          }
-        }, 150);
+        if (!this.isPdfMode && !this._isProgrammaticScroll) {
+          if (this._scrollDebounceTimer) clearTimeout(this._scrollDebounceTimer);
+          this._scrollDebounceTimer = setTimeout(() => {
+            this._scrollDebounceTimer = null;
+            if (this.enabled && this.isVerticalMode() && !this.isPdfMode) {
+              this.refreshLines();
+              if (this.wordTracking) this.refreshWords();
+              this.applyPosition();
+            }
+          }, 150);
+        }
       }
     };
     window.addEventListener("scroll", onScroll, { passive: true, capture: true });
@@ -3978,43 +3959,6 @@ export class ReadingRuler {
     this.cancelHold();
 
     try {
-      // Adaptive velocity-based stepping detection
-      const now = (typeof performance !== "undefined" && performance.now && performance.now() > 0) ? performance.now() : Date.now();
-      let isRapid = false;
-      if (direction !== 0) {
-        const timeDelta = (this.lastStepTime > 0) ? (now - this.lastStepTime) : Infinity;
-        this.lastStepTime = now;
-        isRapid = timeDelta >= 0 && timeDelta < this.rapidThresholdMs;
-        this.isRapidStepping = isRapid;
-
-        if (this.rapidResetTimer) {
-          clearTimeout(this.rapidResetTimer);
-          this.rapidResetTimer = null;
-        }
-        this.rapidResetTimer = setTimeout(() => {
-          this.isRapidStepping = false;
-          this.rapidResetTimer = null;
-          if (this.rulerEl) {
-            this.rulerEl.classList.remove("is-rapid-stepping");
-            if (!document.body.classList.contains("ruler-mouse-follow-active")) {
-              this.rulerEl.style.transition = "";
-            }
-          }
-        }, this.rapidThresholdMs + 40);
-      } else {
-        isRapid = this.isRapidStepping;
-      }
-
-      if (this.rulerEl) {
-        if (isRapid) {
-          this.rulerEl.classList.add("is-rapid-stepping");
-          this.rulerEl.style.transition = "none";
-        } else if (this.rulerEl.style.transition === "none" && !document.body.classList.contains("ruler-mouse-follow-active")) {
-          this.rulerEl.classList.remove("is-rapid-stepping");
-          this.rulerEl.style.transition = "";
-        }
-      }
-
       if (this.wordTracking) {
         if (this.isWordTransitioning) {
           if (this.wordTransitionTimer) {
@@ -4061,15 +4005,13 @@ export class ReadingRuler {
                   const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
                   const scrollDelta = clampedScrollTop - vp.scrollTop;
                   if (Math.abs(scrollDelta) > 0.5) {
-                    const scrollBehavior = isRapid ? "auto" : "smooth";
-                    vp.scrollBy({ top: scrollDelta, behavior: scrollBehavior });
+                    vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
                     this._isProgrammaticScroll = true;
                     if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-                    const lockout = isRapid ? 60 : 350;
                     this._programmaticScrollTimer = setTimeout(() => {
                       this._isProgrammaticScroll = false;
                       this._programmaticScrollTimer = null;
-                    }, lockout);
+                    }, 350);
                   }
                 }
               }
@@ -4092,15 +4034,13 @@ export class ReadingRuler {
                     const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
                     const scrollDelta = clampedScrollTop - vp.scrollTop;
                     if (Math.abs(scrollDelta) > 0.5) {
-                      const scrollBehavior = isRapid ? "auto" : "smooth";
-                      vp.scrollBy({ top: scrollDelta, behavior: scrollBehavior });
+                      vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
                       this._isProgrammaticScroll = true;
                       if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-                      const lockout = isRapid ? 60 : 350;
                       this._programmaticScrollTimer = setTimeout(() => {
                         this._isProgrammaticScroll = false;
                         this._programmaticScrollTimer = null;
-                      }, lockout);
+                      }, 350);
                     }
                   }
                 }
@@ -4286,8 +4226,8 @@ export class ReadingRuler {
             this.maskBottomEl.classList.add("is-snapped");
             this.maskLeftEl.classList.add("is-snapped");
             this.maskRightEl.classList.add("is-snapped");
-            if (this.rulerEl && this.rulerEl.style.transition === "none") {
-              this.rulerEl.style.transition = "";
+            if (this.rulerEl) {
+              this.rulerEl.style.transition = "none";
             }
             this.disableWordTransition();
             this.applyPosition();
@@ -4451,15 +4391,13 @@ export class ReadingRuler {
             const scrollDelta = clampedScrollTop - vp.scrollTop;
 
             if (Math.abs(scrollDelta) > 0.5) {
-              const scrollBehavior = isRapid ? "auto" : "smooth";
-              vp.scrollBy({ top: scrollDelta, behavior: scrollBehavior });
+              vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
               this._isProgrammaticScroll = true;
               if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-              const lockout = isRapid ? 60 : 350;
               this._programmaticScrollTimer = setTimeout(() => {
                 this._isProgrammaticScroll = false;
                 this._programmaticScrollTimer = null;
-              }, lockout);
+              }, 350);
             }
 
             this.activeLineIndex = newIdx;
@@ -4482,13 +4420,7 @@ export class ReadingRuler {
             this.maskLeftEl.classList.add("is-snapped");
             this.maskRightEl.classList.add("is-snapped");
             if (this.rulerEl) {
-              if (isRapid) {
-                this.rulerEl.classList.add("is-rapid-stepping");
-                this.rulerEl.style.transition = "none";
-              } else if (this.rulerEl.style.transition === "none" && !document.body.classList.contains("ruler-mouse-follow-active")) {
-                this.rulerEl.classList.remove("is-rapid-stepping");
-                this.rulerEl.style.transition = "";
-              }
+              this.rulerEl.style.transition = "none";
             }
             this.applyPosition();
             return;
@@ -4518,22 +4450,15 @@ export class ReadingRuler {
         this.maskLeftEl.classList.add("is-snapped");
         this.maskRightEl.classList.add("is-snapped");
         if (this.rulerEl) {
-          if (isRapid) {
-            this.rulerEl.classList.add("is-rapid-stepping");
-            this.rulerEl.style.transition = "none";
-          } else if (this.rulerEl.style.transition === "none" && !document.body.classList.contains("ruler-mouse-follow-active")) {
-            this.rulerEl.classList.remove("is-rapid-stepping");
-            this.rulerEl.style.transition = "";
-          }
+          this.rulerEl.style.transition = "none";
         }
         this.applyPosition();
         if (isVertical && vp && Number.isFinite(this.targetY)) {
           const screenY = this.targetY - vp.scrollTop;
-          const scrollBehavior = isRapid ? "auto" : "smooth";
           if (screenY < 80) {
-            vp.scrollBy({ top: screenY - 120, behavior: scrollBehavior });
+            vp.scrollBy({ top: screenY - 120, behavior: "smooth" });
           } else if (screenY > vp.clientHeight - 120) {
-            vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: scrollBehavior });
+            vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: "smooth" });
           }
         }
         return;
@@ -4615,21 +4540,6 @@ export class ReadingRuler {
         m.classList.add("is-hidden");
       }
     }
-
-    this._focusedMediaEl = null;
-    this.previousActiveLineIndex = null;
-    this._lastAppliedHeight = null;
-    this._lastAppliedLeft = null;
-    this._lastAppliedWidth = null;
-    this._lastAppliedTop = null;
-  }
-
-  requestApplyPosition() {
-    if (this._rafApplyPositionId) return;
-    this._rafApplyPositionId = requestAnimationFrame(() => {
-      this._rafApplyPositionId = null;
-      this.applyPosition();
-    });
   }
 
   applyPosition() {
@@ -4883,10 +4793,7 @@ export class ReadingRuler {
       y = Math.round(currentLine.top);
       h = Math.round(currentLine.height);
     }
-    if (this._lastAppliedHeight !== h) {
-      this.rulerEl.style.height = `${h}px`;
-      this._lastAppliedHeight = h;
-    }
+    this.rulerEl.style.height = `${h}px`;
 
     let screenY = isVertical ? Math.round(y - vScrollTop) : y;
     if (isVertical && this.followMode === "keyboard") {
@@ -4938,12 +4845,8 @@ export class ReadingRuler {
       }
     }
 
-    if (this.isRapidStepping) {
-      this.rulerEl.classList.add("is-rapid-stepping");
+    if (this.mode === "focus" || !this.wordTracking) {
       this.rulerEl.style.transition = "none";
-    } else if (this.rulerEl.style.transition === "none" && !document.body.classList.contains("ruler-mouse-follow-active")) {
-      this.rulerEl.classList.remove("is-rapid-stepping");
-      this.rulerEl.style.transition = "";
     }
 
     let slitLeft = 0;
@@ -4955,22 +4858,12 @@ export class ReadingRuler {
       slitLeft = x;
       slitRight = x + w;
 
-      if (this._lastAppliedTop !== 0) {
-        this.rulerEl.style.top = "0px";
-        this._lastAppliedTop = 0;
-      }
-      if (this._lastAppliedLeft !== 0) {
-        this.rulerEl.style.left = "0px";
-        this.rulerEl.style.right = "auto";
-        this._lastAppliedLeft = 0;
-      }
-      if (this._lastAppliedWidth !== w) {
-        this.rulerEl.style.width = `${w}px`;
-        this.rulerEl.style.maxWidth = "100%";
-        this._lastAppliedWidth = w;
-      }
-      this.rulerEl.style.setProperty("--ruler-top", `${screenY}px`);
-      this.rulerEl.style.transform = `translate3d(${x}px, var(--ruler-top, ${screenY}px), 0)`;
+      this.rulerEl.style.top = "0px";
+      this.rulerEl.style.left = "0px";
+      this.rulerEl.style.right = "auto";
+      this.rulerEl.style.width = `${w}px`;
+      this.rulerEl.style.maxWidth = "100%";
+      this.rulerEl.style.transform = `translate3d(${x}px, ${screenY}px, 0)`;
 
       const aw = Number.isFinite(this.activeWordWidth) && this.activeWordWidth > 0 ? Math.round(this.activeWordWidth) : w;
       const pw = Number.isFinite(this.previewWidth) ? Math.round(this.previewWidth) : Math.max(0, w - aw);
@@ -5009,26 +4902,33 @@ export class ReadingRuler {
           colLeft = this.column0Left ?? this.textBlockLeft;
           colWidth = this.column0Width ?? this.textBlockWidth;
           if (colLeft == null || colWidth == null || colWidth < 80) {
-            colLeft = (this.stageLeft != null && Number.isFinite(this.stageLeft)) ? Math.round(this.stageLeft) : 20;
-            colWidth = (this.stageWidth != null && Number.isFinite(this.stageWidth) && this.stageWidth > 50) ? Math.round(this.stageWidth) : (window.innerWidth - 40);
+            // Fallback: measure the stage live to avoid stale/zero stageLeft cache
+            const stageEl = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+            const sRect = stageEl ? stageEl.getBoundingClientRect() : null;
+            const sLeft = sRect && sRect.width > 50 ? Math.round(sRect.left) : (this.stageLeft ?? 20);
+            const sWidth = sRect && sRect.width > 50 ? Math.round(sRect.width) : (this.stageWidth ?? (window.innerWidth - 40));
+            colLeft = sLeft;
+            colWidth = sWidth;
           }
         }
       }
 
-      // Bezpečnostní limit: na jednosloupcových stránkách nesmí pravítko nikdy přetéct vlevo mimo stageLeft ani vpravo mimo stageRight
+      // Bezpečnostní limit: na jednosloupcových stránkách nesmí pravítko nikdy přetéct vlevo mimo stageRect.left ani vpravo mimo stageRect.right
       if (!isTwoCol && !isCurrentMedia) {
-        const stageLeftBound = (this.stageLeft != null && Number.isFinite(this.stageLeft)) ? Math.round(this.stageLeft) : 0;
-        const stageWidthBound = (this.stageWidth != null && Number.isFinite(this.stageWidth) && this.stageWidth > 50) ? Math.round(this.stageWidth) : window.innerWidth;
-        const stageRightBound = stageLeftBound + stageWidthBound;
-
-        if (colLeft == null || !Number.isFinite(colLeft) || colLeft < stageLeftBound) {
-          colLeft = stageLeftBound;
-        }
-        if (colWidth == null || !Number.isFinite(colWidth) || colWidth < 80) {
-          colWidth = Math.max(80, stageRightBound - colLeft);
-        }
-        if (colLeft + colWidth > stageRightBound) {
-          colWidth = Math.max(80, stageRightBound - colLeft);
+        const stageEl = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+        const sRect = stageEl ? stageEl.getBoundingClientRect() : null;
+        if (sRect && sRect.width > 50) {
+          const stageLeftBound = Math.round(sRect.left);
+          const stageRightBound = Math.round(sRect.right);
+          if (colLeft == null || !Number.isFinite(colLeft) || colLeft < stageLeftBound) {
+            colLeft = stageLeftBound;
+          }
+          if (colWidth == null || !Number.isFinite(colWidth) || colWidth < 80) {
+            colWidth = Math.max(80, stageRightBound - colLeft);
+          }
+          if (colLeft + colWidth > stageRightBound) {
+            colWidth = Math.max(80, stageRightBound - colLeft);
+          }
         }
       }
 
@@ -5044,25 +4944,12 @@ export class ReadingRuler {
       slitLeft = Math.round(colLeft);
       slitRight = Math.round(colLeft + colWidth);
 
-      const roundedColLeft = slitLeft;
-      const roundedColWidth = Math.round(colWidth);
-
-      if (this._lastAppliedTop !== 0) {
-        this.rulerEl.style.top = "0px";
-        this._lastAppliedTop = 0;
-      }
-      if (this._lastAppliedLeft !== roundedColLeft) {
-        this.rulerEl.style.left = `${roundedColLeft}px`;
-        this.rulerEl.style.right = "auto";
-        this._lastAppliedLeft = roundedColLeft;
-      }
-      if (this._lastAppliedWidth !== roundedColWidth) {
-        this.rulerEl.style.width = `${roundedColWidth}px`;
-        this.rulerEl.style.maxWidth = `${roundedColWidth}px`;
-        this._lastAppliedWidth = roundedColWidth;
-      }
-      this.rulerEl.style.setProperty("--ruler-top", `${screenY}px`);
-      this.rulerEl.style.transform = `translate3d(0, var(--ruler-top, ${screenY}px), 0)`;
+      this.rulerEl.style.top = `${screenY}px`;
+      this.rulerEl.style.left = `${Math.round(colLeft)}px`;
+      this.rulerEl.style.right = "auto";
+      this.rulerEl.style.width = `${Math.round(colWidth)}px`;
+      this.rulerEl.style.maxWidth = `${Math.round(colWidth)}px`;
+      this.rulerEl.style.transform = "none";
     }
 
     slitLeft = Math.max(0, slitLeft);
@@ -5077,15 +4964,13 @@ export class ReadingRuler {
 
       // Synchronizace tříd aktivního zaostření na multimédia v stage
       if (stage) {
+        const allMedia = stage.querySelectorAll("img, svg, canvas, figure, picture, .chapter-illustration");
         const targetEl = (isCurrentMedia && currentLine && currentLine.element) ? currentLine.element : null;
-        if (targetEl !== this._focusedMediaEl) {
-          if (this._focusedMediaEl) {
-            this._focusedMediaEl.classList.remove("active-focus", "ruler-focused-image");
-            this._focusedMediaEl = null;
-          }
-          if (targetEl) {
-            targetEl.classList.add("active-focus", "ruler-focused-image");
-            this._focusedMediaEl = targetEl;
+        for (const m of allMedia) {
+          if (targetEl && (m === targetEl || targetEl.contains(m) || m.contains(targetEl))) {
+            m.classList.add("active-focus", "ruler-focused-image");
+          } else {
+            m.classList.remove("active-focus", "ruler-focused-image");
           }
         }
       }
@@ -5093,14 +4978,12 @@ export class ReadingRuler {
       // Synchronní výměna tříd na řádcích textu (reading lines)
       const prevIdx = this.previousActiveLineIndex;
       const curIdx = this.activeLineIndex;
-      if (prevIdx != null && prevIdx >= 0 && prevIdx < this.cachedLines.length) {
-        if (prevIdx !== curIdx) {
-          const prevLine = this.cachedLines[prevIdx];
-          const prevEl = prevLine ? (prevLine.element || prevLine.el) : null;
-          if (prevEl && prevEl.classList) {
-            prevEl.classList.remove("line-focused", "active-focus");
-            prevEl.classList.add("line-dimmed");
-          }
+      if (prevIdx != null && prevIdx >= 0 && prevIdx < this.cachedLines.length && prevIdx !== curIdx) {
+        const prevLine = this.cachedLines[prevIdx];
+        const prevEl = prevLine ? (prevLine.element || prevLine.el) : null;
+        if (prevEl && prevEl.classList) {
+          prevEl.classList.remove("line-focused", "active-focus");
+          prevEl.classList.add("line-dimmed");
         }
       } else if (stage) {
         const allLines = stage.querySelectorAll(".reading-line, .line-focused, .line-dimmed");
@@ -5684,19 +5567,6 @@ export class ReadingRuler {
       cancelAnimationFrame(this.pointerRafId);
       this.pointerRafId = null;
     }
-    if (this._scrollRafId) {
-      cancelAnimationFrame(this._scrollRafId);
-      this._scrollRafId = null;
-    }
-    if (this._rafApplyPositionId) {
-      cancelAnimationFrame(this._rafApplyPositionId);
-      this._rafApplyPositionId = null;
-    }
-    if (this.rapidResetTimer) {
-      clearTimeout(this.rapidResetTimer);
-      this.rapidResetTimer = null;
-    }
-    this.isRapidStepping = false;
     if (this._navSafetyTimer) {
       clearTimeout(this._navSafetyTimer);
       this._navSafetyTimer = null;

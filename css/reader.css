@@ -963,24 +963,12 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
   opacity: 0 !important;
 }
 
-#reading-ruler {
-  position: absolute;
-  top: 0;
-  left: 0;
-  will-change: transform, height;
-  transform: translate3d(0, var(--ruler-top, 0px), 0);
-  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), height 120ms ease;
-}
-
 .reading-ruler {
-  position: absolute;
-  top: 0;
+  position: fixed;
   right: auto !important;
   max-width: 100%;
   z-index: 60 !important;
-  will-change: transform, height;
-  transform: translate3d(0, var(--ruler-top, 0px), 0);
-  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), height 120ms ease, opacity 0.2s ease, background-color 0.2s ease;
+  transition: opacity 0.2s ease, background-color 0.2s ease;
   display: none;
   pointer-events: none !important;
   box-sizing: border-box;
@@ -1115,13 +1103,7 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
 
 /* Magnetická animace při přichycení k řádku */
 .reading-ruler.is-snapped {
-  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), height 120ms ease, background-color 0.2s ease;
-}
-
-/* Okamžité přichycení bez animací při rychlém krokování */
-#reading-ruler.is-rapid-stepping,
-.reading-ruler.is-rapid-stepping {
-  transition: none !important;
+  transition: top 0.08s cubic-bezier(0.2, 0.8, 0.35, 1), height 0.12s ease-out, background-color 0.2s ease;
 }
 
 .ruler-mask.is-snapped {
@@ -1626,9 +1608,9 @@ body.ruler-mouse-follow-active [role="button"] {
   cursor: pointer !important;
 }
 
-/* Zamezení nechtěného označování textu při tažení tužkou přes čtecí plochu se zapnutým pravítkem (pouze v horizontálním režimu) */
-body.ruler-active:not(.mode-vertical) .reader-content,
-body.ruler-active:not(.mode-vertical) .paged-viewport {
+/* Zamezení nechtěného označování textu při tažení tužkou přes čtecí plochu se zapnutým pravítkem */
+body.ruler-active .reader-content,
+body.ruler-active .paged-viewport {
   -webkit-user-select: none;
   user-select: none;
   touch-action: none;
@@ -1992,7 +1974,6 @@ body.is-pdf-mode.mode-vertical .paged-viewport {
   overflow-x: hidden !important;
   overflow-y: auto !important;
   -webkit-overflow-scrolling: touch !important;
-  overscroll-behavior-y: contain !important;
   display: block !important;
   touch-action: pan-y !important;
 }
@@ -2053,14 +2034,6 @@ body.mode-vertical.is-pdf-mode .page-touch-zone {
   pointer-events: none !important;
 }
 
-body.mode-vertical #reader-stage,
-body.mode-vertical #paged-stage,
-body.mode-vertical .paged-stage,
-body.mode-vertical #reader-content,
-body.mode-vertical .reader-content,
-body.mode-vertical .paged-content,
-body.mode-vertical .epub-chapter-section,
-body.mode-vertical .epub-chapter-section *,
 body.mode-vertical.ruler-active #paged-viewport,
 body.mode-vertical.ruler-active .paged-viewport,
 body.mode-vertical.ruler-active #reader-content,
