@@ -24,8 +24,6 @@ export class LuminaApp {
     this.currentChapterIndex = 0;
     this.currentPageIndex = 0;
     this.totalPagesInChapter = 1;
-    this.currentScreenIndex = 0;
-    this.totalScreensInChapter = 1;
     this.bookPagination = null;
     this.bookWordCounts = null;
     this.pageGap = 50;
@@ -399,9 +397,8 @@ export class LuminaApp {
   }
 
   getExactColumnStep() {
-    const colsPerScreen = (typeof this.resolveEffectiveColumnCount === "function" && this.resolveEffectiveColumnCount() === 2) ? 2 : 1;
     if (!this.dom.pagedStage || !this.dom.readerContent) {
-      return { stageWidth: 700, gap: 50, exactStep: 750, colsPerScreen, colStride: 750 / colsPerScreen };
+      return { stageWidth: 700, gap: 50, exactStep: 750 };
     }
     const stageRect = this.dom.pagedStage.getBoundingClientRect();
     const stageWidth = stageRect.width;
@@ -411,13 +408,10 @@ export class LuminaApp {
     const gap = (!isNaN(colGap) && colGap > 0) ? colGap : (this.pageGap || 50);
 
     const exactStep = stageWidth + gap;
-    const colStride = exactStep / colsPerScreen;
     return {
       stageWidth,
       gap,
-      exactStep,
-      colsPerScreen,
-      colStride
+      exactStep
     };
   }
 
@@ -612,7 +606,7 @@ export class LuminaApp {
     // Pokud čteme knihu, přepočítat stránkování (pouze v horizontálním režimu)
     if (!this.isVerticalReadingMode() && this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
       requestAnimationFrame(() => {
-        this.recomputeGlobalPagination(true);
+        this.recomputeGlobalPagination();
         this.recalcPages();
         this.goToPage(this.currentPageIndex);
         this.renderScrubberTicks();
@@ -702,7 +696,7 @@ export class LuminaApp {
             }
 
             await this.waitForContentReady();
-            this.recomputeGlobalPagination(true);
+            this.recomputeGlobalPagination();
             this.recalcPages();
             this.goToPage(this.currentPageIndex || 0);
             this.renderScrubberTicks();
@@ -752,9 +746,6 @@ export class LuminaApp {
     this.checkVerticalInfiniteScroll();
     this.updatePageUI();
     this.saveProgress();
-    if (this.ruler && this.ruler.enabled) {
-      this.ruler.refreshLinesDebounced?.(150);
-    }
   }
 
   bindEvents() {
@@ -820,22 +811,9 @@ export class LuminaApp {
         return;
       }
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating || (this.ruler?.enabled && this.ruler?.isLineLocked)) {
-        const now = Date.now();
-        if (now - this.lastPageTurnTime > 350) {
-          this.isNavigating = false;
-          this.isNavigatingPage = false;
-          this.isLineLocked = false;
-          if (this.ruler) {
-            this.ruler.isNavigating = false;
-            this.ruler.isNavigatingPage = false;
-            this.ruler.isLineLocked = false;
-            this.ruler.suppressLineAdvancement = false;
-          }
-        } else {
-          e.preventDefault();
-          return;
-        }
+      if (this.isNavigating || this.ruler?.isLineLocked) {
+        e.preventDefault();
+        return;
       }
       if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
         this.ruler.stepLine(-1, true);
@@ -875,22 +853,9 @@ export class LuminaApp {
         return;
       }
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating || (this.ruler?.enabled && this.ruler?.isLineLocked)) {
-        const now = Date.now();
-        if (now - this.lastPageTurnTime > 350) {
-          this.isNavigating = false;
-          this.isNavigatingPage = false;
-          this.isLineLocked = false;
-          if (this.ruler) {
-            this.ruler.isNavigating = false;
-            this.ruler.isNavigatingPage = false;
-            this.ruler.isLineLocked = false;
-            this.ruler.suppressLineAdvancement = false;
-          }
-        } else {
-          e.preventDefault();
-          return;
-        }
+      if (this.isNavigating || this.ruler?.isLineLocked) {
+        e.preventDefault();
+        return;
       }
       if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
         this.ruler.stepLine(1, true);
@@ -1062,21 +1027,7 @@ export class LuminaApp {
         return;
       }
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating || (this.ruler?.enabled && this.ruler?.isLineLocked)) {
-        if (Date.now() - this.lastPageTurnTime > 350) {
-          this.isNavigating = false;
-          this.isNavigatingPage = false;
-          this.isLineLocked = false;
-          if (this.ruler) {
-            this.ruler.isNavigating = false;
-            this.ruler.isNavigatingPage = false;
-            this.ruler.isLineLocked = false;
-            this.ruler.suppressLineAdvancement = false;
-          }
-        } else {
-          return;
-        }
-      }
+      if (this.isNavigating || this.ruler?.isLineLocked) return;
       if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
         return;
       }
@@ -1121,21 +1072,7 @@ export class LuminaApp {
     this.dom.pagedViewport.addEventListener("wheel", (e) => {
       if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
-      if (this.isNavigating || (this.ruler?.enabled && this.ruler?.isLineLocked)) {
-        if (Date.now() - this.lastPageTurnTime > 350) {
-          this.isNavigating = false;
-          this.isNavigatingPage = false;
-          this.isLineLocked = false;
-          if (this.ruler) {
-            this.ruler.isNavigating = false;
-            this.ruler.isNavigatingPage = false;
-            this.ruler.isLineLocked = false;
-            this.ruler.suppressLineAdvancement = false;
-          }
-        } else {
-          return;
-        }
-      }
+      if (this.isNavigating || this.ruler?.isLineLocked) return;
       this.ruler?.cancelHold();
       const absX = Math.abs(e.deltaX);
       const absY = Math.abs(e.deltaY);
@@ -1756,7 +1693,7 @@ export class LuminaApp {
     const triggerReflowSync = () => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          this.recomputeGlobalPagination(true);
+          this.recomputeGlobalPagination();
           this.recalcPages();
           this.goToPage(this.currentPageIndex);
           this.renderScrubberTicks();
@@ -1824,7 +1761,7 @@ export class LuminaApp {
 
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            this.recomputeGlobalPagination(true);
+            this.recomputeGlobalPagination();
             this.recalcPages();
             this.goToPage(this.currentPageIndex);
             this.renderScrubberTicks();
@@ -1853,7 +1790,7 @@ export class LuminaApp {
 
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
-              this.recomputeGlobalPagination(true);
+              this.recomputeGlobalPagination();
               this.recalcPages();
               this.goToPage(this.currentPageIndex);
               this.renderScrubberTicks();
@@ -2176,25 +2113,13 @@ export class LuminaApp {
       if (this.isAnyModalOrMenuOpen()) return;
 
       if (isReader) {
-        if (this.isNavigating || (this.ruler?.enabled && this.ruler?.isLineLocked)) {
-          if (Date.now() - this.lastPageTurnTime > 350) {
-            this.isNavigating = false;
-            this.isNavigatingPage = false;
-            this.isLineLocked = false;
-            if (this.ruler) {
-              this.ruler.isNavigating = false;
-              this.ruler.isNavigatingPage = false;
-              this.ruler.isLineLocked = false;
-              this.ruler.suppressLineAdvancement = false;
-            }
-          } else {
-            const navKeys = ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "PageDown", "PageUp", " ", "Spacebar"];
-            if (navKeys.includes(e.key) || e.code === "Space") {
-              e.preventDefault();
-              e.stopPropagation();
-              e.stopImmediatePropagation();
-              return;
-            }
+        if (this.isNavigating || this.ruler?.isLineLocked) {
+          const navKeys = ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "PageDown", "PageUp", " ", "Spacebar"];
+          if (navKeys.includes(e.key) || e.code === "Space") {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            return;
           }
         }
 
@@ -3077,9 +3002,6 @@ export class LuminaApp {
       this.recomputeGlobalPagination();
       this.currentParser.calculateTotalWords().then(counts => {
         this.bookWordCounts = counts;
-        if (typeof this.currentParser.initPageMap === "function") {
-          this.currentParser.initPageMap(this.settings, counts);
-        }
         this.recomputeGlobalPagination();
         this.renderScrubberTicks();
         this.updatePageUI();
@@ -3100,8 +3022,6 @@ export class LuminaApp {
   onPdfPageRendered(currentPage, numPages) {
     this.currentPageIndex = currentPage - 1;
     this.totalPagesInChapter = numPages;
-    this.currentScreenIndex = this.currentPageIndex;
-    this.totalScreensInChapter = numPages;
     this.updatePageUI();
     this.saveProgress();
   }
@@ -3249,7 +3169,6 @@ export class LuminaApp {
     const progressData = {
       currentChapterIndex: this.currentChapterIndex || 0,
       currentPageIndex: pageIndex,
-      currentScreenIndex: this.currentScreenIndex || 0,
       pageRatio: pageRatio,
       scrollPercent: pageProgress,
       progress: computedProgress,
@@ -3748,13 +3667,11 @@ export class LuminaApp {
     // 1. Okamžitý reset indexu a transformace před načtením a vložením nového DOMu
     if (targetPage !== "last") {
       this.currentPageIndex = (typeof targetPage === "number") ? targetPage : (targetPage?.pageIndex ?? 0);
-      this.currentScreenIndex = 0;
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transform = "translateX(0px)";
       }
     } else {
       this.currentPageIndex = 0;
-      this.currentScreenIndex = 0;
     }
 
     this.isNavigating = true;
@@ -3993,7 +3910,7 @@ export class LuminaApp {
     const curPageIndex = this.currentPageIndex;
     this.renderChapterHtml();
     requestAnimationFrame(() => {
-      this.recomputeGlobalPagination(true);
+      this.recomputeGlobalPagination();
       this.recalcPages();
       this.goToPage(Math.min(curPageIndex, Math.max(0, this.totalPagesInChapter - 1)));
       this.renderScrubberTicks();
@@ -4105,81 +4022,57 @@ export class LuminaApp {
       const vpHeight = Math.max(1, vp?.clientHeight || 1);
       const secHeight = Math.max(1, activeSection ? activeSection.offsetHeight : (vp?.scrollHeight || 1));
       this.totalPagesInChapter = Math.max(1, Math.ceil(secHeight / vpHeight));
-      this.totalScreensInChapter = this.totalPagesInChapter;
-      this.currentScreenIndex = this.currentPageIndex;
-      if (this.currentParser?.setChapterPageCount) {
-        this.currentParser.setChapterPageCount(this.currentChapterIndex, this.totalPagesInChapter);
-      }
       this.updatePageUI();
       return;
     }
     if (!this.dom.pagedStage || !this.dom.readerContent) return;
-    const { stageWidth, gap, exactStep, colsPerScreen, colStride } = this.getExactColumnStep();
+    const { stageWidth, gap, exactStep } = this.getExactColumnStep();
     if (stageWidth <= 0 || exactStep <= 0) return;
     this.pageGap = gap;
     const scrollWidth = this.dom.readerContent.scrollWidth;
 
     // Bezpečnostní práh pro sub-pixelový přetisk a mezeru mezi sloupci
-    const safetyThreshold = Math.max(8, Math.min(gap * 0.5, 20));
-    let totalCols = 1;
-
+    const safetyThreshold = Math.max(5, Math.min(gap * 0.5, 15));
     if (scrollWidth <= stageWidth + safetyThreshold) {
-      if (colsPerScreen === 2) {
-        const colWidth = (stageWidth - gap) / 2;
-        let hasCol2 = false;
-        const stageLeft = this.dom.pagedStage.getBoundingClientRect().left;
-        const children = this.dom.readerContent.children;
-        for (let i = 0; i < children.length; i++) {
-          const rects = children[i].getClientRects();
-          for (let j = 0; j < rects.length; j++) {
-            if (rects[j].right - stageLeft > colWidth + safetyThreshold) {
-              hasCol2 = true;
-              break;
-            }
-          }
-          if (hasCol2) break;
-        }
-        totalCols = hasCol2 ? 2 : 1;
-      } else {
-        totalCols = 1;
-      }
+      this.totalPagesInChapter = 1;
     } else {
-      const extraCols = Math.ceil((scrollWidth - stageWidth - safetyThreshold) / colStride);
-      totalCols = colsPerScreen + extraCols;
+      this.totalPagesInChapter = 1 + Math.ceil((scrollWidth - stageWidth - safetyThreshold) / exactStep);
     }
 
-    this.totalPagesInChapter = Math.max(1, totalCols);
-    this.totalScreensInChapter = Math.max(1, Math.ceil(this.totalPagesInChapter / colsPerScreen));
-    this.currentScreenIndex = Math.max(0, Math.min(this.totalScreensInChapter - 1, Math.floor((this.currentPageIndex || 0) / colsPerScreen)));
-    this.currentPageIndex = Math.min(this.totalPagesInChapter - 1, this.currentScreenIndex * colsPerScreen);
+    this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
-    if (this.currentParser?.setChapterPageCount) {
-      this.currentParser.setChapterPageCount(this.currentChapterIndex, this.totalPagesInChapter);
-    }
-
-    this.recomputeGlobalPagination();
     this.updatePageUI();
   }
 
-  goToScreen(screenIndex, explicitDirection = null, immediateRuler = true) {
+  goToPage(pageIndex, explicitDirection = null, immediateRuler = true) {
     if (this.isPdfMode && this.pdfLoader) {
-      return this.goToPage(screenIndex, explicitDirection, immediateRuler);
+      const targetPage = Math.max(1, Math.min(this.pdfLoader.numPages, pageIndex + 1));
+      this.pdfLoader.goToPage(targetPage, explicitDirection);
+      return;
     }
     if (this.isVerticalReadingMode()) {
-      return this.goToPage(screenIndex, explicitDirection, immediateRuler);
+      if (this.dom.readerContent) {
+        this.dom.readerContent.style.transform = "none";
+      }
+      this.updatePageUI();
+      this.saveProgress();
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.refreshLines();
+        if (this.ruler.wordTracking) this.ruler.refreshWords();
+        this.ruler.applyPosition();
+      }
+      return;
     }
-
-    const { colsPerScreen, exactStep, gap } = this.getExactColumnStep();
+    const oldIndex = this.currentPageIndex;
+    this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
+    const { stageWidth, gap, exactStep } = this.getExactColumnStep();
     this.pageGap = gap;
-    const maxScreen = Math.max(0, this.totalScreensInChapter - 1);
-    const oldScreenIndex = this.currentScreenIndex;
-    this.currentScreenIndex = Math.max(0, Math.min(maxScreen, screenIndex));
-    this.currentPageIndex = Math.min(this.totalPagesInChapter - 1, this.currentScreenIndex * colsPerScreen);
+    const offset = this.currentPageIndex * exactStep;
 
-    const isPageChanged = oldScreenIndex !== this.currentScreenIndex || explicitDirection !== null;
+    const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
     const direction = explicitDirection !== null
       ? explicitDirection
-      : (this.currentScreenIndex > oldScreenIndex ? 1 : (this.currentScreenIndex < oldScreenIndex ? -1 : 0));
+      : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
 
     const stage = this.dom.pagedStage;
     if (isPageChanged) {
@@ -4242,11 +4135,11 @@ export class LuminaApp {
     try {
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transition = "none";
-        this.dom.readerContent.style.transform = `translateX(-${(this.currentScreenIndex * exactStep).toFixed(3)}px)`;
+        this.dom.readerContent.style.transform = `translateX(-${(this.currentPageIndex * exactStep).toFixed(3)}px)`;
       }
 
       // Měření postupu
-      const pageProgress = (this.currentScreenIndex + 1) / Math.max(1, this.totalScreensInChapter);
+      const pageProgress = (this.currentPageIndex + 1) / this.totalPagesInChapter;
       tracker.updateScrollProgress(pageProgress);
 
       this.updatePageUI();
@@ -4277,34 +4170,8 @@ export class LuminaApp {
         this.ruler.isNavigating = false;
         this.ruler.isNavigatingPage = false;
         this.ruler.isLineLocked = false;
-        this.ruler.suppressLineAdvancement = false;
       }
     }
-  }
-
-  goToPage(pageIndex, explicitDirection = null, immediateRuler = true) {
-    if (this.isPdfMode && this.pdfLoader) {
-      const targetPage = Math.max(1, Math.min(this.pdfLoader.numPages, pageIndex + 1));
-      this.pdfLoader.goToPage(targetPage, explicitDirection);
-      return;
-    }
-    if (this.isVerticalReadingMode()) {
-      if (this.dom.readerContent) {
-        this.dom.readerContent.style.transform = "none";
-      }
-      this.updatePageUI();
-      this.saveProgress();
-      if (this.ruler && this.ruler.enabled) {
-        this.ruler.refreshLines();
-        if (this.ruler.wordTracking) this.ruler.refreshWords();
-        this.ruler.applyPosition();
-      }
-      return;
-    }
-
-    const { colsPerScreen } = this.getExactColumnStep();
-    const targetScreen = Math.floor(Math.max(0, pageIndex) / colsPerScreen);
-    return this.goToScreen(targetScreen, explicitDirection, immediateRuler);
   }
 
   async nextPage() {
@@ -4335,24 +4202,11 @@ export class LuminaApp {
       await this.pdfLoader.nextPage();
       return;
     }
-    console.log(`[LuminaReader] nextPage() called, currentScreenIndex: ${this.currentScreenIndex}, totalScreensInChapter: ${this.totalScreensInChapter}`);
+    console.log(`[LuminaReader] nextPage() called, currentPageIndex: ${this.currentPageIndex}, totalPagesInChapter: ${this.totalPagesInChapter}`);
     const now = Date.now();
     if (this.isNavigating) {
-      if (now - this.lastPageTurnTime > 350) {
-        console.warn("[LuminaReader] Navigation flag was stuck for > 350ms, auto-recovering.");
-        this.isNavigating = false;
-        this.isNavigatingPage = false;
-        this.isLineLocked = false;
-        if (this.ruler) {
-          this.ruler.isNavigating = false;
-          this.ruler.isNavigatingPage = false;
-          this.ruler.isLineLocked = false;
-          this.ruler.suppressLineAdvancement = false;
-        }
-      } else {
-        console.log("[LuminaReader] nextPage() blocked: navigation already in progress");
-        return;
-      }
+      console.log("[LuminaReader] nextPage() blocked: navigation already in progress");
+      return;
     }
     if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) {
       console.log("[LuminaReader] nextPage() blocked: cooldown active");
@@ -4392,24 +4246,40 @@ export class LuminaApp {
     }, 300); // 300ms maximum lock lifetime
 
     try {
-      // 1. Pokud jsme ještě před koncem známých obrazovek kapitoly, otočíme na další obrazovku
-      if (this.currentScreenIndex < this.totalScreensInChapter - 1) {
-        this.goToScreen(this.currentScreenIndex + 1, 1);
-        console.log(`[LuminaReader] nextPage() resolved cleanly: screen -> ${this.currentScreenIndex}`);
+      // 1. Pokud jsme ještě před koncem známých stran kapitoly, otočíme stranu v rámci kapitoly
+      if (this.currentPageIndex < this.totalPagesInChapter - 1) {
+        this.goToPage(this.currentPageIndex + 1, 1);
+        console.log(`[LuminaReader] nextPage() resolved cleanly: page -> ${this.currentPageIndex + 1}`);
         return;
       }
 
       // 2. Zdánlivě jsme na konci kapitoly. Přepočítáme živý DOM rozměr,
       // abychom zabránili přeskočení nepřečteného textu kvůli donačteným obrázkům
       this.recalcPages();
-      if (this.currentScreenIndex < this.totalScreensInChapter - 1) {
-        this.goToScreen(this.currentScreenIndex + 1, 1);
-        console.log(`[LuminaReader] nextPage() advanced after recalc: screen -> ${this.currentScreenIndex}`);
+      if (this.currentPageIndex < this.totalPagesInChapter - 1) {
+        this.goToPage(this.currentPageIndex + 1, 1);
+        console.log(`[LuminaReader] nextPage() advanced after recalc: page -> ${this.currentPageIndex + 1}`);
         return;
       }
 
-      // 3. Kapitola je skutečně dočtena: přechod na další kapitolu
-      if (this.currentChapterIndex < (this.currentParser?.spine?.length || 1) - 1) {
+      // 3. Fyzická kontrola scrollWidth proti offsetu jako pojistka
+      const { stageWidth, gap, exactStep } = this.getExactColumnStep();
+      const safetyThreshold = Math.max(5, Math.min(gap * 0.5, 15));
+      const currentOffset = this.currentPageIndex * exactStep;
+      const scrollWidth = this.dom.readerContent?.scrollWidth || 0;
+      const remainingWidth = scrollWidth - (currentOffset + stageWidth);
+      if (remainingWidth > safetyThreshold) {
+        this.totalPagesInChapter = Math.max(
+          this.currentPageIndex + 2,
+          1 + Math.ceil((scrollWidth - stageWidth - safetyThreshold) / exactStep)
+        );
+        this.goToPage(this.currentPageIndex + 1, 1);
+        console.log(`[LuminaReader] nextPage() advanced via scrollWidth check: page -> ${this.currentPageIndex + 1}`);
+        return;
+      }
+
+      // 4. Kapitola je skutečně dočtena: přechod na další kapitolu
+      if (this.currentChapterIndex < this.currentParser.spine.length - 1) {
         console.log(`[LuminaReader] nextPage() advancing to next chapter -> ${this.currentChapterIndex + 1}`);
         await this.navigateChapter(1, 0);
       } else {
@@ -4426,7 +4296,6 @@ export class LuminaApp {
         this.ruler.isNavigating = false;
         this.ruler.isNavigatingPage = false;
         this.ruler.isLineLocked = false;
-        this.ruler.suppressLineAdvancement = false;
       }
     }
   }
@@ -4455,24 +4324,11 @@ export class LuminaApp {
       await this.pdfLoader.prevPage();
       return;
     }
-    console.log(`[LuminaReader] prevPage() called, currentScreenIndex: ${this.currentScreenIndex}`);
+    console.log(`[LuminaReader] prevPage() called, currentPageIndex: ${this.currentPageIndex}`);
     const now = Date.now();
     if (this.isNavigating) {
-      if (now - this.lastPageTurnTime > 350) {
-        console.warn("[LuminaReader] Navigation flag was stuck for > 350ms, auto-recovering.");
-        this.isNavigating = false;
-        this.isNavigatingPage = false;
-        this.isLineLocked = false;
-        if (this.ruler) {
-          this.ruler.isNavigating = false;
-          this.ruler.isNavigatingPage = false;
-          this.ruler.isLineLocked = false;
-          this.ruler.suppressLineAdvancement = false;
-        }
-      } else {
-        console.log("[LuminaReader] prevPage() blocked: navigation already in progress");
-        return;
-      }
+      console.log("[LuminaReader] prevPage() blocked: navigation already in progress");
+      return;
     }
     if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
     this.lastPageTurnTime = now;
@@ -4507,9 +4363,9 @@ export class LuminaApp {
     }, 300); // 300ms maximum lock lifetime
 
     try {
-      if (this.currentScreenIndex > 0) {
-        this.goToScreen(this.currentScreenIndex - 1, -1);
-        console.log(`[LuminaReader] prevPage() resolved cleanly: screen -> ${this.currentScreenIndex}`);
+      if (this.currentPageIndex > 0) {
+        this.goToPage(this.currentPageIndex - 1, -1);
+        console.log(`[LuminaReader] prevPage() resolved cleanly: page -> ${this.currentPageIndex + 1}`);
       } else if (this.currentChapterIndex > 0) {
         console.log(`[LuminaReader] prevPage() moving to prev chapter -> ${this.currentChapterIndex - 1}`);
         await this.navigateChapter(-1, "last");
@@ -4524,7 +4380,6 @@ export class LuminaApp {
         this.ruler.isNavigating = false;
         this.ruler.isNavigatingPage = false;
         this.ruler.isLineLocked = false;
-        this.ruler.suppressLineAdvancement = false;
       }
     }
   }
@@ -4571,10 +4426,8 @@ export class LuminaApp {
       }
       if (targetPage !== "last") {
         this.currentPageIndex = (typeof targetPage === "number") ? targetPage : (targetPage?.pageIndex ?? 0);
-        this.currentScreenIndex = 0;
       } else {
         this.currentPageIndex = 0;
-        this.currentScreenIndex = 0;
       }
 
       await tracker.flushSession();
@@ -4583,11 +4436,6 @@ export class LuminaApp {
     } else if (delta > 0) {
       this.showToast("Dočetli jste knihu až do konce! 🎉", "success");
     }
-  }
-
-  updatePageIndicator() {
-    this.updatePageUI();
-    return this.getBookMetrics();
   }
 
   updatePageUI() {
@@ -4718,10 +4566,6 @@ export class LuminaApp {
         if (this.dom.bookPageCounter) {
           this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
         }
-        const elCounter = document.getElementById("page-counter");
-        if (elCounter) {
-          elCounter.textContent = `${currBookPage} z ${totalBookPages}`;
-        }
 
         const hasPrev = scrollTop > 20 || (activeIdx > 0);
         const hasNext = (scrollTop < maxScroll - 20) || (this.currentParser && activeIdx < this.currentParser.spine.length - 1);
@@ -4739,12 +4583,9 @@ export class LuminaApp {
       }
     }
 
-    const isTwoCol = (typeof this.resolveEffectiveColumnCount === "function" && this.resolveEffectiveColumnCount() === 2);
-    const col1 = this.currentPageIndex + 1;
-    const col2 = (isTwoCol && (this.currentPageIndex + 1 < this.totalPagesInChapter)) ? (this.currentPageIndex + 2) : null;
+    const currChapterPage = this.currentPageIndex + 1;
     const totalChapterPages = Math.max(1, this.totalPagesInChapter);
-    const currChapterPageLabel = col2 ? `${col1}–${col2}` : `${col1}`;
-    const remainingChapterPages = col2 ? Math.max(0, totalChapterPages - col2) : Math.max(0, totalChapterPages - col1);
+    const remainingChapterPages = Math.max(0, this.totalPagesInChapter - currChapterPage);
 
     // 1. Informace o zbývajících stránkách v kapitole ("konec kapitoly za: X stran")
     if (this.dom.footerRemainingChapter) {
@@ -4753,39 +4594,32 @@ export class LuminaApp {
 
     // Zpětná kompatibilita pro původní čítače
     if (this.dom.chapterPageCounter) {
-      this.dom.chapterPageCounter.textContent = `strana ${currChapterPageLabel} z ${totalChapterPages}`;
+      this.dom.chapterPageCounter.textContent = `strana ${currChapterPage} z ${totalChapterPages}`;
     } else if (this.dom.pageCounterText) {
-      this.dom.pageCounterText.textContent = `strana ${currChapterPageLabel} z ${totalChapterPages}`;
+      this.dom.pageCounterText.textContent = `strana ${currChapterPage} z ${totalChapterPages}`;
     }
 
     // 2. Počítadlo stránek pro celou knihu ("A z B" / "strana A z B")
     const metrics = this.getBookMetrics();
     const currBookPage = metrics.currBookPage;
-    const currBookPageEnd = metrics.currBookPageEnd;
     const totalBookPages = metrics.totalBookPages;
-    const bookPageLabel = currBookPageEnd ? `${currBookPage}–${currBookPageEnd}` : `${currBookPage}`;
 
     if (this.dom.footerBookPages) {
-      this.dom.footerBookPages.textContent = `${bookPageLabel} z ${totalBookPages}`;
+      this.dom.footerBookPages.textContent = `${currBookPage} z ${totalBookPages}`;
     }
     if (this.dom.bookPageCounter) {
-      this.dom.bookPageCounter.textContent = `strana ${bookPageLabel} z ${totalBookPages}`;
-    }
-    const elCounter = document.getElementById("page-counter");
-    if (elCounter) {
-      elCounter.textContent = `${bookPageLabel} z ${totalBookPages}`;
+      this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
     }
 
     // 3. Tlačítka aktivní/neaktivní
-    const hasPrev = this.currentScreenIndex > 0 || this.currentChapterIndex > 0;
-    const hasNext = this.currentScreenIndex < this.totalScreensInChapter - 1 || this.currentChapterIndex < (this.currentParser?.spine?.length || 1) - 1;
+    const hasPrev = this.currentPageIndex > 0 || this.currentChapterIndex > 0;
+    const hasNext = this.currentPageIndex < this.totalPagesInChapter - 1 || this.currentChapterIndex < (this.currentParser?.spine.length || 1) - 1;
 
     if (this.dom.btnPagePrev) this.dom.btnPagePrev.disabled = !hasPrev;
     if (this.dom.btnPageNext) this.dom.btnPageNext.disabled = !hasNext;
 
     // 4. Celkový postup v knize
-    const effectiveBookPage = currBookPageEnd || currBookPage;
-    const overallProgress = totalBookPages > 0 ? Math.min(100, Math.round((effectiveBookPage / totalBookPages) * 100)) : 0;
+    const overallProgress = totalBookPages > 0 ? Math.min(100, Math.round((currBookPage / totalBookPages) * 100)) : 0;
     if (this.dom.progressBar) this.dom.progressBar.style.width = `${overallProgress}%`;
     if (this.dom.progressText) this.dom.progressText.textContent = `${overallProgress}%`;
 
@@ -5373,11 +5207,11 @@ export class LuminaApp {
       }
 
       const rect = foundParent.getBoundingClientRect();
-      const currentOffset = this.currentScreenIndex * exactStep;
+      const currentOffset = this.currentPageIndex * exactStep;
       const relativeX = (rect.left - stageRect.left) + currentOffset;
-      const targetScreen = Math.max(0, Math.min(this.totalScreensInChapter - 1, Math.floor(relativeX / exactStep)));
+      const targetPage = Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.floor(relativeX / exactStep)));
 
-      this.goToScreen(targetScreen);
+      this.goToPage(targetPage);
       foundParent.classList.add("search-highlight-flash");
       setTimeout(() => foundParent.classList.remove("search-highlight-flash"), 2200);
     }
@@ -5425,7 +5259,7 @@ export class LuminaApp {
     document.body.classList.toggle("reader-chrome-hidden", willHide);
   }
 
-  recomputeGlobalPagination(force = false) {
+  recomputeGlobalPagination() {
     if (!this.currentParser) {
       this.bookPagination = {
         wordsPerPage: 260,
@@ -5436,39 +5270,50 @@ export class LuminaApp {
       return;
     }
 
-    if (force && typeof this.currentParser.resetPageMap === "function") {
-      this.currentParser.resetPageMap();
-    }
-
-    if (typeof this.currentParser.initPageMap === "function") {
-      this.currentParser.initPageMap(this.settings, this.bookWordCounts);
-    }
-
-    if (this.totalPagesInChapter && typeof this.currentParser.setChapterPageCount === "function") {
-      this.currentParser.setChapterPageCount(this.currentChapterIndex, this.totalPagesInChapter);
-    }
-
     const totalChapters = this.currentParser?.spine?.length || 1;
+    const baseWordsPerPage = 260;
+    const fontSize = this.settings.fontSize || 19;
+    const lineHeight = this.settings.lineHeight || 1.6;
+    const isTwoCol = document.documentElement.classList.contains("columns-2") ||
+                     document.body.classList.contains("columns-2") ||
+                     (typeof this.resolveEffectiveColumnCount === "function" && this.resolveEffectiveColumnCount() === 2);
+    const colMultiplier = isTwoCol ? 2 : 1;
+
+    // Škálování hustoty slov podle velikosti písma (plošné), výšky řádku a počtu sloupců
+    const fontFactor = Math.pow(19 / fontSize, 1.7);
+    const lineFactor = 1.6 / lineHeight;
+    let wordsPerPage = Math.round(baseWordsPerPage * fontFactor * lineFactor * colMultiplier);
+    // Bezpečnostní mantinely, aby nedošlo k dělení 0 nebo extrémním hodnotám
+    wordsPerPage = Math.max(80, Math.min(1200, wordsPerPage));
+
+    const hasWordCounts = !!(this.bookWordCounts && Array.isArray(this.bookWordCounts.chapterWords) && this.bookWordCounts.chapterWords.length > 0);
     const chapterPageCounts = [];
     const chapterStarts = [];
+    let runningTotal = 0;
 
     for (let i = 0; i < totalChapters; i++) {
-      const start = typeof this.currentParser.getChapterStartPage === "function"
-        ? this.currentParser.getChapterStartPage(i)
-        : 1;
-      const count = typeof this.currentParser.getChapterPageCount === "function"
-        ? this.currentParser.getChapterPageCount(i)
-        : 1;
-      chapterStarts.push(start);
-      chapterPageCounts.push(count);
+      let chPages = 1;
+      if (hasWordCounts) {
+        const words = this.bookWordCounts.chapterWords[i] != null ? this.bookWordCounts.chapterWords[i] : 0;
+        // Titulní strany, obálky, celostránkové ilustrace či kapitoly s minimem slov mají vždy min. 1 stranu
+        if (words < 50) {
+          chPages = 1;
+        } else {
+          chPages = Math.max(1, Math.round(words / wordsPerPage));
+        }
+      } else {
+        chPages = (i === this.currentChapterIndex && this.totalPagesInChapter) ? this.totalPagesInChapter : 1;
+      }
+
+      chapterPageCounts.push(chPages);
+      chapterStarts.push(runningTotal + 1);
+      runningTotal += chPages;
     }
 
-    const totalBookPages = typeof this.currentParser.getTotalBookPages === "function"
-      ? this.currentParser.getTotalBookPages()
-      : Math.max(1, chapterStarts[totalChapters - 1] + chapterPageCounts[totalChapters - 1] - 1);
+    const totalBookPages = Math.max(1, runningTotal);
 
     this.bookPagination = {
-      wordsPerPage: 260,
+      wordsPerPage,
       chapterPageCounts,
       chapterStarts,
       totalBookPages
@@ -5481,7 +5326,6 @@ export class LuminaApp {
       const currPage = Math.max(1, Math.min(numPages, this.pdfLoader.currentPage || 1));
       return {
         currBookPage: currPage,
-        currBookPageEnd: null,
         totalBookPages: numPages,
         chapterStarts: [1],
         chapterPageCounts: [numPages],
@@ -5494,36 +5338,22 @@ export class LuminaApp {
     }
     const p = this.bookPagination;
     const totalChapters = this.currentParser?.spine?.length || 1;
-    const isTwoCol = (typeof this.resolveEffectiveColumnCount === "function" && this.resolveEffectiveColumnCount() === 2);
+    const chAllocated = p.chapterPageCounts[this.currentChapterIndex] || 1;
+    const startPage = p.chapterStarts[this.currentChapterIndex] || 1;
+    const totalPagesInCh = Math.max(1, this.totalPagesInChapter || 1);
 
-    const startPage = this.currentParser?.getChapterStartPage
-      ? this.currentParser.getChapterStartPage(this.currentChapterIndex)
-      : (p.chapterStarts[this.currentChapterIndex] || 1);
-
-    const chAllocated = this.currentParser?.getChapterPageCount
-      ? this.currentParser.getChapterPageCount(this.currentChapterIndex)
-      : (p.chapterPageCounts[this.currentChapterIndex] || 1);
-
-    const totalPagesInCh = Math.max(1, this.totalPagesInChapter || chAllocated || 1);
-
-    const currBookPage = startPage + Math.min(this.currentPageIndex, totalPagesInCh - 1);
-
-    let currBookPageEnd = null;
-    if (isTwoCol && this.currentPageIndex + 1 < totalPagesInCh) {
-      currBookPageEnd = startPage + this.currentPageIndex + 1;
+    let currBookPage = startPage;
+    if (totalPagesInCh > 1 && chAllocated > 1) {
+      const fraction = this.currentPageIndex / (totalPagesInCh - 1);
+      currBookPage = startPage + Math.round(fraction * (chAllocated - 1));
+    } else {
+      currBookPage = startPage + Math.min(this.currentPageIndex, chAllocated - 1);
     }
-
-    const parserTotal = this.currentParser?.getTotalBookPages
-      ? this.currentParser.getTotalBookPages()
-      : (p.totalBookPages || 1);
-
-    const effectivePage = currBookPageEnd || currBookPage;
-    const totalBookPages = Math.max(effectivePage, parserTotal);
+    currBookPage = Math.max(1, Math.min(p.totalBookPages, currBookPage));
 
     return {
       currBookPage,
-      currBookPageEnd,
-      totalBookPages,
+      totalBookPages: p.totalBookPages,
       chapterStarts: p.chapterStarts,
       chapterPageCounts: p.chapterPageCounts,
       totalChapters
@@ -5559,9 +5389,7 @@ export class LuminaApp {
         pageRatio = chAllocated > 1 ? (offsetInAlloc / (chAllocated - 1)) : 0;
 
         if (chapterIndex === this.currentChapterIndex && this.totalPagesInChapter > 1 && chAllocated > 1) {
-          pageInChapter = (chAllocated === this.totalPagesInChapter)
-            ? offsetInAlloc
-            : Math.round(pageRatio * (this.totalPagesInChapter - 1));
+          pageInChapter = Math.round(pageRatio * (this.totalPagesInChapter - 1));
         } else {
           pageInChapter = offsetInAlloc;
         }
