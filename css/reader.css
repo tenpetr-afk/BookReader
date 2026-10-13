@@ -965,6 +965,8 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
 
 .reading-ruler {
   position: fixed;
+  top: 0;
+  left: 0;
   right: auto !important;
   max-width: 100%;
   z-index: 60 !important;
@@ -973,6 +975,8 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
   pointer-events: none !important;
   box-sizing: border-box;
   overflow: visible !important;
+  will-change: transform;
+  contain: paint;
 }
 
 .reading-ruler.is-visible {
@@ -984,7 +988,8 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
 
 /* Režim sledování jednotlivých slov – přesné ohraničení slova s plynulým dozníváním dopředu (do ztracena) */
 .reading-ruler.word-tracking-mode {
-  left: auto;
+  top: 0;
+  left: 0;
   right: auto;
   border-radius: 4px 0 0 4px !important;
   border: none !important;
@@ -993,9 +998,8 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
   -webkit-mask-image: none !important;
   mask-image: none !important;
   overflow: visible !important;
-  transition: left 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+  transition: transform 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
               width 0.08s ease-out,
-              top 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
               height 0.12s ease-out;
 }
 
@@ -1103,13 +1107,12 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
 
 /* Magnetická animace při přichycení k řádku */
 .reading-ruler.is-snapped {
-  transition: top 0.08s cubic-bezier(0.2, 0.8, 0.35, 1), height 0.12s ease-out, background-color 0.2s ease;
+  transition: transform 0.08s cubic-bezier(0.2, 0.8, 0.35, 1), height 0.12s ease-out, background-color 0.2s ease;
 }
 
 .ruler-mask.is-snapped {
-  transition: top 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
+  transition: transform 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
               height 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
-              left 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
               width 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
               opacity 0.2s ease;
 }
@@ -1257,6 +1260,8 @@ body:not(.in-reader-view):not(.ruler-active) #reader-content.focus-active {
 /* Masky ztmavující okolní text v režimu Zaostření (Focus Mode) */
 .ruler-mask {
   position: fixed;
+  top: 0;
+  left: 0;
   pointer-events: none !important;
   z-index: 50 !important;
   background-color: rgba(0, 0, 0, var(--focus-dim-opacity, 0.65));
@@ -1264,6 +1269,8 @@ body:not(.in-reader-view):not(.ruler-active) #reader-content.focus-active {
   display: none;
   opacity: 0;
   transition: opacity 0.15s ease;
+  will-change: transform;
+  contain: paint;
 }
 
 .ruler-mask.is-visible {
