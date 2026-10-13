@@ -280,8 +280,16 @@ export class ReadingTracker {
     const todayStr = checkDate.toISOString().split("T")[0];
     let hasToday = activeDates.has(todayStr);
 
-    while (true) {
+    const maxIterations = activeDates.size + 10;
+    let iterations = 0;
+    const visitedDates = new Set();
+
+    while (iterations < maxIterations) {
+      iterations++;
       const dateStr = checkDate.toISOString().split("T")[0];
+      if (visitedDates.has(dateStr)) break;
+      visitedDates.add(dateStr);
+
       if (activeDates.has(dateStr)) {
         streak++;
         checkDate.setDate(checkDate.getDate() - 1);
@@ -290,8 +298,9 @@ export class ReadingTracker {
         if (streak === 0 && !hasToday) {
           checkDate.setDate(checkDate.getDate() - 1);
           const yesterdayStr = checkDate.toISOString().split("T")[0];
-          if (activeDates.has(yesterdayStr)) {
+          if (activeDates.has(yesterdayStr) && !visitedDates.has(yesterdayStr)) {
             streak = 1;
+            visitedDates.add(yesterdayStr);
             checkDate.setDate(checkDate.getDate() - 1);
             continue;
           }

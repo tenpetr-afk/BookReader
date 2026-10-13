@@ -97,6 +97,29 @@ export class PDFLoader {
     return this.app?.dom?.pagedViewport || document.getElementById("paged-viewport") || this.container?.parentElement || window;
   }
 
+  _destroyCanvas(canvas) {
+    if (!canvas) return;
+    try {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    } catch (e) {}
+    canvas.width = 0;
+    canvas.height = 0;
+    if (typeof canvas.remove === "function") {
+      canvas.remove();
+    }
+  }
+
+  _cleanupContainerCanvases(container) {
+    if (!container) return;
+    const canvases = container.querySelectorAll("canvas");
+    for (const canvas of canvases) {
+      this._destroyCanvas(canvas);
+    }
+  }
+
   /**
    * Statická tovární metoda pro přímé načtení a vykreslení PDF
    */
@@ -129,6 +152,26 @@ export class PDFLoader {
         // Ignorovat zrušení
       }
       this.currentRenderTask = null;
+    }
+    if (this.currentRenderTasks && this.currentRenderTasks.length > 0) {
+      for (const task of this.currentRenderTasks) {
+        try {
+          task.cancel();
+        } catch (e) {}
+      }
+      this.currentRenderTasks = [];
+    }
+    if (this.canvases && this.canvases.length > 0) {
+      for (const c of this.canvases) this._destroyCanvas(c);
+      this.canvases = [];
+    }
+    if (this.canvas) {
+      this._destroyCanvas(this.canvas);
+      this.canvas = null;
+    }
+    if (this.container) {
+      this._cleanupContainerCanvases(this.container);
+      this.container.innerHTML = "";
     }
 
     if (this.pdfDoc) {
@@ -206,6 +249,16 @@ export class PDFLoader {
       const container = this.container || document.getElementById("reader-content");
       if (!container) return;
 
+      if (this.canvases && this.canvases.length > 0) {
+        for (const c of this.canvases) this._destroyCanvas(c);
+        this.canvases = [];
+      }
+      if (this.canvas) {
+        this._destroyCanvas(this.canvas);
+        this.canvas = null;
+      }
+      this._cleanupContainerCanvases(container);
+
       const dpr = window.devicePixelRatio || 1;
 
       if (this.isSpreadActive()) {
@@ -223,202 +276,222 @@ export class PDFLoader {
         this.currentPage = leftPage;
 
         const pagesToLoad = hasRight ? [leftPage, rightPage] : [leftPage];
-        const pages = await Promise.all(pagesToLoad.map(num => this.pdfDoc.getPage(num)));
+        let pages = [];
+        try {
+          pages = await Promise.all(pagesToLoad.map(num => this.pdfDoc.getPage(num)));
 
-        const vpEl = document.getElementById("paged-viewport");
-        const maxSlotW = hasRight ? Math.floor((window.innerWidth - 64) / 2) : Math.floor(window.innerWidth - 64);
-        const availVpH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : (window.innerHeight - 32);
-        const maxSlotH = Math.min(window.innerHeight - 32, availVpH);
+          const vpEl = document.getElementById("paged-viewport");
+          const maxSlotW = hasRight ? Math.floor((window.innerWidth - 64) / 2) : Math.floor(window.innerWidth - 64);
+          const availVpH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : (window.innerHeight - 32);
+          const maxSlotH = Math.min(window.innerHeight - 32, availVpH);
 
-        const unscaledViewports = pages.map(p => {
-          const uv = p.getViewport({ scale: 1 });
-          const rawW = (p.rotate === 90 || p.rotate === 270)
-            ? (p.view?.[3] || uv.width)
-            : (p.view?.[2] || uv.width);
-          const rawH = (p.rotate === 90 || p.rotate === 270)
-            ? (p.view?.[2] || uv.height)
-            : (p.view?.[3] || uv.height);
-          return {
-            width: uv.width || rawW,
-            height: uv.height || rawH,
-            page: p
-          };
-        });
+          const unscaledViewports = pages.map(p => {
+            const uv = p.getViewport({ scale: 1 });
+            const rawW = (p.rotate === 90 || p.rotate === 270)
+              ? (p.view?.[3] || uv.width)
+              : (p.view?.[2] || uv.width);
+            const rawH = (p.rotate === 90 || p.rotate === 270)
+              ? (p.view?.[2] || uv.height)
+              : (p.view?.[3] || uv.height);
+            return {
+              width: uv.width || rawW,
+              height: uv.height || rawH,
+              page: p
+            };
+          });
 
-        const scales = unscaledViewports.map(uv => {
-          const sX = maxSlotW / uv.width;
-          const sY = maxSlotH / uv.height;
-          return Math.min(sX, sY);
-        });
-        const uniformScale = Math.min(...scales);
+          const scales = unscaledViewports.map(uv => {
+            const sX = maxSlotW / uv.width;
+            const sY = maxSlotH / uv.height;
+            return Math.min(sX, sY);
+          });
+          const uniformScale = Math.min(...scales);
 
-        container.innerHTML = "";
+          this._cleanupContainerCanvases(container);
+          container.innerHTML = "";
 
-        const spreadContainer = document.createElement("div");
-        spreadContainer.className = "pdf-spread-container";
-        this.spreadContainer = spreadContainer;
+          const spreadContainer = document.createElement("div");
+          spreadContainer.className = "pdf-spread-container";
+          this.spreadContainer = spreadContainer;
 
-        const pageSlots = [];
-        const canvases = [];
-        const imageLayers = [];
-        const renderTasks = [];
+          const pageSlots = [];
+          const canvases = [];
+          const imageLayers = [];
+          const renderTasks = [];
 
-        for (let i = 0; i < pages.length; i++) {
-          const p = pages[i];
-          const pageNum = pagesToLoad[i];
-          const viewport = p.getViewport({ scale: uniformScale });
+          for (let i = 0; i < pages.length; i++) {
+            const p = pages[i];
+            const pageNum = pagesToLoad[i];
+            const viewport = p.getViewport({ scale: uniformScale });
+            const floorW = Math.floor(viewport.width);
+            const floorH = Math.floor(viewport.height);
+
+            const slot = document.createElement("div");
+            slot.className = "pdf-page-slot pdf-page-container";
+            slot.dataset.pageNumber = String(pageNum);
+            slot.style.width = `${floorW}px`;
+            slot.style.height = `${floorH}px`;
+            slot.style.position = "relative";
+            slot.style.display = "flex";
+            slot.style.justifyContent = "center";
+            slot.style.alignItems = "center";
+
+            const canvas = document.createElement("canvas");
+            canvas.className = "pdf-page-canvas";
+            canvas.width = Math.floor(viewport.width * dpr);
+            canvas.height = Math.floor(viewport.height * dpr);
+            canvas.style.width = `${floorW}px`;
+            canvas.style.height = `${floorH}px`;
+            canvas.style.display = "block";
+
+            const imageLayer = document.createElement("div");
+            imageLayer.className = "pdf-image-layer";
+
+            const ctx = canvas.getContext("2d");
+            const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
+
+            slot.appendChild(canvas);
+            slot.appendChild(imageLayer);
+            spreadContainer.appendChild(slot);
+
+            pageSlots.push(slot);
+            canvases.push(canvas);
+            imageLayers.push(imageLayer);
+
+            const rTask = p.render({
+              canvasContext: ctx,
+              transform: transform,
+              viewport: viewport
+            });
+            renderTasks.push({ rTask, page: p, viewport, canvas, imageLayer });
+          }
+
+          container.appendChild(spreadContainer);
+
+          this.currentRenderTasks = renderTasks.map(t => t.rTask);
+          this.currentRenderTask = this.currentRenderTasks[0] || null;
+          this.canvas = canvases[0] || null;
+          this.pageContainer = pageSlots[0] || null;
+          this.imageLayer = imageLayers[0] || null;
+          this.pageSlots = pageSlots;
+          this.canvases = canvases;
+
+          await Promise.all(renderTasks.map(t => t.rTask.promise));
+          this.currentRenderTasks = [];
+          this.currentRenderTask = null;
+
+          await Promise.all(renderTasks.map(t =>
+            this._extractAndTagImages(t.page, t.viewport, t.canvas, dpr, t.imageLayer).catch(imgErr => {
+              console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
+            })
+          ));
+        } finally {
+          for (const p of pages) {
+            try {
+              if (typeof p?.cleanup === "function") p.cleanup();
+            } catch (e) {}
+          }
+        }
+      } else {
+        // --- Režim jedné strany (Single-Page Canvas Rendering) ---
+        this.currentPage = pageNumber;
+        let page = null;
+        try {
+          page = await this.pdfDoc.getPage(pageNumber);
+
+          const targetWidth = window.innerWidth;
+          const targetHeight = window.innerHeight;
+
+          const unscaledViewport = page.getViewport({ scale: 1 });
+          const rawWidth = (page.rotate === 90 || page.rotate === 270)
+            ? (page.view?.[3] || unscaledViewport.width)
+            : (page.view?.[2] || unscaledViewport.width);
+          const rawHeight = (page.rotate === 90 || page.rotate === 270)
+            ? (page.view?.[2] || unscaledViewport.height)
+            : (page.view?.[3] || unscaledViewport.height);
+          const pageWidth = unscaledViewport.width || rawWidth || targetWidth;
+          const pageHeight = unscaledViewport.height || rawHeight || targetHeight;
+
+          const vpEl = document.getElementById("paged-viewport");
+          const availH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : targetHeight;
+
+          const scaleX = (targetWidth - 32) / pageWidth;
+          const scaleY = availH / pageHeight;
+          const scale = Math.min(scaleX, scaleY);
+
+          const viewport = page.getViewport({ scale });
           const floorW = Math.floor(viewport.width);
           const floorH = Math.floor(viewport.height);
 
-          const slot = document.createElement("div");
-          slot.className = "pdf-page-slot pdf-page-container";
-          slot.dataset.pageNumber = String(pageNum);
-          slot.style.width = `${floorW}px`;
-          slot.style.height = `${floorH}px`;
-          slot.style.position = "relative";
-          slot.style.display = "flex";
-          slot.style.justifyContent = "center";
-          slot.style.alignItems = "center";
+          this._cleanupContainerCanvases(container);
+          container.innerHTML = "";
+
+          const pageContainer = document.createElement("div");
+          pageContainer.className = "pdf-page-container";
+          this.pageContainer = pageContainer;
+
+          pageContainer.style.position = "relative";
+          pageContainer.style.width = `${floorW}px`;
+          pageContainer.style.height = `${floorH}px`;
+          pageContainer.style.maxWidth = "100vw";
+          pageContainer.style.maxHeight = "100vh";
+          pageContainer.style.margin = "auto";
+          pageContainer.style.display = "flex";
+          pageContainer.style.justifyContent = "center";
+          pageContainer.style.alignItems = "center";
+          pageContainer.style.boxShadow = "none";
+          pageContainer.style.border = "none";
+          pageContainer.style.borderRadius = "0";
+          pageContainer.style.padding = "0";
 
           const canvas = document.createElement("canvas");
           canvas.className = "pdf-page-canvas";
+          this.canvas = canvas;
+
+          canvas.style.boxShadow = "none";
+          canvas.style.border = "none";
+          canvas.style.borderRadius = "0";
+          canvas.style.margin = "0";
+          canvas.style.padding = "0";
+          canvas.style.display = "block";
+
           canvas.width = Math.floor(viewport.width * dpr);
           canvas.height = Math.floor(viewport.height * dpr);
           canvas.style.width = `${floorW}px`;
           canvas.style.height = `${floorH}px`;
-          canvas.style.display = "block";
 
           const imageLayer = document.createElement("div");
           imageLayer.className = "pdf-image-layer";
+          this.imageLayer = imageLayer;
 
           const ctx = canvas.getContext("2d");
           const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
 
-          slot.appendChild(canvas);
-          slot.appendChild(imageLayer);
-          spreadContainer.appendChild(slot);
+          pageContainer.appendChild(canvas);
+          pageContainer.appendChild(imageLayer);
+          container.appendChild(pageContainer);
 
-          pageSlots.push(slot);
-          canvases.push(canvas);
-          imageLayers.push(imageLayer);
-
-          const rTask = p.render({
+          const renderContext = {
             canvasContext: ctx,
             transform: transform,
             viewport: viewport
-          });
-          renderTasks.push({ rTask, page: p, viewport, canvas, imageLayer });
-        }
+          };
 
-        container.appendChild(spreadContainer);
+          this.currentRenderTask = page.render(renderContext);
+          await this.currentRenderTask.promise;
+          this.currentRenderTask = null;
 
-        this.currentRenderTasks = renderTasks.map(t => t.rTask);
-        this.currentRenderTask = this.currentRenderTasks[0] || null;
-        this.canvas = canvases[0] || null;
-        this.pageContainer = pageSlots[0] || null;
-        this.imageLayer = imageLayers[0] || null;
-        this.pageSlots = pageSlots;
-        this.canvases = canvases;
-
-        await Promise.all(renderTasks.map(t => t.rTask.promise));
-        this.currentRenderTasks = [];
-        this.currentRenderTask = null;
-
-        await Promise.all(renderTasks.map(t =>
-          this._extractAndTagImages(t.page, t.viewport, t.canvas, dpr, t.imageLayer).catch(imgErr => {
+          try {
+            await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
+          } catch (imgErr) {
             console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
-          })
-        ));
-      } else {
-        // --- Režim jedné strany (Single-Page Canvas Rendering) ---
-        this.currentPage = pageNumber;
-        const page = await this.pdfDoc.getPage(pageNumber);
-
-        const targetWidth = window.innerWidth;
-        const targetHeight = window.innerHeight;
-
-        const unscaledViewport = page.getViewport({ scale: 1 });
-        const rawWidth = (page.rotate === 90 || page.rotate === 270)
-          ? (page.view?.[3] || unscaledViewport.width)
-          : (page.view?.[2] || unscaledViewport.width);
-        const rawHeight = (page.rotate === 90 || page.rotate === 270)
-          ? (page.view?.[2] || unscaledViewport.height)
-          : (page.view?.[3] || unscaledViewport.height);
-        const pageWidth = unscaledViewport.width || rawWidth || targetWidth;
-        const pageHeight = unscaledViewport.height || rawHeight || targetHeight;
-
-        const vpEl = document.getElementById("paged-viewport");
-        const availH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : targetHeight;
-
-        const scaleX = (targetWidth - 32) / pageWidth;
-        const scaleY = availH / pageHeight;
-        const scale = Math.min(scaleX, scaleY);
-
-        const viewport = page.getViewport({ scale });
-        const floorW = Math.floor(viewport.width);
-        const floorH = Math.floor(viewport.height);
-
-        container.innerHTML = "";
-
-        const pageContainer = document.createElement("div");
-        pageContainer.className = "pdf-page-container";
-        this.pageContainer = pageContainer;
-
-        pageContainer.style.position = "relative";
-        pageContainer.style.width = `${floorW}px`;
-        pageContainer.style.height = `${floorH}px`;
-        pageContainer.style.maxWidth = "100vw";
-        pageContainer.style.maxHeight = "100vh";
-        pageContainer.style.margin = "auto";
-        pageContainer.style.display = "flex";
-        pageContainer.style.justifyContent = "center";
-        pageContainer.style.alignItems = "center";
-        pageContainer.style.boxShadow = "none";
-        pageContainer.style.border = "none";
-        pageContainer.style.borderRadius = "0";
-        pageContainer.style.padding = "0";
-
-        const canvas = document.createElement("canvas");
-        canvas.className = "pdf-page-canvas";
-        this.canvas = canvas;
-
-        canvas.style.boxShadow = "none";
-        canvas.style.border = "none";
-        canvas.style.borderRadius = "0";
-        canvas.style.margin = "0";
-        canvas.style.padding = "0";
-        canvas.style.display = "block";
-
-        canvas.width = Math.floor(viewport.width * dpr);
-        canvas.height = Math.floor(viewport.height * dpr);
-        canvas.style.width = `${floorW}px`;
-        canvas.style.height = `${floorH}px`;
-
-        const imageLayer = document.createElement("div");
-        imageLayer.className = "pdf-image-layer";
-        this.imageLayer = imageLayer;
-
-        const ctx = canvas.getContext("2d");
-        const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
-
-        pageContainer.appendChild(canvas);
-        pageContainer.appendChild(imageLayer);
-        container.appendChild(pageContainer);
-
-        const renderContext = {
-          canvasContext: ctx,
-          transform: transform,
-          viewport: viewport
-        };
-
-        this.currentRenderTask = page.render(renderContext);
-        await this.currentRenderTask.promise;
-        this.currentRenderTask = null;
-
-        try {
-          await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
-        } catch (imgErr) {
-          console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
+          }
+        } finally {
+          try {
+            if (typeof page?.cleanup === "function") {
+              page.cleanup();
+            }
+          } catch (e) {}
         }
       }
     } catch (err) {
@@ -584,9 +657,10 @@ export class PDFLoader {
     if (this.renderedPages.has(pageNumber) || this.renderingPages.has(pageNumber)) return;
 
     this.renderingPages.add(pageNumber);
+    let page = null;
 
     try {
-      const page = await this.pdfDoc.getPage(pageNumber);
+      page = await this.pdfDoc.getPage(pageNumber);
       if (!this.renderingPages.has(pageNumber)) return;
 
       const unscaledViewport = page.getViewport({ scale: 1 });
@@ -610,6 +684,7 @@ export class PDFLoader {
       const floorW = Math.floor(viewport.width);
       const floorH = Math.floor(viewport.height);
 
+      this._cleanupContainerCanvases(pageContainer);
       pageContainer.style.width = `${floorW}px`;
       pageContainer.style.height = `${floorH}px`;
       pageContainer.style.minHeight = `${floorH}px`;
@@ -668,6 +743,11 @@ export class PDFLoader {
       }
     } finally {
       this.renderingPages.delete(pageNumber);
+      try {
+        if (typeof page?.cleanup === "function") {
+          page.cleanup();
+        }
+      } catch (e) {}
     }
   }
 
@@ -682,9 +762,10 @@ export class PDFLoader {
     const scRect = sc === window ? { top: 0, bottom: window.innerHeight } : sc.getBoundingClientRect();
     const cRect = pageContainer.getBoundingClientRect();
 
-    // Pokud je strana dále než 2500px mimo zorné pole, uvolníme canvas pro úsporu paměti
+    // Pokud je strana dále než 1200px mimo zorné pole, uvolníme canvas pro úsporu paměti
     const dist = cRect.bottom < scRect.top ? (scRect.top - cRect.bottom) : (cRect.top > scRect.bottom ? (cRect.top - scRect.bottom) : 0);
-    if (dist > 2500) {
+    if (dist > 1200) {
+      this._cleanupContainerCanvases(pageContainer);
       pageContainer.innerHTML = "";
       this.renderedPages.delete(pageNumber);
     }
@@ -788,6 +869,9 @@ export class PDFLoader {
     if (this._boundOnResize) {
       window.removeEventListener("resize", this._boundOnResize);
       this._boundOnResize = null;
+    }
+    for (const [_, el] of this.pageContainers) {
+      this._cleanupContainerCanvases(el);
     }
     this.pageContainers.clear();
     this.renderedPages.clear();
@@ -981,7 +1065,10 @@ export class PDFLoader {
         offCanvas.width = sw;
         offCanvas.height = sh;
         const offCtx = offCanvas.getContext("2d");
-        if (!offCtx) continue;
+        if (!offCtx) {
+          this._destroyCanvas(offCanvas);
+          continue;
+        }
 
         // Aplikujeme pre-inverzi na data obrázku.
         // Když CSS dark mode aplikuje pravidlo:
@@ -1023,6 +1110,7 @@ export class PDFLoader {
         imgEl.style.pointerEvents = "none";
 
         imageLayer.appendChild(imgEl);
+        this._destroyCanvas(offCanvas);
       }
     }
   }
@@ -1046,17 +1134,24 @@ export class PDFLoader {
       }
       this.currentRenderTasks = [];
     }
+    if (this.canvases && this.canvases.length > 0) {
+      for (const c of this.canvases) this._destroyCanvas(c);
+      this.canvases = [];
+    }
+    if (this.canvas) {
+      this._destroyCanvas(this.canvas);
+      this.canvas = null;
+    }
+    if (this.container) {
+      this._cleanupContainerCanvases(this.container);
+      this.container.innerHTML = "";
+    }
     if (this.pdfDoc) {
       try {
         this.pdfDoc.destroy();
       } catch (e) {}
       this.pdfDoc = null;
     }
-    if (this.container) {
-      this.container.innerHTML = "";
-    }
-    this.canvas = null;
-    this.canvases = [];
     this.pageContainer = null;
     this.pageSlots = [];
     this.spreadContainer = null;
