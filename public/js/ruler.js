@@ -913,15 +913,7 @@ export class ReadingRuler {
       }
     }
 
-    if (this.rulerEl) {
-      this.rulerEl.classList.add("is-snapped");
-      this.rulerEl.style.transition = "none";
-    }
-    if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
-    if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
-    if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
-    if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
-
+    this._snapRulerInstantOrAnimated();
     this.applyPosition();
   }
 
@@ -1018,18 +1010,20 @@ export class ReadingRuler {
     this.lastValidPointerX = this.lastPointerX;
     this.lastValidPointerY = this.lastPointerY;
 
+    if (this._programmaticScrollTimer) {
+      clearTimeout(this._programmaticScrollTimer);
+      this._programmaticScrollTimer = null;
+    }
+    this._isProgrammaticScroll = false;
+
     if (this.rulerEl) {
       this.rulerEl.style.display = "block";
       this.rulerEl.style.opacity = "1";
       this.rulerEl.style.visibility = "visible";
       this.rulerEl.classList.remove("is-hidden", "hidden");
-      this.rulerEl.classList.add("is-visible", "is-snapped");
-      this.rulerEl.style.transition = "none";
+      this.rulerEl.classList.add("is-visible");
     }
-    this.maskTopEl.classList.add("is-snapped");
-    this.maskBottomEl.classList.add("is-snapped");
-    this.maskLeftEl.classList.add("is-snapped");
-    this.maskRightEl.classList.add("is-snapped");
+    this._snapRulerInstantOrAnimated();
 
     this.applyPosition();
   }
@@ -1657,6 +1651,59 @@ export class ReadingRuler {
   }
 
   /**
+   * Provede okamžitý synchronní posun vertikálního viewportu bez plynulých animací (behavior: 'auto'),
+   * aby nedocházelo k zásekům a desynchronizaci WebKit compositoru na dotykových zařízeních.
+   */
+  _applyVerticalScrollDelta(vp, scrollDelta) {
+    if (!vp || Math.abs(scrollDelta) < 0.5) return;
+    if (this._programmaticScrollTimer) {
+      clearTimeout(this._programmaticScrollTimer);
+      this._programmaticScrollTimer = null;
+    }
+    this._isProgrammaticScroll = true;
+    vp.scrollTop += scrollDelta;
+    this._programmaticScrollTimer = setTimeout(() => {
+      this._isProgrammaticScroll = false;
+      this._programmaticScrollTimer = null;
+    }, 40);
+  }
+
+  /**
+   * Aplikuje okamžité přichycení pravítka. Ve vertikálním režimu striktně vynutí
+   * transition: none !important bez třídy .is-snapped pro 1:1 synchronizaci bez lagu.
+   */
+  _snapRulerInstantOrAnimated() {
+    if (this.isVerticalMode()) {
+      if (this.rulerEl) {
+        this.rulerEl.classList.remove("is-snapped");
+        this.rulerEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskTopEl) {
+        this.maskTopEl.classList.remove("is-snapped");
+        this.maskTopEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskBottomEl) {
+        this.maskBottomEl.classList.remove("is-snapped");
+        this.maskBottomEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskLeftEl) {
+        this.maskLeftEl.classList.remove("is-snapped");
+        this.maskLeftEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskRightEl) {
+        this.maskRightEl.classList.remove("is-snapped");
+        this.maskRightEl.style.setProperty("transition", "none", "important");
+      }
+    } else {
+      if (this.rulerEl) this.rulerEl.classList.add("is-snapped");
+      if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
+      if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
+      if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
+      if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
+    }
+  }
+
+  /**
    * Plynulá aktualizace pozice pravítka během vertikálního posuvu stránky (EPUB / PDF scroll).
    * Využívá RAF throttling a GPU transform (translate3d) bez nákladného měření DOMu.
    */
@@ -1836,13 +1883,7 @@ export class ReadingRuler {
         this.currentY = this.targetY;
       }
 
-      if (this.rulerEl) {
-        this.rulerEl.classList.add("is-snapped");
-      }
-      if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
-      if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
-      if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
-      if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
+      this._snapRulerInstantOrAnimated();
     }
 
     this.applyPosition();
@@ -3947,6 +3988,13 @@ export class ReadingRuler {
     if (!force && this.isInteracting()) return;
     this.cancelHold();
 
+    // Okamžitě zrušit jakýkoliv běžící programový scroll timer pro okamžitý snap bez prodlev
+    if (this._programmaticScrollTimer) {
+      clearTimeout(this._programmaticScrollTimer);
+      this._programmaticScrollTimer = null;
+    }
+    this._isProgrammaticScroll = false;
+
     try {
       if (this.wordTracking) {
         if (this.isWordTransitioning) {
@@ -3993,18 +4041,10 @@ export class ReadingRuler {
                   const idealScrollTop = Math.round(nextTarget.centerY - (this.stationaryScreenY + h / 2));
                   const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
                   const scrollDelta = clampedScrollTop - vp.scrollTop;
-                  if (Math.abs(scrollDelta) > 0.5) {
-                    vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
-                    this._isProgrammaticScroll = true;
-                    if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-                    this._programmaticScrollTimer = setTimeout(() => {
-                      this._isProgrammaticScroll = false;
-                      this._programmaticScrollTimer = null;
-                    }, 350);
-                  }
+                  this._applyVerticalScrollDelta(vp, scrollDelta);
                 }
               }
-              this.rulerEl.classList.add("is-snapped");
+              this._snapRulerInstantOrAnimated();
               this.applyPosition();
               return;
             } else {
@@ -4022,18 +4062,11 @@ export class ReadingRuler {
                     const idealScrollTop = Math.round(nextTarget.centerY - (this.stationaryScreenY + h / 2));
                     const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
                     const scrollDelta = clampedScrollTop - vp.scrollTop;
-                    if (Math.abs(scrollDelta) > 0.5) {
-                      vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
-                      this._isProgrammaticScroll = true;
-                      if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-                      this._programmaticScrollTimer = setTimeout(() => {
-                        this._isProgrammaticScroll = false;
-                        this._programmaticScrollTimer = null;
-                      }, 350);
-                    }
+                    this._applyVerticalScrollDelta(vp, scrollDelta);
                   }
                 }
-                this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
+                this.rulerEl.classList.add("word-tracking-mode");
+                this._snapRulerInstantOrAnimated();
                 this.disableWordTransition();
                 this.applyPosition();
                 return;
@@ -4094,18 +4127,10 @@ export class ReadingRuler {
                       const idealScrollTop = Math.round(nextLine.centerY - (this.stationaryScreenY + h / 2));
                       const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
                       const scrollDelta = clampedScrollTop - vp.scrollTop;
-                      if (Math.abs(scrollDelta) > 0.5) {
-                        vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
-                        this._isProgrammaticScroll = true;
-                        if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-                        this._programmaticScrollTimer = setTimeout(() => {
-                          this._isProgrammaticScroll = false;
-                          this._programmaticScrollTimer = null;
-                        }, 350);
-                      }
+                      this._applyVerticalScrollDelta(vp, scrollDelta);
                     }
                   }
-                  this.rulerEl.classList.add("is-snapped");
+                  this._snapRulerInstantOrAnimated();
                   this.applyPosition();
                   return;
                 }
@@ -4132,18 +4157,10 @@ export class ReadingRuler {
                       const idealScrollTop = Math.round(prevLine.centerY - (this.stationaryScreenY + h / 2));
                       const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
                       const scrollDelta = clampedScrollTop - vp.scrollTop;
-                      if (Math.abs(scrollDelta) > 0.5) {
-                        vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
-                        this._isProgrammaticScroll = true;
-                        if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-                        this._programmaticScrollTimer = setTimeout(() => {
-                          this._isProgrammaticScroll = false;
-                          this._programmaticScrollTimer = null;
-                        }, 350);
-                      }
+                      this._applyVerticalScrollDelta(vp, scrollDelta);
                     }
                   }
-                  this.rulerEl.classList.add("is-snapped");
+                  this._snapRulerInstantOrAnimated();
                   this.applyPosition();
                   return;
                 }
@@ -4188,16 +4205,7 @@ export class ReadingRuler {
                 const idealScrollTop = Math.round(nextLine.centerY - (this.stationaryScreenY + h / 2));
                 const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
                 const scrollDelta = clampedScrollTop - vp.scrollTop;
-
-                if (Math.abs(scrollDelta) > 0.5) {
-                  vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
-                  this._isProgrammaticScroll = true;
-                  if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-                  this._programmaticScrollTimer = setTimeout(() => {
-                    this._isProgrammaticScroll = false;
-                    this._programmaticScrollTimer = null;
-                  }, 350);
-                }
+                this._applyVerticalScrollDelta(vp, scrollDelta);
               }
             }
 
@@ -4210,14 +4218,8 @@ export class ReadingRuler {
             this.lastValidPointerX = this.lastPointerX;
             this.lastValidPointerY = this.lastPointerY;
 
-            this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
-            this.maskTopEl.classList.add("is-snapped");
-            this.maskBottomEl.classList.add("is-snapped");
-            this.maskLeftEl.classList.add("is-snapped");
-            this.maskRightEl.classList.add("is-snapped");
-            if (this.rulerEl) {
-              this.rulerEl.style.transition = "none";
-            }
+            this.rulerEl.classList.add("word-tracking-mode");
+            this._snapRulerInstantOrAnimated();
             this.disableWordTransition();
             this.applyPosition();
             return;
@@ -4226,11 +4228,7 @@ export class ReadingRuler {
           this.setWordWindow(newIdx);
 
           this.rulerEl.classList.add("word-tracking-mode");
-          this.rulerEl.classList.add("is-snapped");
-          this.maskTopEl.classList.add("is-snapped");
-          this.maskBottomEl.classList.add("is-snapped");
-          this.maskLeftEl.classList.add("is-snapped");
-          this.maskRightEl.classList.add("is-snapped");
+          this._snapRulerInstantOrAnimated();
 
           this.disableWordTransition();
           this.applyPosition();
@@ -4239,9 +4237,9 @@ export class ReadingRuler {
             if (vp && Number.isFinite(this.targetY)) {
               const screenY = this.targetY - vp.scrollTop;
               if (screenY < 80) {
-                vp.scrollBy({ top: screenY - 120, behavior: "smooth" });
+                this._applyVerticalScrollDelta(vp, screenY - 120);
               } else if (screenY > vp.clientHeight - 120) {
-                vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: "smooth" });
+                this._applyVerticalScrollDelta(vp, screenY - (vp.clientHeight - 160));
               }
             }
           }
@@ -4309,16 +4307,7 @@ export class ReadingRuler {
             const idealScrollTop = Math.round(nextLine.centerY - (this.stationaryScreenY + h / 2));
             const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
             const scrollDelta = clampedScrollTop - vp.scrollTop;
-
-            if (Math.abs(scrollDelta) > 0.5) {
-              vp.scrollBy({ top: scrollDelta, behavior: "smooth" });
-              this._isProgrammaticScroll = true;
-              if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-              this._programmaticScrollTimer = setTimeout(() => {
-                this._isProgrammaticScroll = false;
-                this._programmaticScrollTimer = null;
-              }, 350);
-            }
+            this._applyVerticalScrollDelta(vp, scrollDelta);
 
             this.activeLineIndex = newIdx;
             this.rulerEl.classList.remove("word-tracking-mode");
@@ -4334,14 +4323,7 @@ export class ReadingRuler {
             this.lastValidPointerX = this.lastPointerX;
             this.lastValidPointerY = this.lastPointerY;
 
-            this.rulerEl.classList.add("is-snapped");
-            this.maskTopEl.classList.add("is-snapped");
-            this.maskBottomEl.classList.add("is-snapped");
-            this.maskLeftEl.classList.add("is-snapped");
-            this.maskRightEl.classList.add("is-snapped");
-            if (this.rulerEl) {
-              this.rulerEl.style.transition = "none";
-            }
+            this._snapRulerInstantOrAnimated();
             this.applyPosition();
             return;
           }
@@ -4363,23 +4345,16 @@ export class ReadingRuler {
         this.lastValidPointerX = this.lastPointerX;
         this.lastValidPointerY = this.lastPointerY;
 
-        this.rulerEl.classList.add("is-snapped");
-        this.maskTopEl.classList.add("is-snapped");
-        this.maskBottomEl.classList.add("is-snapped");
-        this.maskLeftEl.classList.add("is-snapped");
-        this.maskRightEl.classList.add("is-snapped");
-        if (this.rulerEl) {
-          this.rulerEl.style.transition = "none";
-        }
+        this._snapRulerInstantOrAnimated();
         this.applyPosition();
         if (isVertical) {
           const vp = document.querySelector(".paged-viewport") || document.getElementById("paged-viewport");
           if (vp && Number.isFinite(this.targetY)) {
             const screenY = this.targetY - vp.scrollTop;
             if (screenY < 80) {
-              vp.scrollBy({ top: screenY - 120, behavior: "smooth" });
+              this._applyVerticalScrollDelta(vp, screenY - 120);
             } else if (screenY > vp.clientHeight - 120) {
-              vp.scrollBy({ top: screenY - (vp.clientHeight - 160), behavior: "smooth" });
+              this._applyVerticalScrollDelta(vp, screenY - (vp.clientHeight - 160));
             }
           }
         }
@@ -4763,8 +4738,29 @@ export class ReadingRuler {
       }
     }
 
-    if (this.mode === "focus" || !this.wordTracking) {
-      this.rulerEl.style.transition = "none";
+    if (this.isVerticalMode()) {
+      if (this.rulerEl) {
+        this.rulerEl.classList.remove("is-snapped");
+        this.rulerEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskTopEl) {
+        this.maskTopEl.classList.remove("is-snapped");
+        this.maskTopEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskBottomEl) {
+        this.maskBottomEl.classList.remove("is-snapped");
+        this.maskBottomEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskLeftEl) {
+        this.maskLeftEl.classList.remove("is-snapped");
+        this.maskLeftEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskRightEl) {
+        this.maskRightEl.classList.remove("is-snapped");
+        this.maskRightEl.style.setProperty("transition", "none", "important");
+      }
+    } else if (this.mode === "focus" || !this.wordTracking) {
+      if (this.rulerEl) this.rulerEl.style.transition = "none";
     }
 
     let slitLeft = 0;
@@ -4895,6 +4891,9 @@ export class ReadingRuler {
           } else {
             m.classList.remove("active-focus", "ruler-focused-image");
           }
+          if (this.isVerticalMode()) {
+            m.style.setProperty("transition", "none", "important");
+          }
         }
       }
 
@@ -4907,18 +4906,27 @@ export class ReadingRuler {
         if (prevEl && prevEl.classList) {
           prevEl.classList.remove("line-focused", "active-focus");
           prevEl.classList.add("line-dimmed");
+          if (this.isVerticalMode()) {
+            prevEl.style.setProperty("transition", "none", "important");
+          }
         }
       } else if (stage) {
         const allLines = stage.querySelectorAll(".reading-line, .line-focused, .line-dimmed");
         for (const l of allLines) {
           l.classList.remove("line-focused", "active-focus");
           l.classList.add("line-dimmed");
+          if (this.isVerticalMode()) {
+            l.style.setProperty("transition", "none", "important");
+          }
         }
       }
       const curEl = currentLine ? (currentLine.element || currentLine.el) : null;
       if (curEl && curEl.classList) {
         curEl.classList.remove("line-dimmed");
         curEl.classList.add("line-focused", "active-focus");
+        if (this.isVerticalMode()) {
+          curEl.style.setProperty("transition", "none", "important");
+        }
       }
       this.previousActiveLineIndex = curIdx;
 
@@ -5037,7 +5045,8 @@ export class ReadingRuler {
       this.lastPointerY = targetWord ? (isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY) : 150;
       this.lastValidPointerX = this.lastPointerX;
       this.lastValidPointerY = this.lastPointerY;
-      this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
+      this.rulerEl.classList.add("word-tracking-mode");
+      this._snapRulerInstantOrAnimated();
     } else {
       const idx = Math.max(0, Math.min(this.cachedLines.length - 1, index));
       this.activeLineIndex = idx;
@@ -5053,7 +5062,7 @@ export class ReadingRuler {
       this.lastPointerY = isVertical ? Math.round(line.centerY - vScrollTop) : line.centerY;
       this.lastValidPointerX = this.lastPointerX;
       this.lastValidPointerY = this.lastPointerY;
-      this.rulerEl.classList.add("is-snapped");
+      this._snapRulerInstantOrAnimated();
     }
 
     if (!this.isPageTransitioning) {
@@ -5151,6 +5160,29 @@ export class ReadingRuler {
       this.rulerEl.style.visibility = "hidden";
     }
 
+    if (this.isVerticalMode()) {
+      if (this.rulerEl) {
+        this.rulerEl.classList.remove("is-snapped");
+        this.rulerEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskTopEl) {
+        this.maskTopEl.classList.remove("is-snapped");
+        this.maskTopEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskBottomEl) {
+        this.maskBottomEl.classList.remove("is-snapped");
+        this.maskBottomEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskLeftEl) {
+        this.maskLeftEl.classList.remove("is-snapped");
+        this.maskLeftEl.style.setProperty("transition", "none", "important");
+      }
+      if (this.maskRightEl) {
+        this.maskRightEl.classList.remove("is-snapped");
+        this.maskRightEl.style.setProperty("transition", "none", "important");
+      }
+    }
+
     this.applyPosition();
   }
 
@@ -5163,11 +5195,13 @@ export class ReadingRuler {
     const isMouseFollow = isRulerActive && this.followMode === "mouse";
     const isWordTracking = isRulerActive && !!this.wordTracking;
     const isFocus = isRulerActive && this.mode === "focus";
+    const isVertical = isRulerActive && this.isVerticalMode();
 
     document.body.classList.toggle("ruler-active", isRulerActive);
     document.body.classList.toggle("ruler-mouse-follow-active", isMouseFollow);
     document.body.classList.toggle("word-tracking-active", isWordTracking);
     document.body.classList.toggle("ruler-mode-focus", isFocus);
+    document.body.classList.toggle("ruler-vertical-mode", isVertical);
   }
 
   setEnabled(val) {

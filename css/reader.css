@@ -1125,6 +1125,31 @@ body.ruler-mouse-follow-active .ruler-mask {
   transition: opacity 0.2s ease !important;
 }
 
+/* Ve vertikálním režimu čtení zakázat veškeré CSS transition animace pro okamžitý 1:1 snap bez zpoždění */
+body.mode-vertical .reading-ruler,
+body[data-reading-mode="vertical"] .reading-ruler,
+html.mode-vertical .reading-ruler,
+body.ruler-vertical-mode .reading-ruler,
+body.mode-vertical .ruler-mask,
+body[data-reading-mode="vertical"] .ruler-mask,
+html.mode-vertical .ruler-mask,
+body.ruler-vertical-mode .ruler-mask,
+body.mode-vertical .reading-line,
+body.mode-vertical .line-focused,
+body.mode-vertical .line-dimmed,
+body.mode-vertical .word-focused,
+body.mode-vertical .active-focus,
+body.mode-vertical .ruler-focused-image,
+body.ruler-vertical-mode .reading-line,
+body.ruler-vertical-mode .line-focused,
+body.ruler-vertical-mode .line-dimmed,
+body.ruler-vertical-mode .word-focused,
+body.ruler-vertical-mode .active-focus,
+body.ruler-vertical-mode .ruler-focused-image {
+  transition: none !important;
+  -webkit-transition: none !important;
+}
+
 /* Okamžité skrytí pravítka během přechodu mezi stranami pro zamezení desynchronizace */
 .reading-ruler.is-page-transitioning,
 .ruler-mask.is-page-transitioning {
