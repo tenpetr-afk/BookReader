@@ -147,8 +147,8 @@ export class ReadingRuler {
   }
 
   isVerticalMode() {
-    return (document.body && document.body.classList.contains("mode-vertical")) ||
-      (document.documentElement && document.documentElement.classList.contains("mode-vertical")) ||
+    return (document.body?.classList?.contains("mode-vertical")) ||
+      (document.documentElement?.classList?.contains("mode-vertical")) ||
       (document.body?.dataset?.readingMode === "vertical") ||
       (this.readingMode === "vertical");
   }
@@ -194,9 +194,7 @@ export class ReadingRuler {
     if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
     if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
     if (this.maskRightEl) this.maskRightEl.style.display = "none";
-    if (this.mode !== "focus") {
-      this.clearFocusTextMask();
-    }
+    this.clearFocusTextMask();
   }
 
   clearPageTransitionTimersAndRAFs() {
@@ -1809,7 +1807,7 @@ export class ReadingRuler {
 
     this.rulerEl.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
 
-    // Optimalizovaná aktualizace dimming masek v režimu Focus výhradně přes transform
+    // Optimalizovaná aktualizace dimming masek v režimu Focus výhradně přes transform (pro EPUB i PDF)
     if (this.mode === "focus") {
       const vh = vHeight || window.innerHeight;
       const rh = Math.round(h);
@@ -3836,9 +3834,7 @@ export class ReadingRuler {
             this.rulerEl.classList.remove("is-visible");
             this.rulerEl.classList.add("is-hidden");
           }
-          if (this.mode !== "focus") {
-            this.clearFocusTextMask();
-          }
+          this.clearFocusTextMask();
           return;
         }
 
@@ -4505,7 +4501,8 @@ export class ReadingRuler {
     if (this.container) targets.add(this.container);
 
     for (const el of targets) {
-      el.classList.remove("focus-active");
+      if (!el || !el.classList || !el.style) continue;
+      el.classList.remove("focus-active", "focus-mode-active");
       el.style.webkitMaskImage = "";
       el.style.maskImage = "";
       el.style.webkitMaskPosition = "";
@@ -4516,12 +4513,23 @@ export class ReadingRuler {
       el.style.maskRepeat = "";
       el.style.webkitMaskComposite = "";
       el.style.maskComposite = "";
+      el.style.webkitMaskAttachment = "";
+      el.style.maskAttachment = "";
+      el.style.removeProperty("--mask-slit-top");
+      el.style.removeProperty("--mask-slit-bottom");
+      el.style.removeProperty("--focus-text-dim");
+      el.style.removeProperty("-webkit-mask-image");
+      el.style.removeProperty("mask-image");
+      el.style.removeProperty("-webkit-mask-attachment");
+      el.style.removeProperty("mask-attachment");
+      el.style.removeProperty("-webkit-mask-size");
+      el.style.removeProperty("mask-size");
       const mediaEls = el.querySelectorAll(".active-focus, .ruler-focused-image");
       mediaEls.forEach(m => m.classList.remove("active-focus", "ruler-focused-image"));
     }
 
     const allLines = document.querySelectorAll(".reading-line, .line-focused, .line-dimmed");
-    allLines.forEach(l => l.classList.remove("line-focused", "line-dimmed"));
+    allLines.forEach(l => l.classList.remove("line-focused", "line-dimmed", "active-focus"));
 
     const masks = [this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl];
     for (const m of masks) {
@@ -4529,6 +4537,8 @@ export class ReadingRuler {
         m.style.display = "none";
         m.classList.remove("is-visible", "pdf-overlay-mask");
         m.classList.add("is-hidden");
+        m.style.removeProperty("background-color");
+        m.style.removeProperty("opacity");
       }
     }
 
@@ -5000,144 +5010,85 @@ export class ReadingRuler {
 
     const stage = this.getStageElement();
     if (this.mode === "focus" && this.enabled) {
-      if (this.cachedLines.length === 0 || this.isPageTransitioning) {
+      if (this.cachedLines.length === 0 || this.isPageTransitioning || !currentLine) {
         this.clearFocusTextMask(stage);
         return;
       }
 
-      // Synchronizace tříd aktivního zaostření na multimédia v stage:
-      // obrázky zůstávají vždy ztlumené společně s neaktivním textem
-      if (stage) {
-        const allMedia = stage.querySelectorAll("img, svg, canvas, figure, picture, .chapter-illustration");
-        for (const m of allMedia) {
-          m.classList.remove("active-focus", "ruler-focused-image");
-          if (this.isVerticalMode()) {
-            m.style.setProperty("transition", "none", "important");
-          }
-        }
-      }
-
-      if (isCurrentMedia) {
-        const curMediaEl = currentLine.element || currentLine.el;
-        if (curMediaEl && curMediaEl.classList) {
-          curMediaEl.classList.add("active-focus", "ruler-focused-image");
-          if (this.isVerticalMode()) {
-            curMediaEl.style.setProperty("transition", "none", "important");
-          }
-          const parentFig = curMediaEl.closest("figure, picture, .chapter-illustration");
-          if (parentFig && parentFig.classList) {
-            parentFig.classList.add("active-focus", "ruler-focused-image");
-            if (this.isVerticalMode()) {
-              parentFig.style.setProperty("transition", "none", "important");
-            }
-          }
-        }
-      }
-
-      // Synchronní výměna tříd na řádcích textu (reading lines)
-      const prevIdx = this.previousActiveLineIndex;
-      const curIdx = this.activeLineIndex;
-      if (prevIdx != null && prevIdx >= 0 && prevIdx < this.cachedLines.length && prevIdx !== curIdx) {
-        const prevLine = this.cachedLines[prevIdx];
-        const prevEl = prevLine ? (prevLine.element || prevLine.el) : null;
-        if (prevEl && prevEl.classList) {
-          prevEl.classList.remove("line-focused", "active-focus");
-          prevEl.classList.add("line-dimmed");
-          if (this.isVerticalMode()) {
-            prevEl.style.setProperty("transition", "none", "important");
-          }
-        }
-      } else if (stage) {
-        const allLines = stage.querySelectorAll(".reading-line, .line-focused, .line-dimmed");
-        for (const l of allLines) {
-          l.classList.remove("line-focused", "active-focus");
-          l.classList.add("line-dimmed");
-          if (this.isVerticalMode()) {
-            l.style.setProperty("transition", "none", "important");
-          }
-        }
-      }
-      const curEl = currentLine ? (currentLine.element || currentLine.el) : null;
-      if (curEl && curEl.classList) {
-        curEl.classList.remove("line-dimmed");
-        curEl.classList.add("line-focused", "active-focus");
-        if (this.isVerticalMode()) {
-          curEl.style.setProperty("transition", "none", "important");
-        }
-      }
-      this.previousActiveLineIndex = curIdx;
-
-      const dimOpacity = (this.dimOpacity !== undefined && this.dimOpacity !== null) ? this.dimOpacity : 0.65;
-      const dimBg = `rgba(0, 0, 0, ${dimOpacity})`;
-      document.documentElement.style.setProperty("--focus-dim-opacity", String(dimOpacity));
-
       const vh = window.innerHeight;
-      this._slitLeft = slitLeft;
+      const roundScreenY = Math.round(screenY);
+      const roundH = Math.round(h);
       this._slitRight = slitRight;
-      this._viewportHeight = vh;
 
-      // 1. Top mask: covers from top of window (0) down to screenY
+      // 1. Horní maska: pokrývá prostor od horního okraje obrazovky dolů k screenY
       if (this.maskTopEl) {
         this.maskTopEl.className = "ruler-mask ruler-mask-top is-visible";
         this.maskTopEl.style.setProperty("display", "block", "important");
-        this.maskTopEl.style.setProperty("background-color", dimBg, "important");
-        this.maskTopEl.style.setProperty("opacity", "1", "important");
         this.maskTopEl.style.top = "0px";
         this.maskTopEl.style.left = "0px";
         this.maskTopEl.style.width = "100%";
         this.maskTopEl.style.height = `${vh}px`;
-        this.maskTopEl.style.transform = `translate3d(0, ${Math.round(screenY - vh)}px, 0)`;
+        this.maskTopEl.style.transform = `translate3d(0, ${Math.round(roundScreenY - vh)}px, 0)`;
       }
 
-      // 2. Bottom mask: covers from screenY + h down to bottom of window
-      const bottomBandTop = screenY + h;
+      // 2. Dolní maska: pokrývá prostor od screenY + h dolů ke spodnímu okraji obrazovky
+      const bottomBandTop = Math.round(roundScreenY + roundH);
       if (this.maskBottomEl) {
         this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-visible";
         this.maskBottomEl.style.setProperty("display", "block", "important");
-        this.maskBottomEl.style.setProperty("background-color", dimBg, "important");
-        this.maskBottomEl.style.setProperty("opacity", "1", "important");
         this.maskBottomEl.style.top = "0px";
         this.maskBottomEl.style.left = "0px";
         this.maskBottomEl.style.width = "100%";
         this.maskBottomEl.style.height = `${vh}px`;
-        this.maskBottomEl.style.transform = `translate3d(0, ${Math.round(bottomBandTop)}px, 0)`;
+        this.maskBottomEl.style.transform = `translate3d(0, ${bottomBandTop}px, 0)`;
       }
 
-      // 3. Left mask: covers between screenY and screenY + h from left edge (0) to slitLeft
-      const leftBandWidth = Math.max(0, Math.round(slitLeft));
-      if (leftBandWidth > 0 && this.maskLeftEl) {
-        this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
-        this.maskLeftEl.style.setProperty("display", "block", "important");
-        this.maskLeftEl.style.setProperty("background-color", dimBg, "important");
-        this.maskLeftEl.style.setProperty("opacity", "1", "important");
-        this.maskLeftEl.style.top = "0px";
-        this.maskLeftEl.style.left = "0px";
-        this.maskLeftEl.style.width = `${leftBandWidth}px`;
-        this.maskLeftEl.style.height = `${Math.round(h)}px`;
-        this.maskLeftEl.style.transform = `translate3d(0, ${Math.round(screenY)}px, 0)`;
-      } else if (this.maskLeftEl) {
-        this.maskLeftEl.style.display = "none";
-        this.maskLeftEl.classList.remove("is-visible");
-        this.maskLeftEl.classList.add("is-hidden");
-      }
+      // 3. Postranní masky (při sledování jednotlivých slov nebo ve dvousloupcovém režimu)
+      const isTwoCol = !isVertical && this.isTwoCol;
+      const needSideMasks = (this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia) || isTwoCol;
 
-      // 4. Right mask: covers between screenY and screenY + h from slitRight to right edge
-      const rightBandLeft = Math.round(slitRight);
-      const rightBandWidth = Math.max(0, window.innerWidth - rightBandLeft);
-      if (rightBandWidth > 0 && this.maskRightEl) {
-        this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
-        this.maskRightEl.style.setProperty("display", "block", "important");
-        this.maskRightEl.style.setProperty("background-color", dimBg, "important");
-        this.maskRightEl.style.setProperty("opacity", "1", "important");
-        this.maskRightEl.style.top = "0px";
-        this.maskRightEl.style.left = "0px";
-        this.maskRightEl.style.width = `${rightBandWidth}px`;
-        this.maskRightEl.style.height = `${Math.round(h)}px`;
-        this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${Math.round(screenY)}px, 0)`;
-      } else if (this.maskRightEl) {
-        this.maskRightEl.style.display = "none";
-        this.maskRightEl.classList.remove("is-visible");
-        this.maskRightEl.classList.add("is-hidden");
+      if (needSideMasks) {
+        const leftBandWidth = Math.max(0, Math.round(slitLeft));
+        if (leftBandWidth > 0 && this.maskLeftEl) {
+          this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
+          this.maskLeftEl.style.setProperty("display", "block", "important");
+          this.maskLeftEl.style.top = "0px";
+          this.maskLeftEl.style.left = "0px";
+          this.maskLeftEl.style.width = `${leftBandWidth}px`;
+          this.maskLeftEl.style.height = `${roundH}px`;
+          this.maskLeftEl.style.transform = `translate3d(0, ${roundScreenY}px, 0)`;
+        } else if (this.maskLeftEl) {
+          this.maskLeftEl.style.display = "none";
+          this.maskLeftEl.classList.remove("is-visible");
+          this.maskLeftEl.classList.add("is-hidden");
+        }
+
+        const rightBandLeft = Math.round(slitRight);
+        const rightBandWidth = Math.max(0, window.innerWidth - rightBandLeft);
+        if (rightBandWidth > 0 && this.maskRightEl) {
+          this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
+          this.maskRightEl.style.setProperty("display", "block", "important");
+          this.maskRightEl.style.top = "0px";
+          this.maskRightEl.style.left = "0px";
+          this.maskRightEl.style.width = `${rightBandWidth}px`;
+          this.maskRightEl.style.height = `${roundH}px`;
+          this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${roundScreenY}px, 0)`;
+        } else if (this.maskRightEl) {
+          this.maskRightEl.style.display = "none";
+          this.maskRightEl.classList.remove("is-visible");
+          this.maskRightEl.classList.add("is-hidden");
+        }
+      } else {
+        if (this.maskLeftEl) {
+          this.maskLeftEl.style.display = "none";
+          this.maskLeftEl.classList.remove("is-visible");
+          this.maskLeftEl.classList.add("is-hidden");
+        }
+        if (this.maskRightEl) {
+          this.maskRightEl.style.display = "none";
+          this.maskRightEl.classList.remove("is-visible");
+          this.maskRightEl.classList.add("is-hidden");
+        }
       }
     } else {
       this.clearFocusTextMask(stage);
@@ -5257,7 +5208,6 @@ export class ReadingRuler {
     const hasLines = this.isPdfMode || this.cachedLines.length > 0;
     const isFocus = this.enabled && this.mode === "focus" && !this.isPageTransitioning && hasLines;
     const transitionClass = this.horizontalWordTransition ? "word-transition-active" : "word-transition-snap";
-    const showSideMasks = isFocus && !this.isPdfMode;
 
     this.rulerEl.classList.add("reading-ruler");
 
@@ -5292,10 +5242,32 @@ export class ReadingRuler {
     this.rulerEl.classList.toggle("word-transition-snap", !!this.wordTracking && !this.horizontalWordTransition);
     this.rulerEl.classList.toggle("is-page-transitioning", !!this.isPageTransitioning);
 
+    const isTwoCol = !this.isVerticalMode() && this.isTwoCol;
+    const showSideMasks = isFocus && (this.wordTracking || isTwoCol);
+
     if (this.maskTopEl) this.maskTopEl.className = `ruler-mask ruler-mask-top ${isFocus ? "is-visible" : "is-hidden"}`;
     if (this.maskBottomEl) this.maskBottomEl.className = `ruler-mask ruler-mask-bottom ${isFocus ? "is-visible" : "is-hidden"}`;
     if (this.maskLeftEl) this.maskLeftEl.className = `ruler-mask ruler-mask-left ${showSideMasks ? "is-visible " + (this.wordTracking ? transitionClass : "") : "is-hidden"}`;
     if (this.maskRightEl) this.maskRightEl.className = `ruler-mask ruler-mask-right ${showSideMasks ? "is-visible " + (this.wordTracking ? transitionClass : "") : "is-hidden"}`;
+
+    if (this.isPdfMode) {
+      if (this.maskTopEl) this.maskTopEl.classList.add("pdf-overlay-mask");
+      if (this.maskBottomEl) this.maskBottomEl.classList.add("pdf-overlay-mask");
+      if (this.maskLeftEl) this.maskLeftEl.classList.add("pdf-overlay-mask");
+      if (this.maskRightEl) this.maskRightEl.classList.add("pdf-overlay-mask");
+    } else {
+      if (this.maskTopEl) this.maskTopEl.classList.remove("pdf-overlay-mask");
+      if (this.maskBottomEl) this.maskBottomEl.classList.remove("pdf-overlay-mask");
+      if (this.maskLeftEl) this.maskLeftEl.classList.remove("pdf-overlay-mask");
+      if (this.maskRightEl) this.maskRightEl.classList.remove("pdf-overlay-mask");
+    }
+
+    if (!isFocus) {
+      if (this.maskTopEl) this.maskTopEl.style.display = "none";
+      if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
+      if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
+      if (this.maskRightEl) this.maskRightEl.style.display = "none";
+    }
 
     if (this.enabled && !this.isPageTransitioning) {
       this.rulerEl.classList.add("is-visible");
@@ -5586,13 +5558,24 @@ export class ReadingRuler {
   }
 
   setDimOpacity(opacity) {
-    this.dimOpacity = Math.max(0.1, Math.min(0.95, parseFloat(opacity) || 0.65));
+    this.dimOpacity = Math.max(0.1, Math.min(0.95, parseFloat(opacity) || 0.70));
     document.documentElement.style.setProperty("--focus-dim-opacity", String(this.dimOpacity));
-    const dimBg = `rgba(0, 0, 0, ${this.dimOpacity})`;
     const masks = [this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl];
-    for (const m of masks) {
-      if (m) {
-        m.style.setProperty("background-color", dimBg, "important");
+    if (this.isPdfMode) {
+      const dimBg = `rgba(0, 0, 0, ${this.dimOpacity})`;
+      for (const m of masks) {
+        if (m) {
+          m.style.setProperty("background-color", dimBg, "important");
+          m.style.setProperty("opacity", "1", "important");
+        }
+      }
+    } else {
+      // V EPUB režimu odstraníme inline barvy a průhlednost, aby se použily CSS vlastnosti motivu (--bg-theme a --focus-dim-opacity)
+      for (const m of masks) {
+        if (m) {
+          m.style.removeProperty("background-color");
+          m.style.removeProperty("opacity");
+        }
       }
     }
     this.updateStyles();
