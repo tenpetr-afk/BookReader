@@ -636,7 +636,7 @@ body.dragging-file .drop-zone-overlay {
   padding-bottom: 0;
   padding-left: max(1rem, var(--safe-area-left));
   padding-right: max(1rem, var(--safe-area-right));
-  z-index: 1000;
+  z-index: 50;
   box-shadow: var(--shadow-sm);
   box-sizing: border-box;
   transition: background-color var(--transition-normal), border-color var(--transition-normal);
@@ -766,7 +766,7 @@ body.dragging-file .drop-zone-overlay {
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  z-index: 2400;
+  z-index: 90 !important;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -803,7 +803,7 @@ body.settings-sheet-open .drawer-backdrop {
   background: var(--bg-surface);
   border-left: 1px solid var(--border-color);
   box-shadow: -8px 0 35px rgba(0, 0, 0, 0.25);
-  z-index: 2500;
+  z-index: 100 !important;
   transform: translateX(105%);
   visibility: hidden;
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.3s;
@@ -1632,10 +1632,10 @@ body.settings-sheet-open .drawer-backdrop {
 .reading-ruler.color-lavender { --ruler-glow-rgb: 168, 85, 247; }
 .reading-ruler.color-slate { --ruler-glow-rgb: 100, 116, 139; }
 
-/* Zajištění viditelnosti a vysokého z-indexu pravítka */
+/* Zajištění viditelnosti a korektního z-indexu pravítka */
 .reading-ruler {
   --ruler-glow-rgb: 245, 158, 11;
-  z-index: 9999 !important;
+  z-index: 20 !important;
   pointer-events: none !important;
 }
 
@@ -1650,12 +1650,12 @@ body.settings-sheet-open .drawer-backdrop {
 }
 
 .ruler-mask {
-  z-index: 50 !important;
+  z-index: 15 !important;
   pointer-events: none !important;
 }
 
 .reading-ruler {
-  z-index: 60 !important;
+  z-index: 20 !important;
 }
 
 .ruler-mask.is-visible {
@@ -1815,13 +1815,21 @@ body.in-reader-view .paged-footer-bar {
   grid-template-columns: 1fr auto 1fr !important;
   align-items: center !important;
   padding: 0 max(1.5rem, env(safe-area-inset-right, 0px)) max(0.5rem, env(safe-area-inset-bottom, 0px)) max(1.5rem, env(safe-area-inset-left, 0px)) !important;
-  z-index: 1000;
+  z-index: 50;
   box-sizing: border-box;
   pointer-events: none !important;
   transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
               opacity 0.24s ease;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Zvýšení priority spodní lišty a ovládacích prvků při otevřeném rychlém menu pravítka */
+#paged-footer-bar:has(#ruler-quick-popover:not(.is-hidden)),
+.paged-footer-bar:has(#ruler-quick-popover:not(.is-hidden)),
+.footer-actions-group:has(#ruler-quick-popover:not(.is-hidden)),
+.ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)) {
+  z-index: 100 !important;
 }
 
 body.in-reader-view .paged-footer-bar > * {
@@ -1877,6 +1885,8 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   align-items: center !important;
   gap: 8px !important;
   pointer-events: auto !important;
+  position: relative;
+  z-index: 60;
   flex: none !important;
 }
 
@@ -1894,6 +1904,7 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   height: 34px;
   box-sizing: border-box;
   position: relative;
+  z-index: 60;
   transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
 
@@ -2029,7 +2040,7 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   min-width: 0;
   padding: 0;
   margin: 0;
-  z-index: 1200;
+  z-index: 60;
   transform-origin: bottom right;
   opacity: 1;
   visibility: visible;
@@ -2575,11 +2586,11 @@ body.is-pdf-mode .page-touch-zone {
 /* Horní lišta: plovoucí poloprůhledná vrstva přímo nad PDF dokumentem */
 body.is-pdf-mode #reader-header,
 body.is-pdf-mode .reader-header {
-  position: absolute !important;
+  position: fixed !important;
   top: 0 !important;
   left: 0 !important;
   right: 0 !important;
-  z-index: 10 !important;
+  z-index: 50 !important;
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
@@ -2648,11 +2659,11 @@ body.is-pdf-mode .header-book-title {
 /* Spodní lišta: plovoucí poloprůhledná vrstva s interaktivními kapslemi */
 body.is-pdf-mode #paged-footer-bar,
 body.is-pdf-mode .paged-footer-bar {
-  position: absolute !important;
+  position: fixed !important;
   bottom: 0 !important;
   left: 0 !important;
   right: 0 !important;
-  z-index: 10 !important;
+  z-index: 50 !important;
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
@@ -2664,7 +2675,7 @@ body.is-pdf-mode .paged-footer-bar {
 }
 
 body.is-pdf-mode .paged-footer-bar > * {
-  pointer-events: none !important;
+  pointer-events: auto !important;
 }
 
 /* Kapslové pilulky ve spodní liště */
@@ -2726,11 +2737,17 @@ body.is-pdf-mode .reading-ruler.mode-highlight,
 .ruler-mask.pdf-overlay-mask {
   position: fixed !important;
   pointer-events: none !important;
-  z-index: 9990 !important;
+  z-index: 15 !important;
   display: block !important;
   opacity: 1 !important;
   box-sizing: border-box !important;
   transition: none !important;
+}
+
+/* Rychlé nastavení pravítka (popover) musí vždy sedět nad všemi maskami i lištami */
+#ruler-quick-popover,
+.ruler-quick-popover {
+  z-index: 100 !important;
 }
 
 /* ==========================================================================

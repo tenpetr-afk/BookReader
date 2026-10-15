@@ -324,6 +324,7 @@ export class LuminaApp {
 
   initRuler() {
     this.ruler = new ReadingRuler(this.dom.pagedStage);
+    this.ruler.app = this;
     this.ruler.readingMode = this.readingMode;
 
     // Callback pro ruler.js: vrátí true pokud je otevřen jakýkoliv panel/zásuvka,
