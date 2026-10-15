@@ -27,7 +27,7 @@ export class ReadingRuler {
 
     // Nastavení
     this.enabled = false;
-    this.mode = "highlight"; // "highlight" | "focus"
+    this.mode = "highlight"; // "highlight" | "focus" | "underline" | "bottom-cover"
     this.rulerPadding = RULER_PADDING;
     this.manualHeight = 48; // px (při vypnutém autoHeight)
     this.height = 36; // aktuální efektivní výška
@@ -3287,9 +3287,15 @@ export class ReadingRuler {
 
       if (isVertical && vp) {
         const vScrollTop = vp.scrollTop;
-        const targetY = (curY != null ? (curY + vScrollTop) : (vScrollTop + 50)) - h / 2;
         const maxScrollHeight = Math.max(vp.scrollHeight, vp.clientHeight);
-        this.currentY = Math.max(0, Math.min(maxScrollHeight - h, targetY));
+        let targetY;
+        if (this.mode === "bottom-cover") {
+          targetY = curY != null ? (curY + vScrollTop) : (vScrollTop + 50);
+          this.currentY = Math.max(0, Math.min(maxScrollHeight, targetY));
+        } else {
+          targetY = (curY != null ? (curY + vScrollTop) : (vScrollTop + 50)) - h / 2;
+          this.currentY = Math.max(0, Math.min(maxScrollHeight - h, targetY));
+        }
         this.targetY = this.currentY;
         this.applyPosition();
         return;
@@ -3297,18 +3303,33 @@ export class ReadingRuler {
 
       const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
       const stageRect = stage ? stage.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
-      const canvas = document.querySelector("#reader-content canvas");
+      const spread = document.querySelector("#reader-content .pdf-spread-container");
       let topBound = stageRect.top;
       let bottomBound = stageRect.bottom;
-      if (canvas) {
-        const cRect = canvas.getBoundingClientRect();
-        if (cRect.height > 50) {
-          topBound = cRect.top;
-          bottomBound = cRect.bottom;
+      if (spread) {
+        const sRect = spread.getBoundingClientRect();
+        if (sRect.height > 50) {
+          topBound = sRect.top;
+          bottomBound = sRect.bottom;
+        }
+      } else {
+        const canvas = document.querySelector("#reader-content canvas");
+        if (canvas) {
+          const cRect = canvas.getBoundingClientRect();
+          if (cRect.height > 50) {
+            topBound = cRect.top;
+            bottomBound = cRect.bottom;
+          }
         }
       }
-      const targetY = (curY != null ? curY : (topBound + 50)) - h / 2;
-      this.currentY = Math.max(topBound, Math.min(bottomBound - h, targetY));
+
+      if (this.mode === "bottom-cover") {
+        const targetY = curY != null ? curY : topBound;
+        this.currentY = Math.max(topBound, Math.min(bottomBound, targetY));
+      } else {
+        const targetY = (curY != null ? curY : (topBound + 50)) - h / 2;
+        this.currentY = Math.max(topBound, Math.min(bottomBound - h, targetY));
+      }
       this.targetY = this.currentY;
       this.applyPosition();
       return;
@@ -4648,9 +4669,63 @@ export class ReadingRuler {
         if (!Number.isFinite(this.currentY)) {
           this.currentY = vScrollTop + Math.round(window.innerHeight * 0.3);
         }
-        this.currentY = Math.max(0, Math.min(maxScrollHeight - h, this.currentY));
+        if (this.mode === "bottom-cover") {
+          this.currentY = Math.max(0, Math.min(maxScrollHeight, this.currentY));
+        } else {
+          this.currentY = Math.max(0, Math.min(maxScrollHeight - h, this.currentY));
+        }
 
         const screenY = Math.round(this.currentY - vScrollTop);
+
+        if (this.mode === "bottom-cover" && this.enabled && !this.isPageTransitioning) {
+          const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.75;
+          const dimBg = `rgba(0, 0, 0, ${dimOpacity})`;
+          const colorHexMap = {
+            amber: "#f59e0b",
+            cyan: "#06b6d4",
+            emerald: "#10b981",
+            lavender: "#a855f7",
+            slate: "#64748b"
+          };
+
+          if (this.maskTopEl) {
+            this.maskTopEl.style.display = "none";
+            this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible");
+            this.maskTopEl.classList.add("is-hidden");
+          }
+          if (this.maskLeftEl) {
+            this.maskLeftEl.style.display = "none";
+            this.maskLeftEl.classList.remove("pdf-overlay-mask", "is-visible");
+            this.maskLeftEl.classList.add("is-hidden");
+          }
+          if (this.maskRightEl) {
+            this.maskRightEl.style.display = "none";
+            this.maskRightEl.classList.remove("pdf-overlay-mask", "is-visible");
+            this.maskRightEl.classList.add("is-hidden");
+          }
+
+          if (this.maskBottomEl) {
+            this.maskBottomEl.className = "ruler-mask ruler-mask-bottom pdf-overlay-mask is-visible";
+            this.maskBottomEl.style.setProperty("display", "block", "important");
+            this.maskBottomEl.style.setProperty("background-color", dimBg, "important");
+            this.maskBottomEl.style.setProperty("opacity", "1", "important");
+            this.maskBottomEl.style.top = `${Math.round(screenY)}px`;
+            this.maskBottomEl.style.left = `${Math.round(targetLeft)}px`;
+            this.maskBottomEl.style.transform = "none";
+            this.maskBottomEl.style.width = `${Math.round(targetWidth)}px`;
+            this.maskBottomEl.style.height = `${Math.max(0, window.innerHeight - screenY)}px`;
+          }
+
+          this.rulerEl.style.top = `${Math.round(screenY)}px`;
+          this.rulerEl.style.left = `${Math.round(targetLeft)}px`;
+          this.rulerEl.style.right = "auto";
+          this.rulerEl.style.transform = "none";
+          this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
+          this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
+          this.rulerEl.style.height = "2px";
+          this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+          return;
+        }
 
         this.rulerEl.style.top = "0px";
         this.rulerEl.style.left = "0px";
@@ -4658,6 +4733,7 @@ export class ReadingRuler {
         this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
         this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
         this.rulerEl.style.transform = `translate3d(${Math.round(targetLeft)}px, ${screenY}px, 0)`;
+        this.rulerEl.style.backgroundColor = "";
 
         // Dimming mask ve vertikálním PDF módu
         if (this.mode === "focus" && this.enabled && !this.isPageTransitioning) {
@@ -4707,24 +4783,90 @@ export class ReadingRuler {
         return;
       }
 
-      // Horizontální režim PDF (jedna strana)
+      // Horizontální režim PDF (jedna strana nebo dvoustrana)
       let boundsTop = stageRect.top;
       let boundsBottom = stageRect.bottom;
-      const canvas = document.querySelector("#reader-content canvas");
-      if (canvas) {
-        const cRect = canvas.getBoundingClientRect();
-        if (cRect.width > 50) {
-          targetLeft = cRect.left;
-          targetWidth = cRect.width;
-          boundsTop = cRect.top;
-          boundsBottom = cRect.bottom;
+      const spread = document.querySelector("#reader-content .pdf-spread-container");
+      if (spread) {
+        const sRect = spread.getBoundingClientRect();
+        if (sRect.width > 50) {
+          targetLeft = sRect.left;
+          targetWidth = sRect.width;
+          boundsTop = sRect.top;
+          boundsBottom = sRect.bottom;
+        }
+      } else {
+        const canvas = document.querySelector("#reader-content canvas");
+        if (canvas) {
+          const cRect = canvas.getBoundingClientRect();
+          if (cRect.width > 50) {
+            targetLeft = cRect.left;
+            targetWidth = cRect.width;
+            boundsTop = cRect.top;
+            boundsBottom = cRect.bottom;
+          }
         }
       }
 
       // Clamp currentY within bounds
       let y = Number.isFinite(this.currentY) ? Math.round(this.currentY) : Math.round(boundsTop + 50);
-      y = Math.max(Math.round(boundsTop), Math.min(Math.round(boundsBottom - h), y));
+      if (this.mode === "bottom-cover") {
+        y = Math.max(Math.round(boundsTop), Math.min(Math.round(boundsBottom), y));
+      } else {
+        y = Math.max(Math.round(boundsTop), Math.min(Math.round(boundsBottom - h), y));
+      }
       this.currentY = y;
+
+      if (this.mode === "bottom-cover" && this.enabled && !this.isPageTransitioning) {
+        const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.75;
+        const dimBg = `rgba(0, 0, 0, ${dimOpacity})`;
+        const screenY = y;
+        const colorHexMap = {
+          amber: "#f59e0b",
+          cyan: "#06b6d4",
+          emerald: "#10b981",
+          lavender: "#a855f7",
+          slate: "#64748b"
+        };
+
+        if (this.maskTopEl) {
+          this.maskTopEl.style.display = "none";
+          this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible");
+          this.maskTopEl.classList.add("is-hidden");
+        }
+        if (this.maskLeftEl) {
+          this.maskLeftEl.style.display = "none";
+          this.maskLeftEl.classList.remove("pdf-overlay-mask", "is-visible");
+          this.maskLeftEl.classList.add("is-hidden");
+        }
+        if (this.maskRightEl) {
+          this.maskRightEl.style.display = "none";
+          this.maskRightEl.classList.remove("pdf-overlay-mask", "is-visible");
+          this.maskRightEl.classList.add("is-hidden");
+        }
+
+        if (this.maskBottomEl) {
+          this.maskBottomEl.className = "ruler-mask ruler-mask-bottom pdf-overlay-mask is-visible";
+          this.maskBottomEl.style.setProperty("display", "block", "important");
+          this.maskBottomEl.style.setProperty("background-color", dimBg, "important");
+          this.maskBottomEl.style.setProperty("opacity", "1", "important");
+          this.maskBottomEl.style.top = `${Math.round(screenY)}px`;
+          this.maskBottomEl.style.left = `${Math.round(targetLeft)}px`;
+          this.maskBottomEl.style.transform = "none";
+          this.maskBottomEl.style.width = `${Math.round(targetWidth)}px`;
+          this.maskBottomEl.style.height = `${Math.max(0, window.innerHeight - screenY)}px`;
+        }
+
+        this.rulerEl.style.top = `${Math.round(screenY)}px`;
+        this.rulerEl.style.left = `${Math.round(targetLeft)}px`;
+        this.rulerEl.style.right = "auto";
+        this.rulerEl.style.transform = "none";
+        this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
+        this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
+        this.rulerEl.style.height = "2px";
+        this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+        return;
+      }
 
       this.rulerEl.style.top = "0px";
       this.rulerEl.style.left = "0px";
@@ -4732,6 +4874,7 @@ export class ReadingRuler {
       this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
       this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
       this.rulerEl.style.transform = `translate3d(${Math.round(targetLeft)}px, ${y}px, 0)`;
+      this.rulerEl.style.backgroundColor = "";
 
       // Dimming mode in PDF: use top and bottom semi-transparent overlay bands leaving the active line slot un-dimmed.
       if (this.mode === "focus" && this.enabled && !this.isPageTransitioning) {
@@ -5090,6 +5233,60 @@ export class ReadingRuler {
           this.maskRightEl.classList.add("is-hidden");
         }
       }
+    } else if (this.mode === "bottom-cover" && this.enabled) {
+      if (this.cachedLines.length === 0 || this.isPageTransitioning || !currentLine) {
+        this.clearFocusTextMask(stage);
+        return;
+      }
+
+      const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.75;
+      const dimBg = `rgba(0, 0, 0, ${dimOpacity})`;
+      const roundScreenY = Math.round(screenY);
+      const colorHexMap = {
+        amber: "#f59e0b",
+        cyan: "#06b6d4",
+        emerald: "#10b981",
+        lavender: "#a855f7",
+        slate: "#64748b"
+      };
+
+      if (this.maskTopEl) {
+        this.maskTopEl.style.display = "none";
+        this.maskTopEl.classList.remove("is-visible");
+        this.maskTopEl.classList.add("is-hidden");
+      }
+      if (this.maskLeftEl) {
+        this.maskLeftEl.style.display = "none";
+        this.maskLeftEl.classList.remove("is-visible");
+        this.maskLeftEl.classList.add("is-hidden");
+      }
+      if (this.maskRightEl) {
+        this.maskRightEl.style.display = "none";
+        this.maskRightEl.classList.remove("is-visible");
+        this.maskRightEl.classList.add("is-hidden");
+      }
+
+      if (this.maskBottomEl) {
+        this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-visible";
+        this.maskBottomEl.style.setProperty("display", "block", "important");
+        this.maskBottomEl.style.setProperty("background-color", dimBg, "important");
+        this.maskBottomEl.style.setProperty("opacity", "1", "important");
+        this.maskBottomEl.style.top = `${roundScreenY}px`;
+        this.maskBottomEl.style.left = `${this._rulerLeft}px`;
+        this.maskBottomEl.style.transform = "none";
+        this.maskBottomEl.style.width = `${this._rulerWidth}px`;
+        this.maskBottomEl.style.height = `${Math.max(0, window.innerHeight - roundScreenY)}px`;
+      }
+
+      this.rulerEl.style.top = `${roundScreenY}px`;
+      this.rulerEl.style.left = `${this._rulerLeft}px`;
+      this.rulerEl.style.right = "auto";
+      this.rulerEl.style.transform = "none";
+      this.rulerEl.style.width = `${this._rulerWidth}px`;
+      this.rulerEl.style.maxWidth = `${this._rulerWidth}px`;
+      this.rulerEl.style.height = "2px";
+      this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+      this.clearFocusTextMask(stage);
     } else {
       this.clearFocusTextMask(stage);
     }
@@ -5207,6 +5404,7 @@ export class ReadingRuler {
 
     const hasLines = this.isPdfMode || this.cachedLines.length > 0;
     const isFocus = this.enabled && this.mode === "focus" && !this.isPageTransitioning && hasLines;
+    const isBottomCover = this.enabled && this.mode === "bottom-cover" && !this.isPageTransitioning && hasLines;
     const transitionClass = this.horizontalWordTransition ? "word-transition-active" : "word-transition-snap";
 
     this.rulerEl.classList.add("reading-ruler");
@@ -5215,6 +5413,7 @@ export class ReadingRuler {
     this.rulerEl.classList.toggle("mode-highlight", this.mode === "highlight");
     this.rulerEl.classList.toggle("mode-focus", this.mode === "focus");
     this.rulerEl.classList.toggle("mode-underline", this.mode === "underline");
+    this.rulerEl.classList.toggle("mode-bottom-cover", this.mode === "bottom-cover");
 
     // Color classes
     const classesToRemove = [];
@@ -5246,7 +5445,7 @@ export class ReadingRuler {
     const showSideMasks = isFocus && (this.wordTracking || isTwoCol);
 
     if (this.maskTopEl) this.maskTopEl.className = `ruler-mask ruler-mask-top ${isFocus ? "is-visible" : "is-hidden"}`;
-    if (this.maskBottomEl) this.maskBottomEl.className = `ruler-mask ruler-mask-bottom ${isFocus ? "is-visible" : "is-hidden"}`;
+    if (this.maskBottomEl) this.maskBottomEl.className = `ruler-mask ruler-mask-bottom ${(isFocus || isBottomCover) ? "is-visible" : "is-hidden"}`;
     if (this.maskLeftEl) this.maskLeftEl.className = `ruler-mask ruler-mask-left ${showSideMasks ? "is-visible " + (this.wordTracking ? transitionClass : "") : "is-hidden"}`;
     if (this.maskRightEl) this.maskRightEl.className = `ruler-mask ruler-mask-right ${showSideMasks ? "is-visible " + (this.wordTracking ? transitionClass : "") : "is-hidden"}`;
 
@@ -5262,11 +5461,29 @@ export class ReadingRuler {
       if (this.maskRightEl) this.maskRightEl.classList.remove("pdf-overlay-mask");
     }
 
-    if (!isFocus) {
+    if (!isFocus && !isBottomCover) {
       if (this.maskTopEl) this.maskTopEl.style.display = "none";
       if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
       if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
       if (this.maskRightEl) this.maskRightEl.style.display = "none";
+    } else if (isBottomCover) {
+      if (this.maskTopEl) this.maskTopEl.style.display = "none";
+      if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
+      if (this.maskRightEl) this.maskRightEl.style.display = "none";
+    }
+
+    const colorHexMap = {
+      amber: "#f59e0b",
+      cyan: "#06b6d4",
+      emerald: "#10b981",
+      lavender: "#a855f7",
+      slate: "#64748b"
+    };
+    if (this.mode === "bottom-cover") {
+      this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+      this.rulerEl.style.height = "2px";
+    } else {
+      this.rulerEl.style.backgroundColor = "";
     }
 
     if (this.enabled && !this.isPageTransitioning) {
@@ -5323,12 +5540,14 @@ export class ReadingRuler {
     const isMouseFollow = isRulerActive && this.followMode === "mouse";
     const isWordTracking = isRulerActive && !!this.wordTracking;
     const isFocus = isRulerActive && this.mode === "focus";
+    const isBottomCover = isRulerActive && this.mode === "bottom-cover";
     const isVertical = isRulerActive && this.isVerticalMode();
 
     document.body.classList.toggle("ruler-active", isRulerActive);
     document.body.classList.toggle("ruler-mouse-follow-active", isMouseFollow);
     document.body.classList.toggle("word-tracking-active", isWordTracking);
     document.body.classList.toggle("ruler-mode-focus", isFocus);
+    document.body.classList.toggle("ruler-mode-bottom-cover", isBottomCover);
     document.body.classList.toggle("ruler-vertical-mode", isVertical);
   }
 
@@ -5405,7 +5624,7 @@ export class ReadingRuler {
   }
 
   setMode(mode) {
-    if (["highlight", "focus", "underline"].includes(mode)) {
+    if (["highlight", "focus", "underline", "bottom-cover"].includes(mode)) {
       if (this.mode === "focus" && mode !== "focus") {
         this.clearFocusTextMask();
       }
@@ -5455,6 +5674,17 @@ export class ReadingRuler {
       const glowRgb = colorGlowMap[this.color];
       if (glowRgb) {
         this.rulerEl.style.setProperty("--ruler-glow-rgb", glowRgb);
+      }
+
+      if (this.mode === "bottom-cover") {
+        const colorHexMap = {
+          amber: "#f59e0b",
+          cyan: "#06b6d4",
+          emerald: "#10b981",
+          lavender: "#a855f7",
+          slate: "#64748b"
+        };
+        this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
       }
 
       if (this.enabled && !this.isPageTransitioning) {
@@ -5579,7 +5809,7 @@ export class ReadingRuler {
       }
     }
     this.updateStyles();
-    if (this.mode === "focus" && this.enabled) {
+    if ((this.mode === "focus" || this.mode === "bottom-cover") && this.enabled) {
       this.applyPosition();
     }
   }

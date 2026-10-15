@@ -215,9 +215,10 @@
             <!-- Styl zobrazení -->
             <div class="popover-section">
               <div class="popover-section-label">Styl pravítka</div>
-              <div class="popover-styles-grid">
+              <div class="popover-styles-grid columns-3">
                 <button type="button" class="popover-style-btn active" data-ruler-style="highlight">Zvýrazňovač</button>
                 <button type="button" class="popover-style-btn" data-ruler-style="focus">Zaostření</button>
+                <button type="button" class="popover-style-btn" data-ruler-style="bottom-cover">Spodní clona</button>
               </div>
             </div>
 
@@ -539,9 +540,10 @@
 
           <div style="margin-bottom: 1rem;">
             <div class="slider-label"><span>Styl pravítka</span></div>
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
-              <button class="font-btn" data-ruler-mode="highlight">Zvýrazňovač</button>
-              <button class="font-btn" data-ruler-mode="focus">Zaostření</button>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem;">
+              <button class="font-btn" data-ruler-mode="highlight" data-ruler-style="highlight">Zvýrazňovač</button>
+              <button class="font-btn" data-ruler-mode="focus" data-ruler-style="focus">Zaostření</button>
+              <button class="font-btn" data-ruler-mode="bottom-cover" data-ruler-style="bottom-cover">Spodní clona</button>
             </div>
           </div>
 

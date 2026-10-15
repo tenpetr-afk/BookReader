@@ -1248,6 +1248,42 @@ body.ruler-vertical-mode .ruler-focused-image {
   box-shadow: inset 0 0 0 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.75), 0 0 10px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.25) !important;
 }
 
+/* 4. Režim: Spodní clona (Bottom Cover) pro PDF a čtení */
+.reading-ruler.mode-bottom-cover {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: 0 1px 4px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.45) !important;
+  pointer-events: none !important;
+  transition: none !important;
+  height: 2px !important;
+  background-color: #f59e0b;
+}
+
+.reading-ruler.mode-bottom-cover.color-amber {
+  --ruler-glow-rgb: 245, 158, 11;
+  background-color: #f59e0b !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-cyan {
+  --ruler-glow-rgb: 6, 182, 212;
+  background-color: #06b6d4 !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-emerald {
+  --ruler-glow-rgb: 16, 185, 129;
+  background-color: #10b981 !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-lavender {
+  --ruler-glow-rgb: 168, 85, 247;
+  background-color: #a855f7 !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-slate {
+  --ruler-glow-rgb: 100, 116, 139;
+  background-color: #64748b !important;
+}
+
 /* Plnoformátové orámování obrázků a ilustrací pravítkem */
 .reading-ruler.is-media-focus {
   border-radius: 10px !important;
@@ -1339,6 +1375,18 @@ canvas.active-focus,
 .ruler-mask.pdf-overlay-mask {
   background-color: rgba(0, 0, 0, var(--focus-dim-opacity, 0.65)) !important;
   opacity: 1 !important;
+}
+
+body.ruler-mode-bottom-cover .ruler-mask-bottom {
+  background-color: rgba(0, 0, 0, var(--focus-dim-opacity, 0.75)) !important;
+  opacity: 1 !important;
+  transition: none !important;
+}
+
+body.ruler-mode-bottom-cover .ruler-mask-top,
+body.ruler-mode-bottom-cover .ruler-mask-left,
+body.ruler-mode-bottom-cover .ruler-mask-right {
+  display: none !important;
 }
 
 /* ==========================================================================
@@ -1573,6 +1621,10 @@ canvas.active-focus,
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 0.35rem;
+}
+
+.popover-styles-grid.columns-3 {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .popover-style-btn {

@@ -552,8 +552,13 @@ export class LuminaApp {
     }
     // Režimy pravítka
     this.dom.rulerModeSelects.forEach(btn => {
-      btn.classList.toggle("active", btn.dataset.rulerMode === s.ruler.mode);
+      btn.classList.toggle("active", (btn.dataset.rulerMode || btn.dataset.rulerStyle) === s.ruler.mode);
     });
+    if (this.dom.popoverStyleButtons) {
+      this.dom.popoverStyleButtons.forEach(btn => {
+        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === s.ruler.mode);
+      });
+    }
     // Barvy pravítka
     this.dom.rulerColorSelects.forEach(btn => {
       btn.classList.toggle("active", btn.dataset.rulerColor === s.ruler.color);
@@ -1883,8 +1888,8 @@ export class LuminaApp {
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const targetBtn = e.target.closest('[data-ruler-mode]') || btn;
-        const newMode = targetBtn ? targetBtn.dataset.rulerMode : null;
+        const targetBtn = e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn;
+        const newMode = targetBtn ? (targetBtn.dataset.rulerMode || targetBtn.dataset.rulerStyle) : null;
         if (!newMode) return;
         if (!this.settings.ruler) this.settings.ruler = {};
         this.settings.ruler.mode = newMode;
@@ -2311,7 +2316,7 @@ export class LuminaApp {
     }
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.rulerStyle === this.settings.ruler.mode);
+        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === this.settings.ruler.mode);
       });
     }
     if (this.dom.popoverColorButtons) {
@@ -2321,7 +2326,7 @@ export class LuminaApp {
     }
     if (this.dom.rulerModeSelects) {
       this.dom.rulerModeSelects.forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.rulerMode === this.settings.ruler.mode);
+        btn.classList.toggle("active", (btn.dataset.rulerMode || btn.dataset.rulerStyle) === this.settings.ruler.mode);
       });
     }
     if (this.dom.rulerColorSelects) {
