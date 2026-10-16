@@ -38,6 +38,13 @@ export class PDFLoader {
     this.pageSlots = [];
     this.canvases = [];
     this.currentRenderTasks = [];
+
+    // TextLayer a přesné počítání slov pro pravítko a statistiky
+    this.pageWordCounts = new Map();
+    this.currentTextLayerTasks = [];
+    this.currentTextLayerTask = null;
+    this.textLayer = null;
+    this.textLayers = [];
   }
 
   setColumnsMode(mode) {
@@ -132,7 +139,7 @@ export class PDFLoader {
   /**
    * Načte PDF dokument z binárních dat (ArrayBuffer)
    */
-  async load(arrayBuffer) {
+  async load(arrayBuffer, initialPage = 1) {
     if (!window.pdfjsLib) {
       throw new Error("Knihovna PDF.js není načtena.");
     }
@@ -161,6 +168,23 @@ export class PDFLoader {
       }
       this.currentRenderTasks = [];
     }
+    if (this.currentTextLayerTask) {
+      try {
+        this.currentTextLayerTask.cancel();
+      } catch (e) {}
+      this.currentTextLayerTask = null;
+    }
+    if (this.currentTextLayerTasks && this.currentTextLayerTasks.length > 0) {
+      for (const task of this.currentTextLayerTasks) {
+        try {
+          task.cancel();
+        } catch (e) {}
+      }
+      this.currentTextLayerTasks = [];
+    }
+    this.textLayers = [];
+    this.textLayer = null;
+    this.pageWordCounts.clear();
     if (this.canvases && this.canvases.length > 0) {
       for (const c of this.canvases) this._destroyCanvas(c);
       this.canvases = [];
@@ -200,13 +224,14 @@ export class PDFLoader {
 
     this.pdfDoc = await loadingTask.promise;
     this.numPages = this.pdfDoc.numPages;
-    this.currentPage = 1;
+    const targetPage = Math.max(1, Math.min(this.numPages, initialPage || 1));
+    this.currentPage = targetPage;
 
     // Vykreslit obsah podle aktuálního režimu čtení (vodorovně vs svisle)
     if (this.isVerticalMode()) {
-      await this.renderAllPagesVertical(1);
+      await this.renderAllPagesVertical(targetPage);
     } else {
-      await this.renderPage(1);
+      await this.renderPage(targetPage);
     }
 
     return this;
@@ -239,6 +264,20 @@ export class PDFLoader {
           } catch (e) {}
         }
         this.currentRenderTasks = [];
+      }
+      if (this.currentTextLayerTask) {
+        try {
+          this.currentTextLayerTask.cancel();
+        } catch (e) {}
+        this.currentTextLayerTask = null;
+      }
+      if (this.currentTextLayerTasks && this.currentTextLayerTasks.length > 0) {
+        for (const task of this.currentTextLayerTasks) {
+          try {
+            task.cancel();
+          } catch (e) {}
+        }
+        this.currentTextLayerTasks = [];
       }
       return;
     }
@@ -363,7 +402,8 @@ export class PDFLoader {
               transform: transform,
               viewport: viewport
             });
-            renderTasks.push({ rTask, page: p, viewport, canvas, imageLayer });
+            const tTask = this._renderTextLayerForPage(p, viewport, slot, pageNum);
+            renderTasks.push({ rTask, tTask, page: p, viewport, canvas, imageLayer });
           }
 
           container.appendChild(spreadContainer);
@@ -376,9 +416,14 @@ export class PDFLoader {
           this.pageSlots = pageSlots;
           this.canvases = canvases;
 
-          await Promise.all(renderTasks.map(t => t.rTask.promise));
+          await Promise.all([
+            Promise.all(renderTasks.map(t => t.rTask.promise)),
+            Promise.all(renderTasks.map(t => t.tTask))
+          ]);
           this.currentRenderTasks = [];
           this.currentRenderTask = null;
+          this.currentTextLayerTasks = [];
+          this.currentTextLayerTask = null;
 
           await Promise.all(renderTasks.map(t =>
             this._extractAndTagImages(t.page, t.viewport, t.canvas, dpr, t.imageLayer).catch(imgErr => {
@@ -478,8 +523,10 @@ export class PDFLoader {
           };
 
           this.currentRenderTask = page.render(renderContext);
-          await this.currentRenderTask.promise;
+          const tTask = this._renderTextLayerForPage(page, viewport, pageContainer, pageNumber);
+          await Promise.all([this.currentRenderTask.promise, tTask]);
           this.currentRenderTask = null;
+          this.currentTextLayerTask = null;
 
           try {
             await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
@@ -626,7 +673,7 @@ export class PDFLoader {
     window.addEventListener("resize", this._boundOnResize, { passive: true });
 
     // 6. Nastavení výchozí strany
-    const targetPage = Math.max(1, Math.min(this.numPages, initialPage || 1));
+    const targetPage = Math.max(1, Math.min(this.numPages, initialPage || this.currentPage || 1));
     this.currentPage = targetPage;
 
     if (targetPage > 1) {
@@ -721,7 +768,8 @@ export class PDFLoader {
       };
 
       const renderTask = page.render(renderContext);
-      await renderTask.promise;
+      const tTask = this._renderTextLayerForPage(page, viewport, pageContainer, pageNumber);
+      await Promise.all([renderTask.promise, tTask]);
 
       // Smart dark mode zachování původních barev fotografií a ilustrací
       try {
@@ -842,6 +890,9 @@ export class PDFLoader {
    * Přepne režim čtení mezi horizontálním a vertikálním se zachováním pozice
    */
   async switchReadingMode(mode) {
+    if (this.readingMode === mode && ((mode === "vertical" && this.pageContainers.size > 0) || (mode !== "vertical" && !this.pageContainers.size))) {
+      return;
+    }
     this.readingMode = mode;
     const targetPage = this.currentPage || 1;
     this._teardownVertical();
@@ -873,6 +924,18 @@ export class PDFLoader {
     for (const [_, el] of this.pageContainers) {
       this._cleanupContainerCanvases(el);
     }
+    if (this.currentTextLayerTask) {
+      try { this.currentTextLayerTask.cancel(); } catch (e) {}
+      this.currentTextLayerTask = null;
+    }
+    if (this.currentTextLayerTasks && this.currentTextLayerTasks.length > 0) {
+      for (const t of this.currentTextLayerTasks) {
+        try { t.cancel(); } catch (e) {}
+      }
+      this.currentTextLayerTasks = [];
+    }
+    this.textLayers = [];
+    this.textLayer = null;
     this.pageContainers.clear();
     this.renderedPages.clear();
     this.renderingPages.clear();
@@ -1134,6 +1197,18 @@ export class PDFLoader {
       }
       this.currentRenderTasks = [];
     }
+    if (this.currentTextLayerTask) {
+      try { this.currentTextLayerTask.cancel(); } catch (e) {}
+      this.currentTextLayerTask = null;
+    }
+    if (this.currentTextLayerTasks && this.currentTextLayerTasks.length > 0) {
+      for (const task of this.currentTextLayerTasks) {
+        try { task.cancel(); } catch (e) {}
+      }
+      this.currentTextLayerTasks = [];
+    }
+    this.textLayers = [];
+    this.textLayer = null;
     if (this.canvases && this.canvases.length > 0) {
       for (const c of this.canvases) this._destroyCanvas(c);
       this.canvases = [];
@@ -1157,4 +1232,178 @@ export class PDFLoader {
     this.spreadContainer = null;
     this.imageLayer = null;
   }
+
+  /**
+   * Vytvoří a vykreslí transparentní textovou vrstvu (.textLayer) přesně nad vykresleným canvasem
+   * pomocí oficiální Mozilla PDF.js renderTextLayer API.
+   * Zároveň zjišťuje a ukládá přesný počet slov dané strany.
+   */
+  async _renderTextLayerForPage(page, viewport, container, pageNum) {
+    if (!page || !container) return null;
+    try {
+      const floorW = Math.floor(viewport.width);
+      const floorH = Math.floor(viewport.height);
+
+      const textLayerDiv = document.createElement("div");
+      textLayerDiv.className = "textLayer";
+      textLayerDiv.style.width = `${floorW}px`;
+      textLayerDiv.style.height = `${floorH}px`;
+      textLayerDiv.style.setProperty("--scale-factor", viewport.scale);
+
+      container.appendChild(textLayerDiv);
+      if (pageNum === this.currentPage) {
+        this.textLayer = textLayerDiv;
+      }
+      this.textLayers.push(textLayerDiv);
+
+      const textContent = await page.getTextContent();
+      let wordCount = 0;
+      if (textContent && Array.isArray(textContent.items)) {
+        for (const item of textContent.items) {
+          if (item && item.str) {
+            const matches = item.str.match(/[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g);
+            if (matches) wordCount += matches.length;
+          }
+        }
+      }
+
+      this.pageWordCounts.set(pageNum, wordCount);
+      if (wordCount === 0) {
+        container.classList.add("is-scanned-page");
+      } else {
+        container.classList.remove("is-scanned-page");
+      }
+
+      if (window.pdfjsLib && typeof window.pdfjsLib.renderTextLayer === "function") {
+        const textTask = window.pdfjsLib.renderTextLayer({
+          textContentSource: textContent,
+          container: textLayerDiv,
+          viewport: viewport,
+          textDivs: []
+        });
+        this.currentTextLayerTasks.push(textTask);
+        this.currentTextLayerTask = textTask;
+        await textTask.promise;
+      }
+
+      return { textLayerDiv, wordCount };
+    } catch (err) {
+      if (err?.name !== "RenderingCancelledException") {
+        console.warn(`[PDFLoader] Chyba při vytváření textové vrstvy pro stranu ${pageNum}:`, err);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Získá přesný počet slov pro danou stranu PDF
+   */
+  getWordsForPage(pageNumber) {
+    return this.pageWordCounts.get(pageNumber) ?? 0;
+  }
+
+  /**
+   * Získá přesný počet slov viditelných na aktuální obrazovce/sloupcích
+   * V režimu dvoustrany sčítá slova obou otevřených stran.
+   * U naskenovaného PDF bez textové vrstvy vrací 0.
+   */
+  getVisibleWords() {
+    if (this.isSpreadActive()) {
+      let p = this.currentPage;
+      let leftPage, rightPage;
+      if (p % 2 === 0) {
+        leftPage = p;
+        rightPage = Math.min(this.numPages, p + 1);
+      } else {
+        leftPage = Math.max(1, p - 1);
+        rightPage = p;
+      }
+      const hasRight = rightPage > leftPage && rightPage <= this.numPages;
+      const leftWords = this.getWordsForPage(leftPage);
+      const rightWords = hasRight ? this.getWordsForPage(rightPage) : 0;
+      return leftWords + rightWords;
+    }
+
+    if (this.isVerticalMode()) {
+      return this.getWordsForPage(this.currentPage);
+    }
+
+    const words = this.pageWordCounts.get(this.currentPage);
+    if (words !== undefined) return words;
+
+    // Fallback: zjištění z DOM textové vrstvy
+    const activeSlot = this.pageContainer || document.querySelector("#reader-content .pdf-page-container");
+    const textLayer = activeSlot?.querySelector(".textLayer");
+    if (textLayer) {
+      const text = textLayer.textContent || "";
+      const matches = text.match(/[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g);
+      return matches ? matches.length : 0;
+    }
+    return 0;
+  }
+
+  /**
+   * Asynchronní výpočet celkového počtu slov dokumentu na pozadí.
+   * Nepřetěžuje hlavní vlákno (dávkování po 5 stranách).
+   */
+  async calculateTotalWordsInBackground(bookId) {
+    if (!this.pdfDoc || this.numPages <= 0) return;
+    try {
+      let totalWords = 0;
+      let hasAnyText = false;
+      const num = this.numPages;
+
+      for (let pNum = 1; pNum <= num; pNum++) {
+        if (!this.pdfDoc) return;
+
+        let words = this.pageWordCounts.get(pNum);
+        if (words === undefined) {
+          try {
+            const page = await this.pdfDoc.getPage(pNum);
+            const content = await page.getTextContent();
+            words = 0;
+            if (content && Array.isArray(content.items)) {
+              for (const item of content.items) {
+                if (item?.str) {
+                  const m = item.str.match(/[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g);
+                  if (m) words += m.length;
+                }
+              }
+            }
+            this.pageWordCounts.set(pNum, words);
+            if (typeof page.cleanup === "function") page.cleanup();
+          } catch (e) {
+            words = 0;
+          }
+        }
+
+        if (words > 0) hasAnyText = true;
+        totalWords += words;
+
+        if (pNum % 5 === 0) {
+          await new Promise(r => setTimeout(r, 10));
+        }
+      }
+
+      if (this.app?.currentBook && this.app.currentBook.id === bookId) {
+        this.app.currentBook.totalWords = hasAnyText ? totalWords : 0;
+        this.app.currentBook.isScanned = !hasAnyText;
+        if (this.app.currentBook.isScanned) {
+          document.body.classList.add("is-scanned-pdf");
+        }
+        try {
+          const { storage } = await import("./storage.js");
+          const storedBook = await storage.getBook(bookId);
+          if (storedBook) {
+            storedBook.totalWords = this.app.currentBook.totalWords;
+            storedBook.isScanned = this.app.currentBook.isScanned;
+            await storage.saveBook(storedBook);
+          }
+        } catch (e) {}
+      }
+    } catch (err) {
+      console.warn("[PDFLoader] Chyba při výpočtu celkového počtu slov:", err);
+    }
+  }
 }
+

@@ -630,7 +630,22 @@ export class LuminaApp {
     // Aplikace režimu čtení (vodorovně vs svisle)
     this.applyReadingMode(this.readingMode);
 
-    // Pokud čteme knihu, přepočítat stránkování (pouze v horizontálním režimu)
+    // Pokud jsme v PDF režimu, vyhneme se reflow a přepočtu EPUB stránek
+    if (this.isPdfMode) {
+      if (this.pdfLoader) {
+        this.totalPagesInChapter = this.pdfLoader.numPages || 1;
+        this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, (this.pdfLoader.currentPage || 1) - 1));
+      }
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.updateStyles();
+        this.ruler.applyPosition();
+      }
+      this.updatePageUI();
+      this.updateTouchZonesUI();
+      return;
+    }
+
+    // Pokud čteme knihu, přepočítat stránkování (pouze v horizontálním režimu pro EPUB)
     if (!this.isVerticalReadingMode() && this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
       requestAnimationFrame(() => {
         this.recomputeGlobalPagination();
@@ -648,6 +663,7 @@ export class LuminaApp {
       mode = localStorage.getItem("lumina_reading_mode") || "horizontal";
     }
     const prevMode = this.readingMode;
+    const isModeChanged = prevMode !== mode;
     this.readingMode = mode;
     try {
       localStorage.setItem("lumina_reading_mode", mode);
@@ -674,7 +690,7 @@ export class LuminaApp {
     if (this.dom.readerContent) {
       if (isVertical) {
         this.dom.readerContent.style.transform = "none";
-      } else {
+      } else if (isModeChanged) {
         if (this.dom.pagedViewport) {
           this.dom.pagedViewport.scrollTop = 0;
         }
@@ -688,17 +704,20 @@ export class LuminaApp {
     const isInReader = this.dom.viewReader ? !this.dom.viewReader.classList.contains("is-hidden") : true;
 
     if (this.isPdfMode && this.pdfLoader && isInReader) {
-      requestAnimationFrame(async () => {
-        await this.pdfLoader.switchReadingMode(mode);
-        this.updatePageUI();
-        if (this.ruler && this.ruler.enabled) {
-          this.ruler.applyPosition();
-        }
-      });
+      if (isModeChanged || (mode === "vertical" && this.pdfLoader.pageContainers.size === 0)) {
+        requestAnimationFrame(async () => {
+          await this.pdfLoader.switchReadingMode(mode);
+          this.updatePageUI();
+          if (this.ruler && this.ruler.enabled) {
+            this.ruler.applyPosition();
+          }
+        });
+      }
       return;
     }
 
     if (this.currentBook && !this.isPdfMode && this.currentParser && isInReader) {
+      if (!isModeChanged) return;
       this._isModeTransitioning = true;
       requestAnimationFrame(async () => {
         try {
@@ -1718,6 +1737,7 @@ export class LuminaApp {
     });
 
     const triggerReflowSync = () => {
+      if (this.isPdfMode) return;
       tracker.cancelCurrentPageDwell();
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -1786,6 +1806,12 @@ export class LuminaApp {
         const colGapVw = `${(val * 0.25).toFixed(2)}vw`;
         document.documentElement.style.setProperty("--col-gap", colGapVw);
         storage.saveSettings(this.settings);
+
+        if (this.isPdfMode) {
+          this.ruler?.refreshLines();
+          this.ruler?.applyPosition();
+          return;
+        }
 
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
@@ -2016,6 +2042,12 @@ export class LuminaApp {
         document.body.classList.toggle("hide-footer-bar", !val);
         storage.saveSettings(this.settings);
         if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
+          if (this.isPdfMode) {
+            this.updateScrubberUI();
+            this.updatePageUI();
+            this.ruler?.applyPosition();
+            return;
+          }
           requestAnimationFrame(() => {
             this.recalcPages();
             this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
@@ -2633,6 +2665,7 @@ export class LuminaApp {
         await this.renderPdfToc();
         this.updatePageUI();
         tracker.startSession(bookId, title, 0, (bookData.totalWords || 1), 0);
+        this.pdfLoader.calculateTotalWordsInBackground(bookId);
       } catch (err) {
         console.error("Chyba při nahrávání PDF:", err);
         this.showToast(`Chyba při čtení PDF: ${err.message}`, "error");
@@ -3046,14 +3079,15 @@ export class LuminaApp {
         } else {
           fileBuffer = rawPdf;
         }
-        await this.pdfLoader.load(fileBuffer);
-        if (targetPage > 1) {
+        await this.pdfLoader.load(fileBuffer, targetPage);
+        if (targetPage > 1 && this.pdfLoader.currentPage !== targetPage) {
           await this.pdfLoader.goToPage(targetPage);
         }
 
         await this.renderPdfToc();
         this.updatePageUI();
         tracker.startSession(bookId, book.title, 0, (book.totalWords || (this.pdfLoader.numPages * 250) || 1), 0);
+        this.pdfLoader.calculateTotalWordsInBackground(bookId);
         return;
       }
 
@@ -3128,6 +3162,15 @@ export class LuminaApp {
     tracker.updateScrollProgress(progress);
     this.updatePageUI();
     this.saveProgress();
+
+    // Re-synchronize reading ruler with the freshly rendered text layer
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.refreshLines();
+      if (this.ruler.wordTracking) {
+        this.ruler.refreshWords();
+      }
+      this.ruler.applyPosition();
+    }
   }
 
   async renderPdfToc() {
@@ -3970,7 +4013,7 @@ export class LuminaApp {
   }
 
   applyFastReadingMode() {
-    if (!this.currentBook || !this.dom.readerContent) return;
+    if (!this.currentBook || !this.dom.readerContent || this.isPdfMode) return;
 
     if (this.isVerticalReadingMode() && !this.isPdfMode) {
       const sections = this.dom.readerContent.querySelectorAll(".epub-chapter-section");
@@ -4111,6 +4154,14 @@ export class LuminaApp {
 
   recalcPages() {
     tracker.cancelCurrentPageDwell();
+    if (this.isPdfMode) {
+      if (this.pdfLoader) {
+        this.totalPagesInChapter = this.pdfLoader.numPages || 1;
+        this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, (this.pdfLoader.currentPage || 1) - 1));
+      }
+      this.updatePageUI();
+      return;
+    }
     if (this.isVerticalReadingMode()) {
       const activeSection = this.getActiveVerticalChapterSection();
       const vp = this.dom.pagedViewport;
@@ -4146,11 +4197,10 @@ export class LuminaApp {
    */
   getVisibleWordsOnCurrentPage() {
     if (this.isPdfMode) {
-      if (this.pdfLoader && this.pdfLoader.numPages > 0) {
-        const totalWords = this.currentBook?.totalWords || (this.pdfLoader.numPages * 250);
-        return Math.max(50, Math.min(600, Math.round(totalWords / this.pdfLoader.numPages)));
+      if (this.pdfLoader) {
+        return this.pdfLoader.getVisibleWords();
       }
-      return 250;
+      return 0;
     }
 
     if (this.isVerticalReadingMode()) {
@@ -4229,6 +4279,12 @@ export class LuminaApp {
     }
     if (this.isPdfMode && this.pdfLoader) {
       const targetPage = Math.max(1, Math.min(this.pdfLoader.numPages, pageIndex + 1));
+      if (options.isReflow && targetPage === this.pdfLoader.currentPage) {
+        if (this.ruler && this.ruler.enabled) {
+          this.ruler.applyPosition();
+        }
+        return;
+      }
       this.pdfLoader.goToPage(targetPage, explicitDirection);
       return;
     }
@@ -5665,6 +5721,17 @@ export class LuminaApp {
   }
 
   recomputeGlobalPagination() {
+    if (this.isPdfMode) {
+      const num = this.pdfLoader?.numPages || this.currentBook?.numPages || 1;
+      this.bookPagination = {
+        wordsPerPage: 260,
+        chapterPageCounts: [num],
+        chapterStarts: [1],
+        totalBookPages: num
+      };
+      return;
+    }
+
     if (!this.currentParser) {
       this.bookPagination = {
         wordsPerPage: 260,

@@ -225,7 +225,12 @@ export class ReadingTracker {
     const title = pageInfo.bookTitle || this.currentBookTitle || "Kniha";
     const chapterIndex = pageInfo.chapterIndex ?? 0;
     const pageIndex = pageInfo.pageIndex ?? 0;
-    const visibleWords = Math.max(20, Math.min(650, Math.round(pageInfo.visibleWords || 250)));
+    let visibleWords = 0;
+    if (pageInfo.visibleWords !== undefined && pageInfo.visibleWords !== null) {
+      visibleWords = Math.max(0, Math.min(650, Math.round(pageInfo.visibleWords)));
+    } else {
+      visibleWords = 250;
+    }
     const isReflow = !!pageInfo.isReflow;
     const isInitialLoad = !!pageInfo.isInitialLoad;
     const isNavigationJump = !!pageInfo.isNavigationJump;
@@ -631,13 +636,13 @@ export class ReadingTracker {
 
     // Ukládáme pouze relace delší než 4 sekundy s reálným čtením
     if (bookId && activeSeconds >= 4) {
-      const avgWpm = this.getCurrentWpm();
+      const avgWpm = wordsRead > 0 ? this.getCurrentWpm() : 0;
       const now = Date.now();
       const endTime = new Date(now).toISOString();
       const dateKey = getLocalDateKey(this.sessionStartTimestamp || now);
 
       // Závěrečný vzorek na konci relace (pouze v platném pásmu)
-      if (avgWpm >= MIN_VALID_WPM && avgWpm <= MAX_VALID_WPM) {
+      if (wordsRead > 0 && avgWpm >= MIN_VALID_WPM && avgWpm <= MAX_VALID_WPM) {
         if (this.timelineSamples.length === 0 || activeSeconds - this.lastSampleActiveSec >= 3) {
           this.timelineSamples.push({
             timestamp: now,
@@ -822,7 +827,8 @@ export class ReadingTracker {
     sessions.forEach(s => {
       const w = s.avgWpm ?? s.wpm ?? 0;
       const dur = s.durationSeconds ?? s.activeSeconds ?? 0;
-      if (w >= MIN_VALID_WPM && w <= MAX_VALID_WPM && dur >= 10) {
+      const words = s.wordsRead ?? 0;
+      if (words > 0 && w >= MIN_VALID_WPM && w <= MAX_VALID_WPM && dur >= 10) {
         weightedWpmSum += w * dur;
         totalValidDuration += dur;
       }
