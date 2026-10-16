@@ -3202,14 +3202,14 @@ export class ReadingRuler {
           }
         }
         const curBottom = Number.isFinite(line.bottom) ? line.bottom : Math.round(mediaT + mediaH + padding);
-        if (hasNext) {
+        let coverTargetY = curBottom + 2;
+        if (hasNext && nextLine) {
           const nextTop = Number.isFinite(nextLine.top) ? nextLine.top : nextLine.centerY;
-          let boundaryY = (curBottom + nextTop) / 2;
-          boundaryY = Math.min(boundaryY, nextTop - 1);
-          targetY = Math.round(boundaryY);
-        } else {
-          targetY = Math.round(curBottom);
+          if ((nextTop - curBottom) < 18) {
+            coverTargetY = Math.min(coverTargetY, nextTop - 1);
+          }
         }
+        targetY = Math.round(coverTargetY);
       }
 
       // Horizontální hranice kontejneru / sloupce
@@ -3314,14 +3314,14 @@ export class ReadingRuler {
         }
       }
       const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + height / 2);
-      if (hasNext) {
+      let coverTargetY = curBottom + 2;
+      if (hasNext && nextLine) {
         const nextTop = Number.isFinite(nextLine.top) ? nextLine.top : (nextLine.centerY - height / 2);
-        let boundaryY = (curBottom + nextTop) / 2;
-        boundaryY = Math.min(boundaryY, nextTop - 1);
-        targetY = Math.round(boundaryY);
-      } else {
-        targetY = Math.round(curBottom);
+        if ((nextTop - curBottom) < 18) {
+          coverTargetY = Math.min(coverTargetY, nextTop - 1);
+        }
       }
+      targetY = Math.round(coverTargetY);
     }
 
     let left = line.columnLeft ?? line.left ?? (line.columnIndex === 1 ? this.column1Left : this.column0Left) ?? this.textBlockLeft ?? 0;
@@ -5927,15 +5927,14 @@ export class ReadingRuler {
         ? currentLine.bottom
         : (currentLine.centerY + (currentLine.height || h) / 2);
 
-      let boundaryDocY;
+      let boundaryDocY = curBottom + 2;
       if (nextLine) {
         const nextTop = Number.isFinite(nextLine.top)
           ? nextLine.top
           : (nextLine.centerY - (nextLine.height || h) / 2);
-        boundaryDocY = (curBottom + nextTop) / 2;
-        boundaryDocY = Math.min(boundaryDocY, nextTop - 1);
-      } else {
-        boundaryDocY = curBottom;
+        if ((nextTop - curBottom) < 18) {
+          boundaryDocY = Math.min(boundaryDocY, nextTop - 1);
+        }
       }
 
       let roundScreenY;
