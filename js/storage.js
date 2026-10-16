@@ -559,7 +559,12 @@ export class StorageManager {
         if (merged.ruler.followMode !== "keyboard") {
           merged.ruler.followMode = "mouse";
         }
-        merged.ruler.snapToLines = true;
+        const savedSnap = localStorage.getItem("rulerSnapToLines");
+        if (savedSnap !== null) {
+          merged.ruler.snapToLines = savedSnap === "true";
+        } else {
+          merged.ruler.snapToLines = parsed.ruler?.snapToLines !== false;
+        }
         merged.ruler.autoHeight = true;
         return merged;
       }
@@ -569,11 +574,56 @@ export class StorageManager {
     return defaults;
   }
 
+  getSetting(key, defaultValue = true) {
+    if (key === "rulerSnapToLines") {
+      const stored = localStorage.getItem("rulerSnapToLines");
+      if (stored !== null) {
+        return stored === "true";
+      }
+      const settings = this.getSettings();
+      if (settings?.ruler?.snapToLines !== undefined) {
+        return settings.ruler.snapToLines !== false;
+      }
+      return defaultValue !== undefined ? defaultValue : true;
+    }
+    const stored = localStorage.getItem(key);
+    if (stored !== null) {
+      try {
+        return JSON.parse(stored);
+      } catch {
+        return stored;
+      }
+    }
+    const settings = this.getSettings();
+    if (settings && key in settings) {
+      return settings[key];
+    }
+    return defaultValue;
+  }
+
+  saveSetting(key, value) {
+    try {
+      localStorage.setItem(key, String(value));
+      const settings = this.getSettings();
+      if (key === "rulerSnapToLines") {
+        if (!settings.ruler) settings.ruler = {};
+        settings.ruler.snapToLines = value !== false;
+        this.saveSettings(settings);
+      } else if (settings && key in settings) {
+        settings[key] = value;
+        this.saveSettings(settings);
+      }
+    } catch (e) {
+      console.warn("Chyba při ukládání nastavení:", e);
+    }
+  }
+
   saveSettings(settings) {
     try {
       if (settings?.ruler) {
-        settings.ruler.snapToLines = true;
+        settings.ruler.snapToLines = settings.ruler.snapToLines !== false;
         settings.ruler.autoHeight = true;
+        localStorage.setItem("rulerSnapToLines", String(settings.ruler.snapToLines));
       }
       const isVisible = (settings.showProgressBar !== undefined ? settings.showProgressBar : settings.showFooterBar) !== false;
       settings.showFooterBar = isVisible;

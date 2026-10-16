@@ -198,6 +198,16 @@
               </div>
             </div>
 
+            <!-- Magnetické přichytávání k řádkům -->
+            <div class="popover-section" id="popover-snap-lines-section">
+              <div class="popover-row-between">
+                <span class="popover-section-label">Magnetické přichytávání k řádkům</span>
+                <button type="button" role="switch" id="popover-ruler-snap" class="switch-control is-checked active" aria-checked="true" aria-label="Magnetické přichytávání k řádkům" data-ruler-snap="toggle">
+                  <span class="switch-track"><span class="switch-thumb"></span></span>
+                </button>
+              </div>
+            </div>
+
             <!-- Režim pravítka: Řádkové vs. Sledování slov -->
             <div class="popover-section">
               <div class="popover-section-label">Režim zvýraznění</div>
@@ -556,6 +566,19 @@
               <button class="ruler-color-btn" data-ruler-color="emerald" title="Smaragdová"></button>
               <button class="ruler-color-btn" data-ruler-color="lavender" title="Levandulová"></button>
               <button class="ruler-color-btn" data-ruler-color="slate" title="Břidlicová"></button>
+            </div>
+          </div>
+
+          <!-- Funkce pravítka: Magnetické přichytávání k řádkům -->
+          <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
+            <div class="toggle-row">
+              <div>
+                <span class="toggle-title">Magnetické přichytávání k řádkům</span>
+                <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0;">Pravítko se automaticky přichytává na středy textových řádků</p>
+              </div>
+              <button type="button" role="switch" id="setting-ruler-snap" class="switch-control is-checked active" aria-checked="true" aria-label="Magnetické přichytávání k řádkům" data-ruler-snap="toggle">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </button>
             </div>
           </div>
 

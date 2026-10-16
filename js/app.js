@@ -257,7 +257,7 @@ export class LuminaApp {
 
       // Pravítko nastavení
       rulerToggle: document.getElementById("ruler-toggle-setting"),
-      rulerSnapSetting: document.getElementById("ruler-snap-setting"),
+      rulerSnapSetting: document.getElementById("setting-ruler-snap") || document.getElementById("ruler-snap-setting"),
       rulerWordTrackingSetting: document.getElementById("ruler-word-tracking-setting"),
       settingPencilFlick: document.getElementById("setting-pencil-flick"),
       rulerAutoHeightSetting: document.getElementById("ruler-auto-height-setting"),
@@ -280,7 +280,7 @@ export class LuminaApp {
       popoverModeWord: document.getElementById("popover-mode-word"),
       popoverStyleButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-style]"),
       popoverColorButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-color]"),
-      popoverRulerSnapToggle: document.getElementById("popover-ruler-snap-toggle"),
+      popoverRulerSnapToggle: document.getElementById("popover-ruler-snap") || document.getElementById("popover-ruler-snap-toggle"),
       popoverRulerAutoHeightToggle: document.getElementById("popover-ruler-auto-height-toggle"),
       popoverSettingRulerHeightContainer: document.getElementById("popover-setting-ruler-height-container"),
       popoverSliderRulerHeight: document.getElementById("popover-slider-ruler-height"),
@@ -393,7 +393,9 @@ export class LuminaApp {
     this.ruler.setColor(this.settings.ruler.color);
     this.ruler.setHeight(this.settings.ruler.height);
     this.ruler.setAutoHeight(true);
-    this.ruler.setSnapToLines(true);
+    const snapEnabled = typeof storage.getSetting === "function" ? storage.getSetting("rulerSnapToLines", true) : (this.settings.ruler.snapToLines !== false);
+    this.settings.ruler.snapToLines = snapEnabled;
+    this.ruler.setSnapToLines(snapEnabled);
     this.ruler.setWordTracking(this.settings.ruler.wordTracking ?? false);
     this.ruler.setDimOpacity(this.settings.ruler.dimOpacity);
     this.ruler.setFollowMode(this.settings.ruler.followMode);
@@ -522,7 +524,10 @@ export class LuminaApp {
       this.ruler.setEnabled(false);
       this.settings.ruler.enabled = false;
     }
-    if (this.dom.rulerSnapSetting) this.setSwitchState(this.dom.rulerSnapSetting, true);
+    const snapEnabled = s.ruler.snapToLines !== false;
+    if (this.dom.rulerSnapSetting) this.setSwitchState(this.dom.rulerSnapSetting, snapEnabled);
+    if (this.dom.popoverRulerSnapToggle) this.setSwitchState(this.dom.popoverRulerSnapToggle, snapEnabled);
+    document.querySelectorAll("#setting-ruler-snap, #ruler-snap-setting, #popover-ruler-snap, #popover-ruler-snap-toggle, [data-ruler-snap='toggle']").forEach(el => this.setSwitchState(el, snapEnabled));
     this.setSwitchState(this.dom.rulerWordTrackingSetting, s.ruler.wordTracking ?? false);
     if (this.dom.settingPencilFlick) this.setSwitchState(this.dom.settingPencilFlick, this.settings.pencilFlickNavigation !== false);
     if (this.dom.rulerAutoHeightSetting) this.setSwitchState(this.dom.rulerAutoHeightSetting, true);
@@ -617,7 +622,7 @@ export class LuminaApp {
         btn.classList.toggle("active", btn.dataset.rulerColor === s.ruler.color);
       });
     }
-    if (this.dom.popoverRulerSnapToggle) this.setSwitchState(this.dom.popoverRulerSnapToggle, true);
+    if (this.dom.popoverRulerSnapToggle) this.setSwitchState(this.dom.popoverRulerSnapToggle, s.ruler.snapToLines !== false);
     if (this.dom.popoverRulerAutoHeightToggle) this.setSwitchState(this.dom.popoverRulerAutoHeightToggle, true);
     if (this.dom.popoverSliderRulerOpacity) {
       this.dom.popoverSliderRulerOpacity.value = Math.round(s.ruler.dimOpacity * 100);
@@ -1570,6 +1575,32 @@ export class LuminaApp {
       });
     }
 
+    const popoverSnapToggle = this.dom.popoverRulerSnapToggle || document.getElementById("popover-ruler-snap") || document.getElementById("popover-ruler-snap-toggle");
+    if (popoverSnapToggle) {
+      const handlePopoverSnap = (e) => {
+        if (e) {
+          e.stopPropagation();
+          if (e.type === "click" && e.target && e.target.tagName !== "INPUT") {
+            e.preventDefault();
+          }
+        }
+        const nextVal = !(this.settings.ruler.snapToLines !== false);
+        this.settings.ruler.snapToLines = nextVal;
+        if (typeof storage.saveSetting === "function") {
+          storage.saveSetting("rulerSnapToLines", nextVal);
+        }
+        if (this.ruler) {
+          this.ruler.setSnapToLines(nextVal);
+        }
+        this.updateRulerToggleButtonUI();
+        storage.saveSettings(this.settings);
+      };
+      popoverSnapToggle.addEventListener("click", handlePopoverSnap);
+      if (popoverSnapToggle.tagName === "INPUT") {
+        popoverSnapToggle.addEventListener("change", handlePopoverSnap);
+      }
+    }
+
     if (this.dom.popoverModeLine) {
       this.dom.popoverModeLine.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -1908,6 +1939,32 @@ export class LuminaApp {
         this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       });
+    }
+
+    const drawerSnapToggle = this.dom.rulerSnapSetting || document.getElementById("setting-ruler-snap") || document.getElementById("ruler-snap-setting");
+    if (drawerSnapToggle) {
+      const handleDrawerSnap = (e) => {
+        if (e) {
+          e.stopPropagation();
+          if (e.type === "click" && e.target && e.target.tagName !== "INPUT") {
+            e.preventDefault();
+          }
+        }
+        const nextVal = !(this.settings.ruler.snapToLines !== false);
+        this.settings.ruler.snapToLines = nextVal;
+        if (typeof storage.saveSetting === "function") {
+          storage.saveSetting("rulerSnapToLines", nextVal);
+        }
+        if (this.ruler) {
+          this.ruler.setSnapToLines(nextVal);
+        }
+        this.updateRulerToggleButtonUI();
+        storage.saveSettings(this.settings);
+      };
+      drawerSnapToggle.addEventListener("click", handleDrawerSnap);
+      if (drawerSnapToggle.tagName === "INPUT") {
+        drawerSnapToggle.addEventListener("change", handleDrawerSnap);
+      }
     }
 
     if (this.dom.rulerWordTrackingSetting) {
@@ -2417,6 +2474,10 @@ export class LuminaApp {
     if (this.dom.rulerToggleBtn) this.dom.rulerToggleBtn.classList.toggle("is-active", isEnabled);
     if (this.dom.popoverRulerToggle) this.setSwitchState(this.dom.popoverRulerToggle, isEnabled);
     if (this.dom.rulerToggle) this.setSwitchState(this.dom.rulerToggle, this.settings.showRulerButton !== false);
+    const isSnap = this.settings.ruler.snapToLines !== false;
+    if (this.dom.rulerSnapSetting) this.setSwitchState(this.dom.rulerSnapSetting, isSnap);
+    if (this.dom.popoverRulerSnapToggle) this.setSwitchState(this.dom.popoverRulerSnapToggle, isSnap);
+    document.querySelectorAll("#setting-ruler-snap, #ruler-snap-setting, #popover-ruler-snap, #popover-ruler-snap-toggle, [data-ruler-snap='toggle']").forEach(el => this.setSwitchState(el, isSnap));
     if (this.dom.rulerWordTrackingSetting) this.setSwitchState(this.dom.rulerWordTrackingSetting, !!this.settings.ruler.wordTracking);
     if (this.dom.settingPencilFlick) this.setSwitchState(this.dom.settingPencilFlick, this.settings.pencilFlickNavigation !== false);
 
