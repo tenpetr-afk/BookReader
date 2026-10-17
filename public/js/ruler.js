@@ -3202,14 +3202,22 @@ export class ReadingRuler {
           }
         }
         const curBottom = Number.isFinite(line.bottom) ? line.bottom : Math.round(mediaT + mediaH + padding);
-        let coverTargetY = curBottom + 2;
-        if (hasNext && nextLine) {
-          const nextTop = Number.isFinite(nextLine.top) ? nextLine.top : nextLine.centerY;
-          if ((nextTop - curBottom) < 18) {
-            coverTargetY = Math.min(coverTargetY, nextTop - 1);
+
+        // Place the cover boundary 2px below current line descenders.
+        // This guarantees the ruler line never touches the active line,
+        // while leaving maximum clearance above the next line's ascenders and diacritics.
+        let coverTargetY = Math.round(curBottom + 2);
+
+        // Safety clamp: if nextLine exists in the same column/slot, ensure coverTargetY never collides with nextLine
+        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+          // Leave at least 4px clearance above nextLine.top to completely hide ascenders/diacritics (d, l, t, Š, etc.)
+          const maxAllowedY = Math.round(nextLine.top - 4);
+          if (coverTargetY > maxAllowedY) {
+            coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
           }
         }
-        targetY = Math.round(coverTargetY);
+
+        targetY = coverTargetY;
       }
 
       // Horizontální hranice kontejneru / sloupce
@@ -3314,14 +3322,22 @@ export class ReadingRuler {
         }
       }
       const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + height / 2);
-      let coverTargetY = curBottom + 2;
-      if (hasNext && nextLine) {
-        const nextTop = Number.isFinite(nextLine.top) ? nextLine.top : (nextLine.centerY - height / 2);
-        if ((nextTop - curBottom) < 18) {
-          coverTargetY = Math.min(coverTargetY, nextTop - 1);
+
+      // Place the cover boundary 2px below current line descenders.
+      // This guarantees the ruler line never touches the active line,
+      // while leaving maximum clearance above the next line's ascenders and diacritics.
+      let coverTargetY = Math.round(curBottom + 2);
+
+      // Safety clamp: if nextLine exists in the same column/slot, ensure coverTargetY never collides with nextLine
+      if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+        // Leave at least 4px clearance above nextLine.top to completely hide ascenders/diacritics (d, l, t, Š, etc.)
+        const maxAllowedY = Math.round(nextLine.top - 4);
+        if (coverTargetY > maxAllowedY) {
+          coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
         }
       }
-      targetY = Math.round(coverTargetY);
+
+      targetY = coverTargetY;
     }
 
     let left = line.columnLeft ?? line.left ?? (line.columnIndex === 1 ? this.column1Left : this.column0Left) ?? this.textBlockLeft ?? 0;
@@ -5575,6 +5591,13 @@ export class ReadingRuler {
           this.currentY = y;
         }
       }
+    } else if (this.mode === "bottom-cover" && this.snapToLines && !this.isDraggingRuler && !this.isDragging) {
+      const geom = this.computeLineGeometry(this.activeLineIndex);
+      if (geom && Number.isFinite(geom.targetY)) {
+        y = geom.targetY;
+        this.targetY = geom.targetY;
+        this.currentY = geom.targetY;
+      }
     }
 
     this.rulerEl.style.height = this.mode === "bottom-cover" ? "2px" : `${h}px`;
@@ -5910,6 +5933,7 @@ export class ReadingRuler {
 
       // Check if subsequent line exists in the same column/container
       let nextLine = null;
+      let hasNext = false;
       if (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length - 1) {
         const candidateNext = this.cachedLines[this.activeLineIndex + 1];
         if (candidateNext && (candidateNext.columnIndex === currentLine.columnIndex || (currentLine.columnIndex == null && candidateNext.columnIndex == null))) {
@@ -5918,23 +5942,35 @@ export class ReadingRuler {
           if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
             if (Number.isFinite(candidateNext.top) && candidateNext.top > (currentLine.top ?? currentLine.centerY)) {
               nextLine = candidateNext;
+              hasNext = true;
             }
           }
         }
       }
 
-      const curBottom = Number.isFinite(currentLine.bottom)
-        ? currentLine.bottom
-        : (currentLine.centerY + (currentLine.height || h) / 2);
+      const geom = this.computeLineGeometry(this.activeLineIndex);
+      let boundaryDocY;
+      if (geom && Number.isFinite(geom.targetY)) {
+        boundaryDocY = geom.targetY;
+      } else {
+        const curBottom = Number.isFinite(currentLine.bottom)
+          ? currentLine.bottom
+          : (currentLine.centerY + (currentLine.height || h) / 2);
 
-      let boundaryDocY = curBottom + 2;
-      if (nextLine) {
-        const nextTop = Number.isFinite(nextLine.top)
-          ? nextLine.top
-          : (nextLine.centerY - (nextLine.height || h) / 2);
-        if ((nextTop - curBottom) < 18) {
-          boundaryDocY = Math.min(boundaryDocY, nextTop - 1);
+        // Place the cover boundary 2px below current line descenders.
+        // This guarantees the ruler line never touches the active line,
+        // while leaving maximum clearance above the next line's ascenders and diacritics.
+        let coverTargetY = Math.round(curBottom + 2);
+
+        // Safety clamp: if nextLine exists in the same column/slot, ensure coverTargetY never collides with nextLine
+        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+          // Leave at least 4px clearance above nextLine.top to completely hide ascenders/diacritics (d, l, t, Š, etc.)
+          const maxAllowedY = Math.round(nextLine.top - 4);
+          if (coverTargetY > maxAllowedY) {
+            coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
+          }
         }
+        boundaryDocY = coverTargetY;
       }
 
       let roundScreenY;
@@ -6157,6 +6193,7 @@ export class ReadingRuler {
         this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
         this.maskBottomEl.style.setProperty("z-index", "15", "important");
         this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
+        this.maskBottomEl.style.setProperty("transition", "none", "important");
         if (isVertical) {
           this.maskBottomEl.style.top = "0px";
           this.maskBottomEl.style.left = "0px";
@@ -6176,6 +6213,7 @@ export class ReadingRuler {
         }
       }
 
+      this.rulerEl.style.setProperty("transition", "none", "important");
       if (isVertical) {
         this.rulerEl.style.top = "0px";
         this.rulerEl.style.left = "0px";
