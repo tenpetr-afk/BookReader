@@ -2587,12 +2587,34 @@ body.is-pdf-mode:not(.mode-vertical) .paged-content {
    Transparentní textová vrstva přesně slícovaná nad plátnem <canvas>
    pro interaktivní pravítko, magnetické přichytávání i výběr textu
    ========================================================================== */
+.pdf-page-container,
+.pdf-page-slot {
+  position: relative !important;
+  box-sizing: border-box !important;
+  padding: 0 !important;
+}
+
+.pdf-page-container canvas,
+.pdf-page-slot canvas,
+#reader-content .pdf-page-canvas {
+  display: block !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  padding: 0 !important;
+  border: none !important;
+  object-fit: fill !important;
+}
+
+.pdf-page-container .textLayer,
+.pdf-page-slot .textLayer,
 .textLayer {
   position: absolute;
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  border: none !important;
   overflow: hidden;
   opacity: 1;
   line-height: 1 !important;

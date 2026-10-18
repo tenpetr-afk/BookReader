@@ -2150,6 +2150,38 @@ export class ReadingRuler {
 
       const rawLines = [];
 
+      // PDF coordinate normalization map against underlying <canvas>
+      const pdfTransformMap = new Map();
+      const getPdfTransform = (tl) => {
+        if (!tl) return null;
+        if (pdfTransformMap.has(tl)) return pdfTransformMap.get(tl);
+
+        const slot = tl.closest('.pdf-page-container, .pdf-page-slot') || tl.parentElement;
+        const canvas = slot ? slot.querySelector('canvas') : document.querySelector('#reader-content canvas');
+        if (!canvas) {
+          pdfTransformMap.set(tl, null);
+          return null;
+        }
+
+        const canvasRect = canvas.getBoundingClientRect();
+        const textLayerRect = tl.getBoundingClientRect();
+
+        if (canvasRect.height > 10 && textLayerRect.height > 10) {
+          const scaleY = canvasRect.height / textLayerRect.height;
+          const scaleX = (canvasRect.width > 10 && textLayerRect.width > 10) ? (canvasRect.width / textLayerRect.width) : 1;
+          const tf = {
+            canvasRect,
+            textLayerRect,
+            scaleY,
+            scaleX
+          };
+          pdfTransformMap.set(tl, tf);
+          return tf;
+        }
+        pdfTransformMap.set(tl, null);
+        return null;
+      };
+
       elements.forEach(el => {
         // Explicitně přeskočit obrázky, svg a prázdné elementy (kromě popisků figcaption)
         if (el.tagName === 'IMG' || el.tagName === 'HR' || el.tagName === 'CANVAS') return;
@@ -2165,6 +2197,10 @@ export class ReadingRuler {
 
         // Přeskočit vnořené inline elementy, pokud je již zachycen jejich nadřazený blok (s výjimkou spanů uvnitř .textLayer)
         if (el.tagName === 'SPAN' && !el.closest('.textLayer') && el.closest('p, div, h1, h2, h3, h4, h5, h6, li, blockquote')) return;
+
+        const isPdfEl = this.isPdfMode || !!el.closest('.textLayer');
+        const textLayer = isPdfEl ? el.closest('.textLayer') : null;
+        const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
 
         const rect = el.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return;
@@ -2186,73 +2222,132 @@ export class ReadingRuler {
             const blockRight = useBlockBounds ? rect.right : null;
             for (let i = 0; i < rects.length; i++) {
               const r = rects[i];
+              let rTop = r.top;
+              let rBottom = r.bottom;
+              let rHeight = r.height;
+              let lineLeft = r.left;
+              let lineRight = r.right;
+
+              if (useBlockBounds) {
+                const sameLeftCol = !isTwoColEarly || !(r.left >= stageCenterX - 15 && blockLeft < stageCenterX - 15);
+                const sameRightCol = !isTwoColEarly || !(r.right <= stageCenterX + 15 && blockRight > stageCenterX + 15);
+                if (blockLeft != null && sameLeftCol) lineLeft = Math.min(lineLeft, blockLeft);
+                if (blockRight != null && sameRightCol) lineRight = Math.max(lineRight, blockRight);
+              }
+
+              if (pdfTf) {
+                const relTop = r.top - pdfTf.textLayerRect.top;
+                const relBottom = r.bottom - pdfTf.textLayerRect.top;
+                rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+                rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+                rHeight = rBottom - rTop;
+
+                const relLeft = lineLeft - pdfTf.textLayerRect.left;
+                const relRight = lineRight - pdfTf.textLayerRect.left;
+                lineLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+                lineRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+              }
+
               const inStage = !hasValidStageBounds || isVertical || (
-                r.right > stageLeft - 4 &&
-                r.left < stageRight + 4 &&
-                r.bottom > stageTop + 2 &&
-                r.top < stageBottom - 2
+                lineRight > stageLeft - 4 &&
+                lineLeft < stageRight + 4 &&
+                rBottom > stageTop + 2 &&
+                rTop < stageBottom - 2
               );
-              if (inStage && r.height >= 8 && r.width >= 8) {
-                let lineLeft = r.left;
-                let lineRight = r.right;
-                if (useBlockBounds) {
-                  const sameLeftCol = !isTwoColEarly || !(r.left >= stageCenterX - 15 && blockLeft < stageCenterX - 15);
-                  const sameRightCol = !isTwoColEarly || !(r.right <= stageCenterX + 15 && blockRight > stageCenterX + 15);
-                  if (blockLeft != null && sameLeftCol) lineLeft = Math.min(lineLeft, blockLeft);
-                  if (blockRight != null && sameRightCol) lineRight = Math.max(lineRight, blockRight);
-                }
+              if (inStage && rHeight >= 8 && (lineRight - lineLeft) >= 8) {
                 rawLines.push({
                   el,
                   element: el,
-                  top: r.top + vScrollTop,
-                  bottom: r.bottom + vScrollTop,
+                  top: rTop + vScrollTop,
+                  bottom: rBottom + vScrollTop,
                   left: lineLeft,
                   right: lineRight,
-                  height: r.height,
-                  centerY: r.top + r.height / 2 + vScrollTop,
-                  hasText: true
+                  height: rHeight,
+                  centerY: rTop + rHeight / 2 + vScrollTop,
+                  hasText: true,
+                  isPdfLine: !!isPdfEl
                 });
               }
             }
           } else {
+            let rTop = rect.top;
+            let rBottom = rect.bottom;
+            let rHeight = rect.height;
+            let rLeft = rect.left;
+            let rRight = rect.right;
+
+            if (pdfTf) {
+              const relTop = rect.top - pdfTf.textLayerRect.top;
+              const relBottom = rect.bottom - pdfTf.textLayerRect.top;
+              rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+              rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+              rHeight = rBottom - rTop;
+
+              const relLeft = rect.left - pdfTf.textLayerRect.left;
+              const relRight = rect.right - pdfTf.textLayerRect.left;
+              rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+              rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+            }
+
             const inStage = !hasValidStageBounds || isVertical || (
-              rect.right > stageLeft - 4 &&
-              rect.left < stageRight + 4 &&
-              rect.bottom > stageTop + 2 &&
-              rect.top < stageBottom - 2
+              rRight > stageLeft - 4 &&
+              rLeft < stageRight + 4 &&
+              rBottom > stageTop + 2 &&
+              rTop < stageBottom - 2
             );
-            if (inStage && rect.height >= 8 && rect.width >= 8) {
+            if (inStage && rHeight >= 8 && (rRight - rLeft) >= 8) {
               rawLines.push({
                 el,
                 element: el,
-                top: rect.top + vScrollTop,
-                bottom: rect.bottom + vScrollTop,
-                left: rect.left,
-                right: rect.right,
-                height: rect.height,
-                centerY: rect.top + rect.height / 2 + vScrollTop,
-                hasText: true
+                top: rTop + vScrollTop,
+                bottom: rBottom + vScrollTop,
+                left: rLeft,
+                right: rRight,
+                height: rHeight,
+                centerY: rTop + rHeight / 2 + vScrollTop,
+                hasText: true,
+                isPdfLine: !!isPdfEl
               });
             }
           }
         } catch (e) {
+          let rTop = rect.top;
+          let rBottom = rect.bottom;
+          let rHeight = rect.height;
+          let rLeft = rect.left;
+          let rRight = rect.right;
+
+          if (pdfTf) {
+            const relTop = rect.top - pdfTf.textLayerRect.top;
+            const relBottom = rect.bottom - pdfTf.textLayerRect.top;
+            rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+            rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+            rHeight = rBottom - rTop;
+
+            const relLeft = rect.left - pdfTf.textLayerRect.left;
+            const relRight = rect.right - pdfTf.textLayerRect.left;
+            rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+            rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+          }
+
           const inStage = !hasValidStageBounds || isVertical || (
-            rect.right > stageLeft - 4 &&
-            rect.left < stageRight + 4 &&
-            rect.bottom > stageTop + 2 &&
-            rect.top < stageBottom - 2
+            rRight > stageLeft - 4 &&
+            rLeft < stageRight + 4 &&
+            rBottom > stageTop + 2 &&
+            rTop < stageBottom - 2
           );
-          if (inStage && rect.height >= 8 && rect.width >= 8) {
+          if (inStage && rHeight >= 8 && (rRight - rLeft) >= 8) {
             rawLines.push({
               el,
               element: el,
-              top: rect.top + vScrollTop,
-              bottom: rect.bottom + vScrollTop,
-              left: rect.left,
-              right: rect.right,
-              height: rect.height,
-              centerY: rect.top + rect.height / 2 + vScrollTop,
-              hasText: true
+              top: rTop + vScrollTop,
+              bottom: rBottom + vScrollTop,
+              left: rLeft,
+              right: rRight,
+              height: rHeight,
+              centerY: rTop + rHeight / 2 + vScrollTop,
+              hasText: true,
+              isPdfLine: !!isPdfEl
             });
           }
         }
@@ -2349,17 +2444,37 @@ export class ReadingRuler {
               const rects = range.getClientRects();
               for (let i = 0; i < rects.length; i++) {
                 const r = rects[i];
-                if (r.width >= 8 && r.height >= 8) {
+                let rTop = r.top;
+                let rBottom = r.bottom;
+                let rHeight = r.height;
+                let rLeft = r.left;
+                let rRight = r.right;
+                const isPdfEl = this.isPdfMode || !!textNode.parentElement?.closest?.('.textLayer');
+                const tl = isPdfEl ? textNode.parentElement.closest('.textLayer') : null;
+                const pdfTf = tl ? getPdfTransform(tl) : null;
+                if (pdfTf) {
+                  const relTop = r.top - pdfTf.textLayerRect.top;
+                  const relBottom = r.bottom - pdfTf.textLayerRect.top;
+                  rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+                  rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+                  rHeight = rBottom - rTop;
+                  const relLeft = r.left - pdfTf.textLayerRect.left;
+                  const relRight = r.right - pdfTf.textLayerRect.left;
+                  rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+                  rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+                }
+                if (rHeight >= 8 && (rRight - rLeft) >= 8) {
                   rawLines.push({
                     el: textNode.parentElement,
                     element: textNode.parentElement,
-                    top: r.top + vScrollTop,
-                    bottom: r.bottom + vScrollTop,
-                    left: r.left,
-                    right: r.right,
-                    height: r.height,
-                    centerY: r.top + r.height / 2 + vScrollTop,
-                    hasText: true
+                    top: rTop + vScrollTop,
+                    bottom: rBottom + vScrollTop,
+                    left: rLeft,
+                    right: rRight,
+                    height: rHeight,
+                    centerY: rTop + rHeight / 2 + vScrollTop,
+                    hasText: true,
+                    isPdfLine: !!isPdfEl
                   });
                 }
               }
@@ -3362,26 +3477,49 @@ export class ReadingRuler {
         const curBottom = Number.isFinite(line.bottom) ? line.bottom : Math.round(mediaT + mediaH + padding);
 
         let coverTargetY;
-        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          const interLineGap = nextLine.top - curBottom;
-          if (interLineGap >= 12) {
-            coverTargetY = Math.round(curBottom + interLineGap * 0.45);
-          } else if (interLineGap >= 6) {
-            coverTargetY = Math.round(curBottom + interLineGap * 0.5);
+        if (this.isPdfMode) {
+          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+            const interLineGap = nextLine.top - curBottom;
+            const minAllowedY = Math.round(curBottom + 3);
+            const maxAllowedY = Math.round(nextLine.top - 4);
+            if (interLineGap >= 12) {
+              coverTargetY = Math.round(curBottom + interLineGap * 0.42);
+            } else if (interLineGap >= 6) {
+              coverTargetY = Math.round(curBottom + interLineGap * 0.45);
+            } else {
+              coverTargetY = Math.round(curBottom + 3);
+            }
+            if (minAllowedY <= maxAllowedY) {
+              coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
+            } else {
+              coverTargetY = Math.round((curBottom + nextLine.top) / 2);
+            }
           } else {
-            coverTargetY = Math.round(curBottom + 2);
-          }
-
-          // Strict clamping
-          const minAllowedY = Math.round(curBottom + 2);
-          const maxAllowedY = Math.round(nextLine.top - 5);
-          if (minAllowedY <= maxAllowedY) {
-            coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
-          } else {
-            coverTargetY = Math.round((curBottom + nextLine.top) / 2);
+            coverTargetY = Math.round(curBottom + 3);
           }
         } else {
-          coverTargetY = Math.round(curBottom + 3);
+          // Unmodified EPUB logic
+          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+            const interLineGap = nextLine.top - curBottom;
+            if (interLineGap >= 12) {
+              coverTargetY = Math.round(curBottom + interLineGap * 0.45);
+            } else if (interLineGap >= 6) {
+              coverTargetY = Math.round(curBottom + interLineGap * 0.5);
+            } else {
+              coverTargetY = Math.round(curBottom + 2);
+            }
+
+            // Strict clamping
+            const minAllowedY = Math.round(curBottom + 2);
+            const maxAllowedY = Math.round(nextLine.top - 5);
+            if (minAllowedY <= maxAllowedY) {
+              coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
+            } else {
+              coverTargetY = Math.round((curBottom + nextLine.top) / 2);
+            }
+          } else {
+            coverTargetY = Math.round(curBottom + 3);
+          }
         }
 
         targetY = coverTargetY;
@@ -3458,34 +3596,12 @@ export class ReadingRuler {
     }
 
     let targetY = Math.round(line.centerY - height / 2);
-    if (prevLine && prevLine.columnIndex === line.columnIndex) {
-      if (prevLine.isMedia && Number.isFinite(prevLine.bottom)) {
-        const prevBottom = Math.round(prevLine.bottom + 10);
-        if (targetY <= prevBottom) {
-          targetY = Math.round(prevBottom + 1);
-        }
-      } else if (Number.isFinite(prevLine.centerY)) {
-        const midPrev = (prevLine.centerY + line.centerY) / 2;
-        if (targetY < Math.round(midPrev)) {
-          targetY = Math.round(midPrev);
-        }
-      }
-    }
-    if (nextLine && nextLine.columnIndex === line.columnIndex) {
-      if (nextLine.isMedia && Number.isFinite(nextLine.top)) {
-        const nextTop = Math.round(nextLine.top - 10);
-        if (targetY + height >= nextTop) {
-          height = Math.max(10, Math.round(nextTop - 1 - targetY));
-        }
-      } else if (Number.isFinite(nextLine.centerY)) {
-        const midNext = (line.centerY + nextLine.centerY) / 2;
-        if (targetY + height > Math.round(midNext)) {
-          height = Math.max(10, Math.round(midNext - targetY));
-        }
-      }
-    }
 
-    if (this.mode === "bottom-cover") {
+    if (this.isPdfMode) {
+      // PDF-SPECIFIC ACCURATE INTER-LINE GAP CALIBRATION
+      const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + height / 2);
+      const curTop = Number.isFinite(line.top) ? line.top : (line.centerY - height / 2);
+
       let hasNext = false;
       if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
         const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
@@ -3496,32 +3612,145 @@ export class ReadingRuler {
           }
         }
       }
-      const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + height / 2);
 
+      let hasPrev = false;
+      if (prevLine && (prevLine.columnIndex === line.columnIndex || (line.columnIndex == null && prevLine.columnIndex == null))) {
+        const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+        const prevSlot = (prevLine.element || prevLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+        if (!lineSlot || !prevSlot || lineSlot === prevSlot) {
+          if (Number.isFinite(prevLine.bottom) && prevLine.bottom < (line.bottom ?? line.centerY)) {
+            hasPrev = true;
+          }
+        }
+      }
+
+      // Safe optical boundary calculation below line N (bottom dividing line)
       let coverTargetY;
       if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
         const interLineGap = nextLine.top - curBottom;
+        // In PDF.js, descenders (p, j, y) on line N extend 1-2px below curBottom (fallback font client rect).
+        // To ensure ruler line sits at least 2px below lowest glyph point:
+        const minAllowedY = Math.round(curBottom + 3);
+
+        // Diacritics (ž, š, č, ř, ů, í) and ascenders (d, l, t) on nextLine extend 2-3px above nextLine.top.
+        // To conceal them completely under ruler line:
+        const maxAllowedY = Math.round(nextLine.top - 4);
+
         if (interLineGap >= 12) {
-          coverTargetY = Math.round(curBottom + interLineGap * 0.45);
+          coverTargetY = Math.round(curBottom + interLineGap * 0.42);
         } else if (interLineGap >= 6) {
-          coverTargetY = Math.round(curBottom + interLineGap * 0.5);
+          coverTargetY = Math.round(curBottom + interLineGap * 0.45);
         } else {
-          coverTargetY = Math.round(curBottom + 2);
+          coverTargetY = Math.round(curBottom + 3);
         }
 
-        // Strict clamping
-        const minAllowedY = Math.round(curBottom + 2);
-        const maxAllowedY = Math.round(nextLine.top - 5);
         if (minAllowedY <= maxAllowedY) {
           coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
         } else {
           coverTargetY = Math.round((curBottom + nextLine.top) / 2);
         }
       } else {
+        // Last line on page/column: safely below current line's descenders (+3px)
         coverTargetY = Math.round(curBottom + 3);
       }
 
-      targetY = coverTargetY;
+      // Safe optical boundary calculation above line N (for highlight and focus modes)
+      let topTargetY;
+      if (hasPrev && prevLine && Number.isFinite(prevLine.bottom)) {
+        const prevGap = curTop - prevLine.bottom;
+        const minTop = Math.round(prevLine.bottom + 3);
+        const maxTop = Math.round(curTop - 3);
+
+        if (prevGap >= 12) {
+          topTargetY = Math.round(curTop - prevGap * 0.42);
+        } else if (prevGap >= 6) {
+          topTargetY = Math.round(curTop - prevGap * 0.45);
+        } else {
+          topTargetY = Math.round(curTop - 3);
+        }
+
+        if (minTop <= maxTop) {
+          topTargetY = Math.max(minTop, Math.min(topTargetY, maxTop));
+        } else {
+          topTargetY = Math.round((prevLine.bottom + curTop) / 2);
+        }
+      } else {
+        topTargetY = Math.round(curTop - 3);
+      }
+
+      if (this.mode === "bottom-cover") {
+        targetY = coverTargetY;
+      } else {
+        targetY = topTargetY;
+        height = Math.max(10, Math.round(coverTargetY - topTargetY));
+      }
+    } else {
+      // 100% UNTOUCHED EPUB LOGIC
+      if (prevLine && prevLine.columnIndex === line.columnIndex) {
+        if (prevLine.isMedia && Number.isFinite(prevLine.bottom)) {
+          const prevBottom = Math.round(prevLine.bottom + 10);
+          if (targetY <= prevBottom) {
+            targetY = Math.round(prevBottom + 1);
+          }
+        } else if (Number.isFinite(prevLine.centerY)) {
+          const midPrev = (prevLine.centerY + line.centerY) / 2;
+          if (targetY < Math.round(midPrev)) {
+            targetY = Math.round(midPrev);
+          }
+        }
+      }
+      if (nextLine && nextLine.columnIndex === line.columnIndex) {
+        if (nextLine.isMedia && Number.isFinite(nextLine.top)) {
+          const nextTop = Math.round(nextLine.top - 10);
+          if (targetY + height >= nextTop) {
+            height = Math.max(10, Math.round(nextTop - 1 - targetY));
+          }
+        } else if (Number.isFinite(nextLine.centerY)) {
+          const midNext = (line.centerY + nextLine.centerY) / 2;
+          if (targetY + height > Math.round(midNext)) {
+            height = Math.max(10, Math.round(midNext - targetY));
+          }
+        }
+      }
+
+      if (this.mode === "bottom-cover") {
+        let hasNext = false;
+        if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
+          const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+          const nextSlot = (nextLine.element || nextLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+          if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
+            if (Number.isFinite(nextLine.top) && nextLine.top > (line.top ?? line.centerY)) {
+              hasNext = true;
+            }
+          }
+        }
+        const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + height / 2);
+
+        let coverTargetY;
+        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+          const interLineGap = nextLine.top - curBottom;
+          if (interLineGap >= 12) {
+            coverTargetY = Math.round(curBottom + interLineGap * 0.45);
+          } else if (interLineGap >= 6) {
+            coverTargetY = Math.round(curBottom + interLineGap * 0.5);
+          } else {
+            coverTargetY = Math.round(curBottom + 2);
+          }
+
+          // Strict clamping
+          const minAllowedY = Math.round(curBottom + 2);
+          const maxAllowedY = Math.round(nextLine.top - 5);
+          if (minAllowedY <= maxAllowedY) {
+            coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
+          } else {
+            coverTargetY = Math.round((curBottom + nextLine.top) / 2);
+          }
+        } else {
+          coverTargetY = Math.round(curBottom + 3);
+        }
+
+        targetY = coverTargetY;
+      }
     }
 
     let left = line.columnLeft ?? line.left ?? (line.columnIndex === 1 ? this.column1Left : this.column0Left) ?? this.textBlockLeft ?? 0;
@@ -5750,6 +5979,17 @@ export class ReadingRuler {
           this.currentY = y;
         }
       }
+    } else if (this.isPdfMode && this.snapToLines && !this.isDraggingRuler && !this.isDragging) {
+      const geom = this.computeLineGeometry(this.activeLineIndex);
+      if (geom && Number.isFinite(geom.targetY)) {
+        y = geom.targetY;
+        this.targetY = geom.targetY;
+        this.currentY = geom.targetY;
+        if (this.mode !== "bottom-cover" && geom.height) {
+          h = geom.height;
+          this.height = h;
+        }
+      }
     } else if (this.mode === "bottom-cover" && this.snapToLines && !this.isDraggingRuler && !this.isDragging) {
       const geom = this.computeLineGeometry(this.activeLineIndex);
       if (geom && Number.isFinite(geom.targetY)) {
@@ -6141,17 +6381,28 @@ export class ReadingRuler {
           ? currentLine.bottom
           : (currentLine.centerY + (currentLine.height || h) / 2);
 
-        // Place the cover boundary 2px below current line descenders.
-        // This guarantees the ruler line never touches the active line,
-        // while leaving maximum clearance above the next line's ascenders and diacritics.
-        let coverTargetY = Math.round(curBottom + 2);
+        let coverTargetY;
+        if (this.isPdfMode) {
+          coverTargetY = Math.round(curBottom + 3);
+          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+            const maxAllowedY = Math.round(nextLine.top - 4);
+            if (coverTargetY > maxAllowedY) {
+              coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
+            }
+          }
+        } else {
+          // Place the cover boundary 2px below current line descenders.
+          // This guarantees the ruler line never touches the active line,
+          // while leaving maximum clearance above the next line's ascenders and diacritics.
+          coverTargetY = Math.round(curBottom + 2);
 
-        // Safety clamp: if nextLine exists in the same column/slot, ensure coverTargetY never collides with nextLine
-        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          // Leave at least 4px clearance above nextLine.top to completely hide ascenders/diacritics (d, l, t, Š, etc.)
-          const maxAllowedY = Math.round(nextLine.top - 4);
-          if (coverTargetY > maxAllowedY) {
-            coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
+          // Safety clamp: if nextLine exists in the same column/slot, ensure coverTargetY never collides with nextLine
+          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+            // Leave at least 4px clearance above nextLine.top to completely hide ascenders/diacritics (d, l, t, Š, etc.)
+            const maxAllowedY = Math.round(nextLine.top - 4);
+            if (coverTargetY > maxAllowedY) {
+              coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
+            }
           }
         }
         boundaryDocY = coverTargetY;

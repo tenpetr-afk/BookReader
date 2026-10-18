@@ -714,6 +714,7 @@ export class LuminaApp {
           await this.pdfLoader.switchReadingMode(mode);
           this.updatePageUI();
           if (this.ruler && this.ruler.enabled) {
+            this.ruler.refreshLines();
             this.ruler.applyPosition();
           }
         });
@@ -1869,6 +1870,7 @@ export class LuminaApp {
             this.pdfLoader.setColumnsMode(mode);
             await this.pdfLoader.renderPage(this.pdfLoader.currentPage);
             this.updatePageUI();
+            this.ruler?.refreshLines();
             this.ruler?.applyPosition();
             return;
           }

@@ -1246,9 +1246,26 @@ export class PDFLoader {
 
       const textLayerDiv = document.createElement("div");
       textLayerDiv.className = "textLayer";
+      textLayerDiv.style.position = "absolute";
+      textLayerDiv.style.top = "0px";
+      textLayerDiv.style.left = "0px";
+      textLayerDiv.style.margin = "0";
+      textLayerDiv.style.padding = "0";
       textLayerDiv.style.width = `${floorW}px`;
       textLayerDiv.style.height = `${floorH}px`;
       textLayerDiv.style.setProperty("--scale-factor", viewport.scale);
+
+      const canvas = container.querySelector("canvas");
+      if (canvas) {
+        if (canvas.style.width) textLayerDiv.style.width = canvas.style.width;
+        if (canvas.style.height) textLayerDiv.style.height = canvas.style.height;
+        if (canvas.offsetTop !== undefined && canvas.offsetTop !== null) {
+          textLayerDiv.style.top = `${canvas.offsetTop}px`;
+        }
+        if (canvas.offsetLeft !== undefined && canvas.offsetLeft !== null) {
+          textLayerDiv.style.left = `${canvas.offsetLeft}px`;
+        }
+      }
 
       container.appendChild(textLayerDiv);
       if (pageNum === this.currentPage) {
@@ -1284,6 +1301,20 @@ export class PDFLoader {
         this.currentTextLayerTasks.push(textTask);
         this.currentTextLayerTask = textTask;
         await textTask.promise;
+      }
+
+      if (canvas) {
+        const cRect = canvas.getBoundingClientRect();
+        if (cRect && cRect.width > 0 && cRect.height > 0) {
+          textLayerDiv.style.width = `${Math.round(cRect.width)}px`;
+          textLayerDiv.style.height = `${Math.round(cRect.height)}px`;
+          if (canvas.offsetTop !== undefined && canvas.offsetTop !== null) {
+            textLayerDiv.style.top = `${canvas.offsetTop}px`;
+          }
+          if (canvas.offsetLeft !== undefined && canvas.offsetLeft !== null) {
+            textLayerDiv.style.left = `${canvas.offsetLeft}px`;
+          }
+        }
       }
 
       return { textLayerDiv, wordCount };
