@@ -173,6 +173,88 @@ export class ReadingRuler {
     return slots.length >= 2;
   }
 
+  /**
+   * Získá přesné informace o aktivní stránce v režimu dvoustrany (Two-Page Spread).
+   * Detekuje levý a pravý slot, odpovídající plátna (canvas) a určí,
+   * zda je aktivní levá či pravá strana podle pozice aktuálního řádku / ukazatele.
+   */
+  getActiveSpreadInfo(currentLine = null) {
+    if (!this.isSpreadActive()) return null;
+    const spreadSlots = Array.from(document.querySelectorAll("#reader-content .pdf-page-slot"));
+    if (spreadSlots.length < 2) return null;
+
+    // Vizuální seřazení zleva doprava
+    spreadSlots.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+
+    const leftSlot = spreadSlots[0];
+    const rightSlot = spreadSlots[1];
+    const leftCanvas = leftSlot.querySelector("canvas") || leftSlot;
+    const rightCanvas = rightSlot.querySelector("canvas") || rightSlot;
+
+    let leftRect = leftCanvas.getBoundingClientRect();
+    let rightRect = rightCanvas.getBoundingClientRect();
+    if (leftRect.width < 50) leftRect = leftSlot.getBoundingClientRect();
+    if (rightRect.width < 50) rightRect = rightSlot.getBoundingClientRect();
+
+    if (leftRect.left > rightRect.left) {
+      const tSlot = leftSlot;
+      leftSlot = rightSlot;
+      rightSlot = tSlot;
+      const tCanvas = leftCanvas;
+      leftCanvas = rightCanvas;
+      rightCanvas = tCanvas;
+      const tRect = leftRect;
+      leftRect = rightRect;
+      rightRect = tRect;
+    }
+
+    const line = currentLine || (this.activeLineIndex >= 0 && this.cachedLines ? this.cachedLines[this.activeLineIndex] : null);
+    const lineEl = line ? (line.element || line.el) : null;
+
+    let isLeftActive = true;
+    if (lineEl && rightSlot.contains(lineEl)) {
+      isLeftActive = false;
+    } else if (lineEl && leftSlot.contains(lineEl)) {
+      isLeftActive = true;
+    } else if (line && line.columnIndex === 1) {
+      isLeftActive = false;
+    } else if (line && line.columnIndex === 0) {
+      isLeftActive = true;
+    } else {
+      const midGap = (leftRect.right + rightRect.left) / 2;
+      const refX = Number.isFinite(line?.textLeft)
+        ? line.textLeft
+        : (Number.isFinite(line?.left)
+          ? line.left
+          : (this.lastPointerX ?? (leftRect.left + leftRect.width / 2)));
+      isLeftActive = refX < midGap;
+    }
+
+    const activeSlot = isLeftActive ? leftSlot : rightSlot;
+    const inactiveSlot = isLeftActive ? rightSlot : leftSlot;
+    const activeCanvas = isLeftActive ? leftCanvas : rightCanvas;
+    const inactiveCanvas = isLeftActive ? rightCanvas : leftCanvas;
+    const activeRect = isLeftActive ? leftRect : rightRect;
+    const inactiveRect = isLeftActive ? rightRect : leftRect;
+
+    return {
+      isLeftActive,
+      leftSlot,
+      rightSlot,
+      leftCanvas,
+      rightCanvas,
+      leftRect,
+      rightRect,
+      activeSlot,
+      inactiveSlot,
+      activeCanvas,
+      inactiveCanvas,
+      activeRect,
+      inactiveRect,
+      midGap: (leftRect.right + rightRect.left) / 2
+    };
+  }
+
   setReadingMode(mode) {
     this.readingMode = mode;
     if (mode !== "vertical") {
@@ -2310,11 +2392,24 @@ export class ReadingRuler {
       const col1StageRight = isTwoCol ? Math.round(col1StageLeft + singleColWidth) : col0StageRight;
       const colDividerX = isTwoCol ? (col0StageRight + col1StageLeft) / 2 : stageCenterX;
 
+      const isSpread = !isVertical && this.isSpreadActive();
+      const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
+
       // Přiřazení indexu sloupce každému nalezenému řádku
       for (let i = 0; i < rawLines.length; i++) {
         const r = rawLines[i];
         if (!isTwoCol || isVertical) {
           r.columnIndex = 0;
+        } else if (isSpread && spreadInfo) {
+          const el = r.element || r.el;
+          if (el && spreadInfo.rightSlot.contains(el)) {
+            r.columnIndex = 1;
+          } else if (el && spreadInfo.leftSlot.contains(el)) {
+            r.columnIndex = 0;
+          } else {
+            const midX = (r.left + r.right) / 2;
+            r.columnIndex = midX >= spreadInfo.midGap ? 1 : 0;
+          }
         } else {
           const midX = (r.left + r.right) / 2;
           r.columnIndex = (midX >= colDividerX || r.left >= col0StageRight - 10) ? 1 : 0;
@@ -2477,7 +2572,37 @@ export class ReadingRuler {
         const textContainerWidth = (textContainerRect && textContainerRect.width > 50) ? textContainerRect.width : stageRect.width;
 
         let c0Left, c0Right;
-        if (isVertical) {
+        let c1Left, c1Right;
+        let c0Width, c1Width;
+
+        if (isSpread && spreadInfo) {
+          const leftRect = spreadInfo.leftRect;
+          const rightRect = spreadInfo.rightRect;
+          const padding = 12;
+
+          let col0Left = Math.round(leftRect.left + padding);
+          let col0Right = Math.round(leftRect.right - padding);
+          if (minLeft0 < Infinity && maxRight0 > -Infinity && maxRight0 > minLeft0) {
+            col0Left = Math.max(Math.round(leftRect.left), Math.round(minLeft0 - padding));
+            col0Right = Math.min(Math.round(leftRect.right), Math.round(maxRight0 + padding));
+          }
+
+          let col1Left = Math.round(rightRect.left + padding);
+          let col1Right = Math.round(rightRect.right - padding);
+          if (minLeft1 < Infinity && maxRight1 > -Infinity && maxRight1 > minLeft1) {
+            col1Left = Math.max(Math.round(rightRect.left), Math.round(minLeft1 - padding));
+            col1Right = Math.min(Math.round(rightRect.right), Math.round(maxRight1 + padding));
+          }
+
+          c0Left = col0Left;
+          c0Right = col0Right;
+          c1Left = col1Left;
+          c1Right = col1Right;
+          gapMiddle = Math.round(spreadInfo.midGap);
+          this.gapMiddle = gapMiddle;
+          c0Width = Math.max(50, c0Right - c0Left);
+          c1Width = Math.max(50, c1Right - c1Left);
+        } else if (isVertical) {
           const tcLeft = textContainerRect ? Math.round(textContainerRect.left) : Math.round(stageRect.left);
           const tcRight = textContainerRect ? Math.round(textContainerRect.right) : Math.round(stageRect.right);
           const textMinL = minLeft0 < Infinity ? Math.round(minLeft0 - horizontalPadding) : tcLeft;
@@ -2490,6 +2615,10 @@ export class ReadingRuler {
           }
           c0Left = Math.max(0, c0Left);
           c0Right = Math.min(window.innerWidth, c0Right);
+          c0Width = Math.max(80, Math.round(c0Right - c0Left));
+          c1Left = c0Left;
+          c1Right = c0Right;
+          c1Width = c0Width;
         } else if (isTwoCol) {
           const col0MaxRight = gapMiddle - 4;
           c0Left = minLeft0 < Infinity ? (minLeft0 - horizontalPadding) : (col0StageLeft - horizontalPadding);
@@ -2497,6 +2626,25 @@ export class ReadingRuler {
           const col0MinLeft = Math.max(0, Math.round(col0StageLeft - horizontalPadding));
           c0Left = Math.max(col0MinLeft, Math.round(c0Left));
           c0Right = Math.min(col0MaxRight, Math.round(c0Right));
+          if (c0Right <= c0Left) {
+            c0Left = Math.round(stageRect.left);
+            c0Right = Math.round(stageRect.right);
+          }
+          c0Width = Math.max(80, Math.round(c0Right - c0Left));
+
+          const computedColWidth = Math.max(80, Math.round((textContainerWidth - colGap) / 2));
+          const columnWidth = (c0Width >= 80 && Math.abs(c0Width - computedColWidth) <= 60) ? c0Width : computedColWidth;
+
+          const col1MinLeft = gapMiddle + 4;
+          let col1TargetLeft = (minLeft1 < Infinity)
+            ? Math.round(minLeft1 - horizontalPadding)
+            : Math.round(c0Left + columnWidth + colGap);
+          if (minLeft1 < Infinity && Math.abs(col1TargetLeft - Math.round(c0Left + columnWidth + colGap)) > 40) {
+            col1TargetLeft = Math.round(c0Left + columnWidth + colGap);
+          }
+          c1Left = Math.max(col1MinLeft, col1TargetLeft);
+          c1Width = columnWidth;
+          c1Right = c1Left + c1Width;
         } else {
           // Single-column mode: enforce colLeft and colWidth to align with the actual text column
           // Never extend or bleed to viewport x = 0 or window.innerWidth
@@ -2509,37 +2657,10 @@ export class ReadingRuler {
             c0Left = Math.round(stageRect.left);
             c0Right = Math.round(stageRect.right);
           }
-        }
-
-        if (c0Right <= c0Left) {
-          c0Left = Math.round(stageRect.left);
-          c0Right = Math.round(stageRect.right);
-        }
-        const c0Width = Math.max(80, Math.round(c0Right - c0Left));
-
-        // Horizontální ohraničení sloupce 1 (pokud je 2-sloupcový režim)
-        // Šířka pravého sloupce je striktně symetrická k sloupci 0 a nesmí být
-        // nikdy odvozována z window.innerWidth, stageRect.right ani pravého okraje viewportu.
-        const computedColWidth = Math.max(80, Math.round((textContainerWidth - colGap) / 2));
-        const columnWidth = isTwoCol
-          ? ((c0Width >= 80 && Math.abs(c0Width - computedColWidth) <= 60) ? c0Width : computedColWidth)
-          : c0Width;
-
-        let c1Left = gapMiddle + 4;
-        let c1Width = columnWidth;
-        let c1Right = c1Left + c1Width;
-
-        if (isTwoCol && !isVertical) {
-          const col1MinLeft = gapMiddle + 4;
-          let col1TargetLeft = (minLeft1 < Infinity)
-            ? Math.round(minLeft1 - horizontalPadding)
-            : Math.round(c0Left + columnWidth + colGap);
-          if (minLeft1 < Infinity && Math.abs(col1TargetLeft - Math.round(c0Left + columnWidth + colGap)) > 40) {
-            col1TargetLeft = Math.round(c0Left + columnWidth + colGap);
-          }
-          c1Left = Math.max(col1MinLeft, col1TargetLeft);
-          c1Width = columnWidth;
-          c1Right = c1Left + c1Width;
+          c0Width = Math.max(80, Math.round(c0Right - c0Left));
+          c1Left = c0Left;
+          c1Right = c0Right;
+          c1Width = c0Width;
         }
 
         for (const line of this.cachedLines) {
@@ -2553,14 +2674,14 @@ export class ReadingRuler {
             line.columnLeft = c1Left;
             line.columnWidth = c1Width;
             line.columnRight = c1Left + c1Width;
-            line.colBoundaryLeft = col1StageLeft;
-            line.colBoundaryRight = col1StageRight;
+            line.colBoundaryLeft = (isSpread && spreadInfo) ? Math.round(spreadInfo.rightRect.left) : col1StageLeft;
+            line.colBoundaryRight = (isSpread && spreadInfo) ? Math.round(spreadInfo.rightRect.right) : col1StageRight;
           } else {
             line.columnLeft = c0Left;
             line.columnWidth = c0Width;
             line.columnRight = c0Left + c0Width;
-            line.colBoundaryLeft = col0StageLeft;
-            line.colBoundaryRight = col0StageRight;
+            line.colBoundaryLeft = (isSpread && spreadInfo) ? Math.round(spreadInfo.leftRect.left) : col0StageLeft;
+            line.colBoundaryRight = (isSpread && spreadInfo) ? Math.round(spreadInfo.leftRect.right) : col0StageRight;
           }
           if (!line.isMedia) {
             line.left = line.columnLeft;
@@ -2982,11 +3103,14 @@ export class ReadingRuler {
         const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, width: window.innerWidth };
         const stageCenterX = stageRect.left + stageRect.width / 2;
         const isTwoCol = this.isTwoCol;
+        const isSpread = !this.isVerticalMode() && this.isSpreadActive();
+        const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
+        const splitX = (isSpread && spreadInfo) ? spreadInfo.midGap : (isTwoCol && this.gapMiddle ? this.gapMiddle : stageCenterX);
 
         for (const w of finalWords) {
           let bestIdx = 0;
           let minDiff = Infinity;
-          const isWordCol1 = isTwoCol && (w.centerX >= stageCenterX);
+          const isWordCol1 = isTwoCol && (w.centerX >= splitX);
           for (let j = 0; j < this.cachedLines.length; j++) {
             const line = this.cachedLines[j];
             if (line.isMedia) continue;
@@ -3035,11 +3159,26 @@ export class ReadingRuler {
    */
   getPageTextColumnBounds(currentLine) {
     const isVertical = this.isVerticalMode();
+    const isSpread = !isVertical && this.isSpreadActive();
     const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
     const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, width: window.innerWidth };
 
     const lineEl = currentLine ? (currentLine.element || currentLine.el) : null;
-    let pdfPage = lineEl ? lineEl.closest(".pdf-page-container, .pdf-page-slot") : null;
+    let pdfPage = null;
+    let canvasRect = null;
+    const padding = 12; // px jednotný offset pro odsazení pravítka
+
+    if (isSpread) {
+      const spreadInfo = this.getActiveSpreadInfo(currentLine);
+      if (spreadInfo) {
+        pdfPage = spreadInfo.activeSlot;
+        canvasRect = spreadInfo.activeRect;
+      }
+    }
+
+    if (!pdfPage) {
+      pdfPage = lineEl ? lineEl.closest(".pdf-page-container, .pdf-page-slot") : null;
+    }
 
     if (!pdfPage) {
       const pdfContainers = document.querySelectorAll("#reader-content .pdf-page-container, #reader-content .pdf-page-slot");
@@ -3065,16 +3204,13 @@ export class ReadingRuler {
       }
     }
 
-    let canvasRect = null;
-    if (pdfPage) {
+    if (!canvasRect && pdfPage) {
       const canvas = pdfPage.querySelector("canvas") || pdfPage;
       const cr = canvas.getBoundingClientRect();
       if (cr.width > 50) {
         canvasRect = cr;
       }
     }
-
-    const padding = 12; // px jednotný offset pro odsazení pravítka
 
     // 1. Zkusíme odvodit stabilní textový sloupec ze všech řádků na dané stránce
     if (pdfPage && this.cachedLines && this.cachedLines.length > 0) {
@@ -3085,8 +3221,9 @@ export class ReadingRuler {
       for (const l of this.cachedLines) {
         if (l.isMedia) continue;
         const el = l.element || l.el;
-        if (!el) continue;
-        if (pdfPage.contains(el) || el.closest(".pdf-page-container, .pdf-page-slot") === pdfPage) {
+        const belongsToPage = (el && (pdfPage.contains(el) || el.closest(".pdf-page-container, .pdf-page-slot") === pdfPage)) ||
+          (isSpread && currentLine && l.columnIndex === currentLine.columnIndex);
+        if (belongsToPage) {
           const lLeft = Number.isFinite(l.textLeft) ? l.textLeft : (Number.isFinite(l.left) ? l.left : null);
           const lRight = Number.isFinite(l.textRight) ? l.textRight : (Number.isFinite(l.right) ? l.right : null);
           if (lLeft !== null && lRight !== null && lRight > lLeft) {
@@ -3110,8 +3247,8 @@ export class ReadingRuler {
       }
     }
 
-    // 2. Pokud nemáme řádky specifické pro stránku, zkusíme globální min/max z cachedLines
-    if (this.cachedLines && this.cachedLines.length > 0) {
+    // 2. Pokud nemáme řádky specifické pro stránku, a NEJSME ve spread módu, zkusíme globální min/max z cachedLines
+    if (!isSpread && this.cachedLines && this.cachedLines.length > 0) {
       let minLeft = Infinity;
       let maxRight = -Infinity;
       let textLineCount = 0;
@@ -3140,6 +3277,13 @@ export class ReadingRuler {
 
     // 3. Fallback na rozměry plátna stránky (canvas), pokud textová vrstva není dostupná
     if (canvasRect && canvasRect.width > 50) {
+      if (isSpread) {
+        const pad = Math.min(padding, Math.round(canvasRect.width * 0.05));
+        return {
+          left: Math.round(canvasRect.left + pad),
+          width: Math.round(canvasRect.width - (pad * 2))
+        };
+      }
       return {
         left: Math.round(canvasRect.left),
         width: Math.round(canvasRect.width)
@@ -3148,15 +3292,29 @@ export class ReadingRuler {
 
     // 4. Fallback na cached columnLeft/columnWidth pokud je rozumné (ne přes celou obrazovku)
     if (currentLine && Number.isFinite(currentLine.columnLeft) && Number.isFinite(currentLine.columnWidth) && currentLine.columnWidth > 50) {
-      if (currentLine.columnWidth < window.innerWidth - 20) {
+      let cLeft = currentLine.columnLeft;
+      let cWidth = currentLine.columnWidth;
+      if (canvasRect && canvasRect.width > 50) {
+        cLeft = Math.max(canvasRect.left, cLeft);
+        if (cLeft + cWidth > canvasRect.right) {
+          cWidth = Math.max(50, canvasRect.right - cLeft);
+        }
+      }
+      if (cWidth < window.innerWidth - 20) {
         return {
-          left: Math.round(currentLine.columnLeft),
-          width: Math.round(currentLine.columnWidth)
+          left: Math.round(cLeft),
+          width: Math.round(cWidth)
         };
       }
     }
 
-    // 5. Poslední fallback na stage ohraničení
+    // 5. Poslední fallback na stage ohraničení (nebo canvasRect)
+    if (canvasRect && canvasRect.width > 50) {
+      return {
+        left: Math.round(canvasRect.left),
+        width: Math.round(canvasRect.width)
+      };
+    }
     return {
       left: Math.round(stageRect.left),
       width: Math.round(stageRect.width)
@@ -3228,6 +3386,14 @@ export class ReadingRuler {
 
       let colBoundaryLeft = line.colBoundaryLeft ?? (line.columnIndex === 1 ? this.column1Left : this.column0Left) ?? stageL;
       let colBoundaryRight = line.colBoundaryRight ?? (line.columnIndex === 1 ? this.column1Right : this.column0Right) ?? stageR;
+
+      if (this.isSpreadActive()) {
+        const spreadInfo = this.getActiveSpreadInfo(line);
+        if (spreadInfo) {
+          colBoundaryLeft = Math.round(spreadInfo.activeRect.left);
+          colBoundaryRight = Math.round(spreadInfo.activeRect.right);
+        }
+      }
 
       colBoundaryLeft = Math.max(stageL, colBoundaryLeft);
       colBoundaryRight = Math.min(stageR, colBoundaryRight);
@@ -3343,7 +3509,31 @@ export class ReadingRuler {
     let left = line.columnLeft ?? line.left ?? (line.columnIndex === 1 ? this.column1Left : this.column0Left) ?? this.textBlockLeft ?? 0;
     let width = line.columnWidth ?? line.width ?? (line.columnIndex === 1 ? this.column1Width : this.column0Width) ?? this.textBlockWidth ?? 200;
 
-    if (this.isVerticalMode() && (this.isPdfMode || document.querySelector("#reader-content .pdf-page-container, #reader-content .pdf-page-slot"))) {
+    const isPdfOrSlot = this.isPdfMode || !!document.querySelector("#reader-content .pdf-page-container, #reader-content .pdf-page-slot");
+    if (this.isSpreadActive() && isPdfOrSlot) {
+      const spreadInfo = this.getActiveSpreadInfo(line);
+      if (spreadInfo) {
+        const cRect = spreadInfo.activeRect;
+        const pageCol = this.getPageTextColumnBounds(line);
+        if (pageCol && pageCol.width > 50) {
+          left = Math.max(Math.round(cRect.left), Math.round(pageCol.left));
+          width = Math.min(Math.round(pageCol.width), Math.round(cRect.right - left));
+        } else if (line.textLeft != null && line.textRight != null && line.textRight > line.textLeft) {
+          const padding = 12;
+          left = Math.max(Math.round(cRect.left), Math.round(line.textLeft - padding));
+          const colR = Math.min(Math.round(cRect.right), Math.round(line.textRight + padding));
+          width = Math.max(50, colR - left);
+        } else {
+          const padding = 12;
+          left = Math.round(cRect.left + padding);
+          width = Math.round(cRect.width - (padding * 2));
+        }
+        left = Math.max(Math.round(cRect.left), left);
+        if (left + width > cRect.right) {
+          width = Math.max(50, Math.round(cRect.right - left));
+        }
+      }
+    } else if (this.isVerticalMode() && isPdfOrSlot) {
       const pageCol = this.getPageTextColumnBounds(line);
       if (pageCol && pageCol.width > 50) {
         left = pageCol.left;
@@ -3622,22 +3812,9 @@ export class ReadingRuler {
       let topBound = stageRect.top;
       let bottomBound = stageRect.bottom;
       const isSpread = this.isSpreadActive();
-      const spreadSlots = isSpread ? Array.from(document.querySelectorAll("#reader-content .pdf-page-slot")) : [];
-      if (isSpread && spreadSlots.length >= 2) {
-        let leftSlot = spreadSlots[0];
-        let rightSlot = spreadSlots[1];
-        let leftCanvas = leftSlot.querySelector("canvas") || leftSlot;
-        let rightCanvas = rightSlot.querySelector("canvas") || rightSlot;
-        let leftRect = leftCanvas.getBoundingClientRect();
-        let rightRect = rightCanvas.getBoundingClientRect();
-        if (leftRect.left > rightRect.left) {
-          const tSlot = leftSlot; leftSlot = rightSlot; rightSlot = tSlot;
-          const tCanvas = leftCanvas; leftCanvas = rightCanvas; rightCanvas = tCanvas;
-          const tRect = leftRect; leftRect = rightRect; rightRect = tRect;
-        }
-        const pointerX = curX != null ? curX : (leftRect.left + leftRect.width / 2);
-        const midGap = (leftRect.right + rightRect.left) / 2;
-        const activeRect = pointerX < midGap ? leftRect : rightRect;
+      const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
+      if (isSpread && spreadInfo) {
+        const activeRect = spreadInfo.activeRect;
         if (activeRect.height > 50) {
           topBound = activeRect.top;
           bottomBound = activeRect.bottom;
@@ -4935,7 +5112,8 @@ export class ReadingRuler {
 
     const hasLines = this.isPdfMode || (this.cachedLines && this.cachedLines.length > 0);
     const isBottomCover = this.mode === "bottom-cover" && this.enabled && !this.isPageTransitioning && hasLines;
-    const masks = isBottomCover
+    const isTwoColOrSpread = (!this.isVerticalMode() && this.isTwoCol) || (!this.isVerticalMode() && this.isSpreadActive && this.isSpreadActive());
+    const masks = (isBottomCover && isTwoColOrSpread)
       ? [this.maskTopEl, this.maskLeftEl, this.maskRightEl]
       : [this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl, this.maskInactiveSpreadEl];
     for (const m of masks) {
@@ -5245,29 +5423,10 @@ export class ReadingRuler {
       let boundsTop = stageRect.top;
       let boundsBottom = stageRect.bottom;
       const isSpread = this.isSpreadActive();
-      const spreadSlots = isSpread ? Array.from(document.querySelectorAll("#reader-content .pdf-page-slot")) : [];
+      const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
 
-      if (isSpread && spreadSlots.length >= 2) {
-        let leftSlot = spreadSlots[0];
-        let rightSlot = spreadSlots[1];
-        let leftCanvas = leftSlot.querySelector("canvas") || leftSlot;
-        let rightCanvas = rightSlot.querySelector("canvas") || rightSlot;
-        let leftRect = leftCanvas.getBoundingClientRect();
-        let rightRect = rightCanvas.getBoundingClientRect();
-        if (leftRect.width < 50) leftRect = leftSlot.getBoundingClientRect();
-        if (rightRect.width < 50) rightRect = rightSlot.getBoundingClientRect();
-
-        if (leftRect.left > rightRect.left) {
-          const tSlot = leftSlot; leftSlot = rightSlot; rightSlot = tSlot;
-          const tCanvas = leftCanvas; leftCanvas = rightCanvas; rightCanvas = tCanvas;
-          const tRect = leftRect; leftRect = rightRect; rightRect = tRect;
-        }
-
-        const pointerX = this.lastPointerX != null ? this.lastPointerX : (leftRect.left + leftRect.width / 2);
-        const midGap = (leftRect.right + rightRect.left) / 2;
-        const isLeftActive = pointerX < midGap;
-        const activeSpreadRect = isLeftActive ? leftRect : rightRect;
-
+      if (spreadInfo) {
+        const activeSpreadRect = spreadInfo.activeRect;
         if (activeSpreadRect.width > 50) {
           targetLeft = activeSpreadRect.left;
           targetWidth = activeSpreadRect.width;
@@ -5333,27 +5492,9 @@ export class ReadingRuler {
           this.maskRightEl.classList.add("is-hidden");
         }
 
-        const isSpread = this.isSpreadActive();
-        const spreadSlots = isSpread ? Array.from(document.querySelectorAll("#reader-content .pdf-page-slot")) : [];
-
-        if (isSpread && spreadSlots.length >= 2) {
-          let leftSlot = spreadSlots[0];
-          let rightSlot = spreadSlots[1];
-          let leftCanvas = leftSlot.querySelector("canvas") || leftSlot;
-          let rightCanvas = rightSlot.querySelector("canvas") || rightSlot;
-          let leftRect = leftCanvas.getBoundingClientRect();
-          let rightRect = rightCanvas.getBoundingClientRect();
-          if (leftRect.left > rightRect.left) {
-            const tSlot = leftSlot; leftSlot = rightSlot; rightSlot = tSlot;
-            const tCanvas = leftCanvas; leftCanvas = rightCanvas; rightCanvas = tCanvas;
-            const tRect = leftRect; leftRect = rightRect; rightRect = tRect;
-          }
-
-          const pointerX = this.lastPointerX != null ? this.lastPointerX : (leftRect.left + leftRect.width / 2);
-          const midGap = (leftRect.right + rightRect.left) / 2;
-          const isLeftActive = pointerX < midGap;
-          const activeRect = isLeftActive ? leftRect : rightRect;
-          const inactiveRect = isLeftActive ? rightRect : leftRect;
+        if (spreadInfo) {
+          const activeRect = spreadInfo.activeRect;
+          const inactiveRect = spreadInfo.inactiveRect;
 
           // Vertikální oříznutí linky a clony podle aktivní strany
           const screenY = Math.max(Math.round(activeRect.top), Math.min(Math.round(activeRect.bottom), Math.round(this.currentY)));
@@ -5727,6 +5868,31 @@ export class ReadingRuler {
           colLeft = pageCol.left;
           colWidth = pageCol.width;
         }
+      } else if (this.isSpreadActive()) {
+        const spreadInfo = this.getActiveSpreadInfo(currentLine);
+        if (spreadInfo) {
+          const cRect = spreadInfo.activeRect;
+          const padding = 12;
+          const pageCol = this.getPageTextColumnBounds(currentLine);
+          if (pageCol && pageCol.width > 50) {
+            colLeft = Math.max(Math.round(cRect.left), Math.round(pageCol.left));
+            colWidth = Math.min(Math.round(pageCol.width), Math.round(cRect.right - colLeft));
+          } else if (currentLine && currentLine.textLeft != null && currentLine.textRight != null && currentLine.textRight > currentLine.textLeft) {
+            colLeft = Math.max(Math.round(cRect.left), Math.round(currentLine.textLeft - padding));
+            const colRight = Math.min(Math.round(cRect.right), Math.round(currentLine.textRight + padding));
+            colWidth = Math.max(50, colRight - colLeft);
+          } else if (currentLine && currentLine.left != null && currentLine.width != null) {
+            colLeft = Math.max(Math.round(cRect.left), Math.round(currentLine.left));
+            colWidth = Math.min(Math.round(currentLine.width), Math.round(cRect.right - colLeft));
+          } else {
+            colLeft = Math.round(cRect.left + padding);
+            colWidth = Math.round(cRect.width - (padding * 2));
+          }
+          colLeft = Math.max(Math.round(cRect.left), colLeft);
+          if (colLeft + colWidth > cRect.right) {
+            colWidth = Math.max(50, Math.round(cRect.right - colLeft));
+          }
+        }
       } else {
         if (colLeft == null || colWidth == null || !Number.isFinite(colLeft) || !Number.isFinite(colWidth) || colWidth < 80) {
           if (isTwoCol) {
@@ -6012,45 +6178,15 @@ export class ReadingRuler {
 
       const lineEl = currentLine ? (currentLine.element || currentLine.el) : null;
       const isSpread = !isVertical && this.isSpreadActive();
-      const spreadSlots = isSpread ? Array.from(document.querySelectorAll("#reader-content .pdf-page-slot")) : [];
+      const spreadInfo = isSpread ? this.getActiveSpreadInfo(currentLine) : null;
 
       let coverLeft = 0;
       let coverWidth = window.innerWidth;
       let coverHeight = Math.max(0, window.innerHeight - roundScreenY);
 
-      if (isSpread && spreadSlots.length >= 2) {
-        let leftSlot = spreadSlots[0];
-        let rightSlot = spreadSlots[1];
-        let leftCanvas = leftSlot.querySelector("canvas") || leftSlot;
-        let rightCanvas = rightSlot.querySelector("canvas") || rightSlot;
-        let leftRect = leftCanvas.getBoundingClientRect();
-        let rightRect = rightCanvas.getBoundingClientRect();
-        if (leftRect.width < 50) leftRect = leftSlot.getBoundingClientRect();
-        if (rightRect.width < 50) rightRect = rightSlot.getBoundingClientRect();
-
-        if (leftRect.left > rightRect.left) {
-          const tSlot = leftSlot; leftSlot = rightSlot; rightSlot = tSlot;
-          const tCanvas = leftCanvas; leftCanvas = rightCanvas; rightCanvas = tCanvas;
-          const tRect = leftRect; leftRect = rightRect; rightRect = tRect;
-        }
-
-        let isLeftActive = true;
-        if (lineEl && rightSlot.contains(lineEl)) {
-          isLeftActive = false;
-        } else if (lineEl && leftSlot.contains(lineEl)) {
-          isLeftActive = true;
-        } else if (currentLine && currentLine.columnIndex === 1) {
-          isLeftActive = false;
-        } else if (currentLine && currentLine.columnIndex === 0) {
-          isLeftActive = true;
-        } else {
-          const midGap = (leftRect.right + rightRect.left) / 2;
-          const lineMidX = currentLine ? (currentLine.left + (currentLine.width || 0) / 2) : (this.lastPointerX ?? 0);
-          isLeftActive = lineMidX < midGap;
-        }
-
-        const activeRect = isLeftActive ? leftRect : rightRect;
-        const inactiveRect = isLeftActive ? rightRect : leftRect;
+      if (spreadInfo) {
+        const activeRect = spreadInfo.activeRect;
+        const inactiveRect = spreadInfo.inactiveRect;
 
         coverLeft = Math.round(activeRect.left);
         coverWidth = Math.round(activeRect.width);
@@ -6086,12 +6222,6 @@ export class ReadingRuler {
         coverWidth = window.innerWidth;
         coverHeight = Math.max(0, window.innerHeight - roundScreenY);
       } else {
-        if (this.maskInactiveSpreadEl) {
-          this.maskInactiveSpreadEl.style.display = "none";
-          this.maskInactiveSpreadEl.classList.remove("is-visible");
-          this.maskInactiveSpreadEl.classList.add("is-hidden");
-        }
-
         // Zkontrolujeme, zda se jedná o PDF stránku (kontejner/canvas)
         const pdfContainers = document.querySelectorAll("#reader-content .pdf-page-container, #reader-content .pdf-page-slot");
         let pdfPage = lineEl ? lineEl.closest(".pdf-page-container, .pdf-page-slot") : null;
@@ -6115,6 +6245,11 @@ export class ReadingRuler {
         }
 
         if (pdfPage) {
+          if (this.maskInactiveSpreadEl) {
+            this.maskInactiveSpreadEl.style.display = "none";
+            this.maskInactiveSpreadEl.classList.remove("is-visible");
+            this.maskInactiveSpreadEl.classList.add("is-hidden");
+          }
           const canvas = pdfPage.querySelector("canvas") || pdfPage;
           let cRect = canvas.getBoundingClientRect();
           if (cRect.width < 50 && pdfPage !== canvas) {
@@ -6132,23 +6267,68 @@ export class ReadingRuler {
           const isTwoCol = !isVertical && this.isTwoCol;
 
           if (isTwoCol && sRect && sRect.width > 50) {
-            const midX = this.gapMiddle || Math.round(sRect.left + sRect.width / 2);
-            if (currentLine && currentLine.columnIndex === 1) {
-              coverLeft = Math.round(midX);
-              coverWidth = Math.max(80, Math.round(sRect.right - midX));
+            const pageContainerTop = Math.round(sRect.top);
+            const pageContainerBottom = Math.round(sRect.bottom);
+            const pageContainerHeight = Math.max(0, Math.round(sRect.height));
+
+            const singleColW = Math.max(80, Math.floor(((this.stageWidth || sRect.width || window.innerWidth) - (this.colGap || 40)) / 2));
+            const c0Left = this.column0Left ?? Math.max(0, Math.round(sRect.left));
+            const c0Width = this.column0Width ?? singleColW;
+            const c1Left = this.column1Left ?? Math.round(c0Left + singleColW + (this.colGap || 40));
+            const c1Width = this.column1Width ?? singleColW;
+
+            const activeCol = (currentLine && currentLine.columnIndex === 1) ? 1 : 0;
+
+            if (activeCol === 1) {
+              coverLeft = c1Left;
+              coverWidth = c1Width;
             } else {
-              coverLeft = Math.max(0, Math.round(sRect.left));
-              coverWidth = Math.max(80, Math.round(midX - coverLeft));
+              coverLeft = c0Left;
+              coverWidth = c0Width;
             }
-            coverHeight = Math.max(0, window.innerHeight - roundScreenY);
-          } else if (sRect && sRect.width > 50) {
-            coverLeft = Math.max(0, Math.round(sRect.left));
-            coverWidth = Math.round(sRect.width);
-            coverHeight = Math.max(0, window.innerHeight - roundScreenY);
+            coverHeight = Math.max(0, pageContainerBottom - roundScreenY);
+
+            // Inaktivní sloupec - zakrytí celé protilehlé strany textového kontejneru
+            const inactiveLeft = activeCol === 1 ? c0Left : c1Left;
+            const inactiveWidth = activeCol === 1 ? c0Width : c1Width;
+            const inactiveTop = pageContainerTop;
+            const inactiveHeight = pageContainerHeight;
+
+            if (!this.maskInactiveSpreadEl) {
+              this.maskInactiveSpreadEl = document.createElement("div");
+              this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover ruler-mask-inactive-spread is-visible";
+              this.maskInactiveSpreadEl.style.willChange = "transform";
+              this.maskInactiveSpreadEl.style.contain = "paint";
+              document.body.appendChild(this.maskInactiveSpreadEl);
+            }
+            this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover ruler-mask-inactive-spread is-visible";
+            this.maskInactiveSpreadEl.classList.remove("pdf-overlay-mask", "is-hidden");
+            this.maskInactiveSpreadEl.style.setProperty("display", "block", "important");
+            this.maskInactiveSpreadEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
+            this.maskInactiveSpreadEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskInactiveSpreadEl.style.setProperty("z-index", "15", "important");
+            this.maskInactiveSpreadEl.style.setProperty("pointer-events", "none", "important");
+            this.maskInactiveSpreadEl.style.top = `${inactiveTop}px`;
+            this.maskInactiveSpreadEl.style.left = `${inactiveLeft}px`;
+            this.maskInactiveSpreadEl.style.transform = "none";
+            this.maskInactiveSpreadEl.style.width = `${inactiveWidth}px`;
+            this.maskInactiveSpreadEl.style.maxWidth = `${inactiveWidth}px`;
+            this.maskInactiveSpreadEl.style.height = `${inactiveHeight}px`;
           } else {
-            coverLeft = 0;
-            coverWidth = window.innerWidth;
-            coverHeight = Math.max(0, window.innerHeight - roundScreenY);
+            if (this.maskInactiveSpreadEl) {
+              this.maskInactiveSpreadEl.style.display = "none";
+              this.maskInactiveSpreadEl.classList.remove("is-visible");
+              this.maskInactiveSpreadEl.classList.add("is-hidden");
+            }
+            if (sRect && sRect.width > 50) {
+              coverLeft = Math.max(0, Math.round(sRect.left));
+              coverWidth = Math.round(sRect.width);
+              coverHeight = Math.max(0, window.innerHeight - roundScreenY);
+            } else {
+              coverLeft = 0;
+              coverWidth = window.innerWidth;
+              coverHeight = Math.max(0, window.innerHeight - roundScreenY);
+            }
           }
         }
       }
@@ -6167,6 +6347,28 @@ export class ReadingRuler {
         const pageCol = this.getPageTextColumnBounds(currentLine);
         rulerLeft = Math.round(pageCol.left);
         rulerWidth = Math.round(pageCol.width);
+      } else if (spreadInfo) {
+        const cRect = spreadInfo.activeRect;
+        const padding = 12;
+        const pageCol = this.getPageTextColumnBounds(currentLine);
+        if (pageCol && pageCol.width > 50) {
+          rulerLeft = Math.max(Math.round(cRect.left), Math.round(pageCol.left));
+          rulerWidth = Math.min(Math.round(pageCol.width), Math.round(cRect.right - rulerLeft));
+        } else if (currentLine && currentLine.textLeft != null && currentLine.textRight != null && currentLine.textRight > currentLine.textLeft) {
+          rulerLeft = Math.max(Math.round(cRect.left), Math.round(currentLine.textLeft - padding));
+          const rRight = Math.min(Math.round(cRect.right), Math.round(currentLine.textRight + padding));
+          rulerWidth = Math.max(50, rRight - rulerLeft);
+        } else if (currentLine && currentLine.left != null && currentLine.width != null) {
+          rulerLeft = Math.max(Math.round(cRect.left), Math.round(currentLine.left));
+          rulerWidth = Math.min(Math.round(currentLine.width), Math.round(cRect.right - rulerLeft));
+        } else {
+          rulerLeft = Math.round(cRect.left + padding);
+          rulerWidth = Math.round(cRect.width - (padding * 2));
+        }
+        rulerLeft = Math.max(Math.round(cRect.left), rulerLeft);
+        if (rulerLeft + rulerWidth > cRect.right) {
+          rulerWidth = Math.max(50, Math.round(cRect.right - rulerLeft));
+        }
       } else if (currentLine) {
         const lineLeft = (currentLine.columnLeft != null && Number.isFinite(currentLine.columnLeft))
           ? currentLine.columnLeft
@@ -6413,6 +6615,11 @@ export class ReadingRuler {
       if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
       if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
       if (this.maskRightEl) this.maskRightEl.style.display = "none";
+      if (this.maskInactiveSpreadEl) {
+        this.maskInactiveSpreadEl.style.display = "none";
+        this.maskInactiveSpreadEl.classList.remove("is-visible");
+        this.maskInactiveSpreadEl.classList.add("is-hidden");
+      }
     } else if (isBottomCover) {
       if (this.maskTopEl) this.maskTopEl.style.display = "none";
       if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
@@ -6424,6 +6631,13 @@ export class ReadingRuler {
         this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
         this.maskBottomEl.style.setProperty("z-index", "15", "important");
         this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
+      }
+      if (!isTwoCol && !this.isSpreadActive?.()) {
+        if (this.maskInactiveSpreadEl) {
+          this.maskInactiveSpreadEl.style.display = "none";
+          this.maskInactiveSpreadEl.classList.remove("is-visible");
+          this.maskInactiveSpreadEl.classList.add("is-hidden");
+        }
       }
     }
 
