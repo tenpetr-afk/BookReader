@@ -3361,18 +3361,27 @@ export class ReadingRuler {
         }
         const curBottom = Number.isFinite(line.bottom) ? line.bottom : Math.round(mediaT + mediaH + padding);
 
-        // Place the cover boundary 2px below current line descenders.
-        // This guarantees the ruler line never touches the active line,
-        // while leaving maximum clearance above the next line's ascenders and diacritics.
-        let coverTargetY = Math.round(curBottom + 2);
-
-        // Safety clamp: if nextLine exists in the same column/slot, ensure coverTargetY never collides with nextLine
+        let coverTargetY;
         if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          // Leave at least 4px clearance above nextLine.top to completely hide ascenders/diacritics (d, l, t, Š, etc.)
-          const maxAllowedY = Math.round(nextLine.top - 4);
-          if (coverTargetY > maxAllowedY) {
-            coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
+          const interLineGap = nextLine.top - curBottom;
+          if (interLineGap >= 12) {
+            coverTargetY = Math.round(curBottom + interLineGap * 0.45);
+          } else if (interLineGap >= 6) {
+            coverTargetY = Math.round(curBottom + interLineGap * 0.5);
+          } else {
+            coverTargetY = Math.round(curBottom + 2);
           }
+
+          // Strict clamping
+          const minAllowedY = Math.round(curBottom + 2);
+          const maxAllowedY = Math.round(nextLine.top - 5);
+          if (minAllowedY <= maxAllowedY) {
+            coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
+          } else {
+            coverTargetY = Math.round((curBottom + nextLine.top) / 2);
+          }
+        } else {
+          coverTargetY = Math.round(curBottom + 3);
         }
 
         targetY = coverTargetY;
@@ -3489,18 +3498,27 @@ export class ReadingRuler {
       }
       const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + height / 2);
 
-      // Place the cover boundary 2px below current line descenders.
-      // This guarantees the ruler line never touches the active line,
-      // while leaving maximum clearance above the next line's ascenders and diacritics.
-      let coverTargetY = Math.round(curBottom + 2);
-
-      // Safety clamp: if nextLine exists in the same column/slot, ensure coverTargetY never collides with nextLine
+      let coverTargetY;
       if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-        // Leave at least 4px clearance above nextLine.top to completely hide ascenders/diacritics (d, l, t, Š, etc.)
-        const maxAllowedY = Math.round(nextLine.top - 4);
-        if (coverTargetY > maxAllowedY) {
-          coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
+        const interLineGap = nextLine.top - curBottom;
+        if (interLineGap >= 12) {
+          coverTargetY = Math.round(curBottom + interLineGap * 0.45);
+        } else if (interLineGap >= 6) {
+          coverTargetY = Math.round(curBottom + interLineGap * 0.5);
+        } else {
+          coverTargetY = Math.round(curBottom + 2);
         }
+
+        // Strict clamping
+        const minAllowedY = Math.round(curBottom + 2);
+        const maxAllowedY = Math.round(nextLine.top - 5);
+        if (minAllowedY <= maxAllowedY) {
+          coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
+        } else {
+          coverTargetY = Math.round((curBottom + nextLine.top) / 2);
+        }
+      } else {
+        coverTargetY = Math.round(curBottom + 3);
       }
 
       targetY = coverTargetY;
