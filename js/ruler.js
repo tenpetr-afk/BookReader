@@ -10,11 +10,16 @@
  */
 
 export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i horizontální odsazení v řádkovém režimu
+export const RULER_WAVE_WIDTH = 80; // px - fixní šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
+export const RULER_WAVE_HEIGHT = 12; // px - fixní hloubka vlnky indikátoru
+export const COVER_LINE_OFFSET = 2; // px - fixní vertikální vzdálenost vodicí linky pod spodním okrajem řádku v režimu Spodní clona (Bottom Cover)
 
 export class ReadingRuler {
-  constructor(containerElement) {
+  constructor(containerElement, app = null) {
     this.container = containerElement;
+    this.app = app;
     this.rulerEl = null;
+    this.wordWaveEl = null;
     this.maskTopEl = null;
     this.maskBottomEl = null;
     this.maskLeftEl = null;
@@ -26,6 +31,7 @@ export class ReadingRuler {
     this.isPdfMode = false;
     this.pdfRulerHeight = 32; // px - výchozí manuální výška pravítka pro PDF (16–120)
     this.pdfStandardLineHeight = 32; // px - standardní kompaktní výška řádku pro PDF
+    this.pdfAutoHeight = true; // Automatická výška pravítka pro PDF podle metrik řádku
     this.isPdfHeightFromSlider = false;
 
     // Nastavení
@@ -302,6 +308,7 @@ export class ReadingRuler {
       this.rulerEl.style.opacity = "0";
       this.rulerEl.style.visibility = "hidden";
     }
+    if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
     if (this.maskTopEl) this.maskTopEl.style.display = "none";
     if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
     if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
@@ -414,8 +421,11 @@ export class ReadingRuler {
     if (this.isPdfMode) {
       if (height !== null) {
         if (typeof height === "object" && height !== null) {
+          if (height.autoHeight !== undefined) {
+            this.pdfAutoHeight = !!height.autoHeight;
+          }
           if (height.height !== undefined) {
-            this.setPdfRulerHeight(height.height);
+            this.setPdfRulerHeight(height.height, !this.pdfAutoHeight);
           }
         } else {
           this.setPdfRulerHeight(height);
@@ -429,11 +439,11 @@ export class ReadingRuler {
         if (this.rulerEl) {
           this.rulerEl.classList.remove("pdf-ruler-overlay");
         }
-        if (!this.autoHeight) {
+        if (!this.pdfAutoHeight) {
           this.height = this.pdfRulerHeight || this.manualHeight || 32;
         }
       } else {
-        this.height = this.pdfRulerHeight || 32;
+        this.height = (!this.pdfAutoHeight ? this.pdfRulerHeight : this.pdfStandardLineHeight) || 32;
         if (this.rulerEl) {
           this.rulerEl.classList.remove("pdf-ruler-overlay");
           this.rulerEl.classList.remove("word-tracking-mode");
@@ -455,6 +465,44 @@ export class ReadingRuler {
         this.applyPosition();
       }
     }
+    this.updateRulerSettingsVisibility(this.mode, this.isPdfMode);
+  }
+
+  setPdfAutoHeight(enabled) {
+    this.pdfAutoHeight = !!enabled;
+    this.isPdfHeightFromSlider = !this.pdfAutoHeight;
+    if (this.pdfAutoHeight) {
+      this.detectLines();
+      if (this.cachedLines && this.cachedLines.length > 0) {
+        if (this.snapToLines && this.activeLineIndex >= 0) {
+          const geom = this.computeLineGeometry(this.activeLineIndex);
+          if (geom) {
+            this.height = geom.height;
+            this.targetY = geom.targetY;
+          }
+        } else {
+          this.height = this.pdfStandardLineHeight || 32;
+        }
+      } else {
+        this.height = this.pdfStandardLineHeight || 32;
+      }
+    } else {
+      this.height = this.pdfRulerHeight || this.manualHeight || 32;
+      if (this.snapToLines && this.cachedLines && this.cachedLines.length > 0 && this.activeLineIndex >= 0) {
+        const geom = this.computeLineGeometry(this.activeLineIndex);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+        }
+      }
+    }
+    if (this.enabled) {
+      this.applyPosition();
+    }
+  }
+
+  getPdfAutoHeight() {
+    return this.pdfAutoHeight !== false;
   }
 
   setPdfRulerHeight(height, isUserSlider = false) {
@@ -464,8 +512,15 @@ export class ReadingRuler {
       this.isPdfHeightFromSlider = true;
     }
     if (this.isPdfMode) {
-      if (!this.cachedLines || this.cachedLines.length === 0 || !this.autoHeight || this.isPdfHeightFromSlider) {
+      if (!this.cachedLines || this.cachedLines.length === 0 || !this.pdfAutoHeight || this.isPdfHeightFromSlider) {
         this.height = h;
+      }
+      if (this.snapToLines && this.cachedLines && this.cachedLines.length > 0 && this.activeLineIndex >= 0 && !this.pdfAutoHeight) {
+        const geom = this.computeLineGeometry(this.activeLineIndex);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+        }
       }
       if (this.enabled) {
         this.applyPosition();
@@ -544,7 +599,13 @@ export class ReadingRuler {
     this.rulerEl.id = "reading-ruler";
     this.rulerEl.setAttribute("aria-hidden", "true");
     this.rulerEl.style.willChange = "transform";
-    this.rulerEl.style.contain = "paint";
+    this.rulerEl.style.contain = this.mode === "bottom-cover" ? "none" : "paint";
+
+    this.wordWaveEl = document.createElement("div");
+    this.wordWaveEl.className = "ruler-word-wave";
+    this.wordWaveEl.setAttribute("aria-hidden", "true");
+    this.wordWaveEl.innerHTML = `<svg viewBox="0 0 80 12" width="80" height="12" preserveAspectRatio="none"><path d="M 0,0 C 20,0 24,12 40,12 C 56,12 60,0 80,0 Z" fill="currentColor" /></svg>`;
+    this.rulerEl.appendChild(this.wordWaveEl);
 
     this.maskTopEl = document.createElement("div");
     this.maskTopEl.className = "ruler-mask ruler-mask-top is-hidden";
@@ -2050,6 +2111,10 @@ export class ReadingRuler {
         this.rulerEl.classList.remove("is-snapped");
         this.rulerEl.style.setProperty("transition", "none", "important");
       }
+      if (this.wordWaveEl) {
+        this.wordWaveEl.classList.remove("is-snapped");
+        this.wordWaveEl.style.setProperty("transition", "none", "important");
+      }
       if (this.maskTopEl) {
         this.maskTopEl.classList.remove("is-snapped");
         this.maskTopEl.style.setProperty("transition", "none", "important");
@@ -2068,6 +2133,10 @@ export class ReadingRuler {
       }
     } else {
       if (this.rulerEl) this.rulerEl.classList.add("is-snapped");
+      if (this.wordWaveEl) {
+        this.wordWaveEl.classList.add("is-snapped");
+        this.wordWaveEl.style.removeProperty("transition");
+      }
       if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
       if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
       if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
@@ -2169,7 +2238,8 @@ export class ReadingRuler {
       screenY = Math.max(minY, Math.min(maxY, lineScreenY));
     }
 
-    const rx = Math.round(this.wordTracking ? (this.wordLeft || 0) : (this._rulerLeft || 0));
+    const isBottomCoverWordTracking = !this.isPdfMode && this.mode === "bottom-cover" && this.wordTracking;
+    const rx = Math.round((this.wordTracking && !isBottomCoverWordTracking) ? (this.wordLeft || 0) : (this._rulerLeft || 0));
     const ry = Math.round(screenY);
 
     this.rulerEl.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
@@ -2865,7 +2935,9 @@ export class ReadingRuler {
       // Pokud na stránce není detekován žádný řádek textu, vygenerujeme bezpečný záložní řádek na ploše stage, aby pravítko nezmizelo
       if (this.cachedLines.length === 0) {
         if (this.isPdfMode) {
-          this.pdfStandardLineHeight = this.pdfRulerHeight || 32;
+          if (!this.pdfStandardLineHeight) {
+            this.pdfStandardLineHeight = this.pdfRulerHeight || 32;
+          }
           this.updatePdfReadingZoneBounds(stageRect, isSpread, spreadInfo);
           return [];
         }
@@ -3125,9 +3197,11 @@ export class ReadingRuler {
           const standardHeight = Math.round(baseLineHeight + 6);
           this.pdfStandardLineHeight = standardHeight;
         } else {
-          this.pdfStandardLineHeight = this.pdfRulerHeight || 32;
+          if (!this.pdfStandardLineHeight) {
+            this.pdfStandardLineHeight = this.pdfRulerHeight || 32;
+          }
         }
-        if (this.autoHeight && !this.isPdfHeightFromSlider) {
+        if (this.pdfAutoHeight) {
           this.height = this.pdfStandardLineHeight;
         } else {
           this.height = this.pdfRulerHeight || this.manualHeight || 32;
@@ -3776,53 +3850,19 @@ export class ReadingRuler {
         }
         const curBottom = Number.isFinite(line.bottom) ? line.bottom : Math.round(mediaT + mediaH + padding);
 
-        let coverTargetY;
-        if (this.isPdfMode) {
-          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-            const interLineGap = nextLine.top - curBottom;
-            const minAllowedY = Math.round(curBottom + 3);
-            const maxAllowedY = Math.round(nextLine.top - 4);
-            if (interLineGap >= 12) {
-              coverTargetY = Math.round(curBottom + interLineGap * 0.42);
-            } else if (interLineGap >= 6) {
-              coverTargetY = Math.round(curBottom + interLineGap * 0.45);
-            } else {
-              coverTargetY = Math.round(curBottom + 3);
-            }
-            if (minAllowedY <= maxAllowedY) {
-              coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
-            } else {
-              coverTargetY = Math.round((curBottom + nextLine.top) / 2);
-            }
-          } else {
-            coverTargetY = Math.round(curBottom + 3);
-          }
-        } else {
-          // Unmodified EPUB logic
-          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-            const interLineGap = nextLine.top - curBottom;
-            if (interLineGap >= 12) {
-              coverTargetY = Math.round(curBottom + interLineGap * 0.45);
-            } else if (interLineGap >= 6) {
-              coverTargetY = Math.round(curBottom + interLineGap * 0.5);
-            } else {
-              coverTargetY = Math.round(curBottom + 2);
-            }
-
-            // Strict clamping
-            const minAllowedY = Math.round(curBottom + 2);
-            const maxAllowedY = Math.round(nextLine.top - 5);
-            if (minAllowedY <= maxAllowedY) {
-              coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
-            } else {
-              coverTargetY = Math.round((curBottom + nextLine.top) / 2);
-            }
-          } else {
-            coverTargetY = Math.round(curBottom + 3);
+        // Strict constant offset from active line bottom across all lines
+        let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
+        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+          // Clamped only so it does not collide with next line's ascenders
+          const maxAllowedY = Math.round(nextLine.top - 3);
+          coverTargetY = Math.min(coverTargetY, maxAllowedY);
+          if (Number.isFinite(curBottom)) {
+            coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
           }
         }
 
         targetY = coverTargetY;
+        height = 2;
       }
 
       // Horizontální hranice kontejneru / sloupce
@@ -3907,71 +3947,58 @@ export class ReadingRuler {
       }
 
       if (this.mode === "bottom-cover") {
-        // Safe optical boundary calculation below line N (bottom dividing line)
-        let coverTargetY;
+        // Strict constant offset from active line bottom across all lines (both intra-paragraph and isolated lines)
+        let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
         if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          const interLineGap = nextLine.top - curBottom;
-          // In PDF.js, descenders (p, j, y) on line N extend 1-2px below curBottom (fallback font client rect).
-          // To ensure ruler line sits at least 2px below lowest glyph point:
-          const minAllowedY = Math.round(curBottom + 3);
-
-          // Diacritics (ž, š, č, ř, ů, í) and ascenders (d, l, t) on nextLine extend 2-3px above nextLine.top.
-          // To conceal them completely under ruler line:
-          const maxAllowedY = Math.round(nextLine.top - 4);
-
-          if (interLineGap >= 12) {
-            coverTargetY = Math.round(curBottom + interLineGap * 0.42);
-          } else if (interLineGap >= 6) {
-            coverTargetY = Math.round(curBottom + interLineGap * 0.45);
-          } else {
-            coverTargetY = Math.round(curBottom + 3);
+          // Clamped only so it does not collide with next line's ascenders
+          const maxAllowedY = Math.round(nextLine.top - 3);
+          coverTargetY = Math.min(coverTargetY, maxAllowedY);
+          if (Number.isFinite(curBottom)) {
+            coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
           }
-
-          if (minAllowedY <= maxAllowedY) {
-            coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
-          } else {
-            coverTargetY = Math.round((curBottom + nextLine.top) / 2);
-          }
-        } else {
-          // Last line on page/column: safely below current line's descenders (+3px)
-          coverTargetY = Math.round(curBottom + 3);
         }
 
         targetY = coverTargetY;
         height = 2;
       } else {
         // PDF mode (highlight, focus, underline styles):
-        // Standard compact height with tight padding (2-3px top and bottom)
-        const standardHeight = (this.isPdfHeightFromSlider && Number.isFinite(this.pdfRulerHeight))
-          ? this.pdfRulerHeight
-          : (this.autoHeight && Number.isFinite(this.pdfStandardLineHeight) && this.pdfStandardLineHeight > 0
-              ? this.pdfStandardLineHeight
-              : (this.pdfRulerHeight || this.manualHeight || 32));
+        let h;
+        let y;
+        if (this.pdfAutoHeight) {
+          // Standard compact height with tight padding (2-3px top and bottom)
+          const standardHeight = (Number.isFinite(this.pdfStandardLineHeight) && this.pdfStandardLineHeight > 0)
+            ? this.pdfStandardLineHeight
+            : (this.pdfRulerHeight || this.manualHeight || 32);
 
-        let h = standardHeight;
-        if (Number.isFinite(line.height) && line.height > 0) {
-          // Ensure full glyph height (ascenders, descenders, diacritics) is covered
-          const lineGlyphHeight = Math.round(line.height + 6);
-          if (lineGlyphHeight > h) {
-            h = lineGlyphHeight;
+          h = standardHeight;
+          if (Number.isFinite(line.height) && line.height > 0) {
+            // Ensure full glyph height (ascenders, descenders, diacritics) is covered
+            const lineGlyphHeight = Math.round(line.height + 6);
+            if (lineGlyphHeight > h) {
+              h = lineGlyphHeight;
+            }
           }
-        }
 
-        // Center the ruler symmetrically over the line's center
-        let y = Math.round(line.centerY - h / 2);
+          // Center the ruler symmetrically over the line's center
+          y = Math.round(line.centerY - h / 2);
 
-        // Clamping to avoid overlapping physically close adjacent lines in dense paragraphs
-        if (hasPrev && prevLine && Number.isFinite(prevLine.bottom)) {
-          const minTop = Math.round(prevLine.bottom + 1);
-          if (y < minTop) {
-            y = minTop;
+          // Clamping to avoid overlapping physically close adjacent lines in dense paragraphs
+          if (hasPrev && prevLine && Number.isFinite(prevLine.bottom)) {
+            const minTop = Math.round(prevLine.bottom + 1);
+            if (y < minTop) {
+              y = minTop;
+            }
           }
-        }
-        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          const maxBottom = Math.round(nextLine.top - 1);
-          if (y + h > maxBottom) {
-            h = Math.max(10, Math.round(maxBottom - y));
+          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+            const maxBottom = Math.round(nextLine.top - 1);
+            if (y + h > maxBottom) {
+              h = Math.max(10, Math.round(maxBottom - y));
+            }
           }
+        } else {
+          // Strictly use the manual slider value (this.pdfRulerHeight)
+          h = Number.isFinite(this.pdfRulerHeight) ? this.pdfRulerHeight : (this.manualHeight || 32);
+          y = Math.round(line.centerY - h / 2);
         }
 
         height = h;
@@ -4039,30 +4066,19 @@ export class ReadingRuler {
         }
         const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + height / 2);
 
-        let coverTargetY;
+        // Strict constant offset from active line bottom across all lines (both intra-paragraph and isolated lines)
+        let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
         if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          const interLineGap = nextLine.top - curBottom;
-          if (interLineGap >= 12) {
-            coverTargetY = Math.round(curBottom + interLineGap * 0.45);
-          } else if (interLineGap >= 6) {
-            coverTargetY = Math.round(curBottom + interLineGap * 0.5);
-          } else {
-            coverTargetY = Math.round(curBottom + 2);
+          // Clamped only so it does not collide with next line's ascenders
+          const maxAllowedY = Math.round(nextLine.top - 3);
+          coverTargetY = Math.min(coverTargetY, maxAllowedY);
+          if (Number.isFinite(curBottom)) {
+            coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
           }
-
-          // Strict clamping
-          const minAllowedY = Math.round(curBottom + 2);
-          const maxAllowedY = Math.round(nextLine.top - 5);
-          if (minAllowedY <= maxAllowedY) {
-            coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
-          } else {
-            coverTargetY = Math.round((curBottom + nextLine.top) / 2);
-          }
-        } else {
-          coverTargetY = Math.round(curBottom + 3);
         }
 
         targetY = coverTargetY;
+        height = 2;
       }
     }
 
@@ -4118,14 +4134,14 @@ export class ReadingRuler {
 
   updateEffectiveHeight(lineHeight) {
     if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
-      this.height = this.pdfRulerHeight || 32;
+      this.height = (!this.pdfAutoHeight ? this.pdfRulerHeight : this.pdfStandardLineHeight) || 32;
       this.applyPosition();
       return;
     }
     if (this.isPdfMode) {
-      this.height = (this.isPdfHeightFromSlider && Number.isFinite(this.pdfRulerHeight))
-        ? this.pdfRulerHeight
-        : (this.autoHeight && Number.isFinite(this.pdfStandardLineHeight) && this.pdfStandardLineHeight > 0
+      this.height = !this.pdfAutoHeight
+        ? (Number.isFinite(this.pdfRulerHeight) ? this.pdfRulerHeight : 32)
+        : ((Number.isFinite(this.pdfStandardLineHeight) && this.pdfStandardLineHeight > 0)
             ? this.pdfStandardLineHeight
             : (this.pdfRulerHeight || 32));
       this.applyPosition();
@@ -4626,12 +4642,14 @@ export class ReadingRuler {
         this.rulerEl.classList.add("word-tracking-mode");
         if (this.followMode === "mouse") {
           this.rulerEl.classList.remove("is-snapped");
+          if (this.wordWaveEl) this.wordWaveEl.classList.remove("is-snapped");
           this.maskTopEl.classList.remove("is-snapped");
           this.maskBottomEl.classList.remove("is-snapped");
           this.maskLeftEl.classList.remove("is-snapped");
           this.maskRightEl.classList.remove("is-snapped");
         } else {
           this.rulerEl.classList.add("is-snapped");
+          if (this.wordWaveEl) this.wordWaveEl.classList.add("is-snapped");
           this.maskTopEl.classList.add("is-snapped");
           this.maskBottomEl.classList.add("is-snapped");
           this.maskLeftEl.classList.add("is-snapped");
@@ -4682,12 +4700,14 @@ export class ReadingRuler {
       this.currentY = this.targetY;
       if (this.followMode === "mouse") {
         this.rulerEl.classList.remove("is-snapped");
+        if (this.wordWaveEl) this.wordWaveEl.classList.remove("is-snapped");
         this.maskTopEl.classList.remove("is-snapped");
         this.maskBottomEl.classList.remove("is-snapped");
         this.maskLeftEl.classList.remove("is-snapped");
         this.maskRightEl.classList.remove("is-snapped");
       } else {
         this.rulerEl.classList.add("is-snapped");
+        if (this.wordWaveEl) this.wordWaveEl.classList.add("is-snapped");
         this.maskTopEl.classList.add("is-snapped");
         this.maskBottomEl.classList.add("is-snapped");
         this.maskLeftEl.classList.add("is-snapped");
@@ -4725,6 +4745,9 @@ export class ReadingRuler {
 
     this.activeWordIndex = wordIndex;
     const w0 = this.cachedWords[wordIndex];
+    if (w0 && w0.lineIndex != null && w0.lineIndex >= 0 && w0.lineIndex < this.cachedLines.length) {
+      this.activeLineIndex = w0.lineIndex;
+    }
     const padX = 3;
     const padY = 1.5;
 
@@ -4737,8 +4760,19 @@ export class ReadingRuler {
       this.height = Math.round(baseH + padY * 2);
     }
 
-    this.targetY = Math.round(w0.top - padY);
-    this.currentY = this.targetY;
+    if (this.mode === "bottom-cover" && w0 && w0.lineIndex != null && w0.lineIndex >= 0 && w0.lineIndex < this.cachedLines.length) {
+      const geom = this.computeLineGeometry(w0.lineIndex);
+      if (geom && Number.isFinite(geom.targetY)) {
+        this.targetY = geom.targetY;
+        this.currentY = this.targetY;
+      } else {
+        this.targetY = Math.round(w0.top - padY);
+        this.currentY = this.targetY;
+      }
+    } else {
+      this.targetY = Math.round(w0.top - padY);
+      this.currentY = this.targetY;
+    }
 
     // Check up to 2 following words on the SAME line (w1, w2 where w.lineIndex === w0.lineIndex).
     // Compare each candidate's left against the PREVIOUS word in the chain (not always w0.left)
@@ -4813,7 +4847,7 @@ export class ReadingRuler {
    * Dočasně potlačí veškeré CSS přechody (transition: none) pro okamžité usazení bez animací.
    */
   setNoTransition(noTrans = true) {
-    const elements = [this.rulerEl, this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl];
+    const elements = [this.rulerEl, this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl, this.wordWaveEl];
     for (const el of elements) {
       if (!el) continue;
       if (noTrans) {
@@ -5719,6 +5753,7 @@ export class ReadingRuler {
       this.rulerEl.style.display = "none";
       this.rulerEl.style.opacity = "0";
       this.rulerEl.style.visibility = "hidden";
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
       this.clearFocusTextMask();
       return;
     }
@@ -5736,6 +5771,7 @@ export class ReadingRuler {
       this.rulerEl.style.display = "none";
       this.rulerEl.style.opacity = "0";
       this.rulerEl.style.visibility = "hidden";
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
       this.clearFocusTextMask();
       return;
     }
@@ -5744,6 +5780,7 @@ export class ReadingRuler {
       this.rulerEl.classList.add("is-page-transitioning");
       this.rulerEl.style.opacity = "0";
       this.rulerEl.style.visibility = "hidden";
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
     } else {
       this.rulerEl.classList.add("is-visible");
       this.rulerEl.classList.remove("is-hidden", "is-page-transitioning");
@@ -5756,6 +5793,7 @@ export class ReadingRuler {
 
     // --- PDF MODE CONTINUOUS MECHANICAL OVERLAY ---
     if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
       const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.pdfRulerHeight || 32);
       this.rulerEl.style.height = `${h}px`;
       this.rulerEl.style.transition = "none";
@@ -6401,7 +6439,9 @@ export class ReadingRuler {
     let slitLeft = 0;
     let slitRight = window.innerWidth;
 
-    if (this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia) {
+    const isBottomCoverWordTracking = !this.isPdfMode && this.mode === "bottom-cover" && !!this.wordTracking;
+
+    if (this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia && !isBottomCoverWordTracking) {
       const x = Number.isFinite(this.wordLeft) ? Math.round(this.wordLeft) : 0;
       const w = Number.isFinite(this.totalWidth) && this.totalWidth > 0 ? Math.round(this.totalWidth) : 100;
       slitLeft = x;
@@ -6429,6 +6469,9 @@ export class ReadingRuler {
         this.rulerEl.classList.remove("no-preview");
       } else {
         this.rulerEl.classList.add("no-preview");
+      }
+      if (this.wordWaveEl) {
+        this.wordWaveEl.style.display = "none";
       }
     } else {
       this.rulerEl.classList.remove("no-preview");
@@ -6540,6 +6583,70 @@ export class ReadingRuler {
       this.rulerEl.style.width = `${Math.round(colWidth)}px`;
       this.rulerEl.style.maxWidth = `${Math.round(colWidth)}px`;
       this.rulerEl.style.transform = `translate3d(${Math.round(colLeft)}px, ${screenY}px, 0)`;
+
+      if (isBottomCoverWordTracking && !isCurrentMedia) {
+        let curWord = (this.activeWordIndex >= 0 && this.activeWordIndex < this.cachedWords.length)
+          ? this.cachedWords[this.activeWordIndex]
+          : null;
+
+        if (curWord && curWord.lineIndex != null && curWord.lineIndex !== this.activeLineIndex) {
+          let foundWord = null;
+          for (let w = 0; w < this.cachedWords.length; w++) {
+            if (this.cachedWords[w].lineIndex === this.activeLineIndex) {
+              foundWord = this.cachedWords[w];
+              this.activeWordIndex = w;
+              break;
+            }
+          }
+          if (foundWord) curWord = foundWord;
+        } else if (!curWord && this.cachedWords.length > 0) {
+          for (let w = 0; w < this.cachedWords.length; w++) {
+            if (this.cachedWords[w].lineIndex === this.activeLineIndex) {
+              curWord = this.cachedWords[w];
+              this.activeWordIndex = w;
+              break;
+            }
+          }
+          if (!curWord) {
+            curWord = this.cachedWords[0];
+            this.activeWordIndex = 0;
+          }
+        }
+
+        let currentPointerX;
+        const isPointerInCol = Number.isFinite(this.lastPointerX) && this.lastPointerX >= colLeft && this.lastPointerX <= colLeft + colWidth;
+        if (this.followMode !== "keyboard" && isPointerInCol) {
+          currentPointerX = this.lastPointerX;
+        } else if (curWord && Number.isFinite(curWord.centerX)) {
+          currentPointerX = curWord.centerX;
+        } else if (Number.isFinite(this.lastPointerX)) {
+          currentPointerX = this.lastPointerX;
+        } else {
+          currentPointerX = Math.round(colLeft + colWidth / 2);
+        }
+
+        const WAVE_WIDTH = RULER_WAVE_WIDTH || 80;
+        const rulerLeft = Math.round(colLeft);
+        const rulerWidth = Math.round(colWidth);
+        let waveX = Math.round((currentPointerX - rulerLeft) - (WAVE_WIDTH / 2));
+        const maxWaveX = Math.max(0, rulerWidth - WAVE_WIDTH);
+        waveX = Math.max(0, Math.min(maxWaveX, waveX));
+
+        if (!this.wordWaveEl && this.rulerEl) {
+          this.wordWaveEl = document.createElement("div");
+          this.wordWaveEl.className = "ruler-word-wave";
+          this.wordWaveEl.setAttribute("aria-hidden", "true");
+          this.wordWaveEl.innerHTML = `<svg viewBox="0 0 80 12" width="80" height="12" preserveAspectRatio="none"><path d="M 0,0 C 20,0 24,12 40,12 C 56,12 60,0 80,0 Z" fill="currentColor" /></svg>`;
+          this.rulerEl.appendChild(this.wordWaveEl);
+        }
+
+        if (this.wordWaveEl) {
+          this.wordWaveEl.style.transform = `translate3d(${waveX}px, 0, 0)`;
+          this.wordWaveEl.style.display = "block";
+        }
+      } else if (this.wordWaveEl) {
+        this.wordWaveEl.style.display = "none";
+      }
     }
 
     slitLeft = Math.max(0, slitLeft);
@@ -6703,28 +6810,12 @@ export class ReadingRuler {
           ? currentLine.bottom
           : (currentLine.centerY + (currentLine.height || h) / 2);
 
-        let coverTargetY;
-        if (this.isPdfMode) {
-          coverTargetY = Math.round(curBottom + 3);
-          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-            const maxAllowedY = Math.round(nextLine.top - 4);
-            if (coverTargetY > maxAllowedY) {
-              coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
-            }
-          }
-        } else {
-          // Place the cover boundary 2px below current line descenders.
-          // This guarantees the ruler line never touches the active line,
-          // while leaving maximum clearance above the next line's ascenders and diacritics.
-          coverTargetY = Math.round(curBottom + 2);
-
-          // Safety clamp: if nextLine exists in the same column/slot, ensure coverTargetY never collides with nextLine
-          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-            // Leave at least 4px clearance above nextLine.top to completely hide ascenders/diacritics (d, l, t, Š, etc.)
-            const maxAllowedY = Math.round(nextLine.top - 4);
-            if (coverTargetY > maxAllowedY) {
-              coverTargetY = Math.max(Math.round(curBottom + 1), maxAllowedY);
-            }
+        let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
+        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+          const maxAllowedY = Math.round(nextLine.top - 3);
+          coverTargetY = Math.min(coverTargetY, maxAllowedY);
+          if (Number.isFinite(curBottom)) {
+            coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
           }
         }
         boundaryDocY = coverTargetY;
@@ -7133,7 +7224,7 @@ export class ReadingRuler {
     if (!this.rulerEl) return;
 
     this.rulerEl.style.willChange = "transform";
-    this.rulerEl.style.contain = "paint";
+    this.rulerEl.style.contain = this.mode === "bottom-cover" ? "none" : "paint";
 
     if (this.maskTopEl) {
       this.maskTopEl.style.willChange = "transform";
@@ -7246,10 +7337,20 @@ export class ReadingRuler {
       slate: "#64748b"
     };
     if (this.mode === "bottom-cover") {
-      this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+      const hex = colorHexMap[this.color] || "#f59e0b";
+      this.rulerEl.style.backgroundColor = hex;
+      this.rulerEl.style.color = hex;
       this.rulerEl.style.height = "2px";
+      this.rulerEl.style.contain = "none";
     } else {
       this.rulerEl.style.backgroundColor = "";
+      this.rulerEl.style.color = "";
+      this.rulerEl.style.contain = "paint";
+    }
+
+    const isBottomCoverWordTracking = !this.isPdfMode && this.mode === "bottom-cover" && !!this.wordTracking;
+    if (!isBottomCoverWordTracking && this.wordWaveEl) {
+      this.wordWaveEl.style.display = "none";
     }
 
     if (this.enabled && !this.isPageTransitioning) {
@@ -7430,11 +7531,42 @@ export class ReadingRuler {
           this.currentY = this.targetY;
         }
       }
+      if (this.wordTracking && this.activeWordIndex >= 0 && this.cachedWords && this.cachedWords.length > 0) {
+        this.setWordWindow(this.activeWordIndex);
+      }
       this.updateEffectiveHeight();
       this.updateStyles();
       this.updateBodyClasses();
       this.applyPosition();
+      this.updateRulerSettingsVisibility(this.mode, this.isPdfMode);
     }
+  }
+
+  updateRulerSettingsVisibility(style = this.mode, isPdf = this.isPdfMode) {
+    if (this.app && typeof this.app.updateRulerSettingsVisibility === "function") {
+      this.app.updateRulerSettingsVisibility(style, isPdf);
+      return;
+    }
+    const activeStyle = style || this.mode || "highlight";
+    const activePdf = isPdf !== null && isPdf !== undefined ? !!isPdf : !!this.isPdfMode;
+
+    const popoverColor = document.getElementById("popover-ruler-color-section");
+    const drawerColor = document.getElementById("drawer-ruler-color-section");
+    const hideColor = activeStyle === "focus";
+    if (popoverColor) popoverColor.classList.toggle("is-hidden", hideColor);
+    if (drawerColor) drawerColor.classList.toggle("is-hidden", hideColor);
+
+    const popoverOpacity = document.getElementById("popover-ruler-opacity-section");
+    const drawerOpacity = document.getElementById("drawer-ruler-opacity-section");
+    const hideOpacity = activeStyle === "highlight";
+    if (popoverOpacity) popoverOpacity.classList.toggle("is-hidden", hideOpacity);
+    if (drawerOpacity) drawerOpacity.classList.toggle("is-hidden", hideOpacity);
+
+    const popoverPdf = document.getElementById("popover-pdf-ruler-section");
+    const drawerPdf = document.getElementById("drawer-pdf-ruler-section");
+    const hidePdfHeight = !activePdf || activeStyle === "bottom-cover";
+    if (popoverPdf) popoverPdf.classList.toggle("is-hidden", hidePdfHeight);
+    if (drawerPdf) drawerPdf.classList.toggle("is-hidden", hidePdfHeight);
   }
 
   setColor(color) {
@@ -7520,6 +7652,10 @@ export class ReadingRuler {
   }
 
   setAutoHeight(enabled) {
+    if (this.isPdfMode) {
+      this.setPdfAutoHeight(enabled);
+      return;
+    }
     this.autoHeight = true;
     this.isPdfHeightFromSlider = false;
     if (this.snapToLines && this.cachedLines.length > 0 && this.activeLineIndex >= 0) {
@@ -7560,41 +7696,92 @@ export class ReadingRuler {
     this.disableWordTransition();
     this.wordTracking = !!enabled;
     this.updateBodyClasses();
+
     if (this.wordTracking) {
-      this.refreshWords();
-      if (this.followMode === "mouse") {
-        this.snapToFirstElement();
-      } else if (this.isVerticalMode() && this.followMode === "keyboard" && this.stationaryScreenY !== null) {
-        if (this.activeLineIndex >= 0 && this.cachedWords.length > 0) {
-          let wIdx = -1;
-          for (let w = 0; w < this.cachedWords.length; w++) {
-            if (this.cachedWords[w].lineIndex === this.activeLineIndex) {
-              wIdx = w;
-              break;
-            }
-          }
-          if (wIdx >= 0) {
-            this.setWordWindow(wIdx);
+      if (!this.cachedLines || this.cachedLines.length === 0) {
+        this.detectLines();
+      }
+      if (!this.cachedWords || this.cachedWords.length === 0) {
+        this.refreshWords();
+      }
+
+      if (this.cachedWords.length > 0) {
+        let targetWordIndex = -1;
+        if (this.activeWordIndex >= 0 && this.activeWordIndex < this.cachedWords.length) {
+          if (this.activeLineIndex < 0 || this.cachedWords[this.activeWordIndex].lineIndex === this.activeLineIndex) {
+            targetWordIndex = this.activeWordIndex;
           }
         }
-        this.applyPosition();
-      } else if (this.cachedWords.length > 0) {
-        this.handlePointerMove(this.lastPointerX, this.lastPointerY);
+
+        if (targetWordIndex < 0) {
+          const hasPointer = Number.isFinite(this.lastPointerX) && Number.isFinite(this.lastPointerY);
+          let minDiff = Infinity;
+          let lineFirstIdx = -1;
+
+          for (let w = 0; w < this.cachedWords.length; w++) {
+            const word = this.cachedWords[w];
+            const isSameLine = (this.activeLineIndex >= 0 && word.lineIndex === this.activeLineIndex);
+            if (isSameLine && lineFirstIdx < 0) {
+              lineFirstIdx = w;
+            }
+            if (hasPointer) {
+              const linePenalty = (this.activeLineIndex >= 0 && !isSameLine) ? 500 : 0;
+              const diff = Math.abs(this.lastPointerY - word.centerY) * 3 + Math.abs(this.lastPointerX - word.centerX) + linePenalty;
+              if (diff < minDiff) {
+                minDiff = diff;
+                targetWordIndex = w;
+              }
+            }
+          }
+
+          if (targetWordIndex < 0) {
+            targetWordIndex = lineFirstIdx >= 0 ? lineFirstIdx : 0;
+          }
+        }
+
+        if (targetWordIndex >= 0) {
+          this.activeWordIndex = targetWordIndex;
+          this.setWordWindow(targetWordIndex);
+          const targetWord = this.cachedWords[targetWordIndex];
+          if (targetWord) {
+            if (!Number.isFinite(this.lastPointerX)) {
+              this.lastPointerX = targetWord.centerX;
+              this.lastValidPointerX = this.lastPointerX;
+            }
+            if (!Number.isFinite(this.lastPointerY)) {
+              this.lastPointerY = targetWord.centerY;
+              this.lastValidPointerY = this.lastPointerY;
+            }
+          }
+        }
+      }
+
+      if (this.rulerEl) {
+        this.rulerEl.classList.add("word-tracking-mode");
       }
     } else {
       this.previewWidth = 0;
       this.totalWidth = 0;
-      this.rulerEl.classList.remove("word-tracking-mode");
-      this.applyPosition();
-      if (this.followMode === "mouse") {
-        this.snapToFirstElement();
-      } else if (this.isVerticalMode() && this.followMode === "keyboard" && this.stationaryScreenY !== null) {
-        this.applyPosition();
-      } else {
-        this.handlePointerMove(this.lastPointerX, this.lastPointerY);
+      if (this.rulerEl) {
+        this.rulerEl.classList.remove("word-tracking-mode");
+      }
+      if (this.wordWaveEl) {
+        this.wordWaveEl.style.display = "none";
+      }
+      if (this.cachedLines && this.cachedLines.length > 0) {
+        const targetIdx = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length) ? this.activeLineIndex : 0;
+        this.activeLineIndex = targetIdx;
+        const geom = this.computeLineGeometry(targetIdx);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+          this.currentY = this.targetY;
+        }
       }
     }
+
     this.updateStyles();
+    this.applyPosition();
   }
 
   setDimOpacity(opacity) {
