@@ -1725,13 +1725,23 @@ body.ruler-mode-bottom-cover .ruler-mask-right {
   border-top: 1px solid var(--border-color);
 }
 
-/* Skrytí systémového kurzoru VÝHRADNĚ při režimu sledování myši se zapnutým pravítkem */
-body.ruler-mouse-follow-active.in-reader-view #paged-viewport,
-body.ruler-mouse-follow-active.in-reader-view #paged-viewport * {
+/* Skrytí systémového kurzoru VÝHRADNĚ uvnitř aktivní čtecí zóny (text + mezisloupcová mezera) */
+body.ruler-cursor-hidden #paged-viewport,
+body.ruler-cursor-hidden #paged-viewport *,
+body.ruler-cursor-hidden #reading-ruler,
+body.ruler-cursor-hidden .reading-ruler,
+body.ruler-cursor-hidden .ruler-mask,
+#paged-viewport.ruler-cursor-hidden,
+#paged-viewport.ruler-cursor-hidden * {
   cursor: none !important;
 }
 
-/* Ovládací prvky a plochy mimo čtecí plátno mají vždy standardní viditelný kurzor */
+/* Dotykové zóny na okrajích a plochy mimo čtecí zónu mají standardní kurzor */
+body.ruler-mouse-follow-active .page-touch-zone {
+  cursor: default;
+}
+
+/* Ovládací prvky a plochy mimo čtecí zónu mají vždy standardní viditelný kurzor */
 body.ruler-mouse-follow-active .top-navbar,
 body.ruler-mouse-follow-active .top-navbar *,
 body.ruler-mouse-follow-active .paged-footer-bar,
@@ -1754,7 +1764,19 @@ body.ruler-mouse-follow-active a,
 body.ruler-mouse-follow-active input,
 body.ruler-mouse-follow-active select,
 body.ruler-mouse-follow-active .switch,
-body.ruler-mouse-follow-active [role="button"] {
+body.ruler-mouse-follow-active [role="button"],
+body.ruler-cursor-hidden button,
+body.ruler-cursor-hidden .btn,
+body.ruler-cursor-hidden .btn-icon,
+body.ruler-cursor-hidden a,
+body.ruler-cursor-hidden input,
+body.ruler-cursor-hidden select,
+body.ruler-cursor-hidden .switch,
+body.ruler-cursor-hidden [role="button"],
+body.ruler-cursor-hidden .ruler-floating-controls,
+body.ruler-cursor-hidden .ruler-floating-controls *,
+body.ruler-cursor-hidden .ruler-quick-popover,
+body.ruler-cursor-hidden .ruler-quick-popover * {
   cursor: pointer !important;
 }
 

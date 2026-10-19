@@ -25,6 +25,10 @@ export class ReadingRuler {
     // PDF Mode
     this.isPdfMode = false;
     this.pdfRulerHeight = 32; // px - výchozí manuální výška pravítka pro PDF (16–120)
+    this.pdfEffectiveHeight = 22; // px - dynamická jednotná bezpečná výška pravítka pro PDF dokument
+    this.pdfMedianPitch = 0; // px - mediánová mezilinková vzdálenost (pitch) PDF dokumentu
+    this.hasManualPdfHeight = false;
+    this.pdfUserHeight = null;
 
     // Nastavení
     this.enabled = false;
@@ -38,6 +42,13 @@ export class ReadingRuler {
     this.color = "amber"; // amber | cyan | emerald | lavender | slate
     this.dimOpacity = 0.65;
     this.followMode = "mouse"; // "mouse" | "keyboard" | "auto"
+
+    // Geometrické ohraničení aktivní čtecí zóny pro řízení viditelnosti kurzoru myši
+    this.readingLeft = null;
+    this.readingRight = null;
+    this.readingTop = null;
+    this.readingBottom = null;
+    this._isCursorHidden = false;
 
     // Stav pozice, řádků a slov
     this.currentY = 180; // px relativně k viewportu
@@ -285,6 +296,7 @@ export class ReadingRuler {
    */
   hideForPageTransition() {
     this.isPageTransitioning = true;
+    this.setCursorHidden(false);
     if (this.rulerEl) {
       this.rulerEl.classList.add("is-page-transitioning");
       this.rulerEl.style.transition = "none";
@@ -403,11 +415,12 @@ export class ReadingRuler {
     if (this.isPdfMode) {
       if (height !== null) {
         if (typeof height === "object" && height !== null) {
+          const isCustom = !!height.userCustomized;
           if (height.height !== undefined) {
-            this.setPdfRulerHeight(height.height);
+            this.setPdfRulerHeight(height.height, isCustom);
           }
         } else {
-          this.setPdfRulerHeight(height);
+          this.setPdfRulerHeight(height, false);
         }
       }
       this.detectLines();
@@ -418,11 +431,9 @@ export class ReadingRuler {
         if (this.rulerEl) {
           this.rulerEl.classList.remove("pdf-ruler-overlay");
         }
-        if (!this.autoHeight) {
-          this.height = this.pdfRulerHeight || this.manualHeight || 32;
-        }
+        this.height = this.pdfEffectiveHeight || 22;
       } else {
-        this.height = this.pdfRulerHeight || 32;
+        this.height = this.pdfEffectiveHeight || this.pdfRulerHeight || 22;
         if (this.rulerEl) {
           this.rulerEl.classList.remove("pdf-ruler-overlay");
           this.rulerEl.classList.remove("word-tracking-mode");
@@ -446,12 +457,27 @@ export class ReadingRuler {
     }
   }
 
-  setPdfRulerHeight(height) {
+  setPdfRulerHeight(height, isUserExplicit = true) {
     const h = Math.max(16, Math.min(120, Math.round(Number(height) || 32)));
     this.pdfRulerHeight = h;
+    if (isUserExplicit) {
+      this.hasManualPdfHeight = true;
+      this.pdfUserHeight = h;
+      let effectiveH = h;
+      const pitch = this.pdfMedianPitch || 0;
+      if (pitch > 0) {
+        const maxAllowed = Math.max(10, Math.floor(pitch - 2));
+        effectiveH = Math.min(effectiveH, maxAllowed);
+      }
+      this.pdfEffectiveHeight = effectiveH;
+      this.height = effectiveH;
+    } else if (!this.hasManualPdfHeight && !this.pdfEffectiveHeight) {
+      this.pdfEffectiveHeight = h;
+      this.height = h;
+    }
     if (this.isPdfMode) {
       if (!this.cachedLines || this.cachedLines.length === 0 || !this.autoHeight) {
-        this.height = h;
+        this.height = this.pdfEffectiveHeight || h;
       }
       if (this.enabled) {
         this.applyPosition();
@@ -460,7 +486,7 @@ export class ReadingRuler {
   }
 
   getPdfRulerHeight() {
-    return this.pdfRulerHeight || 32;
+    return this.pdfEffectiveHeight || this.pdfRulerHeight || 32;
   }
 
   isLastLine() {
@@ -594,6 +620,223 @@ export class ReadingRuler {
       clientY >= rect.top &&
       clientY <= rect.bottom
     );
+  }
+
+  /**
+   * Zjistí, zda se souřadnice myši nacházejí uvnitř kombinované čtecí zóny
+   * (od levého okraje 1. sloupce po pravý okraj 2. sloupce, včetně celé mezery mezi sloupci).
+   */
+  isPointerInReadingZone(clientX, clientY) {
+    if (clientX == null || clientY == null) return false;
+    if (
+      this.readingLeft == null ||
+      this.readingRight == null ||
+      this.readingTop == null ||
+      this.readingBottom == null ||
+      !Number.isFinite(this.readingLeft) ||
+      !Number.isFinite(this.readingRight)
+    ) {
+      this.updateReadingZoneBounds();
+    }
+    if (
+      this.readingLeft == null ||
+      this.readingRight == null ||
+      this.readingTop == null ||
+      this.readingBottom == null
+    ) {
+      return false;
+    }
+    return (
+      clientX >= this.readingLeft &&
+      clientX <= this.readingRight &&
+      clientY >= this.readingTop &&
+      clientY <= this.readingBottom
+    );
+  }
+
+  /**
+   * Řídí viditelnost systémového kurzoru myši podle geometrie čtecí zóny.
+   * Aplikuje se VÝHRADNĚ pro myš (pointerType === 'mouse').
+   * Stylus (Apple Pencil) i dotyková gesta zůstávají 100% nedotčena.
+   */
+  updateCursorVisibility(clientX, clientY, pointerType = "mouse", target = null) {
+    if (pointerType !== "mouse") {
+      this.setCursorHidden(false);
+      return;
+    }
+
+    if (!this.enabled || this.followMode !== "mouse") {
+      this.setCursorHidden(false);
+      return;
+    }
+
+    if (this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || this.isLineLocked || Date.now() < this.navigatingPageLockoutEndTime) {
+      this.setCursorHidden(false);
+      return;
+    }
+
+    if (clientX == null || clientY == null) {
+      this.setCursorHidden(false);
+      return;
+    }
+
+    // Interaktivní prvky UI (tlačítka, navigační lišty, panely, popovery) mají vždy viditelný kurzor
+    if (target && this.isUiControl(target)) {
+      this.setCursorHidden(false);
+      return;
+    }
+
+    const inZone = this.isPointerInReadingZone(clientX, clientY);
+    this.setCursorHidden(inZone);
+  }
+
+  /**
+   * Přepíná CSS třídu pro skrytí kurzoru myši.
+   */
+  setCursorHidden(hidden) {
+    const shouldHide = !!hidden;
+    if (this._isCursorHidden === shouldHide) return;
+    this._isCursorHidden = shouldHide;
+
+    document.body.classList.toggle("ruler-cursor-hidden", shouldHide);
+    const viewport = document.getElementById("paged-viewport");
+    if (viewport) {
+      viewport.classList.toggle("ruler-cursor-hidden", shouldHide);
+    }
+  }
+
+  /**
+   * Bezpečný přepočet geometrických hranic čtecí zóny (fallback).
+   */
+  updateReadingZoneBounds() {
+    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      this.updatePdfReadingZoneBounds();
+      return;
+    }
+
+    const isVertical = this.isVerticalMode();
+    const isSpread = !isVertical && this.isSpreadActive();
+    const isTwoCol = !isVertical && (this.isTwoCol || isSpread);
+    const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
+
+    if (this.column0Left != null && this.column0Right != null) {
+      if (isTwoCol && this.column1Left != null && this.column1Right != null) {
+        this.readingLeft = Math.min(this.column0Left, this.column1Left);
+        this.readingRight = Math.max(this.column0Right, this.column1Right);
+      } else {
+        this.readingLeft = this.column0Left;
+        this.readingRight = this.column0Right;
+      }
+    }
+
+    const stage = document.getElementById("paged-stage") || document.getElementById("paged-viewport") || this.container || document.body;
+    const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight };
+    const textContainer = document.getElementById("reader-content") || stage;
+    const tcRect = textContainer ? textContainer.getBoundingClientRect() : stageRect;
+
+    if (isSpread && spreadInfo) {
+      this.readingTop = Math.round(Math.min(spreadInfo.leftRect.top, spreadInfo.rightRect.top));
+      this.readingBottom = Math.round(Math.max(spreadInfo.leftRect.bottom, spreadInfo.rightRect.bottom));
+      if (this.readingLeft == null || this.readingRight == null) {
+        this.readingLeft = Math.round(Math.min(spreadInfo.leftRect.left, spreadInfo.rightRect.left));
+        this.readingRight = Math.round(Math.max(spreadInfo.leftRect.right, spreadInfo.rightRect.right));
+      }
+    } else if (this.isPdfMode) {
+      const canvas = document.querySelector("#reader-content canvas");
+      const cRect = canvas ? canvas.getBoundingClientRect() : null;
+      if (cRect && cRect.height > 50) {
+        this.readingTop = Math.round(cRect.top);
+        this.readingBottom = Math.round(cRect.bottom);
+        if (this.readingLeft == null || this.readingRight == null) {
+          this.readingLeft = Math.round(cRect.left);
+          this.readingRight = Math.round(cRect.right);
+        }
+      } else {
+        this.readingTop = Math.round((tcRect && tcRect.height > 50) ? tcRect.top : stageRect.top);
+        this.readingBottom = Math.round((tcRect && tcRect.height > 50) ? tcRect.bottom : stageRect.bottom);
+      }
+    } else {
+      this.readingTop = Math.round((tcRect && tcRect.height > 50) ? tcRect.top : stageRect.top);
+      this.readingBottom = Math.round((tcRect && tcRect.height > 50) ? tcRect.bottom : stageRect.bottom);
+      if (this.readingLeft == null || this.readingRight == null) {
+        this.readingLeft = Math.round((tcRect && tcRect.width > 50) ? tcRect.left : stageRect.left);
+        this.readingRight = Math.round((tcRect && tcRect.width > 50) ? tcRect.right : stageRect.right);
+      }
+    }
+  }
+
+  /**
+   * Spočítá hranice aktivní čtecí zóny pro PDF režim (jedna strana i dvoustrana).
+   */
+  updatePdfReadingZoneBounds(stageRect = null, isSpread = null, spreadInfo = null) {
+    const isSpreadMode = isSpread !== null ? isSpread : (!this.isVerticalMode() && this.isSpreadActive());
+    const spread = spreadInfo || (isSpreadMode ? this.getActiveSpreadInfo(null) : null);
+    const stage = stageRect || (this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.() || { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight };
+
+    if (isSpreadMode && spread) {
+      const col0Left = Math.round(spread.leftRect.left);
+      const col0Right = Math.round(spread.leftRect.right);
+      const col1Left = Math.round(spread.rightRect.left);
+      const col1Right = Math.round(spread.rightRect.right);
+      this.column0Left = col0Left;
+      this.column0Right = col0Right;
+      this.column1Left = col1Left;
+      this.column1Right = col1Right;
+      this.readingLeft = Math.min(col0Left, col1Left);
+      this.readingRight = Math.max(col0Right, col1Right);
+      this.readingTop = Math.round(Math.min(spread.leftRect.top, spread.rightRect.top));
+      this.readingBottom = Math.round(Math.max(spread.leftRect.bottom, spread.rightRect.bottom));
+      return;
+    }
+
+    const spreadContainer = document.querySelector("#reader-content .pdf-spread-container");
+    if (spreadContainer) {
+      const sRect = spreadContainer.getBoundingClientRect();
+      if (sRect.width > 50 && sRect.height > 50) {
+        this.readingLeft = Math.round(sRect.left);
+        this.readingRight = Math.round(sRect.right);
+        this.readingTop = Math.round(sRect.top);
+        this.readingBottom = Math.round(sRect.bottom);
+        this.column0Left = this.readingLeft;
+        this.column0Right = this.readingRight;
+        return;
+      }
+    }
+
+    const canvas = document.querySelector("#reader-content canvas");
+    if (canvas) {
+      const cRect = canvas.getBoundingClientRect();
+      if (cRect.width > 50 && cRect.height > 50) {
+        this.readingLeft = Math.round(cRect.left);
+        this.readingRight = Math.round(cRect.right);
+        this.readingTop = Math.round(cRect.top);
+        this.readingBottom = Math.round(cRect.bottom);
+        this.column0Left = this.readingLeft;
+        this.column0Right = this.readingRight;
+        return;
+      }
+    }
+
+    const pdfContainer = document.querySelector("#reader-content .pdf-page-container, #reader-content .pdf-page-slot");
+    if (pdfContainer) {
+      const pRect = pdfContainer.getBoundingClientRect();
+      if (pRect.width > 50 && pRect.height > 50) {
+        this.readingLeft = Math.round(pRect.left);
+        this.readingRight = Math.round(pRect.right);
+        this.readingTop = Math.round(pRect.top);
+        this.readingBottom = Math.round(pRect.bottom);
+        this.column0Left = this.readingLeft;
+        this.column0Right = this.readingRight;
+        return;
+      }
+    }
+
+    this.readingLeft = Math.round(stage.left);
+    this.readingRight = Math.round(stage.right);
+    this.readingTop = Math.round(stage.top);
+    this.readingBottom = Math.round(stage.bottom);
+    this.column0Left = this.readingLeft;
+    this.column0Right = this.readingRight;
   }
 
   /**
@@ -1283,6 +1526,10 @@ export class ReadingRuler {
         }
       }
 
+      if (e.pointerType === "mouse") {
+        this.updateCursorVisibility(e.clientX, e.clientY, "mouse", e.target);
+      }
+
       if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
 
       // Pokud běží aktivní držení, zkontrolujeme prahový posun (tolerance 8px)
@@ -1474,6 +1721,15 @@ export class ReadingRuler {
     window.addEventListener("pointermove", onPointerMove, { passive: true });
     window.addEventListener("pointerup", onPointerUp, { passive: true });
     window.addEventListener("pointercancel", onPointerCancel, { passive: true });
+
+    const onPointerLeaveWindow = (e) => {
+      if (!e || e.pointerType === "mouse" || !e.pointerType) {
+        this.setCursorHidden(false);
+      }
+    };
+    window.addEventListener("pointerleave", onPointerLeaveWindow, { passive: true });
+    document.addEventListener("mouseleave", onPointerLeaveWindow, { passive: true });
+    window.addEventListener("blur", () => this.setCursorHidden(false), { passive: true });
 
     // 2. TOUCH EVENTS (WebKit Safari fallback pro starší zařízení)
     const onTouchStart = (e) => {
@@ -2621,6 +2877,7 @@ export class ReadingRuler {
       // Pokud na stránce není detekován žádný řádek textu, vygenerujeme bezpečný záložní řádek na ploše stage, aby pravítko nezmizelo
       if (this.cachedLines.length === 0) {
         if (this.isPdfMode) {
+          this.updatePdfReadingZoneBounds(stageRect, isSpread, spreadInfo);
           return [];
         }
         const height = this.manualHeight || 36;
@@ -2650,6 +2907,10 @@ export class ReadingRuler {
         this.textBlockWidth = colWidth;
         this.lastKnownColumnLeft = colLeft;
         this.activeLineIndex = 0;
+        this.readingLeft = colLeft;
+        this.readingRight = colRight;
+        this.readingTop = Math.round(stageRect.top);
+        this.readingBottom = Math.round(stageRect.bottom);
         return this.cachedLines;
       }
 
@@ -2817,6 +3078,34 @@ export class ReadingRuler {
         this.lastKnownColumnLeft = c0Left;
         this.lastKnownColumnWidth = c0Width;
 
+        // Horizontální a vertikální ohraničení aktivní čtecí zóny pro viditelnost kurzoru myši
+        if ((isTwoCol || isSpread) && Number.isFinite(c1Left) && Number.isFinite(c1Right)) {
+          this.readingLeft = Math.min(c0Left, c1Left);
+          this.readingRight = Math.max(c0Right, c1Right);
+        } else {
+          this.readingLeft = c0Left;
+          this.readingRight = c0Right;
+        }
+
+        const tcRect = textContainer ? textContainer.getBoundingClientRect() : stageRect;
+        if (isSpread && spreadInfo) {
+          this.readingTop = Math.round(Math.min(spreadInfo.leftRect.top, spreadInfo.rightRect.top));
+          this.readingBottom = Math.round(Math.max(spreadInfo.leftRect.bottom, spreadInfo.rightRect.bottom));
+        } else if (this.isPdfMode) {
+          const canvas = document.querySelector("#reader-content canvas");
+          const cRect = canvas ? canvas.getBoundingClientRect() : null;
+          if (cRect && cRect.height > 50) {
+            this.readingTop = Math.round(cRect.top);
+            this.readingBottom = Math.round(cRect.bottom);
+          } else {
+            this.readingTop = Math.round((tcRect && tcRect.height > 50) ? tcRect.top : stageRect.top);
+            this.readingBottom = Math.round((tcRect && tcRect.height > 50) ? tcRect.bottom : stageRect.bottom);
+          }
+        } else {
+          this.readingTop = Math.round((tcRect && tcRect.height > 50) ? tcRect.top : stageRect.top);
+          this.readingBottom = Math.round((tcRect && tcRect.height > 50) ? tcRect.bottom : stageRect.bottom);
+        }
+
         if (isVertical && Number.isFinite(this.currentY) && this.cachedLines.length > 0) {
           const targetCenter = this.currentY + this.height / 2;
           let bestIdx = 0;
@@ -2838,7 +3127,74 @@ export class ReadingRuler {
         }
       }
 
-      if (this.autoHeight) {
+      if (this.isPdfMode) {
+        const textLines = this.cachedLines.filter(l => l.hasText && !l.isMedia);
+        let baseLineHeight = 0;
+        if (textLines.length > 0) {
+          const sortedHeights = textLines.map(l => l.height).filter(h => h > 0).sort((a, b) => a - b);
+          if (sortedHeights.length > 0) {
+            baseLineHeight = sortedHeights[Math.floor(sortedHeights.length / 2)];
+          }
+        }
+        if (!baseLineHeight || baseLineHeight < 8) {
+          baseLineHeight = 18;
+        }
+
+        // Vypočítat mediánovou vertikální vzdálenost mezi sousedními středy řádků (pitch)
+        let medianPitch = 0;
+        if (this.cachedLines.length > 1) {
+          const pitches = [];
+          for (let i = 0; i < this.cachedLines.length - 1; i++) {
+            const cur = this.cachedLines[i];
+            const next = this.cachedLines[i + 1];
+            if (cur.columnIndex === next.columnIndex && cur.hasText && next.hasText && !cur.isMedia && !next.isMedia) {
+              const curSlot = (cur.element || cur.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+              const nextSlot = (next.element || next.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+              if (!curSlot || !nextSlot || curSlot === nextSlot) {
+                const p = next.centerY - cur.centerY;
+                if (p > 8 && p < 150) {
+                  pitches.push(p);
+                }
+              }
+            }
+          }
+          if (pitches.length > 0) {
+            pitches.sort((a, b) => a - b);
+            medianPitch = pitches[Math.floor(pitches.length / 2)];
+          }
+        }
+        if (medianPitch > 0) {
+          this.pdfMedianPitch = medianPitch;
+        }
+
+        const effPitch = medianPitch > 0 ? medianPitch : (this.pdfMedianPitch || 0);
+
+        // Definovat jednotnou bezpečnou cílovou výšku pro dokument:
+        // safeConstantHeight = Math.max(16, Math.min(baseLineHeight + 4, medianPitch - 4))
+        // Zaručuje alespoň 2px clearance nahoře i dole, zamezuje překryvu písmen.
+        let safeConstantHeight;
+        if (effPitch > 0) {
+          safeConstantHeight = Math.max(16, Math.min(baseLineHeight + 4, effPitch - 4));
+          if (safeConstantHeight > effPitch - 2) {
+            safeConstantHeight = Math.max(10, Math.floor(effPitch - 2));
+          }
+        } else {
+          safeConstantHeight = Math.max(16, Math.round(baseLineHeight + 4));
+        }
+
+        if (this.hasManualPdfHeight && Number.isFinite(this.pdfUserHeight)) {
+          let manualH = this.pdfUserHeight;
+          if (effPitch > 0) {
+            const maxAllowed = Math.max(10, Math.floor(effPitch - 2));
+            manualH = Math.min(manualH, maxAllowed);
+          }
+          this.pdfEffectiveHeight = manualH;
+        } else {
+          this.pdfEffectiveHeight = safeConstantHeight;
+        }
+
+        this.height = this.pdfEffectiveHeight;
+      } else if (this.autoHeight) {
         let baseH = 0;
         if (this.cachedLines.length > 0) {
           const sortedHeights = this.cachedLines.map(l => l.height).filter(h => h > 0).sort((a, b) => a - b);
@@ -2915,6 +3271,10 @@ export class ReadingRuler {
           columnWidth: window.innerWidth - 80,
           columnRight: window.innerWidth - 40
         }];
+        this.readingLeft = 40;
+        this.readingRight = window.innerWidth - 40;
+        this.readingTop = 150;
+        this.readingBottom = window.innerHeight - 150;
       }
       return this.cachedLines;
     } finally {
@@ -3577,115 +3937,90 @@ export class ReadingRuler {
       };
     }
 
-    let height = Math.round((this.autoHeight && Number.isFinite(this.height) && this.height > 0)
-      ? this.height
-      : (this.manualHeight || 36));
-
-    let maxLineH = Infinity;
-    if (prevLine && prevLine.columnIndex === line.columnIndex) {
-      const distPrev = line.centerY - prevLine.centerY;
-      if (distPrev > 8) maxLineH = Math.min(maxLineH, distPrev - 2);
-    }
-    if (nextLine && nextLine.columnIndex === line.columnIndex) {
-      const distNext = nextLine.centerY - line.centerY;
-      if (distNext > 8) maxLineH = Math.min(maxLineH, distNext - 2);
-    }
-
-    if (Number.isFinite(maxLineH) && maxLineH > 10) {
-      height = Math.min(height, Math.round(maxLineH));
-    }
-
-    let targetY = Math.round(line.centerY - height / 2);
+    let height;
+    let targetY;
 
     if (this.isPdfMode) {
-      // PDF-SPECIFIC ACCURATE INTER-LINE GAP CALIBRATION
-      const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + height / 2);
-      const curTop = Number.isFinite(line.top) ? line.top : (line.centerY - height / 2);
+      if (this.mode === "bottom-cover") {
+        // PDF-SPECIFIC ACCURATE INTER-LINE GAP CALIBRATION FOR BOTTOM-COVER
+        const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + (this.pdfEffectiveHeight || 20) / 2);
 
-      let hasNext = false;
-      if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
-        const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-        const nextSlot = (nextLine.element || nextLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-        if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
-          if (Number.isFinite(nextLine.top) && nextLine.top > (line.top ?? line.centerY)) {
-            hasNext = true;
+        let hasNext = false;
+        if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
+          const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+          const nextSlot = (nextLine.element || nextLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+          if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
+            if (Number.isFinite(nextLine.top) && nextLine.top > (line.top ?? line.centerY)) {
+              hasNext = true;
+            }
           }
         }
-      }
 
-      let hasPrev = false;
-      if (prevLine && (prevLine.columnIndex === line.columnIndex || (line.columnIndex == null && prevLine.columnIndex == null))) {
-        const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-        const prevSlot = (prevLine.element || prevLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-        if (!lineSlot || !prevSlot || lineSlot === prevSlot) {
-          if (Number.isFinite(prevLine.bottom) && prevLine.bottom < (line.bottom ?? line.centerY)) {
-            hasPrev = true;
+        // Safe optical boundary calculation below line N (bottom dividing line)
+        let coverTargetY;
+        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+          const interLineGap = nextLine.top - curBottom;
+          // In PDF.js, descenders (p, j, y) on line N extend 1-2px below curBottom (fallback font client rect).
+          // To ensure ruler line sits at least 2px below lowest glyph point:
+          const minAllowedY = Math.round(curBottom + 3);
+
+          // Diacritics (ž, š, č, ř, ů, í) and ascenders (d, l, t) on nextLine extend 2-3px above nextLine.top.
+          // To conceal them completely under ruler line:
+          const maxAllowedY = Math.round(nextLine.top - 4);
+
+          if (interLineGap >= 12) {
+            coverTargetY = Math.round(curBottom + interLineGap * 0.42);
+          } else if (interLineGap >= 6) {
+            coverTargetY = Math.round(curBottom + interLineGap * 0.45);
+          } else {
+            coverTargetY = Math.round(curBottom + 3);
           }
-        }
-      }
 
-      // Safe optical boundary calculation below line N (bottom dividing line)
-      let coverTargetY;
-      if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-        const interLineGap = nextLine.top - curBottom;
-        // In PDF.js, descenders (p, j, y) on line N extend 1-2px below curBottom (fallback font client rect).
-        // To ensure ruler line sits at least 2px below lowest glyph point:
-        const minAllowedY = Math.round(curBottom + 3);
-
-        // Diacritics (ž, š, č, ř, ů, í) and ascenders (d, l, t) on nextLine extend 2-3px above nextLine.top.
-        // To conceal them completely under ruler line:
-        const maxAllowedY = Math.round(nextLine.top - 4);
-
-        if (interLineGap >= 12) {
-          coverTargetY = Math.round(curBottom + interLineGap * 0.42);
-        } else if (interLineGap >= 6) {
-          coverTargetY = Math.round(curBottom + interLineGap * 0.45);
+          if (minAllowedY <= maxAllowedY) {
+            coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
+          } else {
+            coverTargetY = Math.round((curBottom + nextLine.top) / 2);
+          }
         } else {
+          // Last line on page/column: safely below current line's descenders (+3px)
           coverTargetY = Math.round(curBottom + 3);
         }
 
-        if (minAllowedY <= maxAllowedY) {
-          coverTargetY = Math.max(minAllowedY, Math.min(coverTargetY, maxAllowedY));
-        } else {
-          coverTargetY = Math.round((curBottom + nextLine.top) / 2);
-        }
-      } else {
-        // Last line on page/column: safely below current line's descenders (+3px)
-        coverTargetY = Math.round(curBottom + 3);
-      }
-
-      // Safe optical boundary calculation above line N (for highlight and focus modes)
-      let topTargetY;
-      if (hasPrev && prevLine && Number.isFinite(prevLine.bottom)) {
-        const prevGap = curTop - prevLine.bottom;
-        const minTop = Math.round(prevLine.bottom + 3);
-        const maxTop = Math.round(curTop - 3);
-
-        if (prevGap >= 12) {
-          topTargetY = Math.round(curTop - prevGap * 0.42);
-        } else if (prevGap >= 6) {
-          topTargetY = Math.round(curTop - prevGap * 0.45);
-        } else {
-          topTargetY = Math.round(curTop - 3);
-        }
-
-        if (minTop <= maxTop) {
-          topTargetY = Math.max(minTop, Math.min(topTargetY, maxTop));
-        } else {
-          topTargetY = Math.round((prevLine.bottom + curTop) / 2);
-        }
-      } else {
-        topTargetY = Math.round(curTop - 3);
-      }
-
-      if (this.mode === "bottom-cover") {
         targetY = coverTargetY;
+        height = 2;
       } else {
-        targetY = topTargetY;
-        height = Math.max(10, Math.round(coverTargetY - topTargetY));
+        // PDF mode (highlight, focus, etc.):
+        // Lock Height Across ALL Lines:
+        // Set height = this.pdfEffectiveHeight uniformly for every text line.
+        // Do NOT expand the ruler on isolated lines.
+        // Do NOT shrink the ruler dynamically on individual lines.
+        // Every single text line must share the exact same pixel height.
+        // Center the ruler symmetrically: targetY = Math.round(line.centerY - height / 2).
+        height = Math.round(this.pdfEffectiveHeight || this.height || 22);
+        targetY = Math.round(line.centerY - height / 2);
       }
     } else {
       // 100% UNTOUCHED EPUB LOGIC
+      height = Math.round((this.autoHeight && Number.isFinite(this.height) && this.height > 0)
+        ? this.height
+        : (this.manualHeight || 36));
+
+      let maxLineH = Infinity;
+      if (prevLine && prevLine.columnIndex === line.columnIndex) {
+        const distPrev = line.centerY - prevLine.centerY;
+        if (distPrev > 8) maxLineH = Math.min(maxLineH, distPrev - 2);
+      }
+      if (nextLine && nextLine.columnIndex === line.columnIndex) {
+        const distNext = nextLine.centerY - line.centerY;
+        if (distNext > 8) maxLineH = Math.min(maxLineH, distNext - 2);
+      }
+
+      if (Number.isFinite(maxLineH) && maxLineH > 10) {
+        height = Math.min(height, Math.round(maxLineH));
+      }
+
+      targetY = Math.round(line.centerY - height / 2);
+
       if (prevLine && prevLine.columnIndex === line.columnIndex) {
         if (prevLine.isMedia && Number.isFinite(prevLine.bottom)) {
           const prevBottom = Math.round(prevLine.bottom + 10);
@@ -3804,8 +4139,8 @@ export class ReadingRuler {
   }
 
   updateEffectiveHeight(lineHeight) {
-    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
-      this.height = this.pdfRulerHeight || 32;
+    if (this.isPdfMode) {
+      this.height = this.pdfEffectiveHeight || this.pdfRulerHeight || 22;
       this.applyPosition();
       return;
     }
@@ -6726,6 +7061,12 @@ export class ReadingRuler {
       }
       this._lastFocusedMediaEl = null;
     }
+
+    if (!this.isPageTransitioning && this.enabled && this.followMode === "mouse" && this.activePointerType === "mouse") {
+      if (this.lastPointerX != null && this.lastPointerY != null) {
+        this.updateCursorVisibility(this.lastPointerX, this.lastPointerY, "mouse");
+      }
+    }
   }
 
   updateRulerPosition(index = 0) {
@@ -6987,12 +7328,17 @@ export class ReadingRuler {
     document.body.classList.toggle("ruler-mode-focus", isFocus);
     document.body.classList.toggle("ruler-mode-bottom-cover", isBottomCover);
     document.body.classList.toggle("ruler-vertical-mode", isVertical);
+
+    if (!isMouseFollow) {
+      this.setCursorHidden(false);
+    }
   }
 
   setEnabled(val) {
     this.disableWordTransition();
     this.enabled = !!val;
     if (!this.enabled) {
+      this.setCursorHidden(false);
       this.cancelHold();
       this.stationaryScreenY = null;
       if (this._scrollEndTimer) {
@@ -7057,6 +7403,9 @@ export class ReadingRuler {
         } else {
           this.updateRulerPosition(0);
         }
+      }
+      if (this.followMode === "mouse" && this.lastPointerX != null && this.lastPointerY != null) {
+        this.updateCursorVisibility(this.lastPointerX, this.lastPointerY, "mouse");
       }
       console.log(`[Ruler] Activated, found lines: ${this.cachedLines.length}, current position: Top ${Math.round(this.currentY)} px, Height ${Math.round(this.height)} px`);
     }
@@ -7160,8 +7509,8 @@ export class ReadingRuler {
   }
 
   setHeight(px) {
-    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
-      this.setPdfRulerHeight(px);
+    if (this.isPdfMode) {
+      this.setPdfRulerHeight(px, true);
       return;
     }
     this.manualHeight = Math.max(16, Math.min(120, parseInt(px, 10) || 48));
@@ -7313,9 +7662,17 @@ export class ReadingRuler {
     if (this.enabled) {
       if (this.followMode === "mouse") {
         this.snapToFirstElement();
-      } else if (this.followMode === "keyboard" && (!this.isPdfMode || (this.cachedLines && this.cachedLines.length > 0)) && this.isVerticalMode() && this.stationaryScreenY === null) {
-        this.initDefaultStationaryAnchor();
+        if (this.lastPointerX != null && this.lastPointerY != null) {
+          this.updateCursorVisibility(this.lastPointerX, this.lastPointerY, "mouse");
+        }
+      } else {
+        this.setCursorHidden(false);
+        if (this.followMode === "keyboard" && (!this.isPdfMode || (this.cachedLines && this.cachedLines.length > 0)) && this.isVerticalMode() && this.stationaryScreenY === null) {
+          this.initDefaultStationaryAnchor();
+        }
       }
+    } else {
+      this.setCursorHidden(false);
     }
   }
 
@@ -7451,6 +7808,8 @@ export class ReadingRuler {
     if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.remove();
     document.querySelectorAll(".ruler-hold-indicator").forEach(el => el.remove());
     this.clearFocusTextMask();
-    document.body.classList.remove("ruler-active", "ruler-mouse-follow-active", "word-tracking-active", "ruler-mode-focus");
+    this.setCursorHidden(false);
+    document.body.classList.remove("ruler-active", "ruler-mouse-follow-active", "ruler-cursor-hidden", "word-tracking-active", "ruler-mode-focus");
+    document.getElementById("paged-viewport")?.classList.remove("ruler-cursor-hidden");
   }
 }
