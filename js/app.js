@@ -2557,9 +2557,7 @@ export class LuminaApp {
 
   syncPdfRulerUI(config) {
     if (!config) return;
-    const isCustom = !!config.userCustomized;
-    const rHeight = (this.ruler && this.ruler.pdfEffectiveHeight && !isCustom) ? this.ruler.pdfEffectiveHeight : config.height;
-    const height = Math.max(16, Math.min(120, Math.round(Number(rHeight) || 32)));
+    const height = Math.max(16, Math.min(120, Math.round(Number(config.height) || 32)));
     const stepSize = Math.max(10, Math.min(120, Math.round(Number(config.stepSize) || 32)));
 
     if (this.dom.popoverSliderPdfHeight) this.dom.popoverSliderPdfHeight.value = height;
@@ -2605,18 +2603,16 @@ export class LuminaApp {
     if (this.ruler) {
       this.ruler.setPdfRulerHeight(clamped, true);
     }
-    const effectiveH = (this.ruler && this.ruler.pdfEffectiveHeight) ? this.ruler.pdfEffectiveHeight : clamped;
-    if (this.dom.popoverSliderPdfHeight) this.dom.popoverSliderPdfHeight.value = effectiveH;
-    if (this.dom.popoverValPdfHeight) this.dom.popoverValPdfHeight.textContent = `${effectiveH} px`;
-    if (this.dom.sliderPdfRulerHeight) this.dom.sliderPdfRulerHeight.value = effectiveH;
-    if (this.dom.valPdfRulerHeight) this.dom.valPdfRulerHeight.textContent = `${effectiveH} px`;
+    if (this.dom.popoverSliderPdfHeight) this.dom.popoverSliderPdfHeight.value = clamped;
+    if (this.dom.popoverValPdfHeight) this.dom.popoverValPdfHeight.textContent = `${clamped} px`;
+    if (this.dom.sliderPdfRulerHeight) this.dom.sliderPdfRulerHeight.value = clamped;
+    if (this.dom.valPdfRulerHeight) this.dom.valPdfRulerHeight.textContent = `${clamped} px`;
 
     if (this.currentBook && (this.currentBook.isPdf || this.currentBook.format === "pdf")) {
       if (!this.currentBook.pdfRulerConfig) {
         this.currentBook.pdfRulerConfig = { height: 32, stepSize: 32 };
       }
-      this.currentBook.pdfRulerConfig.height = effectiveH;
-      this.currentBook.pdfRulerConfig.userCustomized = true;
+      this.currentBook.pdfRulerConfig.height = clamped;
       try {
         await storage.updateBookPdfRulerConfig(this.currentBook.id, this.currentBook.pdfRulerConfig);
       } catch (err) {

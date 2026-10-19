@@ -25,10 +25,8 @@ export class ReadingRuler {
     // PDF Mode
     this.isPdfMode = false;
     this.pdfRulerHeight = 32; // px - výchozí manuální výška pravítka pro PDF (16–120)
-    this.pdfEffectiveHeight = 22; // px - dynamická jednotná bezpečná výška pravítka pro PDF dokument
-    this.pdfMedianPitch = 0; // px - mediánová mezilinková vzdálenost (pitch) PDF dokumentu
-    this.hasManualPdfHeight = false;
-    this.pdfUserHeight = null;
+    this.pdfStandardLineHeight = 32; // px - standardní kompaktní výška řádku pro PDF
+    this.isPdfHeightFromSlider = false;
 
     // Nastavení
     this.enabled = false;
@@ -412,15 +410,15 @@ export class ReadingRuler {
 
   setPdfMode(enabled, height = null) {
     this.isPdfMode = !!enabled;
+    this.isPdfHeightFromSlider = false;
     if (this.isPdfMode) {
       if (height !== null) {
         if (typeof height === "object" && height !== null) {
-          const isCustom = !!height.userCustomized;
           if (height.height !== undefined) {
-            this.setPdfRulerHeight(height.height, isCustom);
+            this.setPdfRulerHeight(height.height);
           }
         } else {
-          this.setPdfRulerHeight(height, false);
+          this.setPdfRulerHeight(height);
         }
       }
       this.detectLines();
@@ -431,9 +429,11 @@ export class ReadingRuler {
         if (this.rulerEl) {
           this.rulerEl.classList.remove("pdf-ruler-overlay");
         }
-        this.height = this.pdfEffectiveHeight || 22;
+        if (!this.autoHeight) {
+          this.height = this.pdfRulerHeight || this.manualHeight || 32;
+        }
       } else {
-        this.height = this.pdfEffectiveHeight || this.pdfRulerHeight || 22;
+        this.height = this.pdfRulerHeight || 32;
         if (this.rulerEl) {
           this.rulerEl.classList.remove("pdf-ruler-overlay");
           this.rulerEl.classList.remove("word-tracking-mode");
@@ -457,27 +457,15 @@ export class ReadingRuler {
     }
   }
 
-  setPdfRulerHeight(height, isUserExplicit = true) {
+  setPdfRulerHeight(height, isUserSlider = false) {
     const h = Math.max(16, Math.min(120, Math.round(Number(height) || 32)));
     this.pdfRulerHeight = h;
-    if (isUserExplicit) {
-      this.hasManualPdfHeight = true;
-      this.pdfUserHeight = h;
-      let effectiveH = h;
-      const pitch = this.pdfMedianPitch || 0;
-      if (pitch > 0) {
-        const maxAllowed = Math.max(10, Math.floor(pitch - 2));
-        effectiveH = Math.min(effectiveH, maxAllowed);
-      }
-      this.pdfEffectiveHeight = effectiveH;
-      this.height = effectiveH;
-    } else if (!this.hasManualPdfHeight && !this.pdfEffectiveHeight) {
-      this.pdfEffectiveHeight = h;
-      this.height = h;
+    if (isUserSlider) {
+      this.isPdfHeightFromSlider = true;
     }
     if (this.isPdfMode) {
-      if (!this.cachedLines || this.cachedLines.length === 0 || !this.autoHeight) {
-        this.height = this.pdfEffectiveHeight || h;
+      if (!this.cachedLines || this.cachedLines.length === 0 || !this.autoHeight || this.isPdfHeightFromSlider) {
+        this.height = h;
       }
       if (this.enabled) {
         this.applyPosition();
@@ -486,7 +474,7 @@ export class ReadingRuler {
   }
 
   getPdfRulerHeight() {
-    return this.pdfEffectiveHeight || this.pdfRulerHeight || 32;
+    return this.pdfRulerHeight || 32;
   }
 
   isLastLine() {
@@ -2877,6 +2865,7 @@ export class ReadingRuler {
       // Pokud na stránce není detekován žádný řádek textu, vygenerujeme bezpečný záložní řádek na ploše stage, aby pravítko nezmizelo
       if (this.cachedLines.length === 0) {
         if (this.isPdfMode) {
+          this.pdfStandardLineHeight = this.pdfRulerHeight || 32;
           this.updatePdfReadingZoneBounds(stageRect, isSpread, spreadInfo);
           return [];
         }
@@ -3128,129 +3117,80 @@ export class ReadingRuler {
       }
 
       if (this.isPdfMode) {
-        const textLines = this.cachedLines.filter(l => l.hasText && !l.isMedia);
-        let baseLineHeight = 0;
-        if (textLines.length > 0) {
-          const sortedHeights = textLines.map(l => l.height).filter(h => h > 0).sort((a, b) => a - b);
-          if (sortedHeights.length > 0) {
-            baseLineHeight = sortedHeights[Math.floor(sortedHeights.length / 2)];
-          }
-        }
-        if (!baseLineHeight || baseLineHeight < 8) {
-          baseLineHeight = 18;
-        }
-
-        // Vypočítat mediánovou vertikální vzdálenost mezi sousedními středy řádků (pitch)
-        let medianPitch = 0;
-        if (this.cachedLines.length > 1) {
-          const pitches = [];
-          for (let i = 0; i < this.cachedLines.length - 1; i++) {
-            const cur = this.cachedLines[i];
-            const next = this.cachedLines[i + 1];
-            if (cur.columnIndex === next.columnIndex && cur.hasText && next.hasText && !cur.isMedia && !next.isMedia) {
-              const curSlot = (cur.element || cur.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-              const nextSlot = (next.element || next.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-              if (!curSlot || !nextSlot || curSlot === nextSlot) {
-                const p = next.centerY - cur.centerY;
-                if (p > 8 && p < 150) {
-                  pitches.push(p);
-                }
-              }
-            }
-          }
-          if (pitches.length > 0) {
-            pitches.sort((a, b) => a - b);
-            medianPitch = pitches[Math.floor(pitches.length / 2)];
-          }
-        }
-        if (medianPitch > 0) {
-          this.pdfMedianPitch = medianPitch;
-        }
-
-        const effPitch = medianPitch > 0 ? medianPitch : (this.pdfMedianPitch || 0);
-
-        // Definovat jednotnou bezpečnou cílovou výšku pro dokument:
-        // safeConstantHeight = Math.max(16, Math.min(baseLineHeight + 4, medianPitch - 4))
-        // Zaručuje alespoň 2px clearance nahoře i dole, zamezuje překryvu písmen.
-        let safeConstantHeight;
-        if (effPitch > 0) {
-          safeConstantHeight = Math.max(16, Math.min(baseLineHeight + 4, effPitch - 4));
-          if (safeConstantHeight > effPitch - 2) {
-            safeConstantHeight = Math.max(10, Math.floor(effPitch - 2));
-          }
+        const textLines = this.cachedLines.filter(l => l.hasText && !l.isMedia && Number.isFinite(l.height) && l.height > 0);
+        const linesForHeight = textLines.length > 0 ? textLines : this.cachedLines.filter(l => Number.isFinite(l.height) && l.height > 0);
+        if (linesForHeight.length > 0) {
+          const sortedHeights = linesForHeight.map(l => l.height).sort((a, b) => a - b);
+          const baseLineHeight = sortedHeights[Math.floor(sortedHeights.length / 2)];
+          const standardHeight = Math.round(baseLineHeight + 6);
+          this.pdfStandardLineHeight = standardHeight;
         } else {
-          safeConstantHeight = Math.max(16, Math.round(baseLineHeight + 4));
+          this.pdfStandardLineHeight = this.pdfRulerHeight || 32;
         }
-
-        if (this.hasManualPdfHeight && Number.isFinite(this.pdfUserHeight)) {
-          let manualH = this.pdfUserHeight;
-          if (effPitch > 0) {
-            const maxAllowed = Math.max(10, Math.floor(effPitch - 2));
-            manualH = Math.min(manualH, maxAllowed);
-          }
-          this.pdfEffectiveHeight = manualH;
+        if (this.autoHeight && !this.isPdfHeightFromSlider) {
+          this.height = this.pdfStandardLineHeight;
         } else {
-          this.pdfEffectiveHeight = safeConstantHeight;
-        }
-
-        this.height = this.pdfEffectiveHeight;
-      } else if (this.autoHeight) {
-        let baseH = 0;
-        if (this.cachedLines.length > 0) {
-          const sortedHeights = this.cachedLines.map(l => l.height).filter(h => h > 0).sort((a, b) => a - b);
-          if (sortedHeights.length > 0) {
-            baseH = sortedHeights[Math.floor(sortedHeights.length / 2)];
-          }
-        }
-        if (!baseH || baseH < 12) {
-          try {
-            const cs = content ? window.getComputedStyle(content) : null;
-            if (cs) {
-              const lh = parseFloat(cs.lineHeight);
-              const fs = parseFloat(cs.fontSize);
-              if (Number.isFinite(lh) && lh > 0) {
-                baseH = lh;
-              } else if (Number.isFinite(fs) && fs > 0) {
-                baseH = fs * 1.35;
-              }
-            }
-          } catch (e) {}
-        }
-        if (!baseH || baseH < 12) {
-          baseH = 24;
-        }
-
-        // Vypočítat mediánovou vzdálenost mezi sousedními řádky (baseline pitch) ve stejném sloupci
-        let medianPitch = 0;
-        if (this.cachedLines.length > 1) {
-          const pitches = [];
-          for (let i = 0; i < this.cachedLines.length - 1; i++) {
-            const cur = this.cachedLines[i];
-            const next = this.cachedLines[i + 1];
-            if (cur.columnIndex === next.columnIndex) {
-              const p = next.centerY - cur.centerY;
-              if (p > 8 && p < 150) pitches.push(p);
-            }
-          }
-          if (pitches.length > 0) {
-            pitches.sort((a, b) => a - b);
-            medianPitch = pitches[Math.floor(pitches.length / 2)];
-          }
-        }
-
-        // Dynamické vertikální odsazení: nesmí za žádných okolností přesáhnout mezilinkovou vzdálenost
-        let padV = 0;
-        if (medianPitch > 0) {
-          const maxAllowedH = Math.max(10, Math.floor(medianPitch - 2));
-          const availableGap = Math.max(0, maxAllowedH - baseH);
-          padV = Math.max(0, Math.min(2, Math.floor(availableGap / 2)));
-          this.height = Math.min(maxAllowedH, Math.round(baseH + (2 * padV)));
-        } else {
-          padV = Math.max(0, Math.min(2, Math.round(baseH * 0.05)));
-          this.height = Math.round(baseH + (2 * padV));
+          this.height = this.pdfRulerHeight || this.manualHeight || 32;
         }
       } else {
-        this.height = this.manualHeight || 36;
+        if (this.autoHeight) {
+          let baseH = 0;
+          if (this.cachedLines.length > 0) {
+            const sortedHeights = this.cachedLines.map(l => l.height).filter(h => h > 0).sort((a, b) => a - b);
+            if (sortedHeights.length > 0) {
+              baseH = sortedHeights[Math.floor(sortedHeights.length / 2)];
+            }
+          }
+          if (!baseH || baseH < 12) {
+            try {
+              const cs = content ? window.getComputedStyle(content) : null;
+              if (cs) {
+                const lh = parseFloat(cs.lineHeight);
+                const fs = parseFloat(cs.fontSize);
+                if (Number.isFinite(lh) && lh > 0) {
+                  baseH = lh;
+                } else if (Number.isFinite(fs) && fs > 0) {
+                  baseH = fs * 1.35;
+                }
+              }
+            } catch (e) {}
+          }
+          if (!baseH || baseH < 12) {
+            baseH = 24;
+          }
+
+          // Vypočítat mediánovou vzdálenost mezi sousedními řádky (baseline pitch) ve stejném sloupci
+          let medianPitch = 0;
+          if (this.cachedLines.length > 1) {
+            const pitches = [];
+            for (let i = 0; i < this.cachedLines.length - 1; i++) {
+              const cur = this.cachedLines[i];
+              const next = this.cachedLines[i + 1];
+              if (cur.columnIndex === next.columnIndex) {
+                const p = next.centerY - cur.centerY;
+                if (p > 8 && p < 150) pitches.push(p);
+              }
+            }
+            if (pitches.length > 0) {
+              pitches.sort((a, b) => a - b);
+              medianPitch = pitches[Math.floor(pitches.length / 2)];
+            }
+          }
+
+          // Dynamické vertikální odsazení: nesmí za žádných okolností přesáhnout mezilinkovou vzdálenost
+          let padV = 0;
+          if (medianPitch > 0) {
+            const maxAllowedH = Math.max(10, Math.floor(medianPitch - 2));
+            const availableGap = Math.max(0, maxAllowedH - baseH);
+            padV = Math.max(0, Math.min(2, Math.floor(availableGap / 2)));
+            this.height = Math.min(maxAllowedH, Math.round(baseH + (2 * padV)));
+          } else {
+            padV = Math.max(0, Math.min(2, Math.round(baseH * 0.05)));
+            this.height = Math.round(baseH + (2 * padV));
+          }
+        } else {
+          this.height = this.manualHeight || 36;
+        }
       }
 
       return this.cachedLines;
@@ -3941,21 +3881,32 @@ export class ReadingRuler {
     let targetY;
 
     if (this.isPdfMode) {
-      if (this.mode === "bottom-cover") {
-        // PDF-SPECIFIC ACCURATE INTER-LINE GAP CALIBRATION FOR BOTTOM-COVER
-        const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + (this.pdfEffectiveHeight || 20) / 2);
+      const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + (this.pdfStandardLineHeight || 20) / 2);
+      const curTop = Number.isFinite(line.top) ? line.top : (line.centerY - (this.pdfStandardLineHeight || 20) / 2);
 
-        let hasNext = false;
-        if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
-          const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-          const nextSlot = (nextLine.element || nextLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-          if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
-            if (Number.isFinite(nextLine.top) && nextLine.top > (line.top ?? line.centerY)) {
-              hasNext = true;
-            }
+      let hasNext = false;
+      if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
+        const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+        const nextSlot = (nextLine.element || nextLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+        if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
+          if (Number.isFinite(nextLine.top) && nextLine.top > (line.top ?? line.centerY)) {
+            hasNext = true;
           }
         }
+      }
 
+      let hasPrev = false;
+      if (prevLine && (prevLine.columnIndex === line.columnIndex || (line.columnIndex == null && prevLine.columnIndex == null))) {
+        const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+        const prevSlot = (prevLine.element || prevLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+        if (!lineSlot || !prevSlot || lineSlot === prevSlot) {
+          if (Number.isFinite(prevLine.bottom) && prevLine.bottom < (line.bottom ?? line.centerY)) {
+            hasPrev = true;
+          }
+        }
+      }
+
+      if (this.mode === "bottom-cover") {
         // Safe optical boundary calculation below line N (bottom dividing line)
         let coverTargetY;
         if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
@@ -3989,15 +3940,42 @@ export class ReadingRuler {
         targetY = coverTargetY;
         height = 2;
       } else {
-        // PDF mode (highlight, focus, etc.):
-        // Lock Height Across ALL Lines:
-        // Set height = this.pdfEffectiveHeight uniformly for every text line.
-        // Do NOT expand the ruler on isolated lines.
-        // Do NOT shrink the ruler dynamically on individual lines.
-        // Every single text line must share the exact same pixel height.
-        // Center the ruler symmetrically: targetY = Math.round(line.centerY - height / 2).
-        height = Math.round(this.pdfEffectiveHeight || this.height || 22);
-        targetY = Math.round(line.centerY - height / 2);
+        // PDF mode (highlight, focus, underline styles):
+        // Standard compact height with tight padding (2-3px top and bottom)
+        const standardHeight = (this.isPdfHeightFromSlider && Number.isFinite(this.pdfRulerHeight))
+          ? this.pdfRulerHeight
+          : (this.autoHeight && Number.isFinite(this.pdfStandardLineHeight) && this.pdfStandardLineHeight > 0
+              ? this.pdfStandardLineHeight
+              : (this.pdfRulerHeight || this.manualHeight || 32));
+
+        let h = standardHeight;
+        if (Number.isFinite(line.height) && line.height > 0) {
+          // Ensure full glyph height (ascenders, descenders, diacritics) is covered
+          const lineGlyphHeight = Math.round(line.height + 6);
+          if (lineGlyphHeight > h) {
+            h = lineGlyphHeight;
+          }
+        }
+
+        // Center the ruler symmetrically over the line's center
+        let y = Math.round(line.centerY - h / 2);
+
+        // Clamping to avoid overlapping physically close adjacent lines in dense paragraphs
+        if (hasPrev && prevLine && Number.isFinite(prevLine.bottom)) {
+          const minTop = Math.round(prevLine.bottom + 1);
+          if (y < minTop) {
+            y = minTop;
+          }
+        }
+        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+          const maxBottom = Math.round(nextLine.top - 1);
+          if (y + h > maxBottom) {
+            h = Math.max(10, Math.round(maxBottom - y));
+          }
+        }
+
+        height = h;
+        targetY = y;
       }
     } else {
       // 100% UNTOUCHED EPUB LOGIC
@@ -4139,8 +4117,17 @@ export class ReadingRuler {
   }
 
   updateEffectiveHeight(lineHeight) {
+    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      this.height = this.pdfRulerHeight || 32;
+      this.applyPosition();
+      return;
+    }
     if (this.isPdfMode) {
-      this.height = this.pdfEffectiveHeight || this.pdfRulerHeight || 22;
+      this.height = (this.isPdfHeightFromSlider && Number.isFinite(this.pdfRulerHeight))
+        ? this.pdfRulerHeight
+        : (this.autoHeight && Number.isFinite(this.pdfStandardLineHeight) && this.pdfStandardLineHeight > 0
+            ? this.pdfStandardLineHeight
+            : (this.pdfRulerHeight || 32));
       this.applyPosition();
       return;
     }
@@ -7509,6 +7496,10 @@ export class ReadingRuler {
   }
 
   setHeight(px) {
+    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      this.setPdfRulerHeight(px);
+      return;
+    }
     if (this.isPdfMode) {
       this.setPdfRulerHeight(px, true);
       return;
@@ -7530,6 +7521,7 @@ export class ReadingRuler {
 
   setAutoHeight(enabled) {
     this.autoHeight = true;
+    this.isPdfHeightFromSlider = false;
     if (this.snapToLines && this.cachedLines.length > 0 && this.activeLineIndex >= 0) {
       const geom = this.computeLineGeometry(this.activeLineIndex);
       if (geom) {
