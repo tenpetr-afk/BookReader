@@ -145,6 +145,12 @@ export class ReadingRuler {
     this._isProgrammaticScroll = false;
     this._programmaticScrollTimer = null;
 
+    // Vertikální ukotvení a relativní tracking po scrollu (followMode === 'mouse')
+    this._verticalScrollAnchorPending = false;
+    this._relativeTrackingActive = false;
+    this._scrollAnchorPhysicalY = null;
+    this._scrollAnchorVirtualY = null;
+
     // Vertikální optimalizace plynulého scrollování a GPU akcelerace
     this._scrollRafPending = false;
     this._scrollRafId = null;
@@ -274,6 +280,10 @@ export class ReadingRuler {
     this.readingMode = mode;
     if (mode !== "vertical") {
       this.stationaryScreenY = null;
+      this._verticalScrollAnchorPending = false;
+      this._relativeTrackingActive = false;
+      this._scrollAnchorPhysicalY = null;
+      this._scrollAnchorVirtualY = null;
       if (this._scrollEndTimer) {
         clearTimeout(this._scrollEndTimer);
         this._scrollEndTimer = null;
@@ -1524,6 +1534,10 @@ export class ReadingRuler {
         if (e.pointerType === "touch") return;
         this.activePointerId = e.pointerId;
         this.activePointerType = e.pointerType;
+        this._relativeTrackingActive = false;
+        this._verticalScrollAnchorPending = false;
+        this._scrollAnchorPhysicalY = null;
+        this._scrollAnchorVirtualY = null;
         this.handlePointerMove(e.clientX, e.clientY, e.pointerType);
         return;
       }
@@ -1605,6 +1619,11 @@ export class ReadingRuler {
           if (!this.isUiControl(e.target) && this.isPointerInStage(e.clientX, e.clientY)) {
             this.activePointerType = e.pointerType;
             this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
+          } else {
+            this._relativeTrackingActive = false;
+            this._verticalScrollAnchorPending = false;
+            this._scrollAnchorPhysicalY = null;
+            this._scrollAnchorVirtualY = null;
           }
         }
         return;
@@ -1772,13 +1791,23 @@ export class ReadingRuler {
     window.addEventListener("pointercancel", onPointerCancel, { passive: true });
 
     const onPointerLeaveWindow = (e) => {
+      this._relativeTrackingActive = false;
+      this._verticalScrollAnchorPending = false;
+      this._scrollAnchorPhysicalY = null;
+      this._scrollAnchorVirtualY = null;
       if (!e || e.pointerType === "mouse" || !e.pointerType) {
         this.setCursorHidden(false);
       }
     };
     window.addEventListener("pointerleave", onPointerLeaveWindow, { passive: true });
     document.addEventListener("mouseleave", onPointerLeaveWindow, { passive: true });
-    window.addEventListener("blur", () => this.setCursorHidden(false), { passive: true });
+    window.addEventListener("blur", () => {
+      this._relativeTrackingActive = false;
+      this._verticalScrollAnchorPending = false;
+      this._scrollAnchorPhysicalY = null;
+      this._scrollAnchorVirtualY = null;
+      this.setCursorHidden(false);
+    }, { passive: true });
 
     // 2. TOUCH EVENTS (WebKit Safari fallback pro starší zařízení)
     const onTouchStart = (e) => {
@@ -1955,6 +1984,10 @@ export class ReadingRuler {
       if (window.PointerEvent) return;
       if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isDraggingRuler || this.isPenTouching) return;
       if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
+        this._relativeTrackingActive = false;
+        this._verticalScrollAnchorPending = false;
+        this._scrollAnchorPhysicalY = null;
+        this._scrollAnchorVirtualY = null;
         return;
       }
       if (this.followMode === "mouse") {
@@ -1979,10 +2012,15 @@ export class ReadingRuler {
         return;
       }
       if (this.isVerticalMode() && this.followMode === "mouse") {
-        this.lastPointerX = e.clientX;
-        this.lastPointerY = e.clientY;
-        this.lastValidPointerX = e.clientX;
-        this.lastValidPointerY = e.clientY;
+        if (e.clientX != null) {
+          this.lastPointerX = e.clientX;
+          this.lastValidPointerX = e.clientX;
+        }
+        this._relativeTrackingActive = false;
+        this._verticalScrollAnchorPending = false;
+        this._scrollAnchorPhysicalY = null;
+        this._scrollAnchorVirtualY = null;
+        this.handleVerticalScroll();
       }
     }, { passive: true });
 
@@ -2232,10 +2270,23 @@ export class ReadingRuler {
         screenY = this.stationaryScreenY;
       }
     } else {
-      const vh = vHeight || window.innerHeight;
-      const minY = 10;
-      const maxY = Math.max(minY, vh - h - 10);
-      screenY = Math.max(minY, Math.min(maxY, lineScreenY));
+      const targetIdx = (this.cachedLines && this.cachedLines.length > 0)
+        ? Math.max(0, Math.min(this.cachedLines.length - 1, this.activeLineIndex >= 0 ? this.activeLineIndex : 0))
+        : -1;
+      const targetLine = targetIdx >= 0 ? this.cachedLines[targetIdx] : null;
+
+      if (targetLine) {
+        if (this.mode === "bottom-cover") {
+          const baselineDocY = Number.isFinite(this.currentY)
+            ? this.currentY
+            : (Number.isFinite(targetLine.bottom) ? (targetLine.bottom + COVER_LINE_OFFSET) : targetLine.centerY);
+          screenY = Math.round(baselineDocY - vScrollTop);
+        } else {
+          screenY = Math.round(targetLine.centerY - vScrollTop - (h / 2));
+        }
+      } else {
+        screenY = lineScreenY;
+      }
     }
 
     const isBottomCoverWordTracking = !this.isPdfMode && this.mode === "bottom-cover" && this.wordTracking;
@@ -2282,6 +2333,54 @@ export class ReadingRuler {
     if (!this.cachedLines || this.cachedLines.length === 0) {
       this.refreshLines();
       this.applyPosition();
+      return;
+    }
+
+    if (this.followMode === "mouse") {
+      const targetIdx = Math.max(0, Math.min(this.cachedLines.length - 1, this.activeLineIndex >= 0 ? this.activeLineIndex : 0));
+      this.activeLineIndex = targetIdx;
+      const targetLine = this.cachedLines[targetIdx];
+      if (targetLine) {
+        this.lastPointerY = Math.round(targetLine.centerY - vScrollTop);
+        this.lastValidPointerY = this.lastPointerY;
+
+        if (targetLine.isMedia) {
+          this.activeWordIndex = -1;
+          this.rulerEl.classList.remove("word-tracking-mode");
+        } else if (this.wordTracking && this.cachedWords.length > 0) {
+          let wIdx = -1;
+          if (this.activeWordIndex >= 0 && this.activeWordIndex < this.cachedWords.length && this.cachedWords[this.activeWordIndex].lineIndex === targetIdx) {
+            wIdx = this.activeWordIndex;
+          } else {
+            for (let w = 0; w < this.cachedWords.length; w++) {
+              if (this.cachedWords[w].lineIndex === targetIdx) {
+                wIdx = w;
+                break;
+              }
+            }
+          }
+          if (wIdx >= 0) {
+            this.activeWordIndex = wIdx;
+            this.setWordWindow(wIdx);
+            this.rulerEl.classList.add("word-tracking-mode");
+          }
+        }
+
+        const geom = this.computeLineGeometry(targetIdx);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+          this.currentY = this.targetY;
+        }
+
+        this._snapRulerInstantOrAnimated();
+      }
+
+      this.applyPosition();
+
+      this._verticalScrollAnchorPending = true;
+      this._scrollAnchorVirtualY = this.lastPointerY;
+      this._scrollAnchorPhysicalY = null;
       return;
     }
 
@@ -3299,6 +3398,10 @@ export class ReadingRuler {
   }
 
   refreshLines() {
+    this._verticalScrollAnchorPending = false;
+    this._relativeTrackingActive = false;
+    this._scrollAnchorPhysicalY = null;
+    this._scrollAnchorVirtualY = null;
     return this.detectLines();
   }
 
@@ -4293,10 +4396,28 @@ export class ReadingRuler {
     if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     this.disableWordTransition();
 
+    // Pokud probíhá aktivní vertikální posun v režimu myši, zamknout řádek a neprovádět vzorkování pod kurzorem
+    if (this.isVerticalMode() && this.followMode === "mouse" && this._isVerticalScrolling) {
+      return;
+    }
+
+    let effectiveClientY = clientY;
+    if (this.isVerticalMode() && this.followMode === "mouse" && clientY != null) {
+      if (this._verticalScrollAnchorPending) {
+        this._scrollAnchorPhysicalY = clientY;
+        this._verticalScrollAnchorPending = false;
+        this._relativeTrackingActive = true;
+      }
+      if (this._relativeTrackingActive && this._scrollAnchorPhysicalY !== null && this._scrollAnchorVirtualY !== null) {
+        const deltaY = clientY - this._scrollAnchorPhysicalY;
+        effectiveClientY = Math.round(this._scrollAnchorVirtualY + deltaY);
+      }
+    }
+
     // Displacement / Delta Threshold Sanity Check:
     // Pokud probíhá aktivní tažení s předchozí platnou souřadnicí, zachytíme anomální skok (např. dotyk dlaně nebo teleport).
-    if ((!this.isPdfMode || (this.cachedLines && this.cachedLines.length > 0)) && this.isDraggingRuler && this.lastValidPointerY !== null && clientY != null) {
-      const dy = Math.abs(clientY - this.lastValidPointerY);
+    if ((!this.isPdfMode || (this.cachedLines && this.cachedLines.length > 0)) && this.isDraggingRuler && this.lastValidPointerY !== null && effectiveClientY != null) {
+      const dy = Math.abs(effectiveClientY - this.lastValidPointerY);
       const dx = clientX != null && this.lastValidPointerX !== null ? Math.abs(clientX - this.lastValidPointerX) : 0;
       if (dy > 160 || dx > 220) {
         // Anomální skok v jednom snímku – ignorovat, aby nedošlo k odteleportování pravítka
@@ -4308,9 +4429,9 @@ export class ReadingRuler {
       this.lastPointerX = clientX;
       this.lastValidPointerX = clientX;
     }
-    if (clientY != null) {
-      this.lastPointerY = clientY;
-      this.lastValidPointerY = clientY;
+    if (effectiveClientY != null) {
+      this.lastPointerY = effectiveClientY;
+      this.lastValidPointerY = effectiveClientY;
     }
 
     const pType = pointerType || this.activePointerType || (Date.now() - this.lastPenTime < 500 ? "pen" : "mouse");
@@ -7429,6 +7550,10 @@ export class ReadingRuler {
       this.setCursorHidden(false);
       this.cancelHold();
       this.stationaryScreenY = null;
+      this._verticalScrollAnchorPending = false;
+      this._relativeTrackingActive = false;
+      this._scrollAnchorPhysicalY = null;
+      this._scrollAnchorVirtualY = null;
       if (this._scrollEndTimer) {
         clearTimeout(this._scrollEndTimer);
         this._scrollEndTimer = null;
@@ -7834,6 +7959,10 @@ export class ReadingRuler {
     }
     this.disableWordTransition();
     this.followMode = mode;
+    this._verticalScrollAnchorPending = false;
+    this._relativeTrackingActive = false;
+    this._scrollAnchorPhysicalY = null;
+    this._scrollAnchorVirtualY = null;
     if (mode !== "keyboard") {
       this.stationaryScreenY = null;
     }
@@ -7931,6 +8060,10 @@ export class ReadingRuler {
     }
     this._isProgrammaticScroll = false;
     this.stationaryScreenY = null;
+    this._verticalScrollAnchorPending = false;
+    this._relativeTrackingActive = false;
+    this._scrollAnchorPhysicalY = null;
+    this._scrollAnchorVirtualY = null;
     this.penHistory = [];
     this.touchHistory = [];
     this.cachedLines = [];
