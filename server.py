@@ -16,7 +16,7 @@ import mimetypes
 
 PORT = 8000
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-PUBLIC_DIR = os.path.join(ROOT_DIR, "public") if os.path.isdir(os.path.join(ROOT_DIR, "public")) else ROOT_DIR
+PUBLIC_DIR = ROOT_DIR if os.path.exists(os.path.join(ROOT_DIR, "index.html")) else os.path.join(ROOT_DIR, "public")
 
 # Zajistíme správné MIME typy
 mimetypes.add_type("application/epub+zip", ".epub")

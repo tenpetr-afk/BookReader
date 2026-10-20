@@ -11,8 +11,7 @@
   <!-- Volitelný CDN skript JSZip pro ještě vyšší rychlost dekomprese (s automatickým fallbackem) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
 
-  <!-- Mozilla PDF.js pro přímé vykreslování PDF dokumentů a textové vrstvy -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css" crossorigin="anonymous" />
+  <!-- Mozilla PDF.js pro přímé vykreslování PDF dokumentů -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
   <script>
     if (window.pdfjsLib) {
@@ -198,16 +197,6 @@
               </div>
             </div>
 
-            <!-- Magnetické přichytávání k řádkům -->
-            <div class="popover-section" id="popover-snap-lines-section">
-              <div class="popover-row-between">
-                <span class="popover-section-label">Magnetické přichytávání k řádkům</span>
-                <button type="button" role="switch" id="popover-ruler-snap" class="switch-control is-checked active" aria-checked="true" aria-label="Magnetické přichytávání k řádkům" data-ruler-snap="toggle">
-                  <span class="switch-track"><span class="switch-thumb"></span></span>
-                </button>
-              </div>
-            </div>
-
             <!-- Režim pravítka: Řádkové vs. Sledování slov -->
             <div class="popover-section">
               <div class="popover-section-label">Režim zvýraznění</div>
@@ -226,10 +215,9 @@
             <!-- Styl zobrazení -->
             <div class="popover-section">
               <div class="popover-section-label">Styl pravítka</div>
-              <div class="popover-styles-grid columns-3">
+              <div class="popover-styles-grid">
                 <button type="button" class="popover-style-btn active" data-ruler-style="highlight">Zvýrazňovač</button>
                 <button type="button" class="popover-style-btn" data-ruler-style="focus">Zaostření</button>
-                <button type="button" class="popover-style-btn" data-ruler-style="bottom-cover">Spodní clona</button>
               </div>
             </div>
 
@@ -551,10 +539,9 @@
 
           <div style="margin-bottom: 1rem;">
             <div class="slider-label"><span>Styl pravítka</span></div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem;">
-              <button class="font-btn" data-ruler-mode="highlight" data-ruler-style="highlight">Zvýrazňovač</button>
-              <button class="font-btn" data-ruler-mode="focus" data-ruler-style="focus">Zaostření</button>
-              <button class="font-btn" data-ruler-mode="bottom-cover" data-ruler-style="bottom-cover">Spodní clona</button>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
+              <button class="font-btn" data-ruler-mode="highlight">Zvýrazňovač</button>
+              <button class="font-btn" data-ruler-mode="focus">Zaostření</button>
             </div>
           </div>
 
@@ -566,19 +553,6 @@
               <button class="ruler-color-btn" data-ruler-color="emerald" title="Smaragdová"></button>
               <button class="ruler-color-btn" data-ruler-color="lavender" title="Levandulová"></button>
               <button class="ruler-color-btn" data-ruler-color="slate" title="Břidlicová"></button>
-            </div>
-          </div>
-
-          <!-- Funkce pravítka: Magnetické přichytávání k řádkům -->
-          <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
-            <div class="toggle-row">
-              <div>
-                <span class="toggle-title">Magnetické přichytávání k řádkům</span>
-                <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0;">Pravítko se automaticky přichytává na středy textových řádků</p>
-              </div>
-              <button type="button" role="switch" id="setting-ruler-snap" class="switch-control is-checked active" aria-checked="true" aria-label="Magnetické přichytávání k řádkům" data-ruler-snap="toggle">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-              </button>
             </div>
           </div>
 
@@ -702,56 +676,6 @@
           <div id="wpm-chart-container"></div>
         </div>
 
-        <!-- Detail čtecí relace & intra-session WPM časová osa -->
-        <div class="chart-section session-analytics-section" id="session-analytics-section">
-          <div class="session-section-header">
-            <div>
-              <div class="chart-title" style="margin-bottom: 0.25rem;">⏱️ Průběh rychlosti čtecí relace (Intra-session WPM)</div>
-              <p class="section-subtitle">Detailní časová osa zrychlení a tempa čtení v průběhu vybrané relace</p>
-            </div>
-            
-            <!-- Rozbalovací výběr relace -->
-            <div class="session-picker-wrapper">
-              <label for="session-picker-select" class="sr-only">Vybrat čtecí relaci</label>
-              <select id="session-picker-select" class="session-picker-select" aria-label="Vybrat čtecí relaci">
-                <option value="">Načítání relací...</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Souhrnné odznaky vybrané relace -->
-          <div class="session-summary-grid" id="session-summary-grid">
-            <div class="session-stat-card">
-              <span class="session-stat-label">Čas relace</span>
-              <span class="session-stat-value" id="session-badge-duration">0 s</span>
-            </div>
-            <div class="session-stat-card">
-              <span class="session-stat-label">Špičkové tempo</span>
-              <span class="session-stat-value text-accent" id="session-badge-peak-wpm">0 WPM</span>
-            </div>
-            <div class="session-stat-card">
-              <span class="session-stat-label">Průměrné tempo</span>
-              <span class="session-stat-value" id="session-badge-avg-wpm">0 WPM</span>
-            </div>
-            <div class="session-stat-card">
-              <span class="session-stat-label">Přečteno slov</span>
-              <span class="session-stat-value" id="session-badge-words">0</span>
-            </div>
-          </div>
-
-          <!-- Kontejner pro detailní SVG graf časové osy -->
-          <div id="session-timeline-chart-container" class="session-chart-container"></div>
-
-          <!-- Rozbalovací seznam všech zaznamenaných relací -->
-          <details class="session-history-details" id="session-history-details">
-            <summary class="session-history-summary">
-              <span>📋 Historie čtecích relací (<span id="session-count-badge">0</span>)</span>
-              <span class="details-chevron">▼</span>
-            </summary>
-            <div id="session-history-list" class="session-history-list" role="listbox" aria-label="Seznam čtecích relací"></div>
-          </details>
-        </div>
-
         <!-- Graf času čtení za posledních 7 dní -->
         <div class="chart-section">
           <div class="chart-title">Aktivní čas čtení za posledních 7 dní (v minutách)</div>
@@ -759,15 +683,7 @@
         </div>
 
         <!-- Akce ve statistikách -->
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem;">
-          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            <button id="btn-recalc-stats" class="btn btn-secondary" title="Opraví a normalizuje případně poškozená data rychlosti a počtu slov z minulosti">
-              🔄 Přepočítat / Normalizovat data
-            </button>
-            <button id="btn-reset-stats" class="btn btn-secondary btn-sm" style="color: #ef4444; font-size: 0.85rem;" title="Vymaže celou historii čtecích relací a data čtení bez smazání knih a nastavení">
-              🗑️ Resetovat data čtení
-            </button>
-          </div>
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem;">
           <button id="btn-export-data" class="btn btn-secondary">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
             Exportovat data (JSON)
