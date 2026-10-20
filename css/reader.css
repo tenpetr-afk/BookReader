@@ -18,7 +18,17 @@
   --footer-height: calc(var(--footer-base-height) + var(--safe-area-bottom, 0px));
   --col-gap: 5vw;
   --page-gap: 50px;
+  --bg-theme: var(--bg-app, #fbf0d9);
+  --color-bg: var(--bg-app, #fbf0d9);
+  --text-color: var(--text-main, #0f172a);
+  --focus-dim-opacity: 0.70;
 }
+
+[data-theme="light"], .theme-light { --bg-theme: #f8fafc; --color-bg: #f8fafc; --text-color: #0f172a; }
+[data-theme="warm"], .theme-warm { --bg-theme: #fbf0d9; --color-bg: #fbf0d9; --text-color: #2c2523; }
+[data-theme="sepia"], .theme-sepia { --bg-theme: #f4ecd8; --color-bg: #f4ecd8; --text-color: #382b20; }
+[data-theme="dark"], .theme-dark { --bg-theme: #0f172a; --color-bg: #0f172a; --text-color: #f8fafc; }
+[data-theme="oled"], .theme-oled { --bg-theme: #000000; --color-bg: #000000; --text-color: #f5f5f5; }
 
 :root.columns-2,
 body.columns-2 {
@@ -171,7 +181,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 /* Hloubková dědičnost typografie pro přebití vložených EPUB stylů */
 #reader-stage,
 #reader-content,
-#reader-content *,
+#reader-content *:not(.textLayer):not(.textLayer *),
 .paged-content,
 .paged-content * {
   line-height: var(--reader-line-height) !important;
@@ -291,6 +301,11 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 #reader-header,
 .reader-header,
 .reader-top-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
@@ -319,7 +334,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 }
 
 .btn-back-library:hover {
-  background: rgba(0, 0, 0, 0.05) !important;
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05)) !important;
   transform: translateX(-2px);
 }
 
@@ -359,10 +374,18 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   grid-template-columns: 1fr auto 1fr !important;
   align-items: center !important;
   padding: 0 max(1.5rem, env(safe-area-inset-right, 0px)) max(0.5rem, env(safe-area-inset-bottom, 0px)) max(1.5rem, env(safe-area-inset-left, 0px)) !important;
-  z-index: 1000;
+  z-index: 50;
   box-sizing: border-box;
   pointer-events: none !important;
   transition: background-color var(--transition-normal), border-color var(--transition-normal);
+}
+
+/* Zvýšení priority spodní lišty a ovládacích prvků při otevřeném rychlém menu pravítka */
+#paged-footer-bar:has(#ruler-quick-popover:not(.is-hidden)),
+.paged-footer-bar:has(#ruler-quick-popover:not(.is-hidden)),
+.footer-actions-group:has(#ruler-quick-popover:not(.is-hidden)),
+.ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)) {
+  z-index: 100 !important;
 }
 
 .paged-footer-bar > *,
@@ -421,6 +444,8 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   align-items: center !important;
   gap: 8px !important;
   position: relative;
+  z-index: 60;
+  pointer-events: auto !important;
   flex: none !important;
 }
 
@@ -428,33 +453,32 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 .ruler-split-pill {
   display: inline-flex;
   align-items: center;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.45));
+  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.45)));
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
-  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5));
+  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35)));
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
   border-radius: 8px;
   padding: 2px;
   height: 34px;
   box-sizing: border-box;
   position: relative;
+  z-index: 60;
   transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
 
 .ruler-split-pill:hover {
-  background: var(--glass-bg-hover, rgba(255, 255, 255, 0.65));
-  border-color: var(--glass-border-hover, rgba(255, 255, 255, 0.55));
-  box-shadow: var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7));
-  filter: brightness(1.08);
-  backdrop-filter: blur(14px) saturate(190%);
-  -webkit-backdrop-filter: blur(14px) saturate(190%);
+  background: var(--bg-hover, var(--glass-bg-hover, rgba(255, 255, 255, 0.65)));
+  border-color: var(--border-color, var(--glass-border-hover, rgba(255, 255, 255, 0.55)));
+  box-shadow: var(--shadow-md, var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12)));
+  filter: brightness(1.04);
 }
 
 .split-pill-btn {
   background: transparent;
   border: none;
   cursor: pointer;
-  color: var(--glass-icon-color, var(--text-main));
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -464,7 +488,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 }
 
 .split-pill-btn svg {
-  stroke: currentColor;
+  stroke: var(--text-color, var(--glass-icon-color, var(--text-main, currentColor)));
 }
 
 .split-pill-btn.pill-action {
@@ -477,7 +501,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 }
 
 .split-pill-btn:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--bg-hover, rgba(0, 0, 0, 0.06));
 }
 
 [data-theme="dark"] .split-pill-btn:hover,
@@ -487,15 +511,28 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 
 .ruler-split-pill.is-active .pill-action,
 #ruler-toggle-btn.is-active .pill-action,
-#btn-toggle-ruler.active {
-  color: #2563eb;
-  background: rgba(37, 99, 235, 0.18);
+#btn-toggle-ruler.active,
+body.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-action,
+html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-action,
+[data-reading-mode="vertical"] .footer-actions-group .ruler-split-pill.is-active .pill-action {
+  color: var(--color-primary, #2563eb) !important;
+  background: rgba(37, 99, 235, 0.18) !important;
+}
+
+.ruler-split-pill.is-active .pill-action svg,
+#ruler-toggle-btn.is-active .pill-action svg,
+#btn-toggle-ruler.active svg,
+body.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-action svg,
+html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-action svg,
+[data-reading-mode="vertical"] .footer-actions-group .ruler-split-pill.is-active .pill-action svg {
+  color: var(--color-primary, #2563eb) !important;
+  stroke: var(--color-primary, #2563eb) !important;
 }
 
 .pill-divider {
   width: 1px;
   height: 16px;
-  background: var(--glass-divider, rgba(0, 0, 0, 0.12));
+  background: var(--border-color, var(--glass-divider, rgba(0, 0, 0, 0.12)));
   margin: 0 1px;
   flex-shrink: 0;
 }
@@ -510,12 +547,12 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   width: 36px;
   height: 34px;
   border-radius: 8px;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.45));
+  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.45)));
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
-  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5));
-  color: var(--glass-icon-color, var(--text-main));
+  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35)));
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -525,16 +562,14 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 }
 
 .btn-reader-menu-fab svg {
-  stroke: currentColor;
+  stroke: var(--text-color, var(--glass-icon-color, var(--text-main, currentColor)));
 }
 
 .btn-reader-menu-fab:hover {
-  background: var(--glass-bg-hover, rgba(255, 255, 255, 0.65));
-  border-color: var(--glass-border-hover, rgba(255, 255, 255, 0.55));
-  box-shadow: var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7));
-  filter: brightness(1.08);
-  backdrop-filter: blur(14px) saturate(190%);
-  -webkit-backdrop-filter: blur(14px) saturate(190%);
+  background: var(--bg-hover, var(--glass-bg-hover, rgba(255, 255, 255, 0.65)));
+  border-color: var(--border-color, var(--glass-border-hover, rgba(255, 255, 255, 0.55)));
+  box-shadow: var(--shadow-md, var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12)));
+  filter: brightness(1.04);
 }
 
 .btn-reader-menu-fab:active {
@@ -564,7 +599,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   min-width: 0;
   padding: 0;
   margin: 0;
-  z-index: 1200;
+  z-index: 60;
   transform-origin: bottom right;
   opacity: 1;
   visibility: visible;
@@ -606,12 +641,12 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.45));
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
-  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5));
-  color: var(--glass-icon-color, var(--text-main));
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  color: var(--text-color, var(--text-main));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -628,14 +663,14 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   width: 20px;
   height: 20px;
   pointer-events: none;
-  stroke: currentColor;
+  stroke: var(--text-color, var(--text-main, currentColor));
 }
 
 .dock-action-btn:hover {
-  background: var(--glass-bg-hover, rgba(255, 255, 255, 0.65));
-  border-color: var(--glass-border-hover, rgba(255, 255, 255, 0.55));
-  box-shadow: var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7));
-  filter: brightness(1.08);
+  background: var(--bg-hover, var(--bg-secondary));
+  border-color: var(--border-color);
+  box-shadow: var(--shadow-md, var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12)));
+  filter: brightness(1.04);
   backdrop-filter: blur(14px) saturate(190%);
   -webkit-backdrop-filter: blur(14px) saturate(190%);
   transform: scale(1.08);
@@ -651,10 +686,17 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 
 /* Dolní široká pilulka - Kapsle posuvníku celé knihy */
 .dock-action-btn-wide,
-.pill-scrubber-capsule {
+.pill-scrubber-capsule,
+.apple-books-capsule {
   width: 100%;
   height: 38px;
   border-radius: 9999px;
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  color: var(--text-color, var(--text-main));
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -669,7 +711,10 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 }
 
 .dock-action-btn-wide:hover,
-.pill-scrubber-capsule:hover {
+.pill-scrubber-capsule:hover,
+.apple-books-capsule:hover {
+  background: var(--bg-hover, var(--bg-secondary));
+  border-color: var(--border-color);
   transform: scale(1.02);
 }
 
@@ -737,7 +782,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 .pill-scrubber-label {
   font-size: 0.82rem;
   font-weight: 500;
-  color: var(--glass-icon-color, var(--text-main));
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -754,7 +799,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   border-radius: 50%;
   border: none;
   background: transparent;
-  color: var(--glass-icon-color, var(--text-main));
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -778,7 +823,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   display: block;
   width: 18px;
   height: 18px;
-  stroke: currentColor;
+  stroke: var(--text-color, var(--glass-icon-color, var(--text-main, currentColor)));
   pointer-events: none;
 }
 
@@ -788,12 +833,12 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   position: absolute;
   bottom: calc(100% + 10px);
   right: 0;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.75));
+  background: var(--bg-surface-elevated, var(--bg-secondary, rgba(255, 255, 255, 0.75)));
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.4));
-  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.6));
-  color: var(--glass-icon-color, var(--text-main));
+  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.4)));
+  box-shadow: var(--shadow-md, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.12)));
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   padding: 7px 14px;
   border-radius: 12px;
   font-size: 0.8rem;
@@ -834,14 +879,14 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 /* Zajištění, že postranní panely a backdrop jsou vždy bezpečně nad čtečkou, lištami a plovoucím dockem */
 #drawer-backdrop,
 .drawer-backdrop {
-  z-index: 2400 !important;
+  z-index: 90 !important;
 }
 
 #settings-drawer,
 #toc-drawer,
 #search-drawer,
 .drawer-panel {
-  z-index: 2500 !important;
+  z-index: 100 !important;
 }
 
 /* Při vypnutí v nastavení je spodní lišta skryta a čtecí plocha sahá až ke spodnímu okraji displeje */
@@ -969,7 +1014,7 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
   left: 0;
   right: auto !important;
   max-width: 100%;
-  z-index: 60 !important;
+  z-index: 20 !important;
   transition: opacity 0.2s ease, background-color 0.2s ease;
   display: none;
   pointer-events: none !important;
@@ -982,7 +1027,7 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
 .reading-ruler.is-visible {
   display: block !important;
   opacity: 1 !important;
-  z-index: 60 !important;
+  z-index: 20 !important;
   pointer-events: none !important;
 }
 
@@ -1088,8 +1133,9 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
 .reading-ruler.word-tracking-mode.mode-focus {
   background: transparent !important;
   border: none !important;
+  outline: none !important;
   border-radius: 4px !important;
-  box-shadow: inset 0 0 0 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.75), 0 0 8px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.25) !important;
+  box-shadow: none !important;
   -webkit-mask-image: none !important;
   mask-image: none !important;
 }
@@ -1212,11 +1258,98 @@ body.ruler-vertical-mode .ruler-focused-image {
 .reading-ruler.mode-underline.color-slate { border-bottom: 3.5px solid #64748b; }
 
 /* 3. Režim: Zaostřovací maska (Focus Window) */
-.reading-ruler.mode-focus {
+.reading-ruler.mode-focus:not(.is-media-focus) {
   background: transparent !important;
   border: none !important;
-  border-radius: 4px;
-  box-shadow: inset 0 0 0 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.75), 0 0 10px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.25) !important;
+  outline: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* 4. Režim: Spodní clona (Bottom Cover) pro PDF a čtení */
+.reading-ruler.mode-bottom-cover,
+.reading-ruler.mode-bottom-cover.word-tracking-mode {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: 0 1px 4px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.45) !important;
+  pointer-events: none !important;
+  transition: none !important;
+  height: 2px !important;
+  overflow: visible !important;
+  contain: none !important;
+}
+
+.reading-ruler.mode-bottom-cover,
+.reading-ruler.mode-bottom-cover.color-amber,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-amber {
+  --ruler-glow-rgb: 245, 158, 11;
+  background-color: #f59e0b !important;
+  color: #f59e0b !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-cyan,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-cyan {
+  --ruler-glow-rgb: 6, 182, 212;
+  background-color: #06b6d4 !important;
+  color: #06b6d4 !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-emerald,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-emerald {
+  --ruler-glow-rgb: 16, 185, 129;
+  background-color: #10b981 !important;
+  color: #10b981 !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-lavender,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-lavender {
+  --ruler-glow-rgb: 168, 85, 247;
+  background-color: #a855f7 !important;
+  color: #a855f7 !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-slate,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-slate {
+  --ruler-glow-rgb: 100, 116, 139;
+  background-color: #64748b !important;
+  color: #64748b !important;
+}
+
+/* Fixní accent wave / vlnka pro indikátor čteného slova v režimu Spodní clona (Bottom Cover) */
+.ruler-word-wave {
+  position: absolute;
+  top: 100%;
+  margin-top: -1px;
+  left: 0;
+  width: 80px;
+  height: 12px;
+  display: none;
+  pointer-events: none !important;
+  color: inherit;
+  will-change: transform;
+  transition: transform 0.08s cubic-bezier(0.2, 0.8, 0.35, 1);
+  filter: drop-shadow(0 2px 4px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.45));
+}
+
+.ruler-word-wave svg {
+  display: block;
+  width: 80px;
+  height: 12px;
+  color: inherit;
+  overflow: visible;
+}
+
+body.ruler-mouse-follow-active .ruler-word-wave,
+.reading-ruler:not(.is-snapped) .ruler-word-wave,
+.ruler-word-wave:not(.is-snapped),
+body.is-turning-page .ruler-word-wave,
+.reading-ruler.word-transition-snap .ruler-word-wave,
+.reading-ruler.is-page-transitioning .ruler-word-wave {
+  transition: none !important;
+}
+
+.ruler-word-wave.is-snapped {
+  transition: transform 0.08s cubic-bezier(0.2, 0.8, 0.35, 1) !important;
 }
 
 /* Plnoformátové orámování obrázků a ilustrací pravítkem */
@@ -1251,51 +1384,7 @@ body.ruler-vertical-mode .ruler-focused-image {
   box-shadow: 0 0 14px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.25) !important;
 }
 
-/* Focus Mode: de-emphasis neaktivního textu na typografické vrstvě (#paged-stage / #reader-content) */
-.paged-stage.focus-active,
-#reader-content.focus-active {
-  -webkit-mask-repeat: no-repeat, no-repeat;
-  mask-repeat: no-repeat, no-repeat;
-  -webkit-mask-composite: source-over;
-  mask-composite: add;
-  transition: -webkit-mask-position 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
-              mask-position 0.08s cubic-bezier(0.2, 0.8, 0.35, 1),
-              -webkit-mask-size 0.08s ease-out,
-              mask-size 0.08s ease-out;
-}
-
-body.ruler-mouse-follow-active .paged-stage.focus-active,
-body.ruler-mouse-follow-active #reader-content.focus-active,
-body.mode-vertical .paged-stage.focus-active,
-body.mode-vertical #reader-content.focus-active {
-  transition: none !important;
-  -webkit-transition: none !important;
-}
-
-body:not(.in-reader-view):not(.ruler-active) .paged-stage.focus-active,
-body:not(.in-reader-view):not(.ruler-active) #reader-content.focus-active {
-  -webkit-mask-image: none !important;
-  mask-image: none !important;
-}
-
-/* Multimediální elementy a ilustrace v režimu Focus Mode: neaktivní stav ztmaven, aktivní zaostřen */
-.paged-stage.focus-active img,
-.paged-stage.focus-active svg,
-.paged-stage.focus-active figure,
-.paged-stage.focus-active picture,
-.paged-stage.focus-active canvas,
-.paged-stage.focus-active .chapter-illustration,
-#reader-content.focus-active img,
-#reader-content.focus-active svg,
-#reader-content.focus-active figure,
-#reader-content.focus-active picture,
-#reader-content.focus-active canvas,
-#reader-content.focus-active .chapter-illustration {
-  opacity: 0.25;
-  filter: brightness(0.7);
-  transition: opacity 0.2s ease, filter 0.2s ease;
-}
-
+/* Multimediální elementy a ilustrace v režimu Focus Mode: aktivní zaostřen */
 .paged-stage.focus-active img.active-focus,
 .paged-stage.focus-active svg.active-focus,
 .paged-stage.focus-active figure.active-focus,
@@ -1326,30 +1415,61 @@ canvas.active-focus,
   filter: none !important;
 }
 
-/* Masky ztmavující okolní text v režimu Zaostření (Focus Mode) */
+/* Masky ztmavující okolní text v režimu Zaostření (Focus Mode) - tématicky sladěné s pozadím */
 .ruler-mask {
   position: fixed;
   top: 0;
   left: 0;
   pointer-events: none !important;
-  z-index: 50 !important;
-  background-color: rgba(0, 0, 0, var(--focus-dim-opacity, 0.65));
+  z-index: 15 !important;
+  background-color: var(--bg-theme, var(--color-bg, #fbf0d9));
+  opacity: var(--focus-dim-opacity, 0.70);
+  transition: none !important;
   box-sizing: border-box;
   display: none;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-  will-change: transform;
   contain: paint;
+  will-change: transform;
 }
 
 .ruler-mask.is-visible {
   display: block !important;
-  opacity: 1 !important;
 }
 
 .ruler-mask.is-hidden {
   display: none !important;
-  opacity: 0 !important;
+}
+
+/* Režim PDF: tématicky sladěný překryv pro režim Zaostření (Focus Mode), identický s EPUB */
+.ruler-mask.pdf-overlay-mask:not(.mode-bottom-cover) {
+  background-color: var(--bg-theme, var(--color-bg, #fbf0d9)) !important;
+  opacity: var(--focus-dim-opacity, 0.65) !important;
+  z-index: 15 !important;
+}
+
+/* Režim Spodní clona (Bottom Cover): maska striktně dědí barvu pozadí aktivního motivu */
+.ruler-mask.ruler-mask-bottom {
+  background-color: var(--bg-theme, var(--color-bg, #fbf0d9)) !important;
+  transition: none !important;
+  z-index: 15 !important;
+}
+
+body.ruler-mode-bottom-cover .ruler-mask.ruler-mask-bottom,
+body.ruler-mode-bottom-cover .ruler-mask-bottom,
+body.ruler-mode-bottom-cover .ruler-mask.pdf-overlay-mask.ruler-mask-bottom,
+.ruler-mask.ruler-mask-bottom.mode-bottom-cover,
+.ruler-mask.ruler-mask-inactive-spread,
+.ruler-mask-inactive-spread {
+  background-color: var(--bg-theme, var(--color-bg, #fbf0d9)) !important;
+  opacity: var(--focus-dim-opacity, 0.75);
+  transition: none !important;
+  z-index: 15 !important;
+  pointer-events: none !important;
+}
+
+body.ruler-mode-bottom-cover .ruler-mask-top,
+body.ruler-mode-bottom-cover .ruler-mask-left,
+body.ruler-mode-bottom-cover .ruler-mask-right {
+  display: none !important;
 }
 
 /* ==========================================================================
@@ -1422,7 +1542,7 @@ canvas.active-focus,
   border-radius: var(--radius-lg, 16px);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
   padding: 1rem;
-  z-index: 1200;
+  z-index: 100 !important;
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
@@ -1586,6 +1706,10 @@ canvas.active-focus,
   gap: 0.35rem;
 }
 
+.popover-styles-grid.columns-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .popover-style-btn {
   padding: 0.45rem 0.3rem;
   font-size: 0.8rem;
@@ -1651,13 +1775,23 @@ canvas.active-focus,
   border-top: 1px solid var(--border-color);
 }
 
-/* Skrytí systémového kurzoru VÝHRADNĚ při režimu sledování myši se zapnutým pravítkem */
-body.ruler-mouse-follow-active.in-reader-view #paged-viewport,
-body.ruler-mouse-follow-active.in-reader-view #paged-viewport * {
+/* Skrytí systémového kurzoru VÝHRADNĚ uvnitř aktivní čtecí zóny (text + mezisloupcová mezera) */
+body.ruler-cursor-hidden #paged-viewport,
+body.ruler-cursor-hidden #paged-viewport *,
+body.ruler-cursor-hidden #reading-ruler,
+body.ruler-cursor-hidden .reading-ruler,
+body.ruler-cursor-hidden .ruler-mask,
+#paged-viewport.ruler-cursor-hidden,
+#paged-viewport.ruler-cursor-hidden * {
   cursor: none !important;
 }
 
-/* Ovládací prvky a plochy mimo čtecí plátno mají vždy standardní viditelný kurzor */
+/* Dotykové zóny na okrajích a plochy mimo čtecí zónu mají standardní kurzor */
+body.ruler-mouse-follow-active .page-touch-zone {
+  cursor: default;
+}
+
+/* Ovládací prvky a plochy mimo čtecí zónu mají vždy standardní viditelný kurzor */
 body.ruler-mouse-follow-active .top-navbar,
 body.ruler-mouse-follow-active .top-navbar *,
 body.ruler-mouse-follow-active .paged-footer-bar,
@@ -1680,7 +1814,19 @@ body.ruler-mouse-follow-active a,
 body.ruler-mouse-follow-active input,
 body.ruler-mouse-follow-active select,
 body.ruler-mouse-follow-active .switch,
-body.ruler-mouse-follow-active [role="button"] {
+body.ruler-mouse-follow-active [role="button"],
+body.ruler-cursor-hidden button,
+body.ruler-cursor-hidden .btn,
+body.ruler-cursor-hidden .btn-icon,
+body.ruler-cursor-hidden a,
+body.ruler-cursor-hidden input,
+body.ruler-cursor-hidden select,
+body.ruler-cursor-hidden .switch,
+body.ruler-cursor-hidden [role="button"],
+body.ruler-cursor-hidden .ruler-floating-controls,
+body.ruler-cursor-hidden .ruler-floating-controls *,
+body.ruler-cursor-hidden .ruler-quick-popover,
+body.ruler-cursor-hidden .ruler-quick-popover * {
   cursor: pointer !important;
 }
 
@@ -1893,7 +2039,7 @@ body.ruler-holding * {
   padding-left: 0 !important;
   padding-right: 0 !important;
   overflow: hidden !important;
-  z-index: 2500 !important;
+  z-index: 100 !important;
   background: var(--bg-surface) !important;
 }
 
@@ -2158,13 +2304,13 @@ html.mode-vertical .footer-actions-group,
 [data-reading-mode="vertical"] #footer-remaining-chapter,
 [data-reading-mode="vertical"] #footer-book-pages,
 [data-reading-mode="vertical"] .footer-actions-group {
-  background: rgba(18, 24, 38, 0.82) !important;
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.06)) !important;
   backdrop-filter: blur(14px) saturate(160%) !important;
   -webkit-backdrop-filter: blur(14px) saturate(160%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.14) !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1)) !important;
+  box-shadow: var(--shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08)) !important;
   border-radius: 9999px !important;
-  color: #f1f5f9 !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
   padding: 6px 14px !important;
   display: inline-flex !important;
   align-items: center !important;
@@ -2175,6 +2321,7 @@ html.mode-vertical .footer-actions-group,
               background-color 0.2s ease,
               border-color 0.2s ease,
               box-shadow 0.2s ease,
+              color 0.2s ease,
               opacity 0.2s ease !important;
 }
 
@@ -2197,17 +2344,18 @@ html.mode-vertical #btn-back-library,
 body.mode-vertical .btn-back-library:hover,
 html.mode-vertical .btn-back-library:hover,
 [data-reading-mode="vertical"] .btn-back-library:hover {
-  background: rgba(28, 36, 56, 0.92) !important;
-  border-color: rgba(255, 255, 255, 0.25) !important;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+  background: var(--bg-hover, var(--border-color)) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.12)) !important;
   transform: scale(1.06) !important;
 }
 
 body.mode-vertical .btn-back-library svg,
 html.mode-vertical .btn-back-library svg,
 [data-reading-mode="vertical"] .btn-back-library svg {
-  color: #f1f5f9 !important;
-  stroke: #f1f5f9 !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+  stroke: var(--text-color, var(--text-main, currentColor)) !important;
   width: 20px !important;
   height: 20px !important;
 }
@@ -2273,14 +2421,14 @@ html.mode-vertical #header-book-title,
 html.mode-vertical .header-book-title,
 [data-reading-mode="vertical"] #header-book-title,
 [data-reading-mode="vertical"] .header-book-title {
-  color: #f1f5f9 !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
   font-size: 0.82rem !important;
   font-weight: 600 !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
   max-width: 100% !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+  text-shadow: none !important;
 }
 
 /* Zbývající strany kapitoly */
@@ -2299,7 +2447,7 @@ html.mode-vertical .footer-remaining-chapter,
   height: 38px !important;
   user-select: none !important;
   -webkit-user-select: none !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+  text-shadow: none !important;
 }
 
 /* Počítadlo stránek celé knihy */
@@ -2315,7 +2463,7 @@ html.mode-vertical .footer-book-pages,
   height: 38px !important;
   user-select: none !important;
   -webkit-user-select: none !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+  text-shadow: none !important;
 }
 
 /* Akční skupina nástrojů v zápatí vpravo */
@@ -2340,6 +2488,7 @@ html.mode-vertical .footer-actions-group .ruler-split-pill,
   -webkit-backdrop-filter: none !important;
   height: 32px !important;
   padding: 0 !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
 }
 
 body.mode-vertical .footer-actions-group .btn-reader-menu-fab,
@@ -2352,7 +2501,7 @@ html.mode-vertical .footer-actions-group .btn-reader-menu-fab,
   -webkit-backdrop-filter: none !important;
   width: 32px !important;
   height: 32px !important;
-  color: #f1f5f9 !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
 }
 
 body.mode-vertical .footer-actions-group .split-pill-btn,
@@ -2364,14 +2513,14 @@ html.mode-vertical .footer-actions-group .btn-reader-menu-fab svg,
 [data-reading-mode="vertical"] .footer-actions-group .split-pill-btn,
 [data-reading-mode="vertical"] .footer-actions-group .split-pill-btn svg,
 [data-reading-mode="vertical"] .footer-actions-group .btn-reader-menu-fab svg {
-  color: #f1f5f9 !important;
-  stroke: #f1f5f9 !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+  stroke: var(--text-color, var(--text-main, currentColor)) !important;
 }
 
 body.mode-vertical .footer-actions-group .pill-divider,
 html.mode-vertical .footer-actions-group .pill-divider,
 [data-reading-mode="vertical"] .footer-actions-group .pill-divider {
-  background: rgba(255, 255, 255, 0.2) !important;
+  background: var(--border-color, rgba(0, 0, 0, 0.15)) !important;
   height: 18px !important;
 }
 
@@ -2381,8 +2530,20 @@ html.mode-vertical .footer-actions-group .split-pill-btn:hover,
 html.mode-vertical .footer-actions-group .btn-reader-menu-fab:hover,
 [data-reading-mode="vertical"] .footer-actions-group .split-pill-btn:hover,
 [data-reading-mode="vertical"] .footer-actions-group .btn-reader-menu-fab:hover {
-  background: rgba(255, 255, 255, 0.12) !important;
+  background: var(--bg-hover, rgba(0, 0, 0, 0.08)) !important;
   border-radius: 6px !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+}
+
+body.mode-vertical .footer-actions-group .btn-reader-menu-fab.active,
+body.mode-vertical .footer-actions-group .btn-reader-menu-fab[aria-expanded="true"],
+html.mode-vertical .footer-actions-group .btn-reader-menu-fab.active,
+html.mode-vertical .footer-actions-group .btn-reader-menu-fab[aria-expanded="true"],
+[data-reading-mode="vertical"] .footer-actions-group .btn-reader-menu-fab.active,
+[data-reading-mode="vertical"] .footer-actions-group .btn-reader-menu-fab[aria-expanded="true"] {
+  background: var(--bg-hover, var(--border-color)) !important;
+  border-radius: 6px !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
 }
 
 /* Skrývání při zapnutém pohlcujícím čtení (reader-chrome-hidden) */
@@ -2492,4 +2653,85 @@ body.is-pdf-mode:not(.mode-vertical) .paged-content {
 .pdf-page-slot.is-scanned-page .pdf-image-layer {
   display: none !important;
 }
+
+/* ==========================================================================
+   Mozilla PDF.js Text Layer (.textLayer)
+   Transparentní textová vrstva přesně slícovaná nad plátnem <canvas>
+   pro interaktivní pravítko, magnetické přichytávání i výběr textu
+   ========================================================================== */
+.pdf-page-container,
+.pdf-page-slot {
+  position: relative !important;
+  box-sizing: border-box !important;
+  padding: 0 !important;
+}
+
+.pdf-page-container canvas,
+.pdf-page-slot canvas,
+#reader-content .pdf-page-canvas {
+  display: block !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  padding: 0 !important;
+  border: none !important;
+  object-fit: fill !important;
+}
+
+.pdf-page-container .textLayer,
+.pdf-page-slot .textLayer,
+.textLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  border: none !important;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1 !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  text-align: initial;
+  -webkit-text-size-adjust: none;
+  -moz-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 3;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.textLayer :is(span, br),
+.textLayer * {
+  color: transparent !important;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+  line-height: 1 !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+}
+
+.textLayer ::selection {
+  background: rgba(37, 99, 235, 0.35) !important;
+}
+
+.textLayer ::-moz-selection {
+  background: rgba(37, 99, 235, 0.35) !important;
+}
+
+.textLayer br::-moz-selection,
+.textLayer br::selection {
+  background: transparent !important;
+}
+
+/* Skenované dokumenty bez textu – skrýt textovou vrstvu */
+.pdf-page-container.is-scanned-page .textLayer,
+.pdf-page-slot.is-scanned-page .textLayer {
+  display: none !important;
+}
+
 

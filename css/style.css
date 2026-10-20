@@ -28,6 +28,7 @@
   --bg-hover: #f1f5f9;
   --border-color: #e2e8f0;
   --text-main: #0f172a;
+  --text-color: var(--text-main, #0f172a);
   --text-primary: #0f172a;
   --text-secondary: #64748b;
   --text-muted: #64748b;
@@ -70,6 +71,7 @@
   --bg-hover: #f1f5f9;
   --border-color: #e2e8f0;
   --text-main: #0f172a;
+  --text-color: #0f172a;
   --text-primary: #0f172a;
   --text-secondary: #64748b;
   --text-muted: #64748b;
@@ -95,6 +97,7 @@
   --bg-hover: #273549;
   --border-color: #334155;
   --text-main: #f8fafc;
+  --text-color: #f8fafc;
   --text-primary: #f8fafc;
   --text-secondary: #94a3b8;
   --text-muted: #94a3b8;
@@ -122,6 +125,7 @@
   --bg-hover: #242424;
   --border-color: #262626;
   --text-main: #f5f5f5;
+  --text-color: #f5f5f5;
   --text-primary: #f5f5f5;
   --text-secondary: #a3a3a3;
   --text-muted: #a3a3a3;
@@ -147,14 +151,15 @@
   --bg-hover: #ede3cb;
   --border-color: #e2d6be;
   --text-main: #382b20;
+  --text-color: #382b20;
   --text-primary: #382b20;
   --text-secondary: #796652;
   --text-muted: #796652;
   --text-subtle: #9c8a75;
-  --glass-bg: rgba(255, 255, 255, 0.45);
-  --glass-bg-hover: rgba(255, 255, 255, 0.65);
-  --glass-border: rgba(255, 255, 255, 0.35);
-  --glass-border-hover: rgba(255, 255, 255, 0.55);
+  --glass-bg: rgba(237, 227, 203, 0.85);
+  --glass-bg-hover: rgba(226, 214, 190, 0.95);
+  --glass-border: rgba(56, 43, 32, 0.18);
+  --glass-border-hover: rgba(56, 43, 32, 0.3);
   --glass-shadow: 0 8px 24px rgba(80, 60, 40, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5);
   --glass-shadow-hover: 0 8px 28px rgba(80, 60, 40, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7);
   --glass-icon-color: var(--text-main);
@@ -172,14 +177,15 @@
   --bg-hover: #ede3cb;
   --border-color: #e5dbc4;
   --text-main: #2c2523;
+  --text-color: #2c2523;
   --text-primary: #2c2523;
   --text-secondary: #6b5c57;
   --text-muted: #6b5c57;
   --text-subtle: #93827c;
-  --glass-bg: rgba(255, 255, 255, 0.45);
-  --glass-bg-hover: rgba(255, 255, 255, 0.65);
-  --glass-border: rgba(255, 255, 255, 0.35);
-  --glass-border-hover: rgba(255, 255, 255, 0.55);
+  --glass-bg: rgba(244, 235, 212, 0.85);
+  --glass-bg-hover: rgba(237, 227, 203, 0.95);
+  --glass-border: rgba(44, 37, 35, 0.18);
+  --glass-border-hover: rgba(44, 37, 35, 0.3);
   --glass-shadow: 0 8px 24px rgba(80, 60, 40, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5);
   --glass-shadow-hover: 0 8px 28px rgba(80, 60, 40, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7);
   --glass-icon-color: var(--text-main);
@@ -630,7 +636,7 @@ body.dragging-file .drop-zone-overlay {
   padding-bottom: 0;
   padding-left: max(1rem, var(--safe-area-left));
   padding-right: max(1rem, var(--safe-area-right));
-  z-index: 1000;
+  z-index: 50;
   box-shadow: var(--shadow-sm);
   box-sizing: border-box;
   transition: background-color var(--transition-normal), border-color var(--transition-normal);
@@ -760,7 +766,7 @@ body.dragging-file .drop-zone-overlay {
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  z-index: 2400;
+  z-index: 90 !important;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -797,7 +803,7 @@ body.settings-sheet-open .drawer-backdrop {
   background: var(--bg-surface);
   border-left: 1px solid var(--border-color);
   box-shadow: -8px 0 35px rgba(0, 0, 0, 0.25);
-  z-index: 2500;
+  z-index: 100 !important;
   transform: translateX(105%);
   visibility: hidden;
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.3s;
@@ -1406,6 +1412,264 @@ body.settings-sheet-open .drawer-backdrop {
 }
 
 /* ==========================================================================
+   Detailní statistiky čtecí relace (Intra-session Analytics)
+   ========================================================================== */
+
+.session-analytics-section {
+  position: relative;
+}
+
+.session-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.section-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.35;
+}
+
+.session-picker-wrapper {
+  position: relative;
+  min-width: 220px;
+  max-width: 100%;
+}
+
+.session-picker-select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  border: 1.5px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 2.2rem 0.5rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  transition: all var(--transition-fast);
+}
+
+.session-picker-select:hover {
+  border-color: var(--color-primary);
+}
+
+.session-picker-select:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.session-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.65rem;
+  margin: 0.85rem 0 1.25rem 0;
+}
+
+@media (min-width: 520px) {
+  .session-summary-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.session-stat-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.5rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 0.2rem;
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.session-stat-card:hover {
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.session-stat-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.session-stat-value {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--color-primary);
+  line-height: 1.2;
+}
+
+.session-stat-value.text-accent {
+  color: #ec4899;
+}
+
+.session-chart-container {
+  min-height: 200px;
+  position: relative;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.25rem;
+  overflow: hidden;
+}
+
+.session-chart-container .stats-svg-chart {
+  display: block;
+  overflow: visible;
+}
+
+.chart-peak-marker {
+  cursor: pointer;
+  outline: none;
+}
+
+.chart-point {
+  cursor: pointer;
+  transition: r 0.15s ease, stroke-width 0.15s ease;
+}
+
+.chart-point:hover {
+  r: 5.5;
+  stroke-width: 2.5;
+}
+
+.session-history-details {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border-color);
+  padding-top: 0.75rem;
+}
+
+.session-history-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+  padding: 0.4rem 0;
+  user-select: none;
+  list-style: none;
+}
+
+.session-history-summary::-webkit-details-marker {
+  display: none;
+}
+
+.details-chevron {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.session-history-details[open] .details-chevron {
+  transform: rotate(180deg);
+}
+
+.session-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-top: 0.65rem;
+  padding-right: 0.25rem;
+  overscroll-behavior: contain;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.85rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 0.85rem;
+  gap: 0.5rem;
+  text-align: left;
+}
+
+.session-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--color-primary);
+  transform: translateX(2px);
+}
+
+.session-item.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.session-item-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.session-item-date {
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-item-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.session-item-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.session-badge-tag {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-full);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+}
+
+.session-badge-tag.tag-live {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.35);
+  animation: pulseLive 2s infinite ease-in-out;
+}
+
+@keyframes pulseLive {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
+}
+
+/* ==========================================================================
    Toast Notifikace
    ========================================================================== */
 
@@ -1619,6 +1883,91 @@ body.settings-sheet-open .drawer-backdrop {
   transition: none !important;
 }
 
+.reading-ruler.mode-bottom-cover,
+.reading-ruler.mode-bottom-cover.word-tracking-mode {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: 0 1px 4px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.45) !important;
+  pointer-events: none !important;
+  transition: none !important;
+  height: 2px !important;
+  overflow: visible !important;
+  contain: none !important;
+}
+
+.reading-ruler.mode-bottom-cover,
+.reading-ruler.mode-bottom-cover.color-amber,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-amber {
+  --ruler-glow-rgb: 245, 158, 11;
+  background-color: #f59e0b !important;
+  color: #f59e0b !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-cyan,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-cyan {
+  --ruler-glow-rgb: 6, 182, 212;
+  background-color: #06b6d4 !important;
+  color: #06b6d4 !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-emerald,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-emerald {
+  --ruler-glow-rgb: 16, 185, 129;
+  background-color: #10b981 !important;
+  color: #10b981 !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-lavender,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-lavender {
+  --ruler-glow-rgb: 168, 85, 247;
+  background-color: #a855f7 !important;
+  color: #a855f7 !important;
+}
+
+.reading-ruler.mode-bottom-cover.color-slate,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.color-slate {
+  --ruler-glow-rgb: 100, 116, 139;
+  background-color: #64748b !important;
+  color: #64748b !important;
+}
+
+/* Fixní accent wave / vlnka pro indikátor čteného slova v režimu Spodní clona (Bottom Cover) */
+.ruler-word-wave {
+  position: absolute;
+  top: 100%;
+  margin-top: -1px;
+  left: 0;
+  width: 80px;
+  height: 12px;
+  display: none;
+  pointer-events: none !important;
+  color: inherit;
+  will-change: transform;
+  transition: transform 0.08s cubic-bezier(0.2, 0.8, 0.35, 1);
+  filter: drop-shadow(0 2px 4px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.45));
+}
+
+.ruler-word-wave svg {
+  display: block;
+  width: 80px;
+  height: 12px;
+  color: inherit;
+  overflow: visible;
+}
+
+body.ruler-mouse-follow-active .ruler-word-wave,
+.reading-ruler:not(.is-snapped) .ruler-word-wave,
+.ruler-word-wave:not(.is-snapped),
+body.is-turning-page .ruler-word-wave,
+.reading-ruler.word-transition-snap .ruler-word-wave,
+.reading-ruler.is-page-transitioning .ruler-word-wave {
+  transition: none !important;
+}
+
+.ruler-word-wave.is-snapped {
+  transition: transform 0.08s cubic-bezier(0.2, 0.8, 0.35, 1) !important;
+}
+
 /* Paleta barev pro pravítko */
 .reading-ruler.color-cyan { --ruler-glow-rgb: 0, 160, 220; }
 .reading-ruler.color-amber { --ruler-glow-rgb: 245, 158, 11; }
@@ -1626,10 +1975,10 @@ body.settings-sheet-open .drawer-backdrop {
 .reading-ruler.color-lavender { --ruler-glow-rgb: 168, 85, 247; }
 .reading-ruler.color-slate { --ruler-glow-rgb: 100, 116, 139; }
 
-/* Zajištění viditelnosti a vysokého z-indexu pravítka */
+/* Zajištění viditelnosti a korektního z-indexu pravítka */
 .reading-ruler {
   --ruler-glow-rgb: 245, 158, 11;
-  z-index: 9999 !important;
+  z-index: 20 !important;
   pointer-events: none !important;
 }
 
@@ -1644,12 +1993,12 @@ body.settings-sheet-open .drawer-backdrop {
 }
 
 .ruler-mask {
-  z-index: 50 !important;
+  z-index: 15 !important;
   pointer-events: none !important;
 }
 
 .reading-ruler {
-  z-index: 60 !important;
+  z-index: 20 !important;
 }
 
 .ruler-mask.is-visible {
@@ -1809,13 +2158,21 @@ body.in-reader-view .paged-footer-bar {
   grid-template-columns: 1fr auto 1fr !important;
   align-items: center !important;
   padding: 0 max(1.5rem, env(safe-area-inset-right, 0px)) max(0.5rem, env(safe-area-inset-bottom, 0px)) max(1.5rem, env(safe-area-inset-left, 0px)) !important;
-  z-index: 1000;
+  z-index: 50;
   box-sizing: border-box;
   pointer-events: none !important;
   transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
               opacity 0.24s ease;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Zvýšení priority spodní lišty a ovládacích prvků při otevřeném rychlém menu pravítka */
+#paged-footer-bar:has(#ruler-quick-popover:not(.is-hidden)),
+.paged-footer-bar:has(#ruler-quick-popover:not(.is-hidden)),
+.footer-actions-group:has(#ruler-quick-popover:not(.is-hidden)),
+.ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)) {
+  z-index: 100 !important;
 }
 
 body.in-reader-view .paged-footer-bar > * {
@@ -1871,7 +2228,97 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   align-items: center !important;
   gap: 8px !important;
   pointer-events: auto !important;
+  position: relative;
+  z-index: 60;
   flex: none !important;
+}
+
+/* Spojené pilulkové tlačítko pravítka (Split-Pill) */
+.ruler-split-pill {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.45)));
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35)));
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  border-radius: 8px;
+  padding: 2px;
+  height: 34px;
+  box-sizing: border-box;
+  position: relative;
+  z-index: 60;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+.ruler-split-pill:hover {
+  background: var(--bg-hover, var(--glass-bg-hover, rgba(255, 255, 255, 0.65)));
+  border-color: var(--border-color, var(--glass-border-hover, rgba(255, 255, 255, 0.55)));
+  box-shadow: var(--shadow-md, var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12)));
+  filter: brightness(1.04);
+}
+
+.split-pill-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 8px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.split-pill-btn svg {
+  stroke: var(--text-color, var(--glass-icon-color, var(--text-main, currentColor)));
+}
+
+.split-pill-btn.pill-action {
+  border-radius: 6px 0 0 6px;
+}
+
+.split-pill-btn.pill-dropdown {
+  border-radius: 0 6px 6px 0;
+  padding: 0 6px;
+}
+
+.split-pill-btn:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+}
+
+[data-theme="dark"] .split-pill-btn:hover,
+[data-theme="oled"] .split-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.ruler-split-pill.is-active .pill-action,
+#ruler-toggle-btn.is-active .pill-action,
+#btn-toggle-ruler.active,
+body.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-action,
+html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-action,
+[data-reading-mode="vertical"] .footer-actions-group .ruler-split-pill.is-active .pill-action {
+  color: var(--color-primary, #2563eb) !important;
+  background: rgba(37, 99, 235, 0.18) !important;
+}
+
+.ruler-split-pill.is-active .pill-action svg,
+#ruler-toggle-btn.is-active .pill-action svg,
+#btn-toggle-ruler.active svg,
+body.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-action svg,
+html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-action svg,
+[data-reading-mode="vertical"] .footer-actions-group .ruler-split-pill.is-active .pill-action svg {
+  color: var(--color-primary, #2563eb) !important;
+  stroke: var(--color-primary, #2563eb) !important;
+}
+
+.pill-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border-color, var(--glass-divider, rgba(0, 0, 0, 0.12)));
+  margin: 0 1px;
+  flex-shrink: 0;
 }
 
 /* Tlačítko rozbalení menu (FAB) v liště čtečky */
@@ -1884,12 +2331,12 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   width: 36px;
   height: 34px;
   border-radius: 8px;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.45));
+  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.45)));
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
-  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5));
-  color: var(--glass-icon-color, var(--text-main));
+  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35)));
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1899,16 +2346,14 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
 }
 
 .btn-reader-menu-fab svg {
-  stroke: currentColor;
+  stroke: var(--text-color, var(--glass-icon-color, var(--text-main, currentColor)));
 }
 
 .btn-reader-menu-fab:hover {
-  background: var(--glass-bg-hover, rgba(255, 255, 255, 0.65));
-  border-color: var(--glass-border-hover, rgba(255, 255, 255, 0.55));
-  box-shadow: var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7));
-  filter: brightness(1.08);
-  backdrop-filter: blur(14px) saturate(190%);
-  -webkit-backdrop-filter: blur(14px) saturate(190%);
+  background: var(--bg-hover, var(--glass-bg-hover, rgba(255, 255, 255, 0.65)));
+  border-color: var(--border-color, var(--glass-border-hover, rgba(255, 255, 255, 0.55)));
+  box-shadow: var(--shadow-md, var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12)));
+  filter: brightness(1.04);
 }
 
 .btn-reader-menu-fab:active {
@@ -1938,7 +2383,7 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   min-width: 0;
   padding: 0;
   margin: 0;
-  z-index: 1200;
+  z-index: 60;
   transform-origin: bottom right;
   opacity: 1;
   visibility: visible;
@@ -1974,12 +2419,12 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.45));
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
-  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.5));
-  color: var(--glass-icon-color, var(--text-main));
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  color: var(--text-color, var(--text-main));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1996,14 +2441,14 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   width: 20px;
   height: 20px;
   pointer-events: none;
-  stroke: currentColor;
+  stroke: var(--text-color, var(--text-main, currentColor));
 }
 
 .dock-action-btn:hover {
-  background: var(--glass-bg-hover, rgba(255, 255, 255, 0.65));
-  border-color: var(--glass-border-hover, rgba(255, 255, 255, 0.55));
-  box-shadow: var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.7));
-  filter: brightness(1.08);
+  background: var(--bg-hover, var(--bg-secondary));
+  border-color: var(--border-color);
+  box-shadow: var(--shadow-md, var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12)));
+  filter: brightness(1.04);
   backdrop-filter: blur(14px) saturate(190%);
   -webkit-backdrop-filter: blur(14px) saturate(190%);
   transform: scale(1.08);
@@ -2019,10 +2464,17 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
 
 /* Dolní široká pilulka - Kapsle posuvníku celé knihy */
 .dock-action-btn-wide,
-.pill-scrubber-capsule {
+.pill-scrubber-capsule,
+.apple-books-capsule {
   width: 100%;
   height: 38px;
   border-radius: 9999px;
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  color: var(--text-color, var(--text-main));
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -2034,10 +2486,14 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   -webkit-user-select: none;
   touch-action: none;
   cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease, color 0.15s ease;
 }
 
 .dock-action-btn-wide:hover,
-.pill-scrubber-capsule:hover {
+.pill-scrubber-capsule:hover,
+.apple-books-capsule:hover {
+  background: var(--bg-hover, var(--bg-secondary));
+  border-color: var(--border-color);
   transform: scale(1.02);
 }
 
@@ -2105,7 +2561,7 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
 .pill-scrubber-label {
   font-size: 0.82rem;
   font-weight: 500;
-  color: var(--glass-icon-color, var(--text-main));
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2122,7 +2578,7 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   border-radius: 50%;
   border: none;
   background: transparent;
-  color: var(--glass-icon-color, var(--text-main));
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2146,7 +2602,7 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   display: block;
   width: 18px;
   height: 18px;
-  stroke: currentColor;
+  stroke: var(--text-color, var(--glass-icon-color, var(--text-main, currentColor)));
   pointer-events: none;
 }
 
@@ -2155,12 +2611,12 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
   position: absolute;
   bottom: calc(100% + 10px);
   right: 0;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.75));
+  background: var(--bg-surface-elevated, var(--bg-secondary, rgba(255, 255, 255, 0.75)));
   backdrop-filter: blur(16px) saturate(180%);
   -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.4));
-  box-shadow: var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.6));
-  color: var(--glass-icon-color, var(--text-main));
+  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.4)));
+  box-shadow: var(--shadow-md, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.12)));
+  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   padding: 7px 14px;
   border-radius: 12px;
   font-size: 0.8rem;
@@ -2473,11 +2929,11 @@ body.is-pdf-mode .page-touch-zone {
 /* Horní lišta: plovoucí poloprůhledná vrstva přímo nad PDF dokumentem */
 body.is-pdf-mode #reader-header,
 body.is-pdf-mode .reader-header {
-  position: absolute !important;
+  position: fixed !important;
   top: 0 !important;
   left: 0 !important;
   right: 0 !important;
-  z-index: 10 !important;
+  z-index: 50 !important;
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
@@ -2502,22 +2958,22 @@ body.is-pdf-mode .reader-header .header-title-wrapper {
 
 /* Tlačítko zpět s frosted liquid-glass kapslí pro vysoký kontrast na světlém i tmavém PDF */
 body.is-pdf-mode .btn-back-library {
-  background: var(--glass-bg, rgba(255, 255, 255, 0.65)) !important;
+  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.65))) !important;
   backdrop-filter: blur(12px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35)) !important;
-  box-shadow: var(--glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.12)) !important;
-  color: var(--text-main) !important;
+  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35))) !important;
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.12))) !important;
+  color: var(--text-color, var(--text-main)) !important;
   border-radius: var(--radius-full, 9999px) !important;
   padding: 0.45rem 0.95rem !important;
   min-height: 38px !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+  text-shadow: none !important;
 }
 
 body.is-pdf-mode .btn-back-library:hover {
-  background: var(--glass-bg-hover, rgba(255, 255, 255, 0.8)) !important;
-  border-color: var(--glass-border-hover, rgba(255, 255, 255, 0.55)) !important;
-  box-shadow: var(--glass-shadow-hover, 0 6px 20px rgba(0, 0, 0, 0.18)) !important;
+  background: var(--bg-hover, var(--glass-bg-hover, rgba(255, 255, 255, 0.8))) !important;
+  border-color: var(--border-color, var(--glass-border-hover, rgba(255, 255, 255, 0.55))) !important;
+  box-shadow: var(--shadow-md, var(--glass-shadow-hover, 0 6px 20px rgba(0, 0, 0, 0.18))) !important;
 }
 
 /* Plovoucí kapsle pro název knihy v záhlaví */
@@ -2526,31 +2982,31 @@ body.is-pdf-mode .header-title-wrapper {
   align-items: center !important;
   padding: 0.4rem 1rem !important;
   border-radius: var(--radius-full, 9999px) !important;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.65)) !important;
+  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.65))) !important;
   backdrop-filter: blur(12px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35)) !important;
-  box-shadow: var(--glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.12)) !important;
-  color: var(--text-main) !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35))) !important;
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.12))) !important;
+  color: var(--text-color, var(--text-main)) !important;
+  text-shadow: none !important;
   max-width: 60vw !important;
 }
 
 body.is-pdf-mode #header-book-title,
 body.is-pdf-mode .header-book-title {
-  color: var(--text-main) !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+  color: var(--text-color, var(--text-main)) !important;
+  text-shadow: none !important;
   font-weight: 700 !important;
 }
 
 /* Spodní lišta: plovoucí poloprůhledná vrstva s interaktivními kapslemi */
 body.is-pdf-mode #paged-footer-bar,
 body.is-pdf-mode .paged-footer-bar {
-  position: absolute !important;
+  position: fixed !important;
   bottom: 0 !important;
   left: 0 !important;
   right: 0 !important;
-  z-index: 10 !important;
+  z-index: 50 !important;
   background: transparent !important;
   background-color: transparent !important;
   backdrop-filter: none !important;
@@ -2562,7 +3018,7 @@ body.is-pdf-mode .paged-footer-bar {
 }
 
 body.is-pdf-mode .paged-footer-bar > * {
-  pointer-events: none !important;
+  pointer-events: auto !important;
 }
 
 /* Kapslové pilulky ve spodní liště */
@@ -2574,13 +3030,13 @@ body.is-pdf-mode .footer-book-pages {
   align-items: center !important;
   padding: 0.35rem 0.85rem !important;
   border-radius: var(--radius-full, 9999px) !important;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.65)) !important;
+  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.65))) !important;
   backdrop-filter: blur(12px) saturate(180%) !important;
   -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35)) !important;
-  box-shadow: var(--glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.12)) !important;
-  color: var(--text-main) !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35))) !important;
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.12))) !important;
+  color: var(--text-color, var(--text-main)) !important;
+  text-shadow: none !important;
   font-weight: 600 !important;
   font-size: 0.85rem !important;
   pointer-events: auto !important;
@@ -2597,11 +3053,13 @@ body.is-pdf-mode .reading-progress-container {
   display: none !important;
 }
 
-/* Mechanické překryvné pravítko pro PDF */
+/* Mechanické překryvné pravítko pro PDF - sjednocený čistý vzhled shodný s EPUB */
 body.is-pdf-mode .reading-ruler,
 .reading-ruler.pdf-ruler-overlay {
   box-sizing: border-box !important;
-  border-radius: 4px !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
   transition: none !important;
   position: fixed !important;
   pointer-events: none !important;
@@ -2610,23 +3068,323 @@ body.is-pdf-mode .reading-ruler,
 body.is-pdf-mode .reading-ruler.mode-focus,
 .reading-ruler.pdf-ruler-overlay.mode-focus {
   background: transparent !important;
-  box-shadow: inset 0 0 0 1.5px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.8),
-              0 0 12px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.3) !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
 }
 
 body.is-pdf-mode .reading-ruler.mode-highlight,
 .reading-ruler.pdf-ruler-overlay.mode-highlight {
   background: rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.22) !important;
-  box-shadow: inset 0 0 0 1px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.45) !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  border-radius: 4px !important;
 }
 
 /* Poloprůhledné ztmavovací pásy nahoře a dole v režimu Zaostření (Focus) */
 .ruler-mask.pdf-overlay-mask {
   position: fixed !important;
   pointer-events: none !important;
-  z-index: 9990 !important;
+  z-index: 15 !important;
   display: block !important;
-  opacity: 1 !important;
+  background-color: var(--bg-theme, var(--color-bg, #fbf0d9)) !important;
+  opacity: var(--focus-dim-opacity, 0.65) !important;
   box-sizing: border-box !important;
   transition: none !important;
+}
+
+/* Rychlé nastavení pravítka (popover) musí vždy sedět nad všemi maskami i lištami */
+#ruler-quick-popover,
+.ruler-quick-popover {
+  z-index: 100 !important;
+}
+
+/* ==========================================================================
+   Liquid Glass Floating Badges pro vertikální čtecí režim (mode-vertical)
+   ========================================================================== */
+
+/* Společný liquid glass efekt pro plovoucí odznaky */
+.liquid-glass-badge,
+body.mode-vertical .btn-back-library,
+body.mode-vertical #btn-back-library,
+body.mode-vertical .header-title-wrapper,
+body.mode-vertical #footer-remaining-chapter,
+body.mode-vertical #footer-book-pages,
+body.mode-vertical .footer-actions-group,
+html.mode-vertical .liquid-glass-badge,
+html.mode-vertical .btn-back-library,
+html.mode-vertical #btn-back-library,
+html.mode-vertical .header-title-wrapper,
+html.mode-vertical #footer-remaining-chapter,
+html.mode-vertical #footer-book-pages,
+html.mode-vertical .footer-actions-group,
+[data-reading-mode="vertical"] .liquid-glass-badge,
+[data-reading-mode="vertical"] .btn-back-library,
+[data-reading-mode="vertical"] #btn-back-library,
+[data-reading-mode="vertical"] .header-title-wrapper,
+[data-reading-mode="vertical"] #footer-remaining-chapter,
+[data-reading-mode="vertical"] #footer-book-pages,
+[data-reading-mode="vertical"] .footer-actions-group {
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.06)) !important;
+  backdrop-filter: blur(14px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(160%) !important;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1)) !important;
+  box-shadow: var(--shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08)) !important;
+  border-radius: 9999px !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+  padding: 6px 14px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  pointer-events: auto !important;
+  box-sizing: border-box !important;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              background-color 0.2s ease,
+              border-color 0.2s ease,
+              box-shadow 0.2s ease,
+              color 0.2s ease,
+              opacity 0.2s ease !important;
+}
+
+/* Individuální přizpůsobení velikosti a tvaru tlačítek */
+body.mode-vertical .btn-back-library,
+body.mode-vertical #btn-back-library,
+html.mode-vertical .btn-back-library,
+html.mode-vertical #btn-back-library,
+[data-reading-mode="vertical"] .btn-back-library,
+[data-reading-mode="vertical"] #btn-back-library {
+  width: 38px !important;
+  height: 38px !important;
+  min-width: 38px !important;
+  min-height: 38px !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+}
+
+body.mode-vertical .btn-back-library:hover,
+html.mode-vertical .btn-back-library:hover,
+[data-reading-mode="vertical"] .btn-back-library:hover {
+  background: var(--bg-hover, var(--border-color)) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.12)) !important;
+  transform: scale(1.06) !important;
+}
+
+body.mode-vertical .btn-back-library svg,
+html.mode-vertical .btn-back-library svg,
+[data-reading-mode="vertical"] .btn-back-library svg {
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+  stroke: var(--text-color, var(--text-main, currentColor)) !important;
+  width: 20px !important;
+  height: 20px !important;
+}
+
+/* Plná transparentnost a průchodnost podkladových lišt */
+body.mode-vertical .reader-header,
+body.mode-vertical #reader-header,
+body.mode-vertical .reader-header-bar,
+body.mode-vertical .paged-footer-bar,
+body.mode-vertical #paged-footer-bar,
+body.mode-vertical .reader-footer-bar,
+html.mode-vertical .reader-header,
+html.mode-vertical #reader-header,
+html.mode-vertical .reader-header-bar,
+html.mode-vertical .paged-footer-bar,
+html.mode-vertical #paged-footer-bar,
+html.mode-vertical .reader-footer-bar,
+[data-reading-mode="vertical"] .reader-header,
+[data-reading-mode="vertical"] #reader-header,
+[data-reading-mode="vertical"] .reader-header-bar,
+[data-reading-mode="vertical"] .paged-footer-bar,
+[data-reading-mode="vertical"] #paged-footer-bar,
+[data-reading-mode="vertical"] .reader-footer-bar {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-top: none !important;
+  border-bottom: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  pointer-events: none !important;
+}
+
+body.mode-vertical .reader-header-left,
+body.mode-vertical .reader-header-center,
+body.mode-vertical .reader-header-right,
+html.mode-vertical .reader-header-left,
+html.mode-vertical .reader-header-center,
+html.mode-vertical .reader-header-right,
+[data-reading-mode="vertical"] .reader-header-left,
+[data-reading-mode="vertical"] .reader-header-center,
+[data-reading-mode="vertical"] .reader-header-right {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  pointer-events: none !important;
+}
+
+/* Název knihy v záhlaví */
+body.mode-vertical .header-title-wrapper,
+html.mode-vertical .header-title-wrapper,
+[data-reading-mode="vertical"] .header-title-wrapper {
+  max-width: min(70vw, 440px) !important;
+  white-space: nowrap !important;
+  text-align: center !important;
+  height: 38px !important;
+}
+
+body.mode-vertical #header-book-title,
+body.mode-vertical .header-book-title,
+html.mode-vertical #header-book-title,
+html.mode-vertical .header-book-title,
+[data-reading-mode="vertical"] #header-book-title,
+[data-reading-mode="vertical"] .header-book-title {
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+  font-size: 0.82rem !important;
+  font-weight: 600 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  max-width: 100% !important;
+  text-shadow: none !important;
+}
+
+/* Zbývající strany kapitoly */
+body.mode-vertical #footer-remaining-chapter,
+body.mode-vertical .footer-remaining-chapter,
+html.mode-vertical #footer-remaining-chapter,
+html.mode-vertical .footer-remaining-chapter,
+[data-reading-mode="vertical"] #footer-remaining-chapter,
+[data-reading-mode="vertical"] .footer-remaining-chapter {
+  white-space: nowrap !important;
+  max-width: min(35vw, 240px) !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  font-size: 0.82rem !important;
+  font-weight: 500 !important;
+  height: 38px !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  text-shadow: none !important;
+}
+
+/* Počítadlo stránek celé knihy */
+body.mode-vertical #footer-book-pages,
+body.mode-vertical .footer-book-pages,
+html.mode-vertical #footer-book-pages,
+html.mode-vertical .footer-book-pages,
+[data-reading-mode="vertical"] #footer-book-pages,
+[data-reading-mode="vertical"] .footer-book-pages {
+  white-space: nowrap !important;
+  font-size: 0.82rem !important;
+  font-weight: 600 !important;
+  height: 38px !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  text-shadow: none !important;
+}
+
+/* Akční skupina nástrojů v zápatí vpravo */
+body.mode-vertical .footer-actions-group,
+body.mode-vertical #footer-actions-group,
+html.mode-vertical .footer-actions-group,
+html.mode-vertical #footer-actions-group,
+[data-reading-mode="vertical"] .footer-actions-group,
+[data-reading-mode="vertical"] #footer-actions-group {
+  height: 38px !important;
+  gap: 8px !important;
+  padding: 3px 6px !important;
+}
+
+body.mode-vertical .footer-actions-group .ruler-split-pill,
+html.mode-vertical .footer-actions-group .ruler-split-pill,
+[data-reading-mode="vertical"] .footer-actions-group .ruler-split-pill {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  height: 32px !important;
+  padding: 0 !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+}
+
+body.mode-vertical .footer-actions-group .btn-reader-menu-fab,
+html.mode-vertical .footer-actions-group .btn-reader-menu-fab,
+[data-reading-mode="vertical"] .footer-actions-group .btn-reader-menu-fab {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  width: 32px !important;
+  height: 32px !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+}
+
+body.mode-vertical .footer-actions-group .split-pill-btn,
+body.mode-vertical .footer-actions-group .split-pill-btn svg,
+body.mode-vertical .footer-actions-group .btn-reader-menu-fab svg,
+html.mode-vertical .footer-actions-group .split-pill-btn,
+html.mode-vertical .footer-actions-group .split-pill-btn svg,
+html.mode-vertical .footer-actions-group .btn-reader-menu-fab svg,
+[data-reading-mode="vertical"] .footer-actions-group .split-pill-btn,
+[data-reading-mode="vertical"] .footer-actions-group .split-pill-btn svg,
+[data-reading-mode="vertical"] .footer-actions-group .btn-reader-menu-fab svg {
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+  stroke: var(--text-color, var(--text-main, currentColor)) !important;
+}
+
+body.mode-vertical .footer-actions-group .pill-divider,
+html.mode-vertical .footer-actions-group .pill-divider,
+[data-reading-mode="vertical"] .footer-actions-group .pill-divider {
+  background: var(--border-color, rgba(0, 0, 0, 0.15)) !important;
+  height: 18px !important;
+}
+
+body.mode-vertical .footer-actions-group .split-pill-btn:hover,
+body.mode-vertical .footer-actions-group .btn-reader-menu-fab:hover,
+html.mode-vertical .footer-actions-group .split-pill-btn:hover,
+html.mode-vertical .footer-actions-group .btn-reader-menu-fab:hover,
+[data-reading-mode="vertical"] .footer-actions-group .split-pill-btn:hover,
+[data-reading-mode="vertical"] .footer-actions-group .btn-reader-menu-fab:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.08)) !important;
+  border-radius: 6px !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+}
+
+body.mode-vertical .footer-actions-group .btn-reader-menu-fab.active,
+body.mode-vertical .footer-actions-group .btn-reader-menu-fab[aria-expanded="true"],
+html.mode-vertical .footer-actions-group .btn-reader-menu-fab.active,
+html.mode-vertical .footer-actions-group .btn-reader-menu-fab[aria-expanded="true"],
+[data-reading-mode="vertical"] .footer-actions-group .btn-reader-menu-fab.active,
+[data-reading-mode="vertical"] .footer-actions-group .btn-reader-menu-fab[aria-expanded="true"] {
+  background: var(--bg-hover, var(--border-color)) !important;
+  border-radius: 6px !important;
+  color: var(--text-color, var(--text-main, currentColor)) !important;
+}
+
+/* Skrývání při zapnutém pohlcujícím čtení (reader-chrome-hidden) */
+body.mode-vertical.reader-chrome-hidden .btn-back-library,
+body.mode-vertical.reader-chrome-hidden .header-title-wrapper,
+body.mode-vertical.reader-chrome-hidden #footer-remaining-chapter,
+body.mode-vertical.reader-chrome-hidden #footer-book-pages,
+body.mode-vertical.reader-chrome-hidden .footer-actions-group,
+html.mode-vertical.reader-chrome-hidden .btn-back-library,
+html.mode-vertical.reader-chrome-hidden .header-title-wrapper,
+html.mode-vertical.reader-chrome-hidden #footer-remaining-chapter,
+html.mode-vertical.reader-chrome-hidden #footer-book-pages,
+html.mode-vertical.reader-chrome-hidden .footer-actions-group,
+[data-reading-mode="vertical"].reader-chrome-hidden .btn-back-library,
+[data-reading-mode="vertical"].reader-chrome-hidden .header-title-wrapper,
+[data-reading-mode="vertical"].reader-chrome-hidden #footer-remaining-chapter,
+[data-reading-mode="vertical"].reader-chrome-hidden #footer-book-pages,
+[data-reading-mode="vertical"].reader-chrome-hidden .footer-actions-group {
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
