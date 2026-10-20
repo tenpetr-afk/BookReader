@@ -3423,8 +3423,6 @@ export class ReadingRuler {
    * Zmapuje přesné obdélníky všech viditelných slov na aktuální stránce.
    */
   refreshWords() {
-    const visitedBionicSpans = new Set();
-    let range = null;
     try {
       const stage = this.container || document.getElementById("paged-stage");
       const content = document.getElementById("reader-content");
@@ -3446,11 +3444,12 @@ export class ReadingRuler {
       const words = [];
       const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
       let node;
-      range = document.createRange();
+      const range = document.createRange();
       // Podpora všech unicode mezer, nezlomitelných mezer i neviditelných dělicích znaků
       const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g;
       const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
 
+      const visitedBionicSpans = new Set();
       while ((node = walker.nextNode())) {
         if (node.parentElement) {
           const parentTag = node.parentElement.tagName;
@@ -3737,14 +3736,10 @@ export class ReadingRuler {
       this.cachedWords = [];
       return [];
     } finally {
-      if (range) {
-        try {
-          range.detach();
-        } catch (e) {}
-      }
-      if (visitedBionicSpans && typeof visitedBionicSpans.clear === "function") {
-        visitedBionicSpans.clear();
-      }
+      try {
+        range.detach();
+      } catch (e) {}
+      visitedBionicSpans.clear();
     }
   }
 
