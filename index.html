@@ -182,6 +182,13 @@
 
           <!-- Rychlý konfigurační popover pravítka -->
           <div id="ruler-quick-popover" class="ruler-quick-popover is-hidden" role="dialog" aria-label="Rychlé nastavení pravítka">
+            <div class="popover-header">
+              <span class="popover-title">Čtecí pravítko</span>
+              <button type="button" role="switch" id="popover-ruler-toggle" class="switch-control" aria-checked="false" aria-label="Aktivovat pravítko">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </button>
+            </div>
+
             <!-- Způsob pohybu -->
             <div class="popover-section" id="popover-follow-section">
               <div class="popover-section-label">Způsob pohybu</div>
@@ -227,7 +234,7 @@
             </div>
 
             <!-- Barva pravítka -->
-            <div class="popover-section" id="popover-ruler-color-section">
+            <div class="popover-section">
               <div class="popover-section-label">Barva</div>
               <div class="popover-colors-row">
                 <button type="button" class="ruler-color-btn color-amber active" data-ruler-color="amber" title="Jantarová"></button>
@@ -239,7 +246,7 @@
             </div>
 
             <!-- Intenzita ztmavení okolí -->
-            <div class="popover-section" id="popover-ruler-opacity-section">
+            <div class="popover-section">
               <div class="popover-row-between">
                 <span class="popover-section-label">Ztmavení okolí (Zaostření)</span>
                 <span id="popover-val-ruler-opacity" class="popover-val-badge">65%</span>
@@ -249,22 +256,24 @@
               </div>
             </div>
 
-            <!-- Kalibrace pravítka pro PDF (výška) -->
+            <!-- Kalibrace pravítka pro PDF (výška a krok posunu) -->
             <div class="popover-section is-hidden" id="popover-pdf-ruler-section">
-              <div class="popover-row-between" style="margin-bottom: 0.5rem;">
-                <span class="popover-section-label">Automatická výška</span>
-                <button type="button" role="switch" id="popover-pdf-auto-height" class="switch-control is-checked active" aria-checked="true" aria-label="Automatická výška pravítka (PDF)">
-                  <span class="switch-track"><span class="switch-thumb"></span></span>
-                </button>
+              <div class="popover-row-between">
+                <span class="popover-section-label">Výška pravítka (PDF)</span>
+                <span id="popover-val-pdf-height" class="popover-val-badge">32 px</span>
               </div>
-              <div id="popover-pdf-height-container" style="transition: opacity 0.2s ease;">
-                <div class="popover-row-between">
-                  <span class="popover-section-label">Výška pravítka (PDF)</span>
-                  <span id="popover-val-pdf-height" class="popover-val-badge">32 px</span>
-                </div>
-                <div class="popover-slider-wrapper">
-                  <input type="range" id="popover-slider-pdf-height" class="slider-input" min="16" max="120" value="32" step="1" aria-label="Výška pravítka pro PDF">
-                </div>
+              <div class="popover-slider-wrapper">
+                <input type="range" id="popover-slider-pdf-height" class="slider-input" min="16" max="120" value="32" step="1" aria-label="Výška pravítka pro PDF">
+              </div>
+            </div>
+
+            <div class="popover-section is-hidden" id="popover-pdf-step-section">
+              <div class="popover-row-between">
+                <span class="popover-section-label">Krok posunu (PDF)</span>
+                <span id="popover-val-pdf-step" class="popover-val-badge">32 px</span>
+              </div>
+              <div class="popover-slider-wrapper">
+                <input type="range" id="popover-slider-pdf-step" class="slider-input" min="10" max="120" value="32" step="1" aria-label="Krok posunu pravítka pro PDF">
               </div>
             </div>
           </div>
@@ -549,7 +558,7 @@
             </div>
           </div>
 
-          <div style="margin-bottom: 1rem;" id="drawer-ruler-color-section">
+          <div style="margin-bottom: 1rem;">
             <div class="slider-label"><span>Barva pravítka</span></div>
             <div class="ruler-color-options">
               <button class="ruler-color-btn" data-ruler-color="amber" title="Jantarová"></button>
@@ -583,7 +592,7 @@
             </div>
           </div>
 
-          <div class="slider-setting" id="drawer-ruler-opacity-section">
+          <div class="slider-setting">
             <div class="slider-label">
               <span>Intenzita ztmavení okolí (režim Zaostření)</span>
               <span id="val-ruler-opacity">65%</span>
@@ -593,20 +602,19 @@
 
           <!-- Kalibrace PDF pravítka v postranním panelu nastavení -->
           <div id="drawer-pdf-ruler-section" class="is-hidden" style="margin-top: 1rem; margin-bottom: 0.5rem;">
-            <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
-              <div class="toggle-row">
-                <span class="toggle-title">Automatická výška</span>
-                <button type="button" role="switch" id="setting-pdf-auto-height" class="switch-control is-checked active" aria-checked="true" aria-label="Automatická výška pravítka (PDF)">
-                  <span class="switch-track"><span class="switch-thumb"></span></span>
-                </button>
-              </div>
-            </div>
-            <div class="slider-setting" id="drawer-pdf-height-container" style="margin-bottom: 0.75rem; transition: opacity 0.2s ease;">
+            <div class="slider-setting" style="margin-bottom: 0.75rem;">
               <div class="slider-label">
                 <span>Výška pravítka (PDF)</span>
                 <span id="val-pdf-ruler-height">32 px</span>
               </div>
               <input type="range" id="slider-pdf-ruler-height" class="slider-input" min="16" max="120" value="32" step="1" aria-label="Výška pravítka pro PDF" />
+            </div>
+            <div class="slider-setting">
+              <div class="slider-label">
+                <span>Krok posunu (PDF)</span>
+                <span id="val-pdf-ruler-step">32 px</span>
+              </div>
+              <input type="range" id="slider-pdf-ruler-step" class="slider-input" min="10" max="120" value="32" step="1" aria-label="Krok posunu pravítka pro PDF" />
             </div>
           </div>
 

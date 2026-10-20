@@ -7,35 +7,6 @@
 const DB_NAME = "LuminaReaderDB";
 const DB_VERSION = 2;
 
-/**
- * Vypočítá deterministický SHA-256 hash z prvních 64 KB souboru a jeho celkové velikosti.
- * @param {File|Blob|ArrayBuffer|Uint8Array} file
- * @returns {Promise<string>}
- */
-export async function computeFileHash(file) {
-  if (!file) return null;
-  let sliceBlob;
-  let size = 0;
-
-  if (typeof Blob !== "undefined" && file instanceof Blob) {
-    size = file.size;
-    sliceBlob = file.slice(0, 65536);
-  } else if (file instanceof ArrayBuffer) {
-    size = file.byteLength;
-    sliceBlob = new Blob([file.slice(0, Math.min(65536, file.byteLength))]);
-  } else if (ArrayBuffer.isView(file)) {
-    size = file.byteLength;
-    sliceBlob = new Blob([file.buffer.slice(file.byteOffset, file.byteOffset + Math.min(65536, file.byteLength))]);
-  } else {
-    return null;
-  }
-
-  const buffer = await sliceBlob.arrayBuffer();
-  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("") + `_${size}`;
-}
-
 export class StorageManager {
   constructor() {
     this.db = null;
@@ -129,60 +100,12 @@ export class StorageManager {
 
     if (isPdf) {
       if (!bookData.pdfRulerConfig) {
-        bookData.pdfRulerConfig = { height: 32, stepSize: 32, autoHeight: true };
+        bookData.pdfRulerConfig = { height: 32, stepSize: 32 };
       } else {
         bookData.pdfRulerConfig = {
           height: Math.max(16, Math.min(120, Math.round(Number(bookData.pdfRulerConfig.height) || 32))),
-          stepSize: Math.max(10, Math.min(120, Math.round(Number(bookData.pdfRulerConfig.stepSize) || 32))),
-          autoHeight: bookData.pdfRulerConfig.autoHeight !== undefined ? bookData.pdfRulerConfig.autoHeight !== false : true
+          stepSize: Math.max(10, Math.min(120, Math.round(Number(bookData.pdfRulerConfig.stepSize) || 32)))
         };
-      }
-
-      // Výpočet a normalizace hashe pro PDF
-      if (!bookData.fileHash && !bookData.file_hash && rawBinary) {
-        try {
-          const h = await computeFileHash(rawBinary);
-          if (h) {
-            bookData.fileHash = h;
-            bookData.file_hash = h;
-          }
-        } catch (_) {}
-      } else if (bookData.fileHash && !bookData.file_hash) {
-        bookData.file_hash = bookData.fileHash;
-      } else if (bookData.file_hash && !bookData.fileHash) {
-        bookData.fileHash = bookData.file_hash;
-      }
-
-      const h = bookData.fileHash || bookData.file_hash;
-      if (h) {
-        const canonicalId = `pdf_${h}`;
-        if (!bookData.id || (bookData.id.startsWith("pdf_") && bookData.id !== canonicalId)) {
-          bookData.id = canonicalId;
-        }
-        if (!bookData.file_path) {
-          bookData.file_path = `books/${canonicalId}.pdf`;
-        }
-      }
-
-      // Kontrola duplicit v IndexedDB: pokud již existuje záznam se stejným ID nebo obsahem
-      const existing = await this.findBookByIdOrHash(bookData.id, h);
-      if (existing && existing.id !== bookData.id) {
-        console.log(`[StorageManager] Nalezen existující záznam PDF (${existing.id}) pro ukládanou knihu (${bookData.id}), slučuji...`);
-        const existingTime = existing.lastReadAt || existing.addedAt || 0;
-        const newTime = bookData.lastReadAt || bookData.addedAt || 0;
-        if (existingTime > newTime) {
-          bookData.currentChapterIndex = existing.currentChapterIndex;
-          bookData.currentPageIndex = existing.currentPageIndex;
-          bookData.currentPage = existing.currentPage;
-          bookData.scrollPercent = existing.scrollPercent;
-          bookData.progress = existing.progress;
-          bookData.progressPercent = existing.progressPercent;
-          bookData.lastReadAt = existing.lastReadAt;
-        }
-        bookData.addedAt = Math.min(existing.addedAt || Date.now(), bookData.addedAt || Date.now());
-        await this.deleteBookRaw(existing.id);
-        await this.migrateSessionsBookId(existing.id, bookData.id);
-        this.migrateLocalStorageProgress(existing.id, bookData.id);
       }
     }
     const db = await this.getDB();
@@ -194,44 +117,6 @@ export class StorageManager {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
-  }
-
-  async findBookByIdOrHash(id, fileHash) {
-    const books = await this.getAllBooks();
-    if (!books || books.length === 0) return null;
-
-    if (id) {
-      const byId = books.find(b => b.id === id);
-      if (byId) return byId;
-    }
-
-    if (fileHash) {
-      const byHash = books.find(b =>
-        b.fileHash === fileHash ||
-        b.file_hash === fileHash ||
-        b.id === `pdf_${fileHash}` ||
-        (b.id && b.id.includes(fileHash))
-      );
-      if (byHash) return byHash;
-
-      for (const b of books) {
-        if (b.isPdf && (b.data || b.fileData) && !b.fileHash) {
-          try {
-            const h = await computeFileHash(b.data || b.fileData);
-            if (h) {
-              b.fileHash = h;
-              b.file_hash = h;
-              if (h === fileHash) {
-                this.saveBookRaw(b).catch(() => {});
-                return b;
-              }
-            }
-          } catch (_) {}
-        }
-      }
-    }
-
-    return null;
   }
 
   async uploadBook(book) {
@@ -381,10 +266,7 @@ export class StorageManager {
     if (!book) return null;
     const height = Math.max(16, Math.min(120, Math.round(Number(config?.height) || 32)));
     const stepSize = Math.max(10, Math.min(120, Math.round(Number(config?.stepSize) || 32)));
-    const autoHeight = config?.autoHeight !== undefined
-      ? config.autoHeight !== false
-      : (book.pdfRulerConfig?.autoHeight !== undefined ? book.pdfRulerConfig.autoHeight !== false : true);
-    book.pdfRulerConfig = { height, stepSize, autoHeight };
+    book.pdfRulerConfig = { height, stepSize };
     await this.saveBook(book);
     return book.pdfRulerConfig;
   }
@@ -635,7 +517,6 @@ export class StorageManager {
         mode: "highlight", // highlight, focus
         height: 48, // px
         autoHeight: true, // Automatická výška podle velikosti řádku
-        pdfAutoHeight: true, // Automatická výška pravítka pro PDF (výchozí zapnuto)
         snapToLines: true, // Magnetická přilnavost k jednotlivým řádkům
         wordTracking: false, // Sledování jednotlivých slov
         color: "amber", // amber, cyan, emerald, lavender, slate
@@ -684,14 +565,6 @@ export class StorageManager {
         } else {
           merged.ruler.snapToLines = parsed.ruler?.snapToLines !== false;
         }
-        const savedPdfAuto = localStorage.getItem("rulerPdfAutoHeight");
-        if (savedPdfAuto !== null) {
-          merged.ruler.pdfAutoHeight = savedPdfAuto === "true";
-        } else if (parsed.ruler?.pdfAutoHeight !== undefined) {
-          merged.ruler.pdfAutoHeight = parsed.ruler.pdfAutoHeight !== false;
-        } else {
-          merged.ruler.pdfAutoHeight = true;
-        }
         merged.ruler.autoHeight = true;
         return merged;
       }
@@ -710,17 +583,6 @@ export class StorageManager {
       const settings = this.getSettings();
       if (settings?.ruler?.snapToLines !== undefined) {
         return settings.ruler.snapToLines !== false;
-      }
-      return defaultValue !== undefined ? defaultValue : true;
-    }
-    if (key === "rulerPdfAutoHeight") {
-      const stored = localStorage.getItem("rulerPdfAutoHeight");
-      if (stored !== null) {
-        return stored === "true";
-      }
-      const settings = this.getSettings();
-      if (settings?.ruler?.pdfAutoHeight !== undefined) {
-        return settings.ruler.pdfAutoHeight !== false;
       }
       return defaultValue !== undefined ? defaultValue : true;
     }
@@ -747,10 +609,6 @@ export class StorageManager {
         if (!settings.ruler) settings.ruler = {};
         settings.ruler.snapToLines = value !== false;
         this.saveSettings(settings);
-      } else if (key === "rulerPdfAutoHeight") {
-        if (!settings.ruler) settings.ruler = {};
-        settings.ruler.pdfAutoHeight = value !== false;
-        this.saveSettings(settings);
       } else if (settings && key in settings) {
         settings[key] = value;
         this.saveSettings(settings);
@@ -766,9 +624,6 @@ export class StorageManager {
         settings.ruler.snapToLines = settings.ruler.snapToLines !== false;
         settings.ruler.autoHeight = true;
         localStorage.setItem("rulerSnapToLines", String(settings.ruler.snapToLines));
-        if (settings.ruler.pdfAutoHeight !== undefined) {
-          localStorage.setItem("rulerPdfAutoHeight", String(settings.ruler.pdfAutoHeight !== false));
-        }
       }
       const isVisible = (settings.showProgressBar !== undefined ? settings.showProgressBar : settings.showFooterBar) !== false;
       settings.showFooterBar = isVisible;
@@ -1022,176 +877,6 @@ export class StorageManager {
 
     return true;
   }
-
-  async deleteBookRaw(id) {
-    if (!id) return;
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readwrite");
-      const store = tx.objectStore("books");
-      store.delete(id);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => reject(tx.error);
-    });
-  }
-
-  async saveBookRaw(bookData) {
-    if (!bookData) return null;
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readwrite");
-      const store = tx.objectStore("books");
-      store.put(bookData);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => reject(tx.error);
-    });
-  }
-
-  async migrateSessionsBookId(oldBookId, newBookId) {
-    if (!oldBookId || !newBookId || oldBookId === newBookId) return;
-    const db = await this.getDB();
-    const storeNames = [];
-    if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
-    if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
-    if (storeNames.length === 0) return;
-
-    return new Promise((resolve) => {
-      const tx = db.transaction(storeNames, "readwrite");
-      storeNames.forEach(storeName => {
-        const store = tx.objectStore(storeName);
-        if (store.indexNames.contains("bookId")) {
-          const index = store.index("bookId");
-          const req = index.openCursor(IDBKeyRange.only(oldBookId));
-          req.onsuccess = (e) => {
-            const cursor = e.target.result;
-            if (cursor) {
-              const val = { ...cursor.value, bookId: newBookId };
-              cursor.update(val);
-              cursor.continue();
-            }
-          };
-        }
-      });
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
-    });
-  }
-
-  migrateLocalStorageProgress(oldBookId, newBookId) {
-    if (!oldBookId || !newBookId || oldBookId === newBookId) return;
-    try {
-      const oldProgress = localStorage.getItem(`lumina_progress_${oldBookId}`);
-      if (oldProgress && !localStorage.getItem(`lumina_progress_${newBookId}`)) {
-        localStorage.setItem(`lumina_progress_${newBookId}`, oldProgress);
-      }
-      localStorage.removeItem(`lumina_progress_${oldBookId}`);
-    } catch (_) {}
-  }
-
-  /**
-   * Prohledá IndexedDB a sloučí/odstraní duplicitní záznamy PDF dokumentů.
-   * Ponechá záznam s nejaktuálnějším postupem čtení a statistikami.
-   * EPUB knihy zůstávají 100% nedotčeny.
-   */
-  async deduplicateBooks() {
-    const books = await this.getAllBooks();
-    if (!books || books.length === 0) return [];
-
-    const pdfGroups = new Map();
-
-    for (const b of books) {
-      if (!b.isPdf && b.format !== "pdf") continue;
-
-      let hash = b.fileHash || b.file_hash;
-      if (!hash && (b.data || b.fileData)) {
-        try {
-          hash = await computeFileHash(b.data || b.fileData);
-          if (hash) {
-            b.fileHash = hash;
-            b.file_hash = hash;
-          }
-        } catch (_) {}
-      }
-
-      const groupKey = hash
-        ? `hash_${hash}`
-        : `name_${(b.fileName || b.file_name || b.title || "").toLowerCase().trim()}`;
-
-      if (!pdfGroups.has(groupKey)) {
-        pdfGroups.set(groupKey, []);
-      }
-      pdfGroups.get(groupKey).push(b);
-    }
-
-    let hasChanges = false;
-
-    for (const [key, group] of pdfGroups.entries()) {
-      if (group.length === 1) {
-        const book = group[0];
-        const hash = book.fileHash || book.file_hash;
-        if (hash && book.id !== `pdf_${hash}`) {
-          const oldId = book.id;
-          const canonicalId = `pdf_${hash}`;
-          console.log(`[StorageManager] Normalizuji ID PDF knihy "${book.title}": ${oldId} -> ${canonicalId}`);
-          await this.deleteBookRaw(oldId);
-          book.id = canonicalId;
-          book.file_path = `books/${canonicalId}.pdf`;
-          await this.saveBookRaw(book);
-          await this.migrateSessionsBookId(oldId, canonicalId);
-          this.migrateLocalStorageProgress(oldId, canonicalId);
-          if (this.getLastActiveBookId() === oldId) {
-            this.setLastActiveBookId(canonicalId);
-          }
-          hasChanges = true;
-        }
-        continue;
-      }
-
-      // Duplikáty nalezeny! Seřadit podle nejnovějšího postupu čtení
-      console.log(`[StorageManager] Slučuji ${group.length} duplicitních záznamů PDF pro ${key}`);
-      group.sort((a, b) => {
-        const timeA = a.lastReadAt || a.addedAt || 0;
-        const timeB = b.lastReadAt || b.addedAt || 0;
-        if (timeB !== timeA) return timeB - timeA;
-        const progA = a.progressPercent || a.progress || 0;
-        const progB = b.progressPercent || b.progress || 0;
-        if (progB !== progA) return progB - progA;
-        return (b.currentPage || 0) - (a.currentPage || 0);
-      });
-
-      const winner = group[0];
-      const losers = group.slice(1);
-      const hash = winner.fileHash || winner.file_hash;
-      const canonicalId = hash ? `pdf_${hash}` : winner.id;
-
-      for (const loser of losers) {
-        console.log(`[StorageManager] Mazání duplikátu PDF: ${loser.id} (strana ${loser.currentPage || 1})`);
-        await this.deleteBookRaw(loser.id);
-        await this.migrateSessionsBookId(loser.id, canonicalId);
-        this.migrateLocalStorageProgress(loser.id, canonicalId);
-      }
-
-      if (winner.id !== canonicalId) {
-        const oldWinnerId = winner.id;
-        await this.deleteBookRaw(oldWinnerId);
-        winner.id = canonicalId;
-        await this.migrateSessionsBookId(oldWinnerId, canonicalId);
-        this.migrateLocalStorageProgress(oldWinnerId, canonicalId);
-      }
-
-      winner.file_path = `books/${canonicalId}.pdf`;
-      await this.saveBookRaw(winner);
-
-      const lastActive = this.getLastActiveBookId();
-      if (losers.some(l => l.id === lastActive) || lastActive === winner.id) {
-        this.setLastActiveBookId(canonicalId);
-      }
-
-      hasChanges = true;
-    }
-
-    return hasChanges ? await this.getAllBooks() : books;
-  }
 }
 
 export const storage = new StorageManager();
@@ -1206,8 +891,4 @@ export async function syncWithCloud(options) {
 
 export function normalizeBookProgress(book) {
   return storage.normalizeBookProgress(book);
-}
-
-export async function deduplicateBooks() {
-  return await storage.deduplicateBooks();
 }
