@@ -542,29 +542,6 @@ export class ReadingRuler {
     return this.pdfRulerHeight || 32;
   }
 
-  /**
-   * Ověří, zda řádek obsahuje skutečné tiskutelné znaky nebo validní multimédia.
-   */
-  isLineValid(line) {
-    if (!line) return false;
-    if (line.isMedia) {
-      return Number.isFinite(line.height) && line.height >= 20;
-    }
-    if (!line.hasText) return false;
-    if (!Number.isFinite(line.height) || line.height < 8) return false;
-    const w = (line.right != null && line.left != null) ? (line.right - line.left) : (line.width || 0);
-    if (w < 8) return false;
-
-    const el = line.element || line.el;
-    if (el) {
-      if (el.tagName === 'BR' || el.tagName === 'HR') return false;
-      const raw = el.textContent || '';
-      const clean = raw.replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '');
-      if (clean.length === 0) return false;
-    }
-    return true;
-  }
-
   isLastLine() {
     if (!this.enabled) return false;
     if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) return false;
@@ -573,10 +550,7 @@ export class ReadingRuler {
       return this.activeWordIndex >= this.cachedWords.length - 1;
     }
     if (this.cachedLines.length === 0) return false;
-    for (let i = this.activeLineIndex + 1; i < this.cachedLines.length; i++) {
-      if (this.isLineValid(this.cachedLines[i])) return false;
-    }
-    return true;
+    return this.activeLineIndex >= this.cachedLines.length - 1;
   }
 
   stepRuler(delta, force = false) {
@@ -2622,15 +2596,11 @@ export class ReadingRuler {
       };
 
       elements.forEach(el => {
-        // Explicitně přeskočit obrázky, svg, dělítka a prázdné elementy (kromě popisků figcaption)
-        if (el.tagName === 'IMG' || el.tagName === 'HR' || el.tagName === 'CANVAS' || el.tagName === 'BR') return;
+        // Explicitně přeskočit obrázky, svg a prázdné elementy (kromě popisků figcaption)
+        if (el.tagName === 'IMG' || el.tagName === 'HR' || el.tagName === 'CANVAS') return;
         if (el.closest('svg, picture')) return;
         if (el.closest('figure, .chapter-illustration') && !el.closest('figcaption')) return;
-
-        // Striktní validace tiskutelných znaků: přeskočit prázdné odstavce, mezery (&nbsp;) i skryté oddělovače
-        const rawText = el.textContent || '';
-        const cleanText = rawText.replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '');
-        if (cleanText.length === 0) return;
+        if (!el.textContent || el.textContent.trim().length === 0) return;
 
         // Pokud je element sám o sobě kontejner .textLayer, přeskočíme ho (zpracujeme jeho jednotlivé spany)
         if (el.classList.contains('textLayer')) return;
@@ -2640,11 +2610,6 @@ export class ReadingRuler {
 
         // Přeskočit vnořené inline elementy, pokud je již zachycen jejich nadřazený blok (s výjimkou spanů uvnitř .textLayer)
         if (el.tagName === 'SPAN' && !el.closest('.textLayer') && el.closest('p, div, h1, h2, h3, h4, h5, h6, li, blockquote')) return;
-
-        try {
-          const compStyle = window.getComputedStyle(el);
-          if (compStyle.display === 'none' || compStyle.visibility === 'hidden' || compStyle.visibility === 'collapse' || parseFloat(compStyle.opacity) === 0) return;
-        } catch (e) {}
 
         const isPdfEl = this.isPdfMode || !!el.closest('.textLayer');
         const textLayer = isPdfEl ? el.closest('.textLayer') : null;
@@ -2658,104 +2623,147 @@ export class ReadingRuler {
           return;
         }
 
-        const isBlock = /^(P|H[1-6]|LI|BLOCKQUOTE|DIV)$/.test(el.tagName);
-        const isMultiColumnBlock = isTwoColEarly && (rect.left < stageCenterX - 30 && rect.right > stageCenterX + 30);
-        const useBlockBounds = isBlock && !isMultiColumnBlock;
-        const blockLeft = useBlockBounds ? rect.left : null;
-        const blockRight = useBlockBounds ? rect.right : null;
+        // Bezpečně extrahovat nebo seskupit ohraničení řádků
+        try {
+          range.selectNodeContents(el);
+          const rects = range.getClientRects();
+          if (rects && rects.length > 0) {
+            const isBlock = /^(P|H[1-6]|LI|BLOCKQUOTE|DIV)$/.test(el.tagName);
+            const isMultiColumnBlock = isTwoColEarly && (rect.left < stageCenterX - 30 && rect.right > stageCenterX + 30);
+            const useBlockBounds = isBlock && !isMultiColumnBlock;
+            const blockLeft = useBlockBounds ? rect.left : null;
+            const blockRight = useBlockBounds ? rect.right : null;
+            for (let i = 0; i < rects.length; i++) {
+              const r = rects[i];
+              let rTop = r.top;
+              let rBottom = r.bottom;
+              let rHeight = r.height;
+              let lineLeft = r.left;
+              let lineRight = r.right;
 
-        const processRect = (r) => {
-          if (!r) return;
-          const origWidth = r.width != null ? r.width : (r.right - r.left);
-          // Odmítnout prázdné řádky / zlomy bez glyfů (WebKit <br> recty mají šířku ~0)
-          if (origWidth <= 2 || r.height < 4) return;
+              if (useBlockBounds) {
+                const sameLeftCol = !isTwoColEarly || !(r.left >= stageCenterX - 15 && blockLeft < stageCenterX - 15);
+                const sameRightCol = !isTwoColEarly || !(r.right <= stageCenterX + 15 && blockRight > stageCenterX + 15);
+                if (blockLeft != null && sameLeftCol) lineLeft = Math.min(lineLeft, blockLeft);
+                if (blockRight != null && sameRightCol) lineRight = Math.max(lineRight, blockRight);
+              }
 
-          let rTop = r.top;
-          let rBottom = r.bottom;
-          let rHeight = r.height;
-          let lineLeft = r.left;
-          let lineRight = r.right;
+              if (pdfTf) {
+                const relTop = r.top - pdfTf.textLayerRect.top;
+                const relBottom = r.bottom - pdfTf.textLayerRect.top;
+                rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+                rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+                rHeight = rBottom - rTop;
 
-          if (useBlockBounds) {
-            const sameLeftCol = !isTwoColEarly || !(r.left >= stageCenterX - 15 && blockLeft < stageCenterX - 15);
-            const sameRightCol = !isTwoColEarly || !(r.right <= stageCenterX + 15 && blockRight > stageCenterX + 15);
-            if (blockLeft != null && sameLeftCol) lineLeft = Math.min(lineLeft, blockLeft);
-            if (blockRight != null && sameRightCol) lineRight = Math.max(lineRight, blockRight);
+                const relLeft = lineLeft - pdfTf.textLayerRect.left;
+                const relRight = lineRight - pdfTf.textLayerRect.left;
+                lineLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+                lineRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+              }
+
+              const inStage = !hasValidStageBounds || isVertical || (
+                lineRight > stageLeft - 4 &&
+                lineLeft < stageRight + 4 &&
+                rBottom > stageTop + 2 &&
+                rTop < stageBottom - 2
+              );
+              if (inStage && rHeight >= 8 && (lineRight - lineLeft) >= 8) {
+                rawLines.push({
+                  el,
+                  element: el,
+                  top: rTop + vScrollTop,
+                  bottom: rBottom + vScrollTop,
+                  left: lineLeft,
+                  right: lineRight,
+                  height: rHeight,
+                  centerY: rTop + rHeight / 2 + vScrollTop,
+                  hasText: true,
+                  isPdfLine: !!isPdfEl
+                });
+              }
+            }
+          } else {
+            let rTop = rect.top;
+            let rBottom = rect.bottom;
+            let rHeight = rect.height;
+            let rLeft = rect.left;
+            let rRight = rect.right;
+
+            if (pdfTf) {
+              const relTop = rect.top - pdfTf.textLayerRect.top;
+              const relBottom = rect.bottom - pdfTf.textLayerRect.top;
+              rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+              rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+              rHeight = rBottom - rTop;
+
+              const relLeft = rect.left - pdfTf.textLayerRect.left;
+              const relRight = rect.right - pdfTf.textLayerRect.left;
+              rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+              rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+            }
+
+            const inStage = !hasValidStageBounds || isVertical || (
+              rRight > stageLeft - 4 &&
+              rLeft < stageRight + 4 &&
+              rBottom > stageTop + 2 &&
+              rTop < stageBottom - 2
+            );
+            if (inStage && rHeight >= 8 && (rRight - rLeft) >= 8) {
+              rawLines.push({
+                el,
+                element: el,
+                top: rTop + vScrollTop,
+                bottom: rBottom + vScrollTop,
+                left: rLeft,
+                right: rRight,
+                height: rHeight,
+                centerY: rTop + rHeight / 2 + vScrollTop,
+                hasText: true,
+                isPdfLine: !!isPdfEl
+              });
+            }
           }
+        } catch (e) {
+          let rTop = rect.top;
+          let rBottom = rect.bottom;
+          let rHeight = rect.height;
+          let rLeft = rect.left;
+          let rRight = rect.right;
 
           if (pdfTf) {
-            const relTop = r.top - pdfTf.textLayerRect.top;
-            const relBottom = r.bottom - pdfTf.textLayerRect.top;
+            const relTop = rect.top - pdfTf.textLayerRect.top;
+            const relBottom = rect.bottom - pdfTf.textLayerRect.top;
             rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
             rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
             rHeight = rBottom - rTop;
 
-            const relLeft = lineLeft - pdfTf.textLayerRect.left;
-            const relRight = lineRight - pdfTf.textLayerRect.left;
-            lineLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
-            lineRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+            const relLeft = rect.left - pdfTf.textLayerRect.left;
+            const relRight = rect.right - pdfTf.textLayerRect.left;
+            rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+            rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
           }
 
           const inStage = !hasValidStageBounds || isVertical || (
-            lineRight > stageLeft - 4 &&
-            lineLeft < stageRight + 4 &&
+            rRight > stageLeft - 4 &&
+            rLeft < stageRight + 4 &&
             rBottom > stageTop + 2 &&
             rTop < stageBottom - 2
           );
-          if (inStage && rHeight >= 8 && (lineRight - lineLeft) >= 8) {
+          if (inStage && rHeight >= 8 && (rRight - rLeft) >= 8) {
             rawLines.push({
               el,
               element: el,
               top: rTop + vScrollTop,
               bottom: rBottom + vScrollTop,
-              left: lineLeft,
-              right: lineRight,
+              left: rLeft,
+              right: rRight,
               height: rHeight,
               centerY: rTop + rHeight / 2 + vScrollTop,
               hasText: true,
               isPdfLine: !!isPdfEl
             });
           }
-        };
-
-        // Bezpečně extrahovat ohraničení řádků výhradně pro skutečné tiskutelné znaky
-        try {
-          if (el.querySelector('br')) {
-            // Pokud element obsahuje <br>, procházíme přímo listové textové uzly, aby <br> nevytvářelo fantomové recty v mezerách
-            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-              acceptNode(node) {
-                if (!node.textContent) return NodeFilter.FILTER_REJECT;
-                const clean = node.textContent.replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '');
-                return clean.length > 0 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-              }
-            });
-            let textNode;
-            while ((textNode = walker.nextNode())) {
-              try {
-                range.selectNodeContents(textNode);
-                const rClean = (range.toString() || '').replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '');
-                if (rClean.length === 0) continue;
-                const rects = range.getClientRects();
-                if (rects && rects.length > 0) {
-                  for (let i = 0; i < rects.length; i++) {
-                    processRect(rects[i]);
-                  }
-                }
-              } catch (e) {}
-            }
-          } else {
-            range.selectNodeContents(el);
-            const rClean = (range.toString() || '').replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '');
-            if (rClean.length > 0) {
-              const rects = range.getClientRects();
-              if (rects && rects.length > 0) {
-                for (let i = 0; i < rects.length; i++) {
-                  processRect(rects[i]);
-                }
-              }
-            }
-          }
-        } catch (e) {}
+        }
       });
 
       // Detekce samostatných obrázků, ilustrací a multimediálních elementů
@@ -2835,11 +2843,9 @@ export class ReadingRuler {
         try {
           const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
             acceptNode(node) {
-              if (!node.textContent) return NodeFilter.FILTER_REJECT;
-              const clean = node.textContent.replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '');
-              if (clean.length === 0) return NodeFilter.FILTER_REJECT;
+              if (!node.textContent || node.textContent.trim().length === 0) return NodeFilter.FILTER_REJECT;
               const parent = node.parentElement;
-              if (!parent || parent.closest('svg, figure, picture, .chapter-illustration, script, style') || parent.tagName === 'IMG' || parent.tagName === 'CANVAS' || parent.tagName === 'BR' || parent.tagName === 'HR') return NodeFilter.FILTER_REJECT;
+              if (!parent || parent.closest('svg, figure, picture, .chapter-illustration, script, style') || parent.tagName === 'IMG' || parent.tagName === 'CANVAS') return NodeFilter.FILTER_REJECT;
               return NodeFilter.FILTER_ACCEPT;
             }
           });
@@ -2848,13 +2854,9 @@ export class ReadingRuler {
           while ((textNode = walker.nextNode())) {
             try {
               range.selectNodeContents(textNode);
-              const rClean = (range.toString() || '').replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '');
-              if (rClean.length === 0) continue;
               const rects = range.getClientRects();
               for (let i = 0; i < rects.length; i++) {
                 const r = rects[i];
-                const origWidth = r.width != null ? r.width : (r.right - r.left);
-                if (origWidth <= 2 || r.height < 4) continue;
                 let rTop = r.top;
                 let rBottom = r.bottom;
                 let rHeight = r.height;
@@ -3008,25 +3010,7 @@ export class ReadingRuler {
         });
       }
 
-      this.cachedLines = clustered.filter(l => {
-        if (l.isMedia) {
-          return Number.isFinite(l.height) && l.height >= 20 && Number.isFinite(l.width || (l.right - l.left)) && (l.width || (l.right - l.left)) >= 20;
-        }
-        if (!l.hasText) return false;
-        if (!Number.isFinite(l.height) || l.height < 8) return false;
-        const w = (l.right != null && l.left != null) ? (l.right - l.left) : (l.width || 0);
-        if (w < 8) return false;
-
-        // Striktní ověření: element musí obsahovat skutečné tiskutelné znaky a nesmí být prázdným spacerem
-        const el = l.element || l.el;
-        if (el) {
-          if (el.tagName === 'BR' || el.tagName === 'HR') return false;
-          const raw = el.textContent || '';
-          const clean = raw.replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '');
-          if (clean.length === 0) return false;
-        }
-        return true;
-      });
+      this.cachedLines = clustered.filter(l => (l.hasText || l.isMedia) && l.height >= 8 && (l.right - l.left) >= 8);
       if (!isTwoCol || isVertical) {
         this.cachedLines.sort((a, b) => {
           if (Math.abs(a.top - b.top) > 2) {
@@ -5208,18 +5192,7 @@ export class ReadingRuler {
             this.applyPosition();
           }
         } else {
-          let targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
-          if (isBackward) {
-            while (targetLineIdx >= 0 && !this.isLineValid(this.cachedLines[targetLineIdx])) {
-              targetLineIdx--;
-            }
-            if (targetLineIdx < 0) targetLineIdx = 0;
-          } else {
-            while (targetLineIdx < this.cachedLines.length && !this.isLineValid(this.cachedLines[targetLineIdx])) {
-              targetLineIdx++;
-            }
-            if (targetLineIdx >= this.cachedLines.length) targetLineIdx = Math.max(0, this.cachedLines.length - 1);
-          }
+          const targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
           this.activeLineIndex = targetLineIdx;
 
           if (this.cachedWords.length > 0) {
@@ -5679,59 +5652,32 @@ export class ReadingRuler {
 
       if (this.cachedLines.length > 0) {
         let newIdx;
-        if (direction > 0) {
-          let target = this.activeLineIndex < 0 ? 0 : this.activeLineIndex + 1;
-          while (target < this.cachedLines.length && !this.isLineValid(this.cachedLines[target])) {
-            target++;
+        if (this.activeLineIndex < 0) {
+          if (direction > 0) {
+            newIdx = 0;
+          } else if (direction < 0) {
+            newIdx = this.cachedLines.length - 1;
+          } else {
+            newIdx = 0;
           }
-          if (target >= this.cachedLines.length) {
+        } else {
+          const curIdx = this.activeLineIndex;
+          if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
             if (this.onBoundary && !this.isVerticalMode()) {
               this.lockAdvancement(350);
               this.onBoundary(1);
               return;
             }
-            target = this.cachedLines.length - 1;
-            while (target >= 0 && !this.isLineValid(this.cachedLines[target])) {
-              target--;
-            }
-            if (target < 0) return;
-          }
-          newIdx = target;
-        } else if (direction < 0) {
-          let target = this.activeLineIndex < 0 ? this.cachedLines.length - 1 : this.activeLineIndex - 1;
-          while (target >= 0 && !this.isLineValid(this.cachedLines[target])) {
-            target--;
-          }
-          if (target < 0) {
+          } else if (direction < 0 && curIdx <= 0) {
             if (this.onBoundary && !this.isVerticalMode()) {
               this.onBoundary(-1);
               return;
             }
-            target = 0;
-            while (target < this.cachedLines.length && !this.isLineValid(this.cachedLines[target])) {
-              target++;
-            }
-            if (target >= this.cachedLines.length) return;
           }
-          newIdx = target;
-        } else {
-          newIdx = Math.max(0, Math.min(this.cachedLines.length - 1, this.activeLineIndex >= 0 ? this.activeLineIndex : 0));
-          if (!this.isLineValid(this.cachedLines[newIdx])) {
-            let forward = newIdx;
-            while (forward < this.cachedLines.length && !this.isLineValid(this.cachedLines[forward])) {
-              forward++;
-            }
-            if (forward < this.cachedLines.length) {
-              newIdx = forward;
-            } else {
-              let backward = newIdx;
-              while (backward >= 0 && !this.isLineValid(this.cachedLines[backward])) {
-                backward--;
-              }
-              if (backward >= 0) newIdx = backward;
-            }
-          }
+          newIdx = curIdx + direction;
         }
+
+        newIdx = Math.max(0, Math.min(this.cachedLines.length - 1, newIdx));
 
         const isVertical = this.isVerticalMode();
 

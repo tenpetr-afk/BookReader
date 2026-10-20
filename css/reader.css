@@ -371,9 +371,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   display: grid !important;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) !important;
-  column-gap: 0.75rem !important;
-  gap: 0.75rem !important;
+  grid-template-columns: 1fr auto 1fr !important;
   align-items: center !important;
   padding: 0 max(1.5rem, env(safe-area-inset-right, 0px)) max(0.5rem, env(safe-area-inset-bottom, 0px)) max(1.5rem, env(safe-area-inset-left, 0px)) !important;
   z-index: 50;
@@ -411,10 +409,8 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   user-select: none;
   -webkit-user-select: none;
   flex: none !important;
-  max-width: 100% !important;
+  max-width: none !important;
   min-width: 0 !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
 }
 
 /* 2. Střední část: globální číslo stránky v knize ("X z Y") */
@@ -435,82 +431,8 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   user-select: none;
   -webkit-user-select: none;
   flex: none !important;
-  max-width: 100% !important;
+  max-width: none !important;
   min-width: 0 !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-}
-
-/* Responzivní přepínání popisků v zápatí čtečky (Desktop vs. Mobilní kompaktní formát) */
-.label-mobile,
-.unit-mobile {
-  display: none !important;
-}
-
-.label-desktop,
-.unit-desktop {
-  display: inline !important;
-}
-
-.pages-count {
-  display: inline !important;
-}
-
-@media (max-width: 640px) {
-  .label-desktop,
-  .unit-desktop {
-    display: none !important;
-  }
-
-  .label-mobile,
-  .unit-mobile {
-    display: inline !important;
-  }
-
-  .paged-footer-bar,
-  #paged-footer-bar,
-  body.show-footer-bar .paged-footer-bar,
-  body.in-reader-view .paged-footer-bar {
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) !important;
-    gap: 0.5rem !important;
-    column-gap: 0.5rem !important;
-    padding-left: max(0.75rem, env(safe-area-inset-left, 0px)) !important;
-    padding-right: max(0.75rem, env(safe-area-inset-right, 0px)) !important;
-    padding-bottom: max(0.35rem, env(safe-area-inset-bottom, 0px)) !important;
-  }
-
-  #footer-remaining-chapter,
-  .footer-remaining-chapter,
-  .footer-left-item {
-    font-size: 0.78rem !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    white-space: nowrap !important;
-    line-height: 1.2 !important;
-    flex-shrink: 1 !important;
-  }
-
-  #footer-book-pages,
-  .footer-book-pages,
-  .footer-center-item {
-    font-size: 0.78rem !important;
-    min-width: 0 !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
-    line-height: 1.2 !important;
-    padding: 0 2px !important;
-    flex-shrink: 0 !important;
-  }
-
-  #footer-actions-group,
-  .footer-actions-group {
-    gap: 6px !important;
-    justify-self: end !important;
-    flex-shrink: 0 !important;
-  }
 }
 
 /* 3. Pravá akční skupina (Ruler Split-Pill + Menu FAB) */
