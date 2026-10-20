@@ -4922,6 +4922,31 @@ export class LuminaApp {
     }
   }
 
+  /**
+   * Responzivně aktualizuje zbývající počet stránek v zápatí čtečky.
+   * Na desktopu a tabletu (> 640px) renderuje plný text (např. "konec kapitoly za: X stran").
+   * Na mobilních zařízeních (<= 640px) renderuje kompaktní formát (např. "konec kap.: X st.").
+   * Používá HTML spany s responzivními třídami pro okamžitou změnu při změně velikosti okna i přímou podporu v DOM.
+   */
+  updateFooterRemainingChapter(count, isPdf = false) {
+    if (!this.dom.footerRemainingChapter) return;
+    const desktopLabel = isPdf ? "zbývá:" : "konec kapitoly za:";
+    const mobileLabel = isPdf ? "zbývá:" : "konec kap.:";
+    const desktopUnit = "stran";
+    const mobileUnit = "st.";
+
+    this.dom.footerRemainingChapter.innerHTML =
+      `<span class="label-desktop">${desktopLabel} </span>` +
+      `<span class="label-mobile">${mobileLabel} </span>` +
+      `<span class="pages-count">${count}</span> ` +
+      `<span class="unit-desktop">${desktopUnit}</span>` +
+      `<span class="unit-mobile">${mobileUnit}</span>`;
+
+    const fullTitle = isPdf ? `zbývá: ${count} stran` : `konec kapitoly za: ${count} stran`;
+    this.dom.footerRemainingChapter.title = fullTitle;
+    this.dom.footerRemainingChapter.setAttribute("aria-label", fullTitle);
+  }
+
   updatePageUI() {
     if (this.isPdfMode && this.pdfLoader) {
       const currBookPage = Math.max(1, Math.min(this.pdfLoader.numPages, this.pdfLoader.currentPage || 1));
@@ -4933,7 +4958,7 @@ export class LuminaApp {
         : String(currBookPage);
 
       if (this.dom.footerRemainingChapter) {
-        this.dom.footerRemainingChapter.textContent = `zbývá: ${remainingPages} stran`;
+        this.updateFooterRemainingChapter(remainingPages, true);
       }
       if (this.dom.chapterPageCounter) {
         this.dom.chapterPageCounter.textContent = `strana ${pageLabel} z ${totalBookPages}`;
@@ -5048,7 +5073,7 @@ export class LuminaApp {
         }
 
         if (this.dom.footerRemainingChapter) {
-          this.dom.footerRemainingChapter.textContent = `konec kapitoly za: ${remainingPagesInCh} stran`;
+          this.updateFooterRemainingChapter(remainingPagesInCh, false);
         }
         if (this.dom.chapterPageCounter) {
           this.dom.chapterPageCounter.textContent = `strana ${currPageInCh} z ${totalPagesInCh}`;
@@ -5087,9 +5112,9 @@ export class LuminaApp {
     const totalChapterPages = Math.max(1, this.totalPagesInChapter);
     const remainingChapterPages = Math.max(0, this.totalPagesInChapter - currChapterPage);
 
-    // 1. Informace o zbývajících stránkách v kapitole ("konec kapitoly za: X stran")
+    // 1. Informace o zbývajících stránkách v kapitole ("konec kapitoly za: X stran" / "konec kap.: X st.")
     if (this.dom.footerRemainingChapter) {
-      this.dom.footerRemainingChapter.textContent = `konec kapitoly za: ${remainingChapterPages} stran`;
+      this.updateFooterRemainingChapter(remainingChapterPages, false);
     }
 
     // Zpětná kompatibilita pro původní čítače
