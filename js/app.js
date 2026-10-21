@@ -1205,14 +1205,32 @@ export class LuminaApp {
         return;
       }
       if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
-        this.recomputeGlobalPagination();
-        this.recalcPages();
-        this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
+        if (this.isVerticalReadingMode()) {
+          this.updatePageUI();
+        } else {
+          this.recomputeGlobalPagination();
+          this.recalcPages();
+          this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
+        }
         this.renderScrubberTicks();
         this.ruler?.refreshLines();
         this.ruler?.applyPosition();
       }
     });
+
+    try {
+      const mobileMedia = window.matchMedia("(max-width: 600px)");
+      const handleMobileChange = () => {
+        if (this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
+          this.updatePageUI();
+        }
+      };
+      if (typeof mobileMedia.addEventListener === "function") {
+        mobileMedia.addEventListener("change", handleMobileChange);
+      } else if (typeof mobileMedia.addListener === "function") {
+        mobileMedia.addListener(handleMobileChange);
+      }
+    } catch (_) {}
 
     // Tracker události
     tracker.subscribe((event) => {
@@ -4922,6 +4940,29 @@ export class LuminaApp {
     }
   }
 
+  formatChapterRemaining(remainingPages, isPdf = false) {
+    const isMobile = typeof window !== "undefined" && (
+      window.innerWidth <= 600 ||
+      (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 600px)").matches)
+    );
+
+    let unit = "stran";
+    if (remainingPages === 1) {
+      unit = "stranu";
+    } else if (remainingPages >= 2 && remainingPages <= 4) {
+      unit = "strany";
+    }
+
+    if (isPdf) {
+      return isMobile ? `zbývá: ${remainingPages} st.` : `zbývá: ${remainingPages} ${unit}`;
+    }
+
+    if (isMobile) {
+      return `konec kap.: ${remainingPages} st.`;
+    }
+    return `konec kapitoly za: ${remainingPages} ${unit}`;
+  }
+
   updatePageUI() {
     if (this.isPdfMode && this.pdfLoader) {
       const currBookPage = Math.max(1, Math.min(this.pdfLoader.numPages, this.pdfLoader.currentPage || 1));
@@ -4933,7 +4974,7 @@ export class LuminaApp {
         : String(currBookPage);
 
       if (this.dom.footerRemainingChapter) {
-        this.dom.footerRemainingChapter.textContent = `zbývá: ${remainingPages} stran`;
+        this.dom.footerRemainingChapter.textContent = this.formatChapterRemaining(remainingPages, true);
       }
       if (this.dom.chapterPageCounter) {
         this.dom.chapterPageCounter.textContent = `strana ${pageLabel} z ${totalBookPages}`;
@@ -5048,7 +5089,7 @@ export class LuminaApp {
         }
 
         if (this.dom.footerRemainingChapter) {
-          this.dom.footerRemainingChapter.textContent = `konec kapitoly za: ${remainingPagesInCh} stran`;
+          this.dom.footerRemainingChapter.textContent = this.formatChapterRemaining(remainingPagesInCh);
         }
         if (this.dom.chapterPageCounter) {
           this.dom.chapterPageCounter.textContent = `strana ${currPageInCh} z ${totalPagesInCh}`;
@@ -5087,9 +5128,9 @@ export class LuminaApp {
     const totalChapterPages = Math.max(1, this.totalPagesInChapter);
     const remainingChapterPages = Math.max(0, this.totalPagesInChapter - currChapterPage);
 
-    // 1. Informace o zbývajících stránkách v kapitole ("konec kapitoly za: X stran")
+    // 1. Informace o zbývajících stránkách v kapitole ("konec kapitoly za: X stran" / "konec kap.: X st.")
     if (this.dom.footerRemainingChapter) {
-      this.dom.footerRemainingChapter.textContent = `konec kapitoly za: ${remainingChapterPages} stran`;
+      this.dom.footerRemainingChapter.textContent = this.formatChapterRemaining(remainingChapterPages);
     }
 
     // Zpětná kompatibilita pro původní čítače

@@ -3388,3 +3388,154 @@ html.mode-vertical.reader-chrome-hidden .footer-actions-group,
   opacity: 0 !important;
   pointer-events: none !important;
 }
+
+/* ==========================================================================
+   Responzivní přizpůsobení spodní lišty pro mobilní zařízení (<= 600px)
+   ========================================================================== */
+
+.footer-chapter-desktop {
+  display: inline;
+}
+
+.footer-chapter-mobile {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .footer-chapter-desktop {
+    display: none !important;
+  }
+
+  .footer-chapter-mobile {
+    display: inline !important;
+  }
+
+  .paged-footer-bar,
+  #paged-footer-bar,
+  body.in-reader-view .paged-footer-bar,
+  body.is-pdf-mode #paged-footer-bar,
+  body.is-pdf-mode .paged-footer-bar,
+  body.mode-vertical .paged-footer-bar,
+  body.mode-vertical #paged-footer-bar,
+  html.mode-vertical .paged-footer-bar,
+  html.mode-vertical #paged-footer-bar,
+  [data-reading-mode="vertical"] .paged-footer-bar,
+  [data-reading-mode="vertical"] #paged-footer-bar {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    gap: 0.25rem !important;
+    padding: 0 max(0.5rem, env(safe-area-inset-right, 0px)) max(0.35rem, env(safe-area-inset-bottom, 0px)) max(0.5rem, env(safe-area-inset-left, 0px)) !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    grid-template-columns: none !important;
+  }
+
+  #footer-remaining-chapter,
+  .footer-remaining-chapter,
+  .footer-left-item,
+  body.mode-vertical #footer-remaining-chapter,
+  body.mode-vertical .footer-remaining-chapter,
+  html.mode-vertical #footer-remaining-chapter,
+  html.mode-vertical .footer-remaining-chapter,
+  [data-reading-mode="vertical"] #footer-remaining-chapter,
+  [data-reading-mode="vertical"] .footer-remaining-chapter,
+  body.is-pdf-mode #footer-remaining-chapter,
+  body.is-pdf-mode .footer-remaining-chapter {
+    grid-column: auto !important;
+    justify-self: auto !important;
+    flex: 0 1 auto !important;
+    flex-shrink: 1 !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    white-space: nowrap !important;
+    font-size: 0.75rem !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    text-align: left !important;
+    line-height: 1.2 !important;
+  }
+
+  #footer-book-pages,
+  .footer-book-pages,
+  .footer-center-item,
+  body.mode-vertical #footer-book-pages,
+  body.mode-vertical .footer-book-pages,
+  html.mode-vertical #footer-book-pages,
+  html.mode-vertical .footer-book-pages,
+  [data-reading-mode="vertical"] #footer-book-pages,
+  [data-reading-mode="vertical"] .footer-book-pages,
+  body.is-pdf-mode #footer-book-pages,
+  body.is-pdf-mode .footer-book-pages {
+    grid-column: auto !important;
+    justify-self: auto !important;
+    position: static !important;
+    transform: none !important;
+    left: auto !important;
+    right: auto !important;
+    flex: 0 0 auto !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    font-size: 0.75rem !important;
+    text-align: center !important;
+    line-height: 1.2 !important;
+  }
+
+  #footer-actions-group,
+  .footer-actions-group,
+  body.mode-vertical .footer-actions-group,
+  body.mode-vertical #footer-actions-group,
+  html.mode-vertical .footer-actions-group,
+  html.mode-vertical #footer-actions-group,
+  [data-reading-mode="vertical"] .footer-actions-group,
+  [data-reading-mode="vertical"] #footer-actions-group {
+    grid-column: auto !important;
+    justify-self: auto !important;
+    flex: 0 0 auto !important;
+    flex-shrink: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+  }
+
+  body.mode-vertical #footer-remaining-chapter,
+  body.mode-vertical .footer-remaining-chapter,
+  html.mode-vertical #footer-remaining-chapter,
+  html.mode-vertical .footer-remaining-chapter,
+  [data-reading-mode="vertical"] #footer-remaining-chapter,
+  [data-reading-mode="vertical"] .footer-remaining-chapter,
+  body.mode-vertical #footer-book-pages,
+  body.mode-vertical .footer-book-pages,
+  html.mode-vertical #footer-book-pages,
+  html.mode-vertical .footer-book-pages,
+  [data-reading-mode="vertical"] #footer-book-pages,
+  [data-reading-mode="vertical"] .footer-book-pages,
+  body.mode-vertical .footer-actions-group,
+  body.mode-vertical #footer-actions-group,
+  html.mode-vertical .footer-actions-group,
+  html.mode-vertical #footer-actions-group,
+  [data-reading-mode="vertical"] .footer-actions-group,
+  [data-reading-mode="vertical"] #footer-actions-group {
+    height: 32px !important;
+    padding: 3px 8px !important;
+  }
+
+  .ruler-split-pill {
+    height: 32px !important;
+  }
+
+  .split-pill-btn {
+    padding: 0 6px !important;
+  }
+
+  .split-pill-btn.pill-dropdown {
+    padding: 0 4px !important;
+  }
+
+  .btn-reader-menu-fab {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+  }
+}
+
