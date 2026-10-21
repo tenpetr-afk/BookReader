@@ -1014,11 +1014,12 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
   left: 0;
   right: auto !important;
   max-width: 100%;
+  max-height: none !important;
   z-index: 20 !important;
   transition: opacity 0.2s ease, background-color 0.2s ease;
   display: none;
   pointer-events: none !important;
-  box-sizing: border-box;
+  box-sizing: border-box !important;
   overflow: visible !important;
   will-change: transform;
   contain: paint;
@@ -1211,6 +1212,8 @@ body.ruler-vertical-mode .ruler-focused-image {
   border: none !important;
   overflow: visible !important;
   box-shadow: none !important;
+  box-sizing: border-box !important;
+  max-height: none !important;
 }
 
 .reading-ruler.color-amber { --ruler-glow-rgb: 245, 158, 11; }

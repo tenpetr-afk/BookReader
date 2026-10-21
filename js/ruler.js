@@ -40,6 +40,7 @@ export class ReadingRuler {
     this.rulerPadding = RULER_PADDING;
     this.manualHeight = 48; // px (při vypnutém autoHeight)
     this.height = 36; // aktuální efektivní výška
+    this.uniformLineHeight = null; // Jednotná výška pravítka podle intra-paragraph pitch
     this.autoHeight = true; // Automatická výška podle velikosti řádku
     this.snapToLines = true; // Magnetická přilnavost k řádkům
     this.wordTracking = false; // Sledování jednotlivých slov
@@ -3286,64 +3287,103 @@ export class ReadingRuler {
         } else {
           this.height = this.pdfRulerHeight || this.manualHeight || 32;
         }
+        this.uniformLineHeight = this.height;
       } else {
         if (this.autoHeight) {
-          let baseH = 0;
-          if (this.cachedLines.length > 0) {
-            const sortedHeights = this.cachedLines.map(l => l.height).filter(h => h > 0).sort((a, b) => a - b);
-            if (sortedHeights.length > 0) {
-              baseH = sortedHeights[Math.floor(sortedHeights.length / 2)];
-            }
-          }
-          if (!baseH || baseH < 12) {
-            try {
-              const cs = content ? window.getComputedStyle(content) : null;
-              if (cs) {
-                const lh = parseFloat(cs.lineHeight);
-                const fs = parseFloat(cs.fontSize);
-                if (Number.isFinite(lh) && lh > 0) {
-                  baseH = lh;
-                } else if (Number.isFinite(fs) && fs > 0) {
-                  baseH = fs * 1.35;
-                }
-              }
-            } catch (e) {}
-          }
-          if (!baseH || baseH < 12) {
-            baseH = 24;
-          }
+          const getBlockElement = (line) => {
+            const el = line?.element || line?.el;
+            if (!el || typeof el.closest !== 'function') return el || null;
+            return el.closest('p, blockquote, li, h1, h2, h3, h4, h5, h6, div') || el;
+          };
 
-          // Vypočítat mediánovou vzdálenost mezi sousedními řádky (baseline pitch) ve stejném sloupci
-          let medianPitch = 0;
+          // 1. Shromáždit vzdálenosti (pitches) mezi po sobě jdoucími řádky ve stejném sloupci a stejném bloku
+          const intraBlockPitches = [];
           if (this.cachedLines.length > 1) {
-            const pitches = [];
             for (let i = 0; i < this.cachedLines.length - 1; i++) {
               const cur = this.cachedLines[i];
               const next = this.cachedLines[i + 1];
-              if (cur.columnIndex === next.columnIndex) {
-                const p = next.centerY - cur.centerY;
-                if (p > 8 && p < 150) pitches.push(p);
+              if (cur.columnIndex === next.columnIndex && !cur.isMedia && !next.isMedia) {
+                const blockA = getBlockElement(cur);
+                const blockB = getBlockElement(next);
+                if (blockA && blockB && blockA === blockB) {
+                  const p = next.centerY - cur.centerY;
+                  if (p > 5 && p < 200) {
+                    intraBlockPitches.push(p);
+                  }
+                }
               }
-            }
-            if (pitches.length > 0) {
-              pitches.sort((a, b) => a - b);
-              medianPitch = pitches[Math.floor(pitches.length / 2)];
             }
           }
 
-          // Dynamické vertikální odsazení: nesmí za žádných okolností přesáhnout mezilinkovou vzdálenost
-          let padV = 0;
-          if (medianPitch > 0) {
-            const maxAllowedH = Math.max(10, Math.floor(medianPitch - 2));
-            const availableGap = Math.max(0, maxAllowedH - baseH);
-            padV = Math.max(0, Math.min(2, Math.floor(availableGap / 2)));
-            this.height = Math.min(maxAllowedH, Math.round(baseH + (2 * padV)));
-          } else {
-            padV = Math.max(0, Math.min(2, Math.round(baseH * 0.05)));
-            this.height = Math.round(baseH + (2 * padV));
+          // Pokud v rámci stejného elementu není více řádků, shromáždit po sobě jdoucí řádky ve sloupci
+          let candidatePitches = intraBlockPitches;
+          if (candidatePitches.length === 0 && this.cachedLines.length > 1) {
+            const colPitches = [];
+            for (let i = 0; i < this.cachedLines.length - 1; i++) {
+              const cur = this.cachedLines[i];
+              const next = this.cachedLines[i + 1];
+              if (cur.columnIndex === next.columnIndex && !cur.isMedia && !next.isMedia) {
+                const p = next.centerY - cur.centerY;
+                if (p > 5 && p < 200) {
+                  colPitches.push(p);
+                }
+              }
+            }
+            candidatePitches = colPitches;
           }
+
+          let uniformLineHeight = 0;
+          if (candidatePitches.length > 0) {
+            candidatePitches.sort((a, b) => a - b);
+            const initialMedian = candidatePitches[Math.floor(candidatePitches.length / 2)];
+            // Filtrovat odchylky: 0.8 * medianPitch <= pitch <= 1.25 * medianPitch pro odfiltrování mezer mezi odstavci
+            const filteredPitches = candidatePitches.filter(p => p >= 0.8 * initialMedian && p <= 1.25 * initialMedian);
+            if (filteredPitches.length > 0) {
+              filteredPitches.sort((a, b) => a - b);
+              uniformLineHeight = Math.round(filteredPitches[Math.floor(filteredPitches.length / 2)]);
+            } else {
+              uniformLineHeight = Math.round(initialMedian);
+            }
+          }
+
+          // Fallback: Pokud výpočet pitch není dostupný (např. jednostránkové nebo jednořádkové stránky),
+          // použít computedFontSize * computedLineHeight
+          if (!uniformLineHeight || uniformLineHeight < 12) {
+            let fallbackH = 0;
+            try {
+              const sampleEl = content?.querySelector('p, div, li, blockquote') || content || document.getElementById('reader-content');
+              if (sampleEl) {
+                const cs = window.getComputedStyle(sampleEl);
+                const computedFontSize = parseFloat(cs.fontSize) || (this.app?.settings?.fontSize || 18);
+                const parsedLh = parseFloat(cs.lineHeight);
+                let computedLineHeight;
+                if (Number.isFinite(parsedLh) && parsedLh > 0) {
+                  if (parsedLh < 4) {
+                    computedLineHeight = parsedLh;
+                    fallbackH = computedFontSize * computedLineHeight;
+                  } else {
+                    fallbackH = parsedLh;
+                  }
+                } else {
+                  computedLineHeight = parseFloat(this.app?.settings?.lineHeight) || 1.6;
+                  fallbackH = computedFontSize * computedLineHeight;
+                }
+              }
+            } catch (e) {}
+
+            if (!fallbackH || fallbackH < 12) {
+              const fs = parseFloat(this.app?.settings?.fontSize) || 18;
+              const lh = parseFloat(this.app?.settings?.lineHeight) || 1.6;
+              fallbackH = fs * lh;
+            }
+            uniformLineHeight = Math.round(fallbackH || 28);
+          }
+
+          this.uniformLineHeight = uniformLineHeight;
+          this.height = uniformLineHeight;
         } else {
           this.height = this.manualHeight || 36;
+          this.uniformLineHeight = this.height;
         }
       }
 
@@ -4023,10 +4063,7 @@ export class ReadingRuler {
     let height;
     let targetY;
 
-    if (this.isPdfMode) {
-      const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + (this.pdfStandardLineHeight || 20) / 2);
-      const curTop = Number.isFinite(line.top) ? line.top : (line.centerY - (this.pdfStandardLineHeight || 20) / 2);
-
+    if (this.mode === "bottom-cover") {
       let hasNext = false;
       if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
         const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
@@ -4037,174 +4074,25 @@ export class ReadingRuler {
           }
         }
       }
+      const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + (this.uniformLineHeight || this.height) / 2);
 
-      let hasPrev = false;
-      if (prevLine && (prevLine.columnIndex === line.columnIndex || (line.columnIndex == null && prevLine.columnIndex == null))) {
-        const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-        const prevSlot = (prevLine.element || prevLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-        if (!lineSlot || !prevSlot || lineSlot === prevSlot) {
-          if (Number.isFinite(prevLine.bottom) && prevLine.bottom < (line.bottom ?? line.centerY)) {
-            hasPrev = true;
-          }
+      // Strict constant offset from active line bottom across all lines (both intra-paragraph and isolated lines)
+      let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
+      if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+        // Clamped only so it does not collide with next line's ascenders
+        const maxAllowedY = Math.round(nextLine.top - 3);
+        coverTargetY = Math.min(coverTargetY, maxAllowedY);
+        if (Number.isFinite(curBottom)) {
+          coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
         }
       }
 
-      if (this.mode === "bottom-cover") {
-        // Strict constant offset from active line bottom across all lines (both intra-paragraph and isolated lines)
-        let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
-        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          // Clamped only so it does not collide with next line's ascenders
-          const maxAllowedY = Math.round(nextLine.top - 3);
-          coverTargetY = Math.min(coverTargetY, maxAllowedY);
-          if (Number.isFinite(curBottom)) {
-            coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
-          }
-        }
-
-        targetY = coverTargetY;
-        height = 2;
-      } else {
-        // PDF mode (highlight, focus, underline styles):
-        let h;
-        let y;
-        if (this.pdfAutoHeight) {
-          // Standard compact height with tight padding (2-3px top and bottom)
-          const standardHeight = (Number.isFinite(this.pdfStandardLineHeight) && this.pdfStandardLineHeight > 0)
-            ? this.pdfStandardLineHeight
-            : (this.pdfRulerHeight || this.manualHeight || 32);
-
-          h = standardHeight;
-          if (Number.isFinite(line.height) && line.height > 0) {
-            // Ensure full glyph height (ascenders, descenders, diacritics) is covered
-            const lineGlyphHeight = Math.round(line.height + 6);
-            if (lineGlyphHeight > h) {
-              h = lineGlyphHeight;
-            }
-          }
-
-          // Center the ruler symmetrically over the line's center
-          y = Math.round(line.centerY - h / 2);
-
-          // Clamping to avoid overlapping physically close adjacent lines in dense paragraphs
-          if (hasPrev && prevLine && Number.isFinite(prevLine.bottom)) {
-            const minTop = Math.round(prevLine.bottom + 1);
-            if (y < minTop) {
-              y = minTop;
-            }
-          }
-          if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-            const maxBottom = Math.round(nextLine.top - 1);
-            if (y + h > maxBottom) {
-              h = Math.max(10, Math.round(maxBottom - y));
-            }
-          }
-        } else {
-          // Strictly use the manual slider value (this.pdfRulerHeight)
-          h = Number.isFinite(this.pdfRulerHeight) ? this.pdfRulerHeight : (this.manualHeight || 32);
-          y = Math.round(line.centerY - h / 2);
-        }
-
-        height = h;
-        targetY = y;
-      }
+      targetY = coverTargetY;
+      height = 2;
     } else {
-      // 100% UNTOUCHED EPUB LOGIC
-      height = Math.round((this.autoHeight && Number.isFinite(this.height) && this.height > 0)
-        ? this.height
-        : (this.manualHeight || 36));
-
-      let maxLineH = Infinity;
-      if (prevLine && prevLine.columnIndex === line.columnIndex) {
-        const distPrev = line.centerY - prevLine.centerY;
-        if (distPrev > 8) maxLineH = Math.min(maxLineH, distPrev - 2);
-      }
-      if (nextLine && nextLine.columnIndex === line.columnIndex) {
-        const distNext = nextLine.centerY - line.centerY;
-        if (distNext > 8) maxLineH = Math.min(maxLineH, distNext - 2);
-      }
-
-      if (Number.isFinite(maxLineH) && maxLineH > 10) {
-        height = Math.min(height, Math.round(maxLineH));
-      }
-
-      targetY = Math.round(line.centerY - height / 2);
-
-      if (prevLine && prevLine.columnIndex === line.columnIndex) {
-        if (prevLine.isMedia && Number.isFinite(prevLine.bottom)) {
-          const prevBottom = Math.round(prevLine.bottom + 10);
-          if (targetY <= prevBottom) {
-            targetY = Math.round(prevBottom + 1);
-          }
-        } else if (Number.isFinite(prevLine.centerY)) {
-          const midPrev = (prevLine.centerY + line.centerY) / 2;
-          if (targetY < Math.round(midPrev)) {
-            targetY = Math.round(midPrev);
-          }
-        }
-      }
-      if (nextLine && nextLine.columnIndex === line.columnIndex) {
-        if (nextLine.isMedia && Number.isFinite(nextLine.top)) {
-          const nextTop = Math.round(nextLine.top - 10);
-          if (targetY + height >= nextTop) {
-            height = Math.max(10, Math.round(nextTop - 1 - targetY));
-          }
-        } else if (Number.isFinite(nextLine.centerY)) {
-          const midNext = (line.centerY + nextLine.centerY) / 2;
-          if (targetY + height > Math.round(midNext)) {
-            height = Math.max(10, Math.round(midNext - targetY));
-          }
-        }
-      }
-
-      // Ensure targetY and height are strictly calculated from the bounding box of real characters on that line,
-      // ensuring line.bottom never exceeds the actual glyph bounds + padding.
-      if (this.mode !== "bottom-cover" && Number.isFinite(line.top) && Number.isFinite(line.bottom)) {
-        const padV = Math.max(2, Math.min(4, Math.round((line.height || 20) * 0.1)));
-        const maxAllowedBottom = Math.round(line.bottom + padV);
-        const minAllowedTop = Math.round(line.top - padV);
-
-        if (targetY + height > maxAllowedBottom) {
-          const overflow = (targetY + height) - maxAllowedBottom;
-          targetY = Math.max(minAllowedTop, targetY - overflow);
-          if (targetY + height > maxAllowedBottom) {
-            height = Math.max(10, maxAllowedBottom - targetY);
-          }
-        }
-        if (targetY < minAllowedTop) {
-          targetY = minAllowedTop;
-          if (targetY + height > maxAllowedBottom) {
-            height = Math.max(10, maxAllowedBottom - targetY);
-          }
-        }
-      }
-
-      if (this.mode === "bottom-cover") {
-        let hasNext = false;
-        if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
-          const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-          const nextSlot = (nextLine.element || nextLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-          if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
-            if (Number.isFinite(nextLine.top) && nextLine.top > (line.top ?? line.centerY)) {
-              hasNext = true;
-            }
-          }
-        }
-        const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + height / 2);
-
-        // Strict constant offset from active line bottom across all lines (both intra-paragraph and isolated lines)
-        let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
-        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          // Clamped only so it does not collide with next line's ascenders
-          const maxAllowedY = Math.round(nextLine.top - 3);
-          coverTargetY = Math.min(coverTargetY, maxAllowedY);
-          if (Number.isFinite(curBottom)) {
-            coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
-          }
-        }
-
-        targetY = coverTargetY;
-        height = 2;
-      }
+      const h = this.uniformLineHeight || this.height;
+      targetY = Math.round(line.centerY - h / 2);
+      height = h;
     }
 
     let left = line.columnLeft ?? line.left ?? (line.columnIndex === 1 ? this.column1Left : this.column0Left) ?? this.textBlockLeft ?? 0;
@@ -4260,6 +4148,7 @@ export class ReadingRuler {
   updateEffectiveHeight(lineHeight) {
     if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
       this.height = (!this.pdfAutoHeight ? this.pdfRulerHeight : this.pdfStandardLineHeight) || 32;
+      this.uniformLineHeight = this.height;
       this.applyPosition();
       return;
     }
@@ -4269,15 +4158,60 @@ export class ReadingRuler {
         : ((Number.isFinite(this.pdfStandardLineHeight) && this.pdfStandardLineHeight > 0)
             ? this.pdfStandardLineHeight
             : (this.pdfRulerHeight || 32));
+      this.uniformLineHeight = this.height;
       this.applyPosition();
       return;
     }
     if (this.autoHeight) {
-      const baseH = Math.round(lineHeight || 32);
-      const padV = Math.max(0, Math.min(2, Math.round(baseH * 0.05)));
-      this.height = Math.round(baseH + (2 * padV));
+      if (Number.isFinite(this.uniformLineHeight) && this.uniformLineHeight > 0) {
+        this.height = this.uniformLineHeight;
+      } else {
+        let baseH = Number.isFinite(lineHeight) && lineHeight > 0 ? Math.round(lineHeight) : 0;
+        let rawGlyphH = 0;
+        if (this.cachedLines && this.cachedLines.length > 0) {
+          const sortedHeights = this.cachedLines.map(l => l.height).filter(h => h > 0).sort((a, b) => a - b);
+          if (sortedHeights.length > 0) {
+            rawGlyphH = sortedHeights[Math.floor(sortedHeights.length / 2)];
+            if (!baseH) baseH = rawGlyphH;
+          }
+        }
+        if (!baseH || baseH < 14) {
+          try {
+            const content = document.querySelector('#reader-content, .page-content, .reader-text, article') || document.body;
+            const sampleEl = content?.querySelector('p, div, li, blockquote') || content;
+            if (sampleEl) {
+              const cs = window.getComputedStyle(sampleEl);
+              const fs = parseFloat(cs.fontSize);
+              const lh = parseFloat(cs.lineHeight);
+              if (Number.isFinite(lh) && lh > 0) {
+                baseH = Math.max(baseH, Math.round(lh));
+              } else if (Number.isFinite(fs) && fs > 0) {
+                baseH = Math.max(baseH, Math.round(fs * 1.5));
+              }
+            }
+          } catch (e) {}
+        }
+        if (!baseH || baseH < 14) {
+          baseH = 26;
+        }
+        const padV = Math.max(5, Math.round(baseH * 0.15));
+        const effectiveH = Math.round(baseH + (2 * padV));
+        const minRequiredH = Math.round((rawGlyphH > 0 ? rawGlyphH : baseH) + 10);
+        this.height = Math.max(effectiveH, minRequiredH);
+        this.uniformLineHeight = this.height;
+      }
+
+      if (this.snapToLines && this.cachedLines && this.cachedLines.length > 0 && this.activeLineIndex >= 0) {
+        const geom = this.computeLineGeometry(this.activeLineIndex);
+        if (geom && Number.isFinite(geom.height) && geom.height > 0) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+          this.currentY = geom.targetY;
+        }
+      }
     } else {
-      this.height = this.manualHeight;
+      this.height = this.manualHeight || 36;
+      this.uniformLineHeight = this.height;
     }
     this.applyPosition();
   }
@@ -4919,22 +4853,30 @@ export class ReadingRuler {
     const firstWordWidth = Math.round(w0.width + padX * 2);
     this.activeWordWidth = firstWordWidth;
 
-    if (this.autoHeight) {
-      const baseH = Math.round(w0.height);
-      this.height = Math.round(baseH + padY * 2);
-    }
-
-    if (this.mode === "bottom-cover" && w0 && w0.lineIndex != null && w0.lineIndex >= 0 && w0.lineIndex < this.cachedLines.length) {
+    if (w0 && w0.lineIndex != null && w0.lineIndex >= 0 && w0.lineIndex < this.cachedLines.length) {
       const geom = this.computeLineGeometry(w0.lineIndex);
-      if (geom && Number.isFinite(geom.targetY)) {
+      if (geom && Number.isFinite(geom.targetY) && Number.isFinite(geom.height)) {
+        if (this.autoHeight && this.mode !== "bottom-cover") {
+          this.height = geom.height;
+        }
         this.targetY = geom.targetY;
         this.currentY = this.targetY;
       } else {
-        this.targetY = Math.round(w0.top - padY);
+        if (this.autoHeight) {
+          const baseH = Math.round(w0.height || 20);
+          const padV = Math.max(5, Math.round(baseH * 0.15));
+          this.height = Math.round(baseH + padV * 2);
+        }
+        this.targetY = Math.round(w0.top - 5);
         this.currentY = this.targetY;
       }
     } else {
-      this.targetY = Math.round(w0.top - padY);
+      if (this.autoHeight) {
+        const baseH = Math.round(w0.height || 20);
+        const padV = Math.max(5, Math.round(baseH * 0.15));
+        this.height = Math.round(baseH + padV * 2);
+      }
+      this.targetY = Math.round(w0.top - 5);
       this.currentY = this.targetY;
     }
 
@@ -6503,7 +6445,7 @@ export class ReadingRuler {
           this.currentY = y;
         }
       }
-    } else if (this.isPdfMode && this.snapToLines && !this.isDraggingRuler && !this.isDragging) {
+    } else if (this.snapToLines && !this.isDraggingRuler && !this.isDragging) {
       const geom = this.computeLineGeometry(this.activeLineIndex);
       if (geom && Number.isFinite(geom.targetY)) {
         y = geom.targetY;
@@ -6513,13 +6455,6 @@ export class ReadingRuler {
           h = geom.height;
           this.height = h;
         }
-      }
-    } else if (this.mode === "bottom-cover" && this.snapToLines && !this.isDraggingRuler && !this.isDragging) {
-      const geom = this.computeLineGeometry(this.activeLineIndex);
-      if (geom && Number.isFinite(geom.targetY)) {
-        y = geom.targetY;
-        this.targetY = geom.targetY;
-        this.currentY = geom.targetY;
       }
     }
 
@@ -7807,6 +7742,7 @@ export class ReadingRuler {
     this.manualHeight = Math.max(16, Math.min(120, parseInt(px, 10) || 48));
     if (!this.autoHeight) {
       this.height = this.manualHeight;
+      this.uniformLineHeight = this.height;
       if (this.snapToLines && this.cachedLines.length > 0 && this.activeLineIndex >= 0) {
         const geom = this.computeLineGeometry(this.activeLineIndex);
         if (geom) {
