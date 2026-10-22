@@ -21,6 +21,8 @@ export class LuminaApp {
     this.currentParser = null;
     this.pdfLoader = null;
     this.isPdfMode = false;
+    this.isImageOnlyPdf = false;
+    this._savedRulerSettings = null;
     this.currentChapterIndex = 0;
     this.currentPageIndex = 0;
     this.totalPagesInChapter = 1;
@@ -185,6 +187,9 @@ export class LuminaApp {
       pillScrubberContainer: document.getElementById("pill-scrubber-container"),
       pillScrubberFill: document.getElementById("pill-scrubber-fill"),
       pillScrubberLabel: document.getElementById("pill-scrubber-label"),
+      pillScrubberPrefix: document.getElementById("pill-scrubber-prefix"),
+      pillScrubberSeparator: document.getElementById("pill-scrubber-separator"),
+      pillScrubberPercent: document.getElementById("pill-scrubber-percent"),
       pillScrubberTooltip: document.getElementById("pill-scrubber-tooltip"),
       pillScrubberTooltipText: document.getElementById("pill-scrubber-tooltip-text"),
       btnMenuSearch: document.getElementById("btn-menu-search"),
@@ -290,6 +295,13 @@ export class LuminaApp {
       popoverRulerFollowSelect: document.getElementById("popover-ruler-follow-select"),
 
       // Sekce pravítka pro kontextovou viditelnost
+      popoverFollowSection: document.getElementById("popover-follow-section"),
+      settingsFollowSection: document.getElementById("settings-follow-section"),
+      popoverSnapLinesSection: document.getElementById("popover-snap-lines-section"),
+      drawerSnapLinesSection: document.getElementById("drawer-snap-lines-section"),
+      popoverRulerModeSection: document.getElementById("popover-ruler-mode-section"),
+      drawerWordTrackingSection: document.getElementById("drawer-word-tracking-section"),
+      popoverModeSegmented: document.getElementById("popover-mode-segmented"),
       popoverRulerColorSection: document.getElementById("popover-ruler-color-section"),
       popoverRulerOpacitySection: document.getElementById("popover-ruler-opacity-section"),
       drawerRulerColorSection: document.getElementById("drawer-ruler-color-section"),
@@ -298,11 +310,13 @@ export class LuminaApp {
       // Kalibrace pravítka pro PDF (popover & drawer)
       popoverPdfRulerSection: document.getElementById("popover-pdf-ruler-section"),
       popoverPdfAutoHeight: document.getElementById("popover-pdf-auto-height"),
+      popoverPdfAutoHeightRow: document.getElementById("popover-pdf-auto-height-row"),
       popoverPdfHeightContainer: document.getElementById("popover-pdf-height-container"),
       popoverSliderPdfHeight: document.getElementById("popover-slider-pdf-height"),
       popoverValPdfHeight: document.getElementById("popover-val-pdf-height"),
       drawerPdfRulerSection: document.getElementById("drawer-pdf-ruler-section"),
       settingPdfAutoHeight: document.getElementById("setting-pdf-auto-height"),
+      drawerPdfAutoHeightRow: document.getElementById("drawer-pdf-auto-height-row"),
       drawerPdfHeightContainer: document.getElementById("drawer-pdf-height-container"),
       sliderPdfRulerHeight: document.getElementById("slider-pdf-ruler-height"),
       valPdfRulerHeight: document.getElementById("val-pdf-ruler-height"),
@@ -1592,7 +1606,7 @@ export class LuminaApp {
     }
 
     const _handleOutsideTap = (e) => {
-      if (this.isPillScrubbing) return;
+      if (this.isPillScrubbing || this.wasPillScrubbing) return;
       const target = (e.touches && e.touches[0]?.target) || (e.changedTouches && e.changedTouches[0]?.target) || e.target;
       if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
         const insideRuler = (this.dom.rulerSplitPill && this.dom.rulerSplitPill.contains(target)) ||
@@ -1616,6 +1630,7 @@ export class LuminaApp {
     const popoverSnapToggle = this.dom.popoverRulerSnapToggle || document.getElementById("popover-ruler-snap") || document.getElementById("popover-ruler-snap-toggle");
     if (popoverSnapToggle) {
       const handlePopoverSnap = (e) => {
+        if (this.isPdfMode && this.isImageOnlyPdf) return;
         if (e) {
           e.stopPropagation();
           if (e.type === "click" && e.target && e.target.tagName !== "INPUT") {
@@ -1651,6 +1666,7 @@ export class LuminaApp {
       this.dom.popoverModeWord.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (this.isPdfMode && this.isImageOnlyPdf) return;
         this.setWordTracking(true);
       });
     }
@@ -1660,6 +1676,7 @@ export class LuminaApp {
         btn.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
+          if (this.isPdfMode && this.isImageOnlyPdf) return;
           const isWord = btn.dataset.rulerModeType === "word";
           this.setWordTracking(isWord);
         });
@@ -1996,6 +2013,7 @@ export class LuminaApp {
     const drawerSnapToggle = this.dom.rulerSnapSetting || document.getElementById("setting-ruler-snap") || document.getElementById("ruler-snap-setting");
     if (drawerSnapToggle) {
       const handleDrawerSnap = (e) => {
+        if (this.isPdfMode && this.isImageOnlyPdf) return;
         if (e) {
           e.stopPropagation();
           if (e.type === "click" && e.target && e.target.tagName !== "INPUT") {
@@ -2112,6 +2130,7 @@ export class LuminaApp {
           e.stopPropagation();
           const val = btn.dataset.rulerFollow;
           if (!val) return;
+          if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") return;
           this.settings.ruler.followMode = val;
           this.ruler.setFollowMode(val);
           this.applySettings();
@@ -2388,6 +2407,35 @@ export class LuminaApp {
         }
 
         // 2. KROKOVÁNÍ PRAVÍTKA: Mezerník a Šipka dolů (vpřed +1), Šipka nahoru (vzad -1)
+        // Pokud je aktivní image-only PDF, krokování řádků nefunguje (nejsou textové linky); použije se běžný posun/stránkování
+        if (this.isPdfMode && this.isImageOnlyPdf) {
+          if (e.code === "Space" || e.key === " " || e.key === "Spacebar" || e.key === "ArrowDown") {
+            e.preventDefault();
+            if (this.isVerticalReadingMode()) {
+              const vp = this.dom.pagedViewport || document.getElementById("paged-viewport");
+              if (vp) {
+                const stride = (e.key === "ArrowDown") ? 80 : Math.round(vp.clientHeight * 0.85);
+                vp.scrollBy({ top: stride, behavior: "smooth" });
+              }
+            } else {
+              this.nextPage();
+            }
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            if (this.isVerticalReadingMode()) {
+              const vp = this.dom.pagedViewport || document.getElementById("paged-viewport");
+              if (vp) {
+                vp.scrollBy({ top: -80, behavior: "smooth" });
+              }
+            } else {
+              this.prevPage();
+            }
+            return;
+          }
+        }
+
         // Pokud pravítko není zapnuto, automaticky jej aktivujeme a ihned posuneme
         if (e.code === "Space" || e.key === " " || e.key === "Spacebar" || e.key === "ArrowDown") {
           if (this.isVerticalReadingMode()) {
@@ -2522,6 +2570,9 @@ export class LuminaApp {
   }
 
   setWordTracking(isWordMode) {
+    if (this.isPdfMode && this.isImageOnlyPdf) {
+      isWordMode = false;
+    }
     if (!this.settings.ruler) this.settings.ruler = {};
     const enabled = !!isWordMode;
     this.settings.ruler.wordTracking = enabled;
@@ -2645,8 +2696,71 @@ export class LuminaApp {
     this.updatePdfAutoHeightUI(autoHeight, height);
   }
 
+  /**
+   * Nastaví stav aplikace a pravítka pro obrazový/skenovaný PDF dokument (bez textové vrstvy).
+   * @param {boolean} isImageOnly
+   */
+  setImageOnlyPdf(isImageOnly) {
+    const flag = !!isImageOnly;
+    this.isImageOnlyPdf = flag;
+
+    if (this.currentBook && (this.currentBook.isPdf || this.currentBook.format === "pdf")) {
+      this.currentBook.isImageOnlyPdf = flag;
+      try {
+        storage.saveBook(this.currentBook);
+      } catch (e) {}
+    }
+
+    if (this.ruler) {
+      this.ruler.setImageOnlyPdf(flag);
+    }
+
+    if (flag) {
+      if (!this._savedRulerSettings) {
+        this._savedRulerSettings = {
+          snapToLines: this.settings.ruler.snapToLines !== false,
+          pdfAutoHeight: this.settings.ruler.pdfAutoHeight !== false,
+          followMode: this.settings.ruler.followMode || "mouse",
+          wordTracking: !!this.settings.ruler.wordTracking
+        };
+      }
+
+      this.settings.ruler.snapToLines = false;
+      this.settings.ruler.pdfAutoHeight = false;
+      this.settings.ruler.wordTracking = false;
+      this.settings.ruler.followMode = "mouse";
+    } else {
+      if (this._savedRulerSettings) {
+        this.settings.ruler.snapToLines = this._savedRulerSettings.snapToLines;
+        this.settings.ruler.pdfAutoHeight = this._savedRulerSettings.pdfAutoHeight;
+        this.settings.ruler.followMode = this._savedRulerSettings.followMode;
+        this.settings.ruler.wordTracking = this._savedRulerSettings.wordTracking;
+        this._savedRulerSettings = null;
+      }
+    }
+
+    const snapVal = this.settings.ruler.snapToLines !== false;
+    if (this.dom.rulerSnapSetting) this.setSwitchState(this.dom.rulerSnapSetting, snapVal);
+    if (this.dom.popoverRulerSnapToggle) this.setSwitchState(this.dom.popoverRulerSnapToggle, snapVal);
+    document.querySelectorAll("#setting-ruler-snap, #ruler-snap-setting, #popover-ruler-snap, #popover-ruler-snap-toggle, [data-ruler-snap='toggle']").forEach(el => this.setSwitchState(el, snapVal));
+    if (this.dom.rulerWordTrackingSetting) this.setSwitchState(this.dom.rulerWordTrackingSetting, !!this.settings.ruler.wordTracking);
+
+    if (this.dom.rulerFollowButtons) {
+      this.dom.rulerFollowButtons.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.rulerFollow === this.settings.ruler.followMode);
+      });
+    }
+
+    const currentHeight = this.currentBook?.pdfRulerConfig?.height || this.ruler?.getPdfRulerHeight?.() || 32;
+    this.updatePdfAutoHeightUI(flag ? false : (this.settings.ruler.pdfAutoHeight !== false), currentHeight);
+    this.updateRulerToggleButtonUI();
+    this.updateTouchZonesUI();
+    this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+  }
+
   updatePdfAutoHeightUI(autoHeight, height = null) {
-    const isAuto = autoHeight !== false;
+    const isImageOnly = this.isPdfMode && !!this.isImageOnlyPdf;
+    const isAuto = !isImageOnly && (autoHeight !== false);
     const currentHeight = height !== null
       ? Math.max(16, Math.min(120, Math.round(Number(height) || 32)))
       : (this.currentBook?.pdfRulerConfig?.height || this.ruler?.getPdfRulerHeight?.() || 32);
@@ -2686,6 +2800,8 @@ export class LuminaApp {
   }
 
   async togglePdfAutoHeight(forcedValue = null) {
+    if (this.isPdfMode && this.isImageOnlyPdf) return;
+
     const currentVal = this.ruler?.pdfAutoHeight !== undefined
       ? this.ruler.pdfAutoHeight
       : (this.settings.ruler.pdfAutoHeight !== false);
@@ -2730,6 +2846,7 @@ export class LuminaApp {
   updateRulerSettingsVisibility(style = null, isPdf = null) {
     const activeStyle = style || this.settings?.ruler?.mode || this.ruler?.mode || "highlight";
     const activePdf = isPdf !== null && isPdf !== undefined ? !!isPdf : !!this.isPdfMode;
+    const isImageOnly = activePdf && !!this.isImageOnlyPdf;
 
     // 1. Color section: skryto pro režim focus (Zaostření)
     const hideColor = activeStyle === "focus";
@@ -2755,18 +2872,84 @@ export class LuminaApp {
     const drawerPdf = this.dom.drawerPdfRulerSection || document.getElementById("drawer-pdf-ruler-section");
     if (drawerPdf) drawerPdf.classList.toggle("is-hidden", hidePdfHeight);
 
-    // 4. V PDF režimu skrýt volbu sledování slov v popoveru a draweru
-    if (this.dom.popoverModeWord) {
-      const modeSegmented = this.dom.popoverModeWord.closest(".popover-section");
-      if (modeSegmented) {
-        modeSegmented.classList.toggle("is-hidden", activePdf);
+    // 4. Automatická výška v PDF: při image-only PDF skrýt přepínač auto-výšky
+    const popoverAutoHeightRow = this.dom.popoverPdfAutoHeightRow || document.getElementById("popover-pdf-auto-height-row");
+    if (popoverAutoHeightRow) popoverAutoHeightRow.classList.toggle("is-hidden", isImageOnly);
+
+    const drawerAutoHeightRow = this.dom.drawerPdfAutoHeightRow || document.getElementById("drawer-pdf-auto-height-row");
+    if (drawerAutoHeightRow) drawerAutoHeightRow.classList.toggle("is-hidden", isImageOnly);
+
+    // Manuální slider výšky: při image-only PDF je VŽDY zobrazen a aktivní (nezávisle na auto-height přepínači)
+    if (isImageOnly) {
+      if (this.dom.popoverPdfHeightContainer) {
+        this.dom.popoverPdfHeightContainer.style.opacity = "1";
+        this.dom.popoverPdfHeightContainer.style.pointerEvents = "auto";
+      }
+      if (this.dom.popoverSliderPdfHeight) {
+        this.dom.popoverSliderPdfHeight.disabled = false;
+      }
+      if (this.dom.drawerPdfHeightContainer) {
+        this.dom.drawerPdfHeightContainer.style.opacity = "1";
+        this.dom.drawerPdfHeightContainer.style.pointerEvents = "auto";
+      }
+      if (this.dom.sliderPdfRulerHeight) {
+        this.dom.sliderPdfRulerHeight.disabled = false;
       }
     }
-    if (this.dom.rulerWordTrackingSetting) {
-      const wordTrackingRow = this.dom.rulerWordTrackingSetting.closest(".toggle-row")?.parentElement;
-      if (wordTrackingRow) {
-        wordTrackingRow.style.display = activePdf ? "none" : "";
+
+    // 5. Magnetické přichytávání k řádkům: skrýt pro image-only PDF v popoveru i draweru
+    const popoverSnap = this.dom.popoverSnapLinesSection || document.getElementById("popover-snap-lines-section");
+    if (popoverSnap) popoverSnap.classList.toggle("is-hidden", isImageOnly);
+
+    const drawerSnap = this.dom.drawerSnapLinesSection || document.getElementById("drawer-snap-lines-section");
+    if (drawerSnap) drawerSnap.classList.toggle("is-hidden", isImageOnly);
+
+    // 6. Režim zvýraznění: Slova (Word tracking): skrýt nebo zablokovat v popoveru i draweru
+    const popoverModeWord = this.dom.popoverModeWord || document.getElementById("popover-mode-word");
+    const popoverModeLine = this.dom.popoverModeLine || document.getElementById("popover-mode-line");
+    const popoverModeSegmented = this.dom.popoverModeSegmented || document.getElementById("popover-mode-segmented");
+    if (popoverModeWord) {
+      popoverModeWord.classList.toggle("is-hidden", isImageOnly);
+      popoverModeWord.disabled = isImageOnly;
+      if (isImageOnly) {
+        popoverModeWord.classList.remove("active");
+        if (popoverModeLine) popoverModeLine.classList.add("active");
+      } else {
+        popoverModeWord.classList.toggle("active", !!this.settings.ruler?.wordTracking);
+        if (popoverModeLine) popoverModeLine.classList.toggle("active", !this.settings.ruler?.wordTracking);
       }
+    }
+    if (popoverModeSegmented) {
+      popoverModeSegmented.classList.toggle("is-single-segment", isImageOnly);
+    }
+
+    const drawerWordTracking = this.dom.drawerWordTrackingSection || document.getElementById("drawer-word-tracking-section");
+    if (drawerWordTracking) {
+      drawerWordTracking.classList.toggle("is-hidden", isImageOnly);
+    }
+
+    // 7. Způsob pohybu: Klávesové šipky: skrýt/zakázat pro image-only PDF, ponechat pouze kurzor myši
+    const popoverFollowSection = this.dom.popoverFollowSection || document.getElementById("popover-follow-section");
+    const settingsFollowSection = this.dom.settingsFollowSection || document.getElementById("settings-follow-section");
+    if (popoverFollowSection) popoverFollowSection.classList.toggle("is-image-only", isImageOnly);
+    if (settingsFollowSection) settingsFollowSection.classList.toggle("is-image-only", isImageOnly);
+
+    document.querySelectorAll("[data-ruler-follow='keyboard']").forEach(btn => {
+      btn.classList.toggle("is-hidden", isImageOnly);
+      btn.disabled = isImageOnly;
+      if (isImageOnly) {
+        btn.classList.remove("active");
+      }
+    });
+
+    if (isImageOnly) {
+      document.querySelectorAll("[data-ruler-follow='mouse']").forEach(btn => {
+        btn.classList.add("active");
+      });
+    } else {
+      document.querySelectorAll("[data-ruler-follow]").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.rulerFollow === this.settings.ruler.followMode);
+      });
     }
   }
 
@@ -2850,6 +3033,7 @@ export class LuminaApp {
           }
 
           const pdfRulerConfig = { height: 32, autoHeight: true };
+          const isImageOnly = !!this.pdfLoader.isImageOnlyPdf;
           const bookData = {
             id: bookId,
             fileHash,
@@ -2862,6 +3046,7 @@ export class LuminaApp {
             file_path: `books/${bookId}.pdf`,
             format: "pdf",
             isPdf: true,
+            isImageOnlyPdf: isImageOnly,
             language: "cs",
             description: `PDF dokument (${this.pdfLoader.numPages} stran)`,
             coverDataUrl,
@@ -2885,6 +3070,7 @@ export class LuminaApp {
           this.currentBook = bookData;
           storage.setLastActiveBookId(bookId);
 
+          this.setImageOnlyPdf(isImageOnly);
           if (this.ruler) this.ruler.setPdfMode(true, pdfRulerConfig);
           this.syncPdfRulerUI(pdfRulerConfig);
           this.setPdfRulerUIVisibility(true);
@@ -2908,6 +3094,7 @@ export class LuminaApp {
       this.isPdfMode = false;
       document.body.classList.remove("is-pdf-mode");
       if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-pdf-mode");
+      this.setImageOnlyPdf(false);
       if (this.ruler) this.ruler.setPdfMode(false);
       this.setPdfRulerUIVisibility(false);
       if (this.pdfLoader) {
@@ -3290,6 +3477,8 @@ export class LuminaApp {
         this.isPdfMode = true;
         document.body.classList.add("is-pdf-mode");
         if (this.dom.readerContent) this.dom.readerContent.classList.add("is-pdf-mode");
+        const isKnownImageOnly = book.isImageOnlyPdf === true;
+        this.setImageOnlyPdf(isKnownImageOnly);
         const pdfConfig = book.pdfRulerConfig || {
           height: 32,
           autoHeight: this.settings.ruler.pdfAutoHeight !== false
@@ -3327,6 +3516,7 @@ export class LuminaApp {
           fileBuffer = rawPdf;
         }
         await this.pdfLoader.load(fileBuffer, targetPage);
+        this.setImageOnlyPdf(this.pdfLoader.isImageOnlyPdf);
         if (targetPage > 1 && this.pdfLoader.currentPage !== targetPage) {
           await this.pdfLoader.goToPage(targetPage);
         }
@@ -3341,6 +3531,7 @@ export class LuminaApp {
       this.isPdfMode = false;
       document.body.classList.remove("is-pdf-mode");
       if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-pdf-mode");
+      this.setImageOnlyPdf(false);
       if (this.ruler) this.ruler.setPdfMode(false);
       this.setPdfRulerUIVisibility(false);
 
@@ -5280,6 +5471,7 @@ export class LuminaApp {
     this.dom.viewLibrary.classList.remove("is-hidden");
     this.ruler.setEnabled(false);
     if (this.ruler) this.ruler.setPdfMode(false);
+    this.setImageOnlyPdf(false);
     this.setPdfRulerUIVisibility(false);
     if (this.pdfLoader) {
       this.pdfLoader.destroy();
@@ -5353,6 +5545,9 @@ export class LuminaApp {
       if (this.dom.btnReaderMenuFab) {
         this.dom.btnReaderMenuFab.classList.remove("active");
         this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "false");
+      }
+      if (this.dom.pillScrubberTooltip) {
+        this.dom.pillScrubberTooltip.classList.add("is-hidden");
       }
     }
   }
@@ -6391,7 +6586,7 @@ export class LuminaApp {
     }
   }
 
-  updatePillScrubberUI(customRatio = null, customTooltip = null) {
+  updatePillScrubberUI(customRatio = null, customTooltip = null, customPrefix = null) {
     const metrics = this.getBookMetrics();
     const totalPages = Math.max(1, metrics.totalBookPages);
 
@@ -6409,19 +6604,44 @@ export class LuminaApp {
       this.dom.pillScrubberFill.style.width = percent + "%";
     }
 
-    if (this.dom.pillScrubberLabel) {
-      this.dom.pillScrubberLabel.textContent = "Obsah \u2022 " + percent + "\u00a0%";
+    if (this.dom.pillScrubberPercent) {
+      this.dom.pillScrubberPercent.textContent = `${percent}\u00a0%`;
+    }
+
+    if (this.dom.pillScrubberPrefix) {
+      if (customPrefix !== null) {
+        this.dom.pillScrubberPrefix.textContent = customPrefix;
+      } else if (!this.dom.pillScrubberPrefix.textContent.trim()) {
+        this.dom.pillScrubberPrefix.textContent = "Obsah";
+      }
+    }
+
+    // Zpětná kompatibilita pro případ nepřítomnosti vnitřních elementů
+    if (this.dom.pillScrubberLabel && !this.dom.pillScrubberPercent) {
+      this.dom.pillScrubberLabel.textContent = `${customPrefix || "Obsah"} \u2022 ${percent}\u00a0%`;
     }
 
     const capsule = this.dom.pillScrubberContainer;
     if (capsule) {
       capsule.setAttribute("aria-valuemin", "1");
       capsule.setAttribute("aria-valuemax", String(totalPages));
-      capsule.setAttribute("aria-valuenow", String(metrics.currBookPage));
+      const curPage = customRatio !== null
+        ? (totalPages > 1 ? Math.max(1, Math.min(totalPages, Math.round(1 + ratio * (totalPages - 1)))) : 1)
+        : metrics.currBookPage;
+      capsule.setAttribute("aria-valuenow", String(curPage));
     }
 
-    if (this.dom.pillScrubberTooltipText && customTooltip) {
-      this.dom.pillScrubberTooltipText.textContent = customTooltip;
+    if (this.dom.pillScrubberTooltipText) {
+      if (customTooltip) {
+        this.dom.pillScrubberTooltipText.textContent = customTooltip;
+      } else {
+        const resolved = this.resolveBookPage(metrics.currBookPage);
+        let tooltipText = `Strana ${resolved.targetBookPage} z ${totalPages}`;
+        if (!this.isPdfMode && resolved.chapterTitle && resolved.chapterTitle !== `Strana ${resolved.targetBookPage}` && resolved.chapterTitle !== this.currentBook?.title) {
+          tooltipText = `Strana ${resolved.targetBookPage} z ${totalPages} \u2022 ${resolved.chapterTitle}`;
+        }
+        this.dom.pillScrubberTooltipText.textContent = tooltipText;
+      }
     }
   }
 
@@ -6431,95 +6651,126 @@ export class LuminaApp {
     if (!capsule) return;
 
     let isPointerDown = false;
-    let isDragging = false;
-    let startX = 0;
-    let startY = 0;
     let pendingTargetPage = null;
-    const dragThreshold = 5;
 
-    const getRatioFromEvent = (e) => {
+    const getMetricsAndRatio = (e) => {
       const rect = capsule.getBoundingClientRect();
-      const w = rect.width > 0 ? rect.width : 130;
-      return Math.max(0, Math.min(1, (e.clientX - rect.left) / w));
-    };
+      const w = rect.width > 0 ? rect.width : 156;
+      const clientX = e.clientX !== undefined
+        ? e.clientX
+        : (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+      const rawX = clientX - rect.left;
+      const clampedX = Math.max(0, Math.min(w, rawX));
+      const ratio = clampedX / w;
 
-    const updateOnDrag = (e) => {
-      const ratio = getRatioFromEvent(e);
       const bookMetrics = this.getBookMetrics();
       const totalPages = Math.max(1, bookMetrics.totalBookPages);
-      const targetPage = Math.max(1, Math.min(totalPages, Math.round(1 + ratio * (totalPages - 1))));
+      const targetPage = totalPages > 1
+        ? Math.max(1, Math.min(totalPages, Math.round(1 + ratio * (totalPages - 1))))
+        : 1;
+
+      return { ratio, clampedX, clientX, rect, width: w, targetPage, totalPages };
+    };
+
+    const updateTooltipPosition = (clientX, capsuleRect) => {
+      const tooltip = this.dom.pillScrubberTooltip;
+      if (!tooltip) return;
+
+      const tooltipWidth = tooltip.offsetWidth || 180;
+      const hw = tooltipWidth / 2;
+      const screenW = window.innerWidth || document.documentElement.clientWidth || 360;
+      const minMargin = 10;
+
+      // Tooltip ideálně zarovnán na střed vůči horizontální pozici ukazatele/prstu
+      const idealCenterX = Math.max(capsuleRect.left, Math.min(capsuleRect.right, clientX));
+      // Omezení, aby bublina nepřetekla okraje obrazovky
+      const clampedCenterX = Math.max(minMargin + hw, Math.min(screenW - minMargin - hw, idealCenterX));
+
+      // Relativní souřadnice středu tooltipu vůči levému okraji kapsle
+      const leftInCapsule = clampedCenterX - capsuleRect.left;
+      tooltip.style.left = `${leftInCapsule}px`;
+
+      // Posun šipky vůči středu tooltipu tak, aby mířila přesně na idealCenterX
+      const arrowOffset = Math.max(-hw + 14, Math.min(hw - 14, idealCenterX - clampedCenterX));
+      tooltip.style.setProperty("--arrow-offset-x", `${Math.round(arrowOffset)}px`);
+    };
+
+    const updateScrubFeedback = (e) => {
+      const { ratio, clientX, rect, targetPage, totalPages } = getMetricsAndRatio(e);
       pendingTargetPage = targetPage;
 
       const resolved = this.resolveBookPage(targetPage);
-      const tooltipText = `Strana ${resolved.targetBookPage} z ${resolved.totalBookPages} \u2022 ${resolved.chapterTitle}`;
+      let tooltipText = `Strana ${resolved.targetBookPage} z ${totalPages}`;
+      if (!this.isPdfMode && resolved.chapterTitle && resolved.chapterTitle !== `Strana ${resolved.targetBookPage}` && resolved.chapterTitle !== this.currentBook?.title) {
+        tooltipText = `Strana ${resolved.targetBookPage} z ${totalPages} \u2022 ${resolved.chapterTitle}`;
+      }
+
       this.updatePillScrubberUI(ratio, tooltipText);
+      updateTooltipPosition(clientX, rect);
     };
 
     capsule.addEventListener("pointerdown", (e) => {
       if (e.button !== undefined && e.button !== 0) return;
+      // Nekolidovat s tlačítkem obsahu vpravo
+      if (e.target && e.target.closest("#btn-menu-toc")) return;
+
       tracker.cancelCurrentPageDwell();
       isPointerDown = true;
-      isDragging = false;
+      this.isPillScrubbing = true;
       pendingTargetPage = null;
-      startX = e.clientX;
-      startY = e.clientY;
-      try { capsule.setPointerCapture(e.pointerId); } catch (err) {}
+
+      capsule.classList.add("is-scrubbing");
+      if (this.dom.readerFloatingDock) {
+        this.dom.readerFloatingDock.classList.add("is-scrubbing");
+      }
+      if (this.dom.pillScrubberTooltip) {
+        this.dom.pillScrubberTooltip.classList.remove("is-hidden");
+      }
+
+      updateScrubFeedback(e);
+
+      try {
+        capsule.setPointerCapture(e.pointerId);
+      } catch (err) {}
     });
 
     capsule.addEventListener("pointermove", (e) => {
       if (!isPointerDown) return;
-      const dx = Math.abs(e.clientX - startX);
-      const dy = Math.abs(e.clientY - startY);
-
-      if (!isDragging && (dx > dragThreshold || dy > dragThreshold)) {
-        isDragging = true;
-        this.isPillScrubbing = true;
-        capsule.classList.add("is-scrubbing");
-        if (this.dom.readerFloatingDock) this.dom.readerFloatingDock.classList.add("is-scrubbing");
-        if (this.dom.pillScrubberTooltip) this.dom.pillScrubberTooltip.classList.remove("is-hidden");
-      }
-
-      if (isDragging) {
-        e.preventDefault();
-        e.stopPropagation();
-        updateOnDrag(e);
-      }
+      e.preventDefault();
+      e.stopPropagation();
+      updateScrubFeedback(e);
     });
 
     const onPointerEnd = async (e) => {
       if (!isPointerDown) return;
-      const dx = Math.abs(e.clientX - startX);
-      const dy = Math.abs(e.clientY - startY);
-      const didDrag = isDragging;
-
       isPointerDown = false;
-      isDragging = false;
       this.isPillScrubbing = false;
 
-      try { capsule.releasePointerCapture(e.pointerId); } catch (err) {}
+      try {
+        capsule.releasePointerCapture(e.pointerId);
+      } catch (err) {}
 
       capsule.classList.remove("is-scrubbing");
-      if (this.dom.readerFloatingDock) this.dom.readerFloatingDock.classList.remove("is-scrubbing");
-      if (this.dom.pillScrubberTooltip) this.dom.pillScrubberTooltip.classList.add("is-hidden");
-
-      if (didDrag) {
-        tracker.cancelCurrentPageDwell();
-        this.wasPillScrubbing = true;
-        setTimeout(() => { this.wasPillScrubbing = false; }, 120);
-        if (pendingTargetPage !== null) {
-          const pageToNav = pendingTargetPage;
-          pendingTargetPage = null;
-          await this.goToBookPage(pageToNav);
-        }
-      } else if (dx <= dragThreshold && dy <= dragThreshold) {
-        // Any tap on the capsule (not a drag) opens the TOC
-        this.wasPillScrubbing = true;
-        setTimeout(() => { this.wasPillScrubbing = false; }, 120);
-        this.closeFloatingDock();
-        this.toggleDrawer("toc");
+      if (this.dom.readerFloatingDock) {
+        this.dom.readerFloatingDock.classList.remove("is-scrubbing");
+      }
+      if (this.dom.pillScrubberTooltip) {
+        this.dom.pillScrubberTooltip.classList.add("is-hidden");
       }
 
-      pendingTargetPage = null;
+      this.wasPillScrubbing = true;
+      setTimeout(() => {
+        this.wasPillScrubbing = false;
+      }, 200);
+
+      if (pendingTargetPage !== null) {
+        const pageToNav = pendingTargetPage;
+        pendingTargetPage = null;
+        tracker.cancelCurrentPageDwell();
+        await this.goToBookPage(pageToNav);
+      }
+
+      this.updatePillScrubberUI();
     };
 
     capsule.addEventListener("pointerup", onPointerEnd);

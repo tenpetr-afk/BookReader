@@ -29,6 +29,8 @@ export class ReadingRuler {
 
     // PDF Mode
     this.isPdfMode = false;
+    this.isImageOnlyPdf = false;
+    this._savedNonImageOnlyState = null;
     this.pdfRulerHeight = 32; // px - výchozí manuální výška pravítka pro PDF (16–120)
     this.pdfStandardLineHeight = 24; // px - standardní kompaktní výška řádku pro PDF
     this.pdfBaseLineHeight = null;
@@ -430,16 +432,102 @@ export class ReadingRuler {
     }, Math.max(300, duration + 50)); // lock lifetime slightly longer than duration
   }
 
+  /**
+   * Nastaví stav pravítka pro skenovaný/obrazový PDF dokument (bez textové vrstvy).
+   * Automaticky deaktivuje magnetické přichytávání k řádkům, auto-height,
+   * sledování slov a přepne na plynulé sledování kurzoru (followMode = "mouse").
+   * Při přepnutí zpět obnoví původní nastavení.
+   */
+  setImageOnlyPdf(isImageOnly) {
+    const flag = !!isImageOnly;
+    if (this.isImageOnlyPdf === flag) return;
+    this.isImageOnlyPdf = flag;
+
+    if (this.isImageOnlyPdf) {
+      if (!this._savedNonImageOnlyState) {
+        this._savedNonImageOnlyState = {
+          snapToLines: this.snapToLines,
+          pdfAutoHeight: this.pdfAutoHeight,
+          wordTracking: this.wordTracking,
+          followMode: this.followMode
+        };
+      }
+
+      this.snapToLines = false;
+      this.pdfAutoHeight = false;
+      this.isPdfHeightFromSlider = true;
+      this.height = this.pdfRulerHeight || 32;
+      this.uniformLineHeight = this.height;
+      this.wordTracking = false;
+      this.wordTrackingExplicitlyEnabledInPdf = false;
+      this.followMode = "mouse";
+      this.stationaryScreenY = null;
+
+      if (this.rulerEl) {
+        this.rulerEl.classList.remove("word-tracking-mode", "is-snapped");
+        this.rulerEl.style.height = this.mode === "bottom-cover" ? "2px" : `${this.height}px`;
+      }
+      if (this.wordWaveEl) {
+        this.wordWaveEl.style.display = "none";
+      }
+      if (this.maskTopEl) this.maskTopEl.classList.remove("is-snapped");
+      if (this.maskBottomEl) this.maskBottomEl.classList.remove("is-snapped");
+      if (this.maskLeftEl) this.maskLeftEl.classList.remove("is-snapped");
+      if (this.maskRightEl) this.maskRightEl.classList.remove("is-snapped");
+    } else {
+      if (this._savedNonImageOnlyState) {
+        this.snapToLines = this._savedNonImageOnlyState.snapToLines;
+        this.pdfAutoHeight = this._savedNonImageOnlyState.pdfAutoHeight;
+        this.wordTracking = this._savedNonImageOnlyState.wordTracking;
+        this.followMode = this._savedNonImageOnlyState.followMode;
+        this._savedNonImageOnlyState = null;
+      }
+      if (this.isPdfMode) {
+        if (!this.pdfAutoHeight) {
+          this.height = this.pdfRulerHeight || 32;
+          this.uniformLineHeight = this.height;
+        } else {
+          this.uniformLineHeight = null;
+          this.detectLines();
+          if (this.cachedLines && this.cachedLines.length > 0 && this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length) {
+            const geom = this.computeLineGeometry(this.activeLineIndex);
+            if (geom) {
+              this.height = geom.height;
+              this.targetY = geom.targetY;
+            }
+          }
+        }
+      }
+    }
+
+    this.updateBodyClasses();
+    if (this.enabled) {
+      this.applyPosition();
+    }
+    this.updateRulerSettingsVisibility(this.mode, this.isPdfMode);
+  }
+
   setPdfMode(enabled, height = null) {
     const wasPdfMode = this.isPdfMode;
     this.isPdfMode = !!enabled;
     this.isPdfHeightFromSlider = false;
     if (this.isPdfMode) {
-      // 1. V PDF režimu vynutit výchozí plnošířkový řádkový režim (wordTracking = false),
-      // pokud uživatel explicitně nezapnul sledování slov v PDF.
-      if (!wasPdfMode || !this.wordTrackingExplicitlyEnabledInPdf) {
+      if (this.isImageOnlyPdf) {
+        this.snapToLines = false;
+        this.pdfAutoHeight = false;
+        this.isPdfHeightFromSlider = true;
+        this.height = this.pdfRulerHeight || 32;
+        this.uniformLineHeight = this.height;
         this.wordTracking = false;
         this.wordTrackingExplicitlyEnabledInPdf = false;
+        this.followMode = "mouse";
+      } else {
+        // 1. V PDF režimu vynutit výchozí plnošířkový řádkový režim (wordTracking = false),
+        // pokud uživatel explicitně nezapnul sledování slov v PDF.
+        if (!wasPdfMode || !this.wordTrackingExplicitlyEnabledInPdf) {
+          this.wordTracking = false;
+          this.wordTrackingExplicitlyEnabledInPdf = false;
+        }
       }
 
       if (!this.wordTracking) {
@@ -456,7 +544,7 @@ export class ReadingRuler {
 
       if (height !== null) {
         if (typeof height === "object" && height !== null) {
-          if (height.autoHeight !== undefined) {
+          if (height.autoHeight !== undefined && !this.isImageOnlyPdf) {
             this.pdfAutoHeight = !!height.autoHeight;
           }
           if (height.height !== undefined) {
@@ -500,6 +588,7 @@ export class ReadingRuler {
         this.applyPosition();
       }
     } else {
+      this.setImageOnlyPdf(false);
       this.wordTrackingExplicitlyEnabledInPdf = false;
       if (this.rulerEl) {
         this.rulerEl.classList.remove("pdf-ruler-overlay");
@@ -516,6 +605,14 @@ export class ReadingRuler {
   }
 
   setPdfAutoHeight(enabled) {
+    if (this.isImageOnlyPdf) {
+      this.pdfAutoHeight = false;
+      this.isPdfHeightFromSlider = true;
+      this.height = this.pdfRulerHeight || 32;
+      this.uniformLineHeight = this.height;
+      if (this.enabled) this.applyPosition();
+      return;
+    }
     this.pdfAutoHeight = !!enabled;
     this.isPdfHeightFromSlider = !this.pdfAutoHeight;
     if (this.pdfAutoHeight) {
@@ -561,7 +658,7 @@ export class ReadingRuler {
       this.isPdfHeightFromSlider = true;
     }
     if (this.isPdfMode) {
-      if (!this.cachedLines || this.cachedLines.length === 0 || !this.pdfAutoHeight || this.isPdfHeightFromSlider) {
+      if (this.isImageOnlyPdf || !this.cachedLines || this.cachedLines.length === 0 || !this.pdfAutoHeight || this.isPdfHeightFromSlider) {
         this.height = h;
         this.uniformLineHeight = h;
       }
@@ -5793,7 +5890,7 @@ export class ReadingRuler {
    * - Ignoruje při pohybu > 10px nebo pokud je aktivní / dokončené podržení (long-press).
    */
   handleTap(clientX, clientY, pointerType = "touch", movementDelta = 0) {
-    if (!this.enabled || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) || this.isLineLocked || this.followMode !== "keyboard") return false;
+    if (!this.enabled || this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) || this.isLineLocked || this.followMode !== "keyboard") return false;
     if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return false;
     if (pointerType !== "touch" && pointerType !== "mouse" && pointerType !== "pen") return false;
     if (movementDelta > 10) return false;
@@ -5837,7 +5934,7 @@ export class ReadingRuler {
    */
   stepLine(direction, force = false) {
     // Pokud probíhá přechod strany, aktivní tažení nebo dobíhá lockout přechodu strany, ignorovat krokování
-    if (!this.enabled || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (!this.enabled || this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     if (direction > 0 && (this.suppressLineAdvancement || (performance.now() - this.pageTurnTimestamp < 350))) {
       return;
     }
@@ -8170,6 +8267,7 @@ export class ReadingRuler {
     }
     const activeStyle = style || this.mode || "highlight";
     const activePdf = isPdf !== null && isPdf !== undefined ? !!isPdf : !!this.isPdfMode;
+    const isImageOnly = activePdf && !!this.isImageOnlyPdf;
 
     const popoverColor = document.getElementById("popover-ruler-color-section");
     const drawerColor = document.getElementById("drawer-ruler-color-section");
@@ -8188,6 +8286,29 @@ export class ReadingRuler {
     const hidePdfHeight = !activePdf || activeStyle === "bottom-cover";
     if (popoverPdf) popoverPdf.classList.toggle("is-hidden", hidePdfHeight);
     if (drawerPdf) drawerPdf.classList.toggle("is-hidden", hidePdfHeight);
+
+    const popoverAutoHeight = document.getElementById("popover-pdf-auto-height-row");
+    const drawerAutoHeight = document.getElementById("drawer-pdf-auto-height-row");
+    if (popoverAutoHeight) popoverAutoHeight.classList.toggle("is-hidden", isImageOnly);
+    if (drawerAutoHeight) drawerAutoHeight.classList.toggle("is-hidden", isImageOnly);
+
+    const popoverSnap = document.getElementById("popover-snap-lines-section");
+    const drawerSnap = document.getElementById("drawer-snap-lines-section");
+    if (popoverSnap) popoverSnap.classList.toggle("is-hidden", isImageOnly);
+    if (drawerSnap) drawerSnap.classList.toggle("is-hidden", isImageOnly);
+
+    const popoverWord = document.getElementById("popover-mode-word");
+    const drawerWord = document.getElementById("drawer-word-tracking-section");
+    if (popoverWord) {
+      popoverWord.classList.toggle("is-hidden", isImageOnly);
+      popoverWord.disabled = isImageOnly;
+    }
+    if (drawerWord) drawerWord.classList.toggle("is-hidden", isImageOnly);
+
+    document.querySelectorAll("[data-ruler-follow='keyboard']").forEach(btn => {
+      btn.classList.toggle("is-hidden", isImageOnly);
+      btn.disabled = isImageOnly;
+    });
   }
 
   setColor(color) {
@@ -8294,6 +8415,16 @@ export class ReadingRuler {
   }
 
   setSnapToLines(enabled) {
+    if (this.isImageOnlyPdf) {
+      this.snapToLines = false;
+      if (this.rulerEl) this.rulerEl.classList.remove("is-snapped");
+      if (this.maskTopEl) this.maskTopEl.classList.remove("is-snapped");
+      if (this.maskBottomEl) this.maskBottomEl.classList.remove("is-snapped");
+      if (this.maskLeftEl) this.maskLeftEl.classList.remove("is-snapped");
+      if (this.maskRightEl) this.maskRightEl.classList.remove("is-snapped");
+      this.applyPosition();
+      return;
+    }
     this.snapToLines = !!enabled;
     if (!this.snapToLines) {
       if (this.rulerEl) this.rulerEl.classList.remove("is-snapped");
@@ -8316,6 +8447,13 @@ export class ReadingRuler {
 
   setWordTracking(enabled) {
     this.disableWordTransition();
+    if (this.isImageOnlyPdf) {
+      this.wordTracking = false;
+      this.wordTrackingExplicitlyEnabledInPdf = false;
+      this.updateBodyClasses();
+      this.applyPosition();
+      return;
+    }
     this.wordTracking = !!enabled;
     this.wordTrackingExplicitlyEnabledInPdf = this.isPdfMode ? !!enabled : false;
     this.updateBodyClasses();
@@ -8449,7 +8587,7 @@ export class ReadingRuler {
   }
 
   setFollowMode(mode) {
-    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+    if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
       this.followMode = "mouse";
       this.stationaryScreenY = null;
       this.updateBodyClasses();

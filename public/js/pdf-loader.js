@@ -45,6 +45,7 @@ export class PDFLoader {
     this.currentTextLayerTask = null;
     this.textLayer = null;
     this.textLayers = [];
+    this.isImageOnlyPdf = false;
   }
 
   setColumnsMode(mode) {
@@ -226,6 +227,12 @@ export class PDFLoader {
     this.numPages = this.pdfDoc.numPages;
     const targetPage = Math.max(1, Math.min(this.numPages, initialPage || 1));
     this.currentPage = targetPage;
+
+    // Detekce obrazového / skenovaného PDF bez textové vrstvy
+    this.isImageOnlyPdf = await this.detectImageOnlyPdf();
+    if (this.app && typeof this.app.setImageOnlyPdf === "function") {
+      this.app.setImageOnlyPdf(this.isImageOnlyPdf);
+    }
 
     // Vykreslit obsah podle aktuálního režimu čtení (vodorovně vs svisle)
     if (this.isVerticalMode()) {
@@ -1289,6 +1296,12 @@ export class PDFLoader {
         container.classList.add("is-scanned-page");
       } else {
         container.classList.remove("is-scanned-page");
+        if (this.isImageOnlyPdf) {
+          this.isImageOnlyPdf = false;
+          if (this.app && typeof this.app.setImageOnlyPdf === "function") {
+            this.app.setImageOnlyPdf(false);
+          }
+        }
       }
 
       if (window.pdfjsLib && typeof window.pdfjsLib.renderTextLayer === "function") {
@@ -1374,6 +1387,40 @@ export class PDFLoader {
   }
 
   /**
+   * Automatická detekce naskenovaného/obrazového PDF dokumentu bez textové vrstvy.
+   * Prozkoumá výsledek page.getTextContent() na vzorku prvních stran (max 3–5 stran).
+   * Pokud je textContent.items prázdný nebo neobsahuje žádné čitelné alfanumerické znaky,
+   * označí dokument jako isImageOnlyPdf: true.
+   */
+  async detectImageOnlyPdf() {
+    if (!this.pdfDoc || this.numPages <= 0) return false;
+    try {
+      const sampleCount = Math.min(this.numPages, 3);
+      for (let pNum = 1; pNum <= sampleCount; pNum++) {
+        const page = await this.pdfDoc.getPage(pNum);
+        const textContent = await page.getTextContent();
+        if (textContent && Array.isArray(textContent.items) && textContent.items.length > 0) {
+          for (const item of textContent.items) {
+            if (item && item.str && /[\p{L}\p{N}]/u.test(item.str)) {
+              if (typeof page.cleanup === "function") page.cleanup();
+              return false; // Nalezen čitelný text -> běžné textové PDF
+            }
+          }
+        }
+        if (typeof page.cleanup === "function") page.cleanup();
+      }
+      return true; // Všechny vzorkované strany jsou bez čitelného textu -> sken / image-only PDF
+    } catch (err) {
+      console.warn("[PDFLoader] Chyba při detekci image-only PDF:", err);
+      return false;
+    }
+  }
+
+  getIsImageOnlyPdf() {
+    return !!this.isImageOnlyPdf;
+  }
+
+  /**
    * Asynchronní výpočet celkového počtu slov dokumentu na pozadí.
    * Nepřetěžuje hlavní vlákno (dávkování po 5 stranách).
    */
@@ -1408,7 +1455,15 @@ export class PDFLoader {
           }
         }
 
-        if (words > 0) hasAnyText = true;
+        if (words > 0) {
+          hasAnyText = true;
+          if (this.isImageOnlyPdf) {
+            this.isImageOnlyPdf = false;
+            if (this.app && typeof this.app.setImageOnlyPdf === "function") {
+              this.app.setImageOnlyPdf(false);
+            }
+          }
+        }
         totalWords += words;
 
         if (pNum % 5 === 0) {
@@ -1416,9 +1471,17 @@ export class PDFLoader {
         }
       }
 
+      if (!hasAnyText && !this.isImageOnlyPdf) {
+        this.isImageOnlyPdf = true;
+        if (this.app && typeof this.app.setImageOnlyPdf === "function") {
+          this.app.setImageOnlyPdf(true);
+        }
+      }
+
       if (this.app?.currentBook && this.app.currentBook.id === bookId) {
         this.app.currentBook.totalWords = hasAnyText ? totalWords : 0;
         this.app.currentBook.isScanned = !hasAnyText;
+        this.app.currentBook.isImageOnlyPdf = !hasAnyText;
         if (this.app.currentBook.isScanned) {
           document.body.classList.add("is-scanned-pdf");
         }
@@ -1428,6 +1491,7 @@ export class PDFLoader {
           if (storedBook) {
             storedBook.totalWords = this.app.currentBook.totalWords;
             storedBook.isScanned = this.app.currentBook.isScanned;
+            storedBook.isImageOnlyPdf = this.app.currentBook.isImageOnlyPdf;
             await storage.saveBook(storedBook);
           }
         } catch (e) {}

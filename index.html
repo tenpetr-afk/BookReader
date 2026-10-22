@@ -203,7 +203,7 @@
             </div>
 
             <!-- Režim pravítka: Řádkové vs. Sledování slov -->
-            <div class="popover-section">
+            <div class="popover-section" id="popover-ruler-mode-section">
               <div class="popover-section-label">Režim zvýraznění</div>
               <div class="popover-segmented-control" id="popover-mode-segmented">
                 <button type="button" class="segment-btn active" id="popover-mode-line" data-ruler-mode-type="line">
@@ -252,7 +252,7 @@
 
             <!-- Kalibrace pravítka pro PDF (výška) -->
             <div class="popover-section is-hidden" id="popover-pdf-ruler-section">
-              <div class="popover-row-between" style="margin-bottom: 0.5rem;">
+              <div class="popover-row-between" style="margin-bottom: 0.5rem;" id="popover-pdf-auto-height-row">
                 <span class="popover-section-label">Automatická výška</span>
                 <button type="button" role="switch" id="popover-pdf-auto-height" class="switch-control is-checked active" aria-checked="true" aria-label="Automatická výška pravítka (PDF)">
                   <span class="switch-track"><span class="switch-thumb"></span></span>
@@ -295,18 +295,24 @@
             <div class="action-cluster-bottom-row">
               <div id="pill-scrubber-container" class="dock-action-btn dock-action-btn-wide pill-scrubber-capsule apple-books-capsule" role="slider" aria-label="Obsah knihy a posuvník" aria-valuemin="1" aria-valuemax="1" aria-valuenow="1" tabindex="0">
                 
-                <!-- Plovoucí liquid-glass tooltip přímo nad pilulkou -->
+                <!-- Plovoucí liquid-glass tooltip přímo nad prstem/kurzorem -->
                 <div id="pill-scrubber-tooltip" class="pill-scrubber-tooltip is-hidden" aria-hidden="true">
                   <span id="pill-scrubber-tooltip-text" class="pill-scrubber-tooltip-text">Strana 1 z 1 • Úvod</span>
                 </div>
 
-                <!-- Plnohodnotná výplň průběhu čtení na celou výšku (0 - 100 %) -->
-                <div class="pill-scrubber-progress-fill" id="pill-scrubber-fill"></div>
+                <!-- Plnohodnotná výplň průběhu čtení v ohraničeném tracku s border-radius -->
+                <div class="pill-scrubber-track">
+                  <div class="pill-scrubber-progress-fill" id="pill-scrubber-fill"></div>
+                </div>
 
                 <!-- Fixní obsah nad výplní (z-index: 2) -->
                 <div class="pill-scrubber-content">
-                  <!-- Textový popisek vlevo: Obsah • 58 % -->
-                  <span id="pill-scrubber-label" class="pill-scrubber-label">Obsah • 0 %</span>
+                  <!-- Textový popisek vlevo: Obsah • 58 % se stabilním zobrazením procent -->
+                  <span id="pill-scrubber-label" class="pill-scrubber-label">
+                    <span id="pill-scrubber-prefix" class="pill-scrubber-label-prefix">Obsah</span>
+                    <span id="pill-scrubber-separator" class="pill-scrubber-label-separator"> • </span>
+                    <span id="pill-scrubber-percent" class="pill-scrubber-label-percent">0 %</span>
+                  </span>
 
                   <!-- Fixní tlačítko obsahu vpravo s list/menu ikonou -->
                   <button type="button" id="btn-menu-toc" class="pill-scrubber-menu-btn" title="Obsah knihy (klávesa T)" aria-label="Obsah knihy">
@@ -562,7 +568,7 @@
           </div>
 
           <!-- Funkce pravítka: Magnetické přichytávání k řádkům -->
-          <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
+          <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;" id="drawer-snap-lines-section">
             <div class="toggle-row">
               <div>
                 <span class="toggle-title">Magnetické přichytávání k řádkům</span>
@@ -575,7 +581,7 @@
           </div>
 
           <!-- Funkce pravítka: Sledování slov -->
-          <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
+          <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;" id="drawer-word-tracking-section">
             <div class="toggle-row">
               <span class="toggle-title">Sledování jednotlivých slov</span>
               <button type="button" role="switch" id="ruler-word-tracking-setting" class="switch-control" aria-checked="false" aria-label="Sledování jednotlivých slov">
@@ -594,7 +600,7 @@
 
           <!-- Kalibrace PDF pravítka v postranním panelu nastavení -->
           <div id="drawer-pdf-ruler-section" class="is-hidden" style="margin-top: 1rem; margin-bottom: 0.5rem;">
-            <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;">
+            <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;" id="drawer-pdf-auto-height-row">
               <div class="toggle-row">
                 <span class="toggle-title">Automatická výška</span>
                 <button type="button" role="switch" id="setting-pdf-auto-height" class="switch-control is-checked active" aria-checked="true" aria-label="Automatická výška pravítka (PDF)">
