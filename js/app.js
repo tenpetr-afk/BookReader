@@ -6146,9 +6146,11 @@ export class LuminaApp {
       });
     }
 
+    const avgWpm = session.avgWpm || 220;
+    const maxPace = Math.min(650, Math.max(280, Math.round(avgWpm * 1.65)));
     const samples = Array.isArray(session.timelineSamples) ? session.timelineSamples : [];
-    const speeds = samples.map(s => Number(s.instantaneousWpm) || 0);
-    const peakWpm = Math.max(...speeds, session.avgWpm || 0);
+    const speeds = samples.map(s => Number(s.instantaneousWpm) || 0).filter(w => w >= 60).map(w => Math.min(maxPace, w));
+    const peakWpm = speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm;
 
     if (this.dom.sessionBadgeDuration) {
       this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(session.durationSeconds);

@@ -65,13 +65,14 @@ export class ReadingTracker {
     this.pageEnterTimestamp = null;
     this.currentPageVisibleWords = 0;
     
-    // Časová osa vzorků rychlosti v rámci relace: [{ timestamp, elapsedSeconds, instantaneousWpm }]
+    // Časová osa vzorků rychlosti v rámci relace: [{ timestamp, elapsedSeconds, elapsedActiveSeconds, instantaneousWpm }]
     this.timelineSamples = [];
     this.lastSampleActiveSec = 0;
     this.lastSampleWordsRead = 0;
+    this.smoothedWpm = null;
 
-    // Klouzavé okno nedávného postupu pro výpočet okamžitého WPM: [{ time, words, activeMs }]
-    this.progressHistory = [];
+    // Klouzavé okno aktivního čtení pro výpočet okamžitého WPM: [{ activeMs, words }]
+    this.activeProgressHistory = [];
 
     // Posluchači změn pro UI
     this.listeners = new Set();
@@ -195,15 +196,13 @@ export class ReadingTracker {
       this.sessionWordsRead += wordsOnPage;
     }
 
-    // 5. Filtrace vzorku WPM:
-    // Pokud vypočtené rawWpm spadne mimo realistické pásmo [80, 650] WPM (např. < 80 WPM je pauza/zamyšlení),
-    // považujeme vzorek za outlier a do historie WPM ani časové osy ho NEZAPISUJEME.
-    // NIKDY neukládáme uměle oříznuté (clamped) extrémy!
+    // 5. Filtrace vzorku WPM a započtení do klouzavého okna aktivního čtení
     if (rawWpm >= MIN_VALID_WPM && rawWpm <= MAX_VALID_WPM) {
       this.validReadingTimeMs += (dwellSeconds * 1000);
       this.validWordsRead += wordsOnPage;
-      const elapsedSec = Math.floor(this.activeTimeMs / 1000);
-      this.recordTimelineSample(elapsedSec, rawWpm);
+      this.recordActiveProgress();
+      const elapsedActiveSec = Math.floor(this.activeTimeMs / 1000);
+      this.recordTimelineSample(elapsedActiveSec, rawWpm);
     }
   }
 
@@ -384,14 +383,17 @@ export class ReadingTracker {
     this.timelineSamples = [];
     this.lastSampleActiveSec = 0;
     this.lastSampleWordsRead = 0;
-    this.progressHistory = [{ time: now, words: 0, activeMs: 0 }];
+    this.smoothedWpm = null;
+    this.activeProgressHistory = [{ activeMs: 0, words: 0 }];
 
-    // Výchozí počáteční vzorek relace (pouze pokud je v platném pásmu)
+    // Výchozí počáteční vzorek relace na t=0
     const initialWpm = this.getCurrentWpm();
     if (initialWpm >= MIN_VALID_WPM && initialWpm <= MAX_VALID_WPM) {
+      this.smoothedWpm = initialWpm;
       this.timelineSamples.push({
         timestamp: now,
         elapsedSeconds: 0,
+        elapsedActiveSeconds: 0,
         instantaneousWpm: initialWpm
       });
     }
@@ -425,11 +427,14 @@ export class ReadingTracker {
         const deltaSec = delta / 1000;
         const elapsedSec = Math.floor(this.activeTimeMs / 1000);
 
+        // Zaznamenáme postup aktivního čtení do klouzavého okna
+        this.recordActiveProgress();
+
         // Synchronizace s denní statistikou v sekundách přesně ve stejný okamžik a ze stejného zdroje!
         const todayKey = getLocalDateKey();
         storage.addDailyReadingSeconds(todayKey, deltaSec);
 
-        // Periodický odběr vzorku rychlosti pro intra-session timeline (pouze pokud je tempo validní)
+        // Periodický odběr vzorku rychlosti pro intra-session timeline (každých 12 sekund aktivního čtení)
         if (elapsedSec - this.lastSampleActiveSec >= TIMELINE_SAMPLE_INTERVAL_SEC) {
           this.recordTimelineSample(elapsedSec);
         }
@@ -459,64 +464,123 @@ export class ReadingTracker {
   }
 
   /**
-   * Zaznamená bod na časové ose rychlosti čtení (Intra-session WPM timeline).
-   * Nikdy neukládá oříznuté (clamped) extrémy. Outliery mimo pásmo [80, 650] WPM zahazuje.
-   * @param {number} elapsedSec Uplynulý aktivní čas v sekundách
-   * @param {number|null} forceWpm Přímá rychlost WPM
+   * Zaznamená postup do klouzavého okna aktivního čtení (Rolling Window)
    */
-  recordTimelineSample(elapsedSec, forceWpm = null) {
-    const elapsed = elapsedSec !== undefined ? elapsedSec : Math.floor(this.activeTimeMs / 1000);
-    const now = Date.now();
+  recordActiveProgress() {
+    const currentActiveMs = this.activeTimeMs;
+    const currentWords = this.sessionWordsRead;
+    // Uchováváme historii v okně posledních 60 sekund aktivního čtení
+    this.activeProgressHistory = (this.activeProgressHistory || []).filter(p => currentActiveMs - p.activeMs <= 60000);
+    this.activeProgressHistory.push({ activeMs: currentActiveMs, words: currentWords });
+  }
 
-    let instantaneousWpm = null;
+  /**
+   * Spočítá klouzavé tempo čtení z okna 30-45 sekund reálného aktivního času (vyjma pauz/nečinnosti)
+   */
+  getRollingActivePace() {
+    const currentActiveMs = this.activeTimeMs;
+    const currentWords = this.sessionWordsRead;
 
-    if (typeof forceWpm === "number" && !isNaN(forceWpm) && forceWpm > 0) {
-      if (forceWpm >= MIN_VALID_WPM && forceWpm <= MAX_VALID_WPM) {
-        instantaneousWpm = Math.round(forceWpm);
-      } else {
-        return; // Zahození outlieru mimo [80, 650] WPM
-      }
-    } else {
-      // Vyčistíme starší události v historii postupu (starší než 45 sekund)
-      this.progressHistory = this.progressHistory.filter(p => now - p.time <= 45000);
-      this.progressHistory.push({
-        time: now,
-        words: this.sessionWordsRead,
-        activeMs: this.activeTimeMs
-      });
+    if (!this.activeProgressHistory || this.activeProgressHistory.length === 0) {
+      return this.getCurrentWpm();
+    }
 
-      if (this.progressHistory.length >= 2) {
-        const oldest = this.progressHistory[0];
-        const deltaWords = this.sessionWordsRead - oldest.words;
-        const deltaActiveMin = (this.activeTimeMs - oldest.activeMs) / 1000 / 60;
-
-        if (deltaActiveMin >= 0.15 && deltaWords > 0) {
-          const rawWpm = Math.round(deltaWords / deltaActiveMin);
-          if (rawWpm >= MIN_VALID_WPM && rawWpm <= MAX_VALID_WPM) {
-            const currentAvg = this.getCurrentWpm();
-            instantaneousWpm = Math.round(rawWpm * 0.7 + currentAvg * 0.3);
-          }
-        }
+    // Hledáme záznam v plovoucím okně 30 až 50 sekund aktivního čtení
+    let reference = null;
+    for (let i = 0; i < this.activeProgressHistory.length; i++) {
+      const entry = this.activeProgressHistory[i];
+      const deltaMs = currentActiveMs - entry.activeMs;
+      if (deltaMs >= 30000 && deltaMs <= 50000) {
+        reference = entry;
+        break;
       }
     }
 
-    if (instantaneousWpm === null || instantaneousWpm < MIN_VALID_WPM || instantaneousWpm > MAX_VALID_WPM) {
-      return; // Neukládáme neplatný vzorek ani extrémy
+    // Pokud nemáme vzorek starý alespoň 30s, ale relace trvá 12-30s a bylo přečteno dost slov:
+    if (!reference) {
+      if (currentActiveMs >= 12000 && currentWords >= 15) {
+        const pace = Math.round(currentWords / (currentActiveMs / 60000));
+        return pace;
+      }
+      return this.getCurrentWpm();
+    }
+
+    const deltaMs = currentActiveMs - reference.activeMs;
+    const deltaWords = currentWords - reference.words;
+    if (deltaMs < 10000 || deltaWords <= 0) {
+      return this.getCurrentWpm();
+    }
+
+    const deltaMin = deltaMs / 60000;
+    const pace = Math.round(deltaWords / deltaMin);
+    return pace;
+  }
+
+  /**
+   * Zaznamená bod na časové ose rychlosti čtení (Intra-session WPM timeline).
+   * Zaručuje striktně monotónní čas aktivního čtení (Monotonic Elapsed Active Time),
+   * klouzavý výpočet v okně 30-45s s EMA vyhlazením a clamping nereálných špiček (Outlier Clamping).
+   * @param {number} elapsedSec Uplynulý aktivní čas v sekundách
+   * @param {number|null} forceWpm Kandidátní rychlost WPM (např. z dwell time)
+   */
+  recordTimelineSample(elapsedSec = null, forceWpm = null) {
+    const elapsed = elapsedSec !== null ? Math.max(0, Math.round(elapsedSec)) : Math.floor(this.activeTimeMs / 1000);
+    const now = Date.now();
+
+    // 1. Získání klouzavého tempa z 30-45s okna aktivního čtení
+    const rollingPace = this.getRollingActivePace();
+    let rawPace = rollingPace;
+
+    if (typeof forceWpm === "number" && !isNaN(forceWpm) && forceWpm >= MIN_VALID_WPM) {
+      // Vážený kompromis: 35 % dwell time z aktuální stránky, 65 % stabilní 30-45s rolling okno
+      rawPace = Math.round(forceWpm * 0.35 + rollingPace * 0.65);
+    }
+
+    // 2. Outlier Clamping: Cap unrealistic transient velocity spikes
+    const currentAvg = this.getCurrentWpm();
+    const maxAllowedPace = Math.min(MAX_VALID_WPM, Math.max(300, Math.round(currentAvg * 1.65)));
+    const clampedPace = Math.max(MIN_VALID_WPM, Math.min(maxAllowedPace, rawPace));
+
+    // 3. EMA Smoothing (Exponential Moving Average)
+    const alpha = 0.28;
+    if (this.smoothedWpm === null) {
+      this.smoothedWpm = clampedPace;
+    } else {
+      this.smoothedWpm = Math.round(this.smoothedWpm * (1 - alpha) + clampedPace * alpha);
+    }
+
+    const instantaneousWpm = Math.max(MIN_VALID_WPM, Math.min(maxAllowedPace, this.smoothedWpm));
+
+    // 4. Striktně monotónní čas aktivního čtení (Monotonic Elapsed Active Time)
+    if (this.timelineSamples.length > 0) {
+      const last = this.timelineSamples[this.timelineSamples.length - 1];
+      const lastSec = last.elapsedActiveSeconds ?? last.elapsedSeconds ?? 0;
+
+      if (elapsed < lastSec) {
+        // Retrográdní skok v čase (např. raw wall-clock při pauze) -> ignorovat
+        return;
+      }
+      if (elapsed === lastSec) {
+        // Stejná sekunda -> aktualizovat stávající vzorek bez vytváření duplicitního bodu
+        last.instantaneousWpm = instantaneousWpm;
+        last.timestamp = now;
+        return;
+      }
+      if (elapsed - lastSec < 3) {
+        // Příliš blízko u sebe (<3s) -> vyhladit do předchozího bodu, zabrání shlukům
+        last.instantaneousWpm = Math.round((last.instantaneousWpm + instantaneousWpm) / 2);
+        return;
+      }
     }
 
     const sample = {
       timestamp: now,
       elapsedSeconds: elapsed,
+      elapsedActiveSeconds: elapsed,
       instantaneousWpm
     };
 
-    // Pokud už existuje vzorek ve stejnou sekundu, přepíšeme ho
-    if (this.timelineSamples.length > 0 && this.timelineSamples[this.timelineSamples.length - 1].elapsedSeconds === elapsed) {
-      this.timelineSamples[this.timelineSamples.length - 1] = sample;
-    } else {
-      this.timelineSamples.push(sample);
-    }
-
+    this.timelineSamples.push(sample);
     this.lastSampleActiveSec = elapsed;
     this.lastSampleWordsRead = this.sessionWordsRead;
   }
@@ -594,12 +658,17 @@ export class ReadingTracker {
 
     const currentWpm = this.getCurrentWpm();
     const samples = [...this.timelineSamples];
-    if (samples.length === 0 || activeSeconds - this.lastSampleActiveSec >= 4) {
+    const lastSec = samples.length > 0
+      ? (samples[samples.length - 1].elapsedActiveSeconds ?? samples[samples.length - 1].elapsedSeconds ?? 0)
+      : -1;
+
+    if (activeSeconds > lastSec && (samples.length === 0 || activeSeconds - this.lastSampleActiveSec >= 4)) {
       if (currentWpm >= MIN_VALID_WPM && currentWpm <= MAX_VALID_WPM) {
         samples.push({
           timestamp: Date.now(),
           elapsedSeconds: activeSeconds,
-          instantaneousWpm: currentWpm
+          elapsedActiveSeconds: activeSeconds,
+          instantaneousWpm: this.smoothedWpm || currentWpm
         });
       }
     }
@@ -643,11 +712,15 @@ export class ReadingTracker {
 
       // Závěrečný vzorek na konci relace (pouze v platném pásmu)
       if (wordsRead > 0 && avgWpm >= MIN_VALID_WPM && avgWpm <= MAX_VALID_WPM) {
-        if (this.timelineSamples.length === 0 || activeSeconds - this.lastSampleActiveSec >= 3) {
+        const lastSec = this.timelineSamples.length > 0
+          ? (this.timelineSamples[this.timelineSamples.length - 1].elapsedActiveSeconds ?? this.timelineSamples[this.timelineSamples.length - 1].elapsedSeconds ?? 0)
+          : -1;
+        if (activeSeconds > lastSec && activeSeconds - this.lastSampleActiveSec >= 3) {
           this.timelineSamples.push({
             timestamp: now,
             elapsedSeconds: activeSeconds,
-            instantaneousWpm: avgWpm
+            elapsedActiveSeconds: activeSeconds,
+            instantaneousWpm: this.smoothedWpm || avgWpm
           });
         }
       }
@@ -914,6 +987,8 @@ export class ReadingTracker {
         index: idx + 1,
         wpm: Math.round(s.avgWpm ?? s.wpm),
         date: getLocalDateKey(s.date || s.startTime || s.timestamp),
+        timestamp: s.timestamp || (s.startTime ? new Date(s.startTime).getTime() : null),
+        startTime: s.startTime,
         bookTitle: s.bookTitle || "Kniha"
       }));
 
