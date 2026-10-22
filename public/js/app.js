@@ -2736,6 +2736,11 @@ export class LuminaApp {
         this.settings.ruler.followMode = this._savedRulerSettings.followMode;
         this.settings.ruler.wordTracking = this._savedRulerSettings.wordTracking;
         this._savedRulerSettings = null;
+      } else {
+        if (this.settings.ruler.snapToLines === false) this.settings.ruler.snapToLines = true;
+        if (this.settings.ruler.pdfAutoHeight === false) this.settings.ruler.pdfAutoHeight = true;
+        this.settings.ruler.followMode = "mouse";
+        this.settings.ruler.wordTracking = false;
       }
     }
 
@@ -2905,6 +2910,9 @@ export class LuminaApp {
     if (drawerSnap) drawerSnap.classList.toggle("is-hidden", isImageOnly);
 
     // 6. Režim zvýraznění: Slova (Word tracking): skrýt nebo zablokovat v popoveru i draweru
+    const popoverModeSection = this.dom.popoverRulerModeSection || document.getElementById("popover-ruler-mode-section");
+    if (popoverModeSection) popoverModeSection.classList.toggle("is-hidden", isImageOnly);
+
     const popoverModeWord = this.dom.popoverModeWord || document.getElementById("popover-mode-word");
     const popoverModeLine = this.dom.popoverModeLine || document.getElementById("popover-mode-line");
     const popoverModeSegmented = this.dom.popoverModeSegmented || document.getElementById("popover-mode-segmented");

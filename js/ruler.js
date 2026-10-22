@@ -462,6 +462,8 @@ export class ReadingRuler {
       this.wordTrackingExplicitlyEnabledInPdf = false;
       this.followMode = "mouse";
       this.stationaryScreenY = null;
+      this.cachedLines = [];
+      this.cachedWords = [];
 
       if (this.rulerEl) {
         this.rulerEl.classList.remove("word-tracking-mode", "is-snapped");
@@ -481,6 +483,11 @@ export class ReadingRuler {
         this.wordTracking = this._savedNonImageOnlyState.wordTracking;
         this.followMode = this._savedNonImageOnlyState.followMode;
         this._savedNonImageOnlyState = null;
+      } else {
+        this.snapToLines = true;
+        this.pdfAutoHeight = true;
+        this.followMode = "mouse";
+        this.wordTracking = false;
       }
       if (this.isPdfMode) {
         if (!this.pdfAutoHeight) {
@@ -648,6 +655,7 @@ export class ReadingRuler {
   }
 
   getPdfAutoHeight() {
+    if (this.isImageOnlyPdf) return false;
     return this.pdfAutoHeight !== false;
   }
 
@@ -1691,7 +1699,7 @@ export class ReadingRuler {
       // Pro myš na PC vyžadujeme výhradně stisknuté levé tlačítko (button === 0)
       if (e.pointerType === "mouse" && e.button !== 0) return;
 
-      if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
         this.activePointerId = e.pointerId;
         this.activePointerType = e.pointerType;
         this.isPenTouching = (e.pointerType === "pen");
@@ -1787,7 +1795,7 @@ export class ReadingRuler {
         }
       }
 
-      if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
         if (!this.isUiControl(e.target) && this.isPointerInStage(e.clientX, e.clientY)) {
           this.activePointerType = e.pointerType;
           this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
@@ -1814,7 +1822,7 @@ export class ReadingRuler {
     };
 
     const onPointerUp = (e) => {
-      if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
         this.isDraggingRuler = false;
         this.isPenTouching = false;
       }
@@ -2015,7 +2023,7 @@ export class ReadingRuler {
       if (isStylus) {
         this.lastPenTime = Date.now();
       }
-      if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
         this.activePointerType = isStylus ? "pen" : "touch";
         this.isDraggingRuler = true;
         this.schedulePointerUpdate(touch.clientX, touch.clientY, this.activePointerType);
@@ -2053,7 +2061,7 @@ export class ReadingRuler {
         this.lastPenTime = Date.now();
       }
 
-      if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
         const touch = e.touches[0];
         if (touch && !this.isUiControl(e.target) && this.isPointerInStage(touch.clientX, touch.clientY)) {
           this.activePointerType = isStylus ? "pen" : "touch";
@@ -2085,7 +2093,7 @@ export class ReadingRuler {
     };
 
     const onTouchEnd = (e) => {
-      if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
         this.isDraggingRuler = false;
         this.isPenTouching = false;
         return;
@@ -2735,6 +2743,9 @@ export class ReadingRuler {
    */
   detectLines() {
     this.cachedLines = [];
+    if (this.isImageOnlyPdf) {
+      return;
+    }
     const range = document.createRange();
     try {
       // Ensure we capture whatever typography container the reader engine actually uses:
@@ -3715,6 +3726,10 @@ export class ReadingRuler {
    * Zmapuje přesné obdélníky všech viditelných slov na aktuální stránce.
    */
   refreshWords() {
+    this.cachedWords = [];
+    if (this.isImageOnlyPdf) {
+      return [];
+    }
     try {
       const stage = this.container || document.getElementById("paged-stage");
       const content = document.getElementById("reader-content");
@@ -6500,7 +6515,7 @@ export class ReadingRuler {
     }
 
     // --- PDF MODE CONTINUOUS MECHANICAL OVERLAY ---
-    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+    if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
       if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
       const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.pdfRulerHeight || 32);
       this.rulerEl.style.height = `${h}px`;
@@ -8297,6 +8312,9 @@ export class ReadingRuler {
     if (popoverSnap) popoverSnap.classList.toggle("is-hidden", isImageOnly);
     if (drawerSnap) drawerSnap.classList.toggle("is-hidden", isImageOnly);
 
+    const popoverModeSection = document.getElementById("popover-ruler-mode-section");
+    if (popoverModeSection) popoverModeSection.classList.toggle("is-hidden", isImageOnly);
+
     const popoverWord = document.getElementById("popover-mode-word");
     const drawerWord = document.getElementById("drawer-word-tracking-section");
     if (popoverWord) {
@@ -8304,6 +8322,11 @@ export class ReadingRuler {
       popoverWord.disabled = isImageOnly;
     }
     if (drawerWord) drawerWord.classList.toggle("is-hidden", isImageOnly);
+
+    const popoverFollow = document.getElementById("popover-follow-section");
+    const settingsFollow = document.getElementById("settings-follow-section");
+    if (popoverFollow) popoverFollow.classList.toggle("is-image-only", isImageOnly);
+    if (settingsFollow) settingsFollow.classList.toggle("is-image-only", isImageOnly);
 
     document.querySelectorAll("[data-ruler-follow='keyboard']").forEach(btn => {
       btn.classList.toggle("is-hidden", isImageOnly);
@@ -8370,7 +8393,7 @@ export class ReadingRuler {
   }
 
   setHeight(px) {
-    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+    if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
       this.setPdfRulerHeight(px);
       return;
     }
@@ -8395,6 +8418,10 @@ export class ReadingRuler {
   }
 
   setAutoHeight(enabled) {
+    if (this.isImageOnlyPdf) {
+      this.setPdfAutoHeight(false);
+      return;
+    }
     if (this.isPdfMode) {
       this.setPdfAutoHeight(enabled);
       return;

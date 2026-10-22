@@ -1112,6 +1112,12 @@ export class PDFLoader {
           if (sourceCanvas) {
             sourceCanvas.classList.add("is-scanned-page");
           }
+          if (!this.isImageOnlyPdf) {
+            this.isImageOnlyPdf = true;
+            if (this.app && typeof this.app.setImageOnlyPdf === "function") {
+              this.app.setImageOnlyPdf(true);
+            }
+          }
           continue;
         }
 
@@ -1292,16 +1298,8 @@ export class PDFLoader {
       }
 
       this.pageWordCounts.set(pageNum, wordCount);
-      if (wordCount === 0) {
+      if (wordCount === 0 || this.isImageOnlyPdf) {
         container.classList.add("is-scanned-page");
-      } else {
-        container.classList.remove("is-scanned-page");
-        if (this.isImageOnlyPdf) {
-          this.isImageOnlyPdf = false;
-          if (this.app && typeof this.app.setImageOnlyPdf === "function") {
-            this.app.setImageOnlyPdf(false);
-          }
-        }
       }
 
       if (window.pdfjsLib && typeof window.pdfjsLib.renderTextLayer === "function") {
@@ -1392,24 +1390,125 @@ export class PDFLoader {
    * Pokud je textContent.items prázdný nebo neobsahuje žádné čitelné alfanumerické znaky,
    * označí dokument jako isImageOnlyPdf: true.
    */
+  /**
+   * Automatická detekce naskenovaného/obrazového PDF dokumentu bez funkční textové vrstvy.
+   * Prozkoumá výsledek page.getTextContent() a operátory vykreslování na vzorku prvních stran (max 3–5 stran).
+   * Pokud je textContent.items prázdný, neobsahuje žádné čitelné alfanumerické znaky,
+   * nebo jsou všechny vzorkované strany celostránkovými rastrovými skeny (isFullPageScan),
+   * označí dokument jako isImageOnlyPdf: true.
+   */
   async detectImageOnlyPdf() {
     if (!this.pdfDoc || this.numPages <= 0) return false;
     try {
       const sampleCount = Math.min(this.numPages, 3);
+      let scannedPagesCount = 0;
+
       for (let pNum = 1; pNum <= sampleCount; pNum++) {
         const page = await this.pdfDoc.getPage(pNum);
-        const textContent = await page.getTextContent();
-        if (textContent && Array.isArray(textContent.items) && textContent.items.length > 0) {
-          for (const item of textContent.items) {
-            if (item && item.str && /[\p{L}\p{N}]/u.test(item.str)) {
-              if (typeof page.cleanup === "function") page.cleanup();
-              return false; // Nalezen čitelný text -> běžné textové PDF
+        let hasReadableText = false;
+
+        try {
+          const textContent = await page.getTextContent();
+          if (textContent && Array.isArray(textContent.items) && textContent.items.length > 0) {
+            for (const item of textContent.items) {
+              if (item && item.str && /[\p{L}\p{N}]/u.test(item.str)) {
+                hasReadableText = true;
+                break;
+              }
             }
           }
+        } catch (e) {
+          hasReadableText = false;
         }
+
+        // Pokud textContent neobsahuje žádný čitelný text -> tato strana je čistý rastrový sken
+        if (!hasReadableText) {
+          scannedPagesCount++;
+          if (typeof page.cleanup === "function") page.cleanup();
+          continue;
+        }
+
+        // Pokud textContent obsahuje znaky, prověříme, zda strana není celostránkový rastrový sken
+        // s pouze podkladovým/skrytým OCR textem bez funkční sazby (isFullPageScan)
+        let isFullPageScan = false;
+        try {
+          const viewport = page.getViewport({ scale: 1 });
+          const opList = await page.getOperatorList();
+          if (opList && opList.fnArray && opList.argsArray && window.pdfjsLib?.OPS) {
+            const OPS = window.pdfjsLib.OPS;
+            const OP_SAVE = OPS.save ?? 1;
+            const OP_RESTORE = OPS.restore ?? 2;
+            const OP_TRANSFORM = OPS.transform ?? 3;
+            const OP_PAINT_IMAGE = OPS.paintImageXObject ?? 85;
+            const OP_PAINT_INLINE = OPS.paintInlineImageXObject ?? 82;
+            const OP_PAINT_MASK = OPS.paintImageMaskXObject ?? 83;
+            const OP_PAINT_REPEAT = OPS.paintImageXObjectRepeat ?? 86;
+
+            let ctm = [1, 0, 0, 1, 0, 0];
+            const ctmStack = [];
+            const multiplyTransform = (m1, m2) => [
+              m1[0] * m2[0] + m1[2] * m2[1],
+              m1[1] * m2[0] + m1[3] * m2[1],
+              m1[0] * m2[2] + m1[2] * m2[3],
+              m1[1] * m2[2] + m1[3] * m2[3],
+              m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+              m1[1] * m2[4] + m1[3] * m2[5] + m1[5]
+            ];
+
+            const fnArray = opList.fnArray;
+            const argsArray = opList.argsArray;
+            for (let i = 0; i < fnArray.length; i++) {
+              const fn = fnArray[i];
+              const args = argsArray[i];
+              if (fn === OP_SAVE) {
+                ctmStack.push([...ctm]);
+              } else if (fn === OP_RESTORE) {
+                ctm = ctmStack.length > 0 ? ctmStack.pop() : [1, 0, 0, 1, 0, 0];
+              } else if (fn === OP_TRANSFORM) {
+                if (args && args.length >= 6) {
+                  ctm = multiplyTransform(ctm, args);
+                }
+              } else if (
+                fn === OP_PAINT_IMAGE ||
+                fn === OP_PAINT_INLINE ||
+                fn === OP_PAINT_MASK ||
+                fn === OP_PAINT_REPEAT
+              ) {
+                const p0 = viewport.convertToViewportPoint(ctm[4], ctm[5]);
+                const p1 = viewport.convertToViewportPoint(ctm[0] + ctm[4], ctm[1] + ctm[5]);
+                const p2 = viewport.convertToViewportPoint(ctm[2] + ctm[4], ctm[3] + ctm[5]);
+                const p3 = viewport.convertToViewportPoint(ctm[0] + ctm[2] + ctm[4], ctm[1] + ctm[3] + ctm[5]);
+
+                const minVx = Math.min(p0[0], p1[0], p2[0], p3[0]);
+                const maxVx = Math.max(p0[0], p1[0], p2[0], p3[0]);
+                const minVy = Math.min(p0[1], p1[1], p2[1], p3[1]);
+                const maxVy = Math.max(p0[1], p1[1], p2[1], p3[1]);
+
+                const vWidth = maxVx - minVx;
+                const vHeight = maxVy - minVy;
+                if ((vWidth / viewport.width > 0.85) && (vHeight / viewport.height > 0.85)) {
+                  isFullPageScan = true;
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`[PDFLoader] Chyba při analýze opList pro stranu ${pNum}:`, e);
+        }
+
+        if (isFullPageScan) {
+          scannedPagesCount++;
+        } else {
+          // Běžné textové PDF se skutečnou textovou sazbou a bez celostránkového skenu
+          if (typeof page.cleanup === "function") page.cleanup();
+          return false;
+        }
+
         if (typeof page.cleanup === "function") page.cleanup();
       }
-      return true; // Všechny vzorkované strany jsou bez čitelného textu -> sken / image-only PDF
+
+      return scannedPagesCount === sampleCount;
     } catch (err) {
       console.warn("[PDFLoader] Chyba při detekci image-only PDF:", err);
       return false;
@@ -1457,12 +1556,6 @@ export class PDFLoader {
 
         if (words > 0) {
           hasAnyText = true;
-          if (this.isImageOnlyPdf) {
-            this.isImageOnlyPdf = false;
-            if (this.app && typeof this.app.setImageOnlyPdf === "function") {
-              this.app.setImageOnlyPdf(false);
-            }
-          }
         }
         totalWords += words;
 

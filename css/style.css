@@ -216,6 +216,21 @@ body {
   display: none !important;
 }
 
+#popover-snap-lines-section.is-hidden,
+#drawer-snap-lines-section.is-hidden,
+#popover-pdf-auto-height-row.is-hidden,
+#drawer-pdf-auto-height-row.is-hidden,
+#popover-ruler-mode-section.is-hidden,
+#drawer-word-tracking-section.is-hidden,
+[data-ruler-follow="keyboard"].is-hidden {
+  display: none !important;
+}
+
+#popover-follow-section.is-image-only .popover-styles-grid,
+#settings-follow-section.is-image-only > div:last-child {
+  grid-template-columns: 1fr !important;
+}
+
 /* ==========================================================================
    Knihovna (Library View)
    ========================================================================== */
