@@ -461,40 +461,36 @@ export class StorageManager {
     const startTime = sessionData.startTime || new Date(timestamp - (durationSeconds * 1000)).toISOString();
     const endTime = sessionData.endTime || new Date(timestamp).toISOString();
     let wordsRead = Math.max(0, Math.round(sessionData.wordsRead ?? 0));
-    let avgWpm = Math.round(sessionData.avgWpm ?? sessionData.wpm ?? 220);
 
     const durationMinutes = durationSeconds / 60;
-    if (durationMinutes > 0.05) {
-      const calculatedPace = Math.round(wordsRead / durationMinutes);
-      if (calculatedPace > 650) {
-        wordsRead = Math.round(durationMinutes * 220);
-        avgWpm = 220;
-      }
-    }
-    if (avgWpm < 80 || avgWpm > 650) {
-      avgWpm = (durationMinutes > 0.05 && (wordsRead / durationMinutes) >= 80 && (wordsRead / durationMinutes) <= 650)
-        ? Math.round(wordsRead / durationMinutes)
-        : 220;
+    const realAvgPace = (durationMinutes > 0.05 && wordsRead > 0) ? Math.round(wordsRead / durationMinutes) : 0;
+    let avgWpm = sessionData.avgWpm ?? sessionData.wpm ?? realAvgPace;
+    if (avgWpm <= 0 || isNaN(avgWpm)) {
+      avgWpm = realAvgPace;
     }
 
     const localDate = this.getLocalDateString(sessionData.date || startTime || timestamp);
     const sessionId = sessionData.sessionId || sessionData.id || `session_${timestamp}_${Math.random().toString(36).substring(2, 9)}`;
 
-    // Filtrace vzorků timelineSamples od umělých clampů
+    // Filtrace vzorků timelineSamples od extrémních chyb (zachováváme validní 1-minutové body)
     const rawSamples = Array.isArray(sessionData.timelineSamples || sessionData.intraSessionSamples) 
       ? (sessionData.timelineSamples || sessionData.intraSessionSamples) 
       : [];
     const cleanedSamples = rawSamples.filter(s => {
-      const sw = Number(s.instantaneousWpm || s.wpm || 0);
-      return sw >= 80 && sw <= 650;
+      const sw = Number(s.wpm ?? s.instantaneousWpm ?? 0);
+      return sw >= 20 && sw <= 800;
     }).map(s => ({
-      timestamp: s.timestamp || timestamp,
+      minute: s.minute,
       elapsedSeconds: Math.max(0, Math.round(s.elapsedSeconds || 0)),
-      instantaneousWpm: Math.round(s.instantaneousWpm || s.wpm || avgWpm)
+      words: s.words !== undefined ? Math.round(s.words) : Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
+      wpm: Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
+      instantaneousWpm: Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
+      timestamp: s.timestamp || timestamp,
+      isPartial: !!s.isPartial
     }));
 
     // Výpočet špičkové rychlosti
-    const validSpeeds = cleanedSamples.map(s => s.instantaneousWpm).filter(w => w >= 80 && w <= 650);
+    const validSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
     const peakWpm = sessionData.peakWpm 
       ? Math.round(sessionData.peakWpm) 
       : (validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm);
@@ -980,57 +976,52 @@ export class StorageManager {
 
       const durationMin = durationSec / 60;
       let words = Math.max(0, session.wordsRead || 0);
-      let avgWpm = session.avgWpm ?? session.wpm ?? 220;
       let changed = false;
 
-      const calculatedPace = durationMin > 0.05 ? Math.round(words / durationMin) : avgWpm;
+      const calculatedPace = durationMin > 0.05 ? Math.round(words / durationMin) : 0;
+      let avgWpm = session.avgWpm ?? session.wpm ?? calculatedPace;
 
-      // 1. Detekce a oprava extrémních / zkreslených relací:
-      if (avgWpm >= 650 || calculatedPace > 650 || words > Math.round(durationMin * 650) ||
-          (durationMin < 0.5 && words > 200) || (words > 5000 && durationSec < 900)) {
-        avgWpm = 220;
-        words = Math.round(durationMin * 220);
+      // 1. Detekce a oprava zjevně poškozených nebo dříve nesprávně přepsaných relací:
+      if (isNaN(avgWpm) || avgWpm <= 0) {
+        avgWpm = calculatedPace > 0 ? calculatedPace : 220;
         changed = true;
-      } else if (avgWpm <= 150) {
-        // Pokud byla relace uměle oříznuta na spodní limit 150 WPM:
-        if (calculatedPace >= 80 && calculatedPace <= 650) {
-          avgWpm = calculatedPace;
-        } else {
-          avgWpm = 220;
-          if (words > Math.round(durationMin * 250)) {
-            words = Math.round(durationMin * 220);
-          }
-        }
-        changed = true;
-      } else if (calculatedPace < 80 && durationSec >= 15 && words > 0) {
-        avgWpm = 220;
+      } else if (Math.abs(avgWpm - calculatedPace) > 25 && calculatedPace >= 40 && calculatedPace <= 650) {
+        // Pokud byla relace v minulosti nesprávně přepsána (např. 1,193 slov za 15m 08s zafixována na 220 místo 79 WPM):
+        // Obnovíme skutečný naměřený průměr odpovídající slovům a délce relace!
+        avgWpm = calculatedPace;
         changed = true;
       }
 
-      // 2. Normalizace a filtrace vzorků v timelineSamples:
-      // Odstranit vzorky na umělých stropech/dnech (<= 150 WPM nebo >= 650 WPM)
+      // 2. Normalizace a zachování vzorků v timelineSamples (1-minutové buckety)
       const samples = Array.isArray(session.timelineSamples) ? session.timelineSamples : [];
       let samplesChanged = false;
       let cleanedSamples = samples.filter(s => {
-        const sw = Number(s.instantaneousWpm || s.wpm || 0);
-        if (sw <= 150 || sw >= 650) {
-          samplesChanged = true;
-          return false;
-        }
-        return true;
+        const sw = Number(s.wpm ?? s.instantaneousWpm ?? 0);
+        return sw >= 20 && sw <= 800;
       }).map(s => ({
-        timestamp: s.timestamp || session.timestamp || Date.now(),
+        minute: s.minute ?? (s.elapsedSeconds ? Math.round(s.elapsedSeconds / 60) : 1),
         elapsedSeconds: Math.max(0, Math.round(s.elapsedSeconds || 0)),
-        instantaneousWpm: Math.round(s.instantaneousWpm || s.wpm || avgWpm)
+        words: s.words !== undefined ? Math.round(s.words) : Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
+        wpm: Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
+        instantaneousWpm: Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
+        timestamp: s.timestamp || session.timestamp || Date.now(),
+        isPartial: !!s.isPartial
       }));
 
-      // Pokud byly všechny vzorky odfiltrovány kvůli umělým limitům, doplníme validní referenci
+      // Pokud relace neměla vzorky, doplníme referenční koncový bod
       if (cleanedSamples.length === 0 && durationSec >= 15) {
         cleanedSamples = [
-          { timestamp: session.timestamp || Date.now(), elapsedSeconds: 0, instantaneousWpm: avgWpm },
-          { timestamp: session.timestamp || Date.now(), elapsedSeconds: durationSec, instantaneousWpm: avgWpm }
+          { minute: 1, elapsedSeconds: durationSec, words: words, wpm: avgWpm, instantaneousWpm: avgWpm, timestamp: session.timestamp || Date.now() }
         ];
         samplesChanged = true;
+      }
+
+      // Výpočet špičkové rychlosti
+      const sampleSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
+      const peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds, avgWpm) : avgWpm;
+      if (session.peakWpm !== peakWpm) {
+        session.peakWpm = peakWpm;
+        changed = true;
       }
 
       // 3. Normalizace data relace do YYYY-MM-DD
@@ -1040,13 +1031,15 @@ export class StorageManager {
         changed = true;
       }
 
-      if (changed || samplesChanged) {
+      if (changed || samplesChanged || session.avgWpm !== avgWpm) {
         session.wordsRead = words;
         session.durationSeconds = durationSec;
         session.activeSeconds = durationSec;
         session.avgWpm = avgWpm;
         session.wpm = avgWpm;
+        session.peakWpm = peakWpm;
         session.timelineSamples = cleanedSamples;
+        session.intraSessionSamples = cleanedSamples;
         await this.saveReadingSession(session);
         normalizedCount++;
       }

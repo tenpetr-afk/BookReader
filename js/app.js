@@ -449,6 +449,11 @@ export class LuminaApp {
     this.ruler.app = this;
     this.ruler.readingMode = this.readingMode;
 
+    // Kontinuální akreditace slov při posunu pravítka po řádcích a slovech
+    this.ruler.onProgress = (type, count) => {
+      tracker.attributeWords(count);
+    };
+
     // Callback pro ruler.js: vrátí true pokud je otevřen jakýkoliv panel/zásuvka,
     // aby ruler neinterferoval s kliknutím na backdrop (zavření panelu).
     this.ruler.isAnyDrawerOpen = () => this.isAnyModalOrMenuOpen();
@@ -5375,6 +5380,20 @@ export class LuminaApp {
           const scrollIntoSec = Math.max(0, scrollTop - activeSection.offsetTop);
           const maxSecScroll = Math.max(1, secHeight - vpHeight);
           const chapterScrollRatio = Math.max(0, Math.min(1, scrollIntoSec / maxSecScroll));
+
+          // Kontinuální akreditace slov při vertikálním skrolování
+          this._maxVScrollByChapter = this._maxVScrollByChapter || new Map();
+          const prevRatio = this._maxVScrollByChapter.get(activeIdx) || 0;
+          if (chapterScrollRatio > prevRatio) {
+            const deltaRatio = chapterScrollRatio - prevRatio;
+            this._maxVScrollByChapter.set(activeIdx, chapterScrollRatio);
+            const secWords = parseInt(activeSection.dataset.wordCount, 10) || 1000;
+            const wordsScrolled = Math.round(deltaRatio * secWords);
+            if (wordsScrolled > 0 && wordsScrolled <= 500) {
+              tracker.attributeWords(wordsScrolled);
+            }
+          }
+
           currPageInCh = Math.max(1, Math.min(totalPagesInCh, Math.round(chapterScrollRatio * (totalPagesInCh - 1)) + 1));
           remainingPagesInCh = Math.max(0, totalPagesInCh - currPageInCh);
 
@@ -6186,7 +6205,7 @@ export class LuminaApp {
 
       const durationStr = ReadingTracker.formatDurationDetailed(s.durationSeconds);
       const wordsStr = (s.wordsRead || 0).toLocaleString("cs-CZ");
-      const speedStr = `${s.avgWpm || 220} WPM`;
+      const speedStr = `${s.avgWpm || (s.durationSeconds > 0 ? Math.round((s.wordsRead || 0) / (s.durationSeconds / 60)) : 0)} WPM`;
 
       if (s.isLive) {
         opt.textContent = `🔴 [Aktivní relace] ${durationStr} • ${wordsStr} slov • ${speedStr}`;
@@ -6221,7 +6240,7 @@ export class LuminaApp {
 
       const durationStr = ReadingTracker.formatDurationDetailed(s.durationSeconds);
       const wordsStr = `${(s.wordsRead || 0).toLocaleString("cs-CZ")} slov`;
-      const speedStr = `${s.avgWpm || 220} WPM`;
+      const speedStr = `${s.avgWpm || (s.durationSeconds > 0 ? Math.round((s.wordsRead || 0) / (s.durationSeconds / 60)) : 0)} WPM`;
 
       let dateFormatted = "";
       if (s.isLive) {
@@ -6275,12 +6294,13 @@ export class LuminaApp {
       });
     }
 
-    const avgWpm = session.avgWpm || 220;
-    const maxPace = Math.min(650, Math.max(280, Math.round(avgWpm * 1.65)));
+    const durationMin = (session.durationSeconds || session.activeSeconds || 0) / 60;
+    const calcAvg = (durationMin > 0 && session.wordsRead > 0) ? Math.round(session.wordsRead / durationMin) : 0;
+    const avgWpm = session.avgWpm ?? (calcAvg > 0 ? calcAvg : 220);
     const samples = Array.isArray(session.timelineSamples || session.intraSessionSamples) 
       ? (session.timelineSamples || session.intraSessionSamples) 
       : [];
-    const speeds = samples.map(s => Number(s.instantaneousWpm || s.wpm) || 0).filter(w => w >= 60).map(w => Math.min(maxPace, w));
+    const speeds = samples.map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
     const peakWpm = session.peakWpm 
       ? session.peakWpm 
       : (speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm);
@@ -6292,7 +6312,7 @@ export class LuminaApp {
       this.dom.sessionBadgePeakWpm.textContent = `${peakWpm} WPM`;
     }
     if (this.dom.sessionBadgeAvgWpm) {
-      this.dom.sessionBadgeAvgWpm.textContent = `${session.avgWpm || 220} WPM`;
+      this.dom.sessionBadgeAvgWpm.textContent = `${avgWpm} WPM`;
     }
     if (this.dom.sessionBadgeWords) {
       this.dom.sessionBadgeWords.textContent = (session.wordsRead || 0).toLocaleString("cs-CZ");

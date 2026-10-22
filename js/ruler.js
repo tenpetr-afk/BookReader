@@ -77,6 +77,9 @@ export class ReadingRuler {
     this.activeLineIndex = -1;
     this.previousActiveLineIndex = -1;
     this.activeWordIndex = -1;
+    this.onProgress = null; // Callback: (type: "line" | "word", count: number)
+    this._maxLineIndexOnPage = -1;
+    this._maxWordIndexOnPage = -1;
     this.animFrameId = null;
     this.isDragging = false;
     this.isPageTransitioning = false;
@@ -5434,6 +5437,41 @@ export class ReadingRuler {
     this.maskRightEl.classList.remove("is-snapped");
   }
 
+  _checkLineProgress(idx) {
+    if (idx > this._maxLineIndexOnPage && this._maxLineIndexOnPage >= 0) {
+      const deltaLines = idx - this._maxLineIndexOnPage;
+      this._maxLineIndexOnPage = idx;
+      let words = 0;
+      if (this.cachedWords && this.cachedWords.length > 0) {
+        words = this.cachedWords.filter(w => w.lineIndex > (idx - deltaLines) && w.lineIndex <= idx).length;
+      }
+      if (!words || words <= 0) {
+        const pageWords = (this.app && typeof this.app.getVisibleWordsOnCurrentPage === "function") 
+          ? this.app.getVisibleWordsOnCurrentPage() 
+          : 250;
+        const totalLines = Math.max(1, this.cachedLines?.length || 25);
+        words = Math.round(deltaLines * (pageWords / totalLines));
+      }
+      if (words > 0 && typeof this.onProgress === "function") {
+        this.onProgress("line", words);
+      }
+    } else if (this._maxLineIndexOnPage < 0 && idx >= 0) {
+      this._maxLineIndexOnPage = idx;
+    }
+  }
+
+  _checkWordProgress(idx) {
+    if (idx > this._maxWordIndexOnPage && this._maxWordIndexOnPage >= 0) {
+      const delta = idx - this._maxWordIndexOnPage;
+      this._maxWordIndexOnPage = idx;
+      if (delta > 0 && typeof this.onProgress === "function") {
+        this.onProgress("word", delta);
+      }
+    } else if (this._maxWordIndexOnPage < 0 && idx >= 0) {
+      this._maxWordIndexOnPage = idx;
+    }
+  }
+
   /**
    * Nastaví geometrii asymetrického čtecího okna pro režim slov:
    * - Cílové slovo (activeWordWidth): plný kontrast bez vnitřního vyblednutí
@@ -5454,6 +5492,7 @@ export class ReadingRuler {
     }
 
     this.activeWordIndex = wordIndex;
+    this._checkWordProgress(wordIndex);
     const w0 = this.cachedWords[wordIndex];
     if (w0 && w0.lineIndex != null && w0.lineIndex >= 0 && w0.lineIndex < this.cachedLines.length) {
       this.activeLineIndex = w0.lineIndex;
@@ -6297,6 +6336,7 @@ export class ReadingRuler {
 
           if (currentLine && nextLine && vp) {
             this.activeLineIndex = newIdx;
+            this._checkLineProgress(newIdx);
             this.rulerEl.classList.remove("word-tracking-mode");
             const geom = this.computeLineGeometry(newIdx);
             if (geom) {
@@ -6326,6 +6366,7 @@ export class ReadingRuler {
         }
 
         this.activeLineIndex = newIdx;
+        this._checkLineProgress(newIdx);
 
         this.rulerEl.classList.remove("word-tracking-mode");
         const geom = this.computeLineGeometry(newIdx);
@@ -8694,6 +8735,8 @@ export class ReadingRuler {
 
     this.penHistory = [];
     this.touchHistory = [];
+    this._maxLineIndexOnPage = -1;
+    this._maxWordIndexOnPage = -1;
 
     // Okamžité synchronní usazení pravítka na nové stránce podle směru listování
     // Pro švihnutí stylusu vždy resynchronizovat na horní řádek příchozí stránky
@@ -8729,6 +8772,8 @@ export class ReadingRuler {
     this._scrollAnchorVirtualY = null;
     this.penHistory = [];
     this.touchHistory = [];
+    this._maxLineIndexOnPage = -1;
+    this._maxWordIndexOnPage = -1;
     this.cachedLines = [];
     this.cachedWords = [];
     this.penStrokeStartTime = 0;

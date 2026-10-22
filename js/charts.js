@@ -84,10 +84,10 @@ export class StatsCharts {
     if (!container) return;
     container.innerHTML = "";
 
-    // Filtrujeme pouze platné vzorky v pásmu [80, 650] WPM (žádné umělé clampingy)
+    // Filtrujeme pouze platné vzorky v realistickém pásmu [40, 650] WPM (bez umělého ořezávání na 80+)
     const validHistory = (history || []).filter(h => {
       const w = Math.round(h.wpm);
-      return w >= 80 && w <= 650;
+      return w >= 40 && w <= 650;
     });
 
     if (validHistory.length === 0) {
@@ -107,14 +107,14 @@ export class StatsCharts {
     const chartW = width - padding.left - padding.right;
     const chartH = height - padding.top - padding.bottom;
 
-    const clampedAvgWpm = Math.max(80, Math.min(650, Math.round(avgWpm)));
+    const clampedAvgWpm = Math.max(40, Math.min(650, Math.round(avgWpm)));
     const wpms = validHistory.map(h => Math.round(h.wpm));
-    // Dynamické meze osy Y odpovídající reálným datům uživatele (bez umělých stropů)
+    // Dynamické meze osy Y odpovídající reálným datům uživatele (bez umělých stropů a podlah)
     const dataMin = Math.min(...wpms, clampedAvgWpm);
     const dataMax = Math.max(...wpms, clampedAvgWpm);
-    const minWpm = Math.max(60, Math.floor((dataMin * 0.85) / 25) * 25);
+    const minWpm = Math.max(30, Math.floor((dataMin * 0.85) / 25) * 25);
     const maxWpm = Math.min(650, Math.ceil((dataMax * 1.15) / 25) * 25);
-    const range = Math.max(50, maxWpm - minWpm);
+    const range = Math.max(40, maxWpm - minWpm);
 
     const getX = (idx) => {
       if (validHistory.length === 1) return padding.left + chartW / 2;
@@ -258,30 +258,37 @@ export class StatsCharts {
     }
 
     const durationSeconds = Number(sessionData.durationSeconds ?? sessionData.activeSeconds ?? sessionData.duration ?? 0);
-    const avgWpm = Number(sessionData.avgWpm ?? sessionData.wpm ?? 220);
+    const avgWpm = Number(sessionData.avgWpm ?? sessionData.wpm ?? (durationSeconds > 0 ? Math.round((sessionData.wordsRead || 0) / (durationSeconds / 60)) : 0));
     let rawSamples = Array.isArray(sessionData.timelineSamples || sessionData.intraSessionSamples || sessionData.intra_session_samples) 
       ? [...(sessionData.timelineSamples || sessionData.intraSessionSamples || sessionData.intra_session_samples)] 
       : [];
 
-    // 1. Extrakce a normalizace vzorků (Monotonic Elapsed Active Time)
+    // 1. Extrakce a normalizace 1-minutových vzorků (Monotonic Elapsed Active Time)
     let parsedSamples = rawSamples.map(s => {
-      let sec = Number(s.elapsedActiveSeconds ?? s.elapsedSeconds ?? s.elapsedTime);
+      let sec = Number(s.elapsedSeconds ?? s.elapsedActiveSeconds ?? s.elapsedTime);
       if (isNaN(sec) || sec < 0) {
-        if (s.timestamp && sessionData.startTime) {
+        if (s.minute) {
+          sec = s.minute * 60;
+        } else if (s.timestamp && sessionData.startTime) {
           const startMs = new Date(sessionData.startTime).getTime();
           sec = Math.max(0, Math.round((s.timestamp - startMs) / 1000));
         } else {
           sec = 0;
         }
       }
-      const wpm = Number(s.instantaneousWpm ?? s.wpm ?? 0);
+      const wpm = Number(s.wpm ?? s.instantaneousWpm ?? 0);
+      const words = Number(s.words ?? wpm);
+      const minute = Number(s.minute ?? Math.round(sec / 60));
       return {
+        minute,
         sec: Math.max(0, Math.round(sec)),
-        wpm: Math.round(wpm)
+        words: Math.round(words),
+        wpm: Math.round(wpm),
+        isPartial: !!s.isPartial
       };
-    }).filter(s => s.wpm >= 60 && s.wpm <= 650);
+    }).filter(s => s.wpm >= 20 && s.wpm <= 800 && s.sec > 0);
 
-    // 2. Striktní vzestupné řazení podle uplynulého aktivního času (Consistent Sorting)
+    // 2. Striktní vzestupné řazení podle času
     parsedSamples.sort((a, b) => a.sec - b.sec);
 
     // 3. Monotónní deduplikace a eliminace duplicitních bodů
@@ -291,43 +298,19 @@ export class StatsCharts {
         dedupedSamples.push({ ...sample });
       } else {
         const last = dedupedSamples[dedupedSamples.length - 1];
-        if (sample.sec <= last.sec + 1) {
-          // Bod je ve stejnou sekundu nebo do 1s: zprůměrujeme tempo
-          last.wpm = Math.round((last.wpm + sample.wpm) / 2);
+        if (sample.sec === last.sec) {
+          last.wpm = sample.wpm;
+          last.words = sample.words;
         } else {
           dedupedSamples.push({ ...sample });
         }
       }
     }
 
-    // 4. Outlier Clamping: Cap unrealistic transient velocity spikes
-    // Zabráníme tomu, aby mikro-intervaly (rychlé otočení stránky za < 3s, skimming)
-    // vytvořily zkreslenou špičku (např. 494 WPM) deformující měřítko grafu a odznak špičky
-    const maxAllowedPace = Math.min(650, Math.max(280, Math.round(avgWpm * 1.65)));
-
-    // 5. Smoothed Rolling WPM Calculation (EMA smoothing přes vzorky)
-    let currentEma = avgWpm;
-    let smoothedSamples = dedupedSamples.map((s, idx) => {
-      const clampedWpm = Math.max(70, Math.min(maxAllowedPace, s.wpm));
-      if (idx === 0) {
-        currentEma = clampedWpm;
-      } else {
-        const alpha = 0.35;
-        currentEma = Math.round(currentEma * (1 - alpha) + clampedWpm * alpha);
-      }
-      return {
-        sec: s.sec,
-        wpm: currentEma
-      };
-    });
-
     // Pokud relace nemá uložené vzorky, ale má trvání a průměrné WPM, vytvoříme referenční linku
-    if (smoothedSamples.length === 0) {
+    if (dedupedSamples.length === 0) {
       if (durationSeconds >= 5) {
-        smoothedSamples = [
-          { sec: 0, wpm: avgWpm },
-          { sec: durationSeconds, wpm: avgWpm }
-        ];
+        dedupedSamples.push({ minute: 1, sec: Math.min(60, durationSeconds), words: sessionData.wordsRead || 0, wpm: avgWpm });
       } else {
         container.innerHTML = `
           <div class="chart-empty-state">
@@ -339,32 +322,39 @@ export class StatsCharts {
       }
     }
 
-    // Pokud máme jen 1 vzorek na začátku relace, doplníme koncový bod
-    if (smoothedSamples.length === 1) {
-      const endSec = Math.max(durationSeconds, smoothedSamples[0].sec + 10);
-      smoothedSamples.push({
-        sec: endSec,
-        wpm: avgWpm || smoothedSamples[0].wpm
-      });
+    // 4. Konstrukce bodů křivky: zaručuje, že čára začíná na t=0 a sahá PŘESNĚ až na konec relace (durationSeconds)
+    const curvePoints = [];
+    if (dedupedSamples[0].sec > 0) {
+      curvePoints.push({ sec: 0, wpm: dedupedSamples[0].wpm, isAnchor: true });
+    }
+    curvePoints.push(...dedupedSamples);
+    if (durationSeconds > dedupedSamples[dedupedSamples.length - 1].sec) {
+      curvePoints.push({ sec: durationSeconds, wpm: dedupedSamples[dedupedSamples.length - 1].wpm, isAnchor: true });
     }
 
-    const samples = smoothedSamples;
-    const maxElapsed = Math.max(durationSeconds, samples[samples.length - 1].sec, 10);
+    const maxElapsed = Math.max(durationSeconds, curvePoints[curvePoints.length - 1].sec, 60);
 
-    // Výpočet dynamických mezí pro osu Y v pásmu [80, 650] WPM
-    const clampedAvgWpm = Math.max(80, Math.min(650, Math.round(avgWpm)));
-    const sampleSpeeds = samples.map(s => s.wpm);
-    const peakWpm = Math.max(...sampleSpeeds, clampedAvgWpm);
-    const lowestWpm = Math.min(...sampleSpeeds, clampedAvgWpm);
+    // 5. Výpočet špičkové rychlosti (Peak WPM)
+    const sampleSpeeds = dedupedSamples.map(s => s.wpm).filter(w => w > 0);
+    const peakWpm = sessionData.peakWpm 
+      ? Math.round(sessionData.peakWpm) 
+      : (sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds, avgWpm) : avgWpm);
 
-    // Synchronizujeme odznak špičkového tempa v UI s reálným vyhlazeným peakem
+    // Synchronizujeme odznaky špičkového a průměrného tempa v UI
     const peakBadge = document.getElementById("session-badge-peak-wpm");
     if (peakBadge) {
       peakBadge.textContent = `${peakWpm} WPM`;
     }
+    const avgBadge = document.getElementById("session-badge-avg-wpm");
+    if (avgBadge) {
+      avgBadge.textContent = `${avgWpm} WPM`;
+    }
 
-    const minY = Math.max(50, Math.floor((lowestWpm * 0.85) / 25) * 25);
-    const maxY = Math.min(650, Math.max(minY + 50, Math.ceil((peakWpm * 1.15) / 25) * 25));
+    // 6. Dynamické meze pro osu Y odpovídající reálným datům uživatele
+    const dataMin = Math.min(...sampleSpeeds, avgWpm > 0 ? avgWpm : 60);
+    const dataMax = Math.max(...sampleSpeeds, peakWpm > 0 ? peakWpm : 200);
+    const minY = Math.max(20, Math.floor((dataMin * 0.8) / 25) * 25);
+    const maxY = Math.min(800, Math.max(minY + 50, Math.ceil((dataMax * 1.15) / 25) * 25));
     const rangeY = maxY - minY || 100;
 
     const width = container.clientWidth || 560;
@@ -385,11 +375,14 @@ export class StatsCharts {
     };
 
     // Body křivky
-    const points = samples.map(s => ({
+    const points = curvePoints.map(s => ({
       x: getX(s.sec),
       y: getY(s.wpm),
       sec: s.sec,
-      wpm: s.wpm
+      wpm: s.wpm,
+      minute: s.minute,
+      words: s.words,
+      isAnchor: !!s.isAnchor
     }));
 
     // Sestavení plynulé Bézierovy křivky (Cubic Bezier Spline) garantovaně bez smyček v X
@@ -485,34 +478,32 @@ export class StatsCharts {
     // 5. Hlavní čára grafu
     svg += `<path d="${curvePath}" fill="none" stroke="#3b82f6" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" />`;
 
-    // 6. Nalezení bodu se špičkovou rychlostí (Peak WPM)
-    let peakPoint = points[0];
+    // 6. Nalezení bodu se špičkovou rychlostí (Peak WPM) mezi reálnými vzorky
+    let peakPoint = null;
     for (const pt of points) {
-      if (pt.wpm > peakPoint.wpm) {
-        peakPoint = pt;
+      if (!pt.isAnchor) {
+        if (!peakPoint || pt.wpm > peakPoint.wpm) {
+          peakPoint = pt;
+        }
       }
     }
 
-    // 7. Vykreslení interaktivních bodů (pokud není bodů extrémně mnoho)
-    const shouldDrawAllPoints = points.length <= 40;
-    const step = shouldDrawAllPoints ? 1 : Math.ceil(points.length / 30);
+    // 7. Vykreslení interaktivních 1-minutových bodů
+    points.forEach((pt) => {
+      if (pt.isAnchor) return; // Ukotvovací pomocné body nevykreslují kruhový bod
 
-    points.forEach((pt, idx) => {
-      const isPeak = pt === peakPoint && pt.wpm > (avgWpm + 10);
-      const isEndpoint = idx === 0 || idx === points.length - 1;
-      
-      if (!isPeak && !isEndpoint && idx % step !== 0) return;
-
+      const isPeak = peakPoint && pt === peakPoint && (peakPoint.wpm > avgWpm || points.filter(p => !p.isAnchor).length === 1);
       const m = Math.floor(pt.sec / 60);
       const s = pt.sec % 60;
-      const timeStr = m > 0 ? `${m} min ${s} s` : `${s} s`;
+      const timeStr = pt.minute ? `Minuta ${pt.minute} (${m > 0 ? `${m}m ` : ""}${s}s)` : (m > 0 ? `${m} min ${s} s` : `${s} s`);
+      const wordsStr = pt.words !== undefined ? ` • ${pt.words} slov` : "";
 
       if (isPeak) {
         svg += `
           <g class="chart-peak-marker" tabindex="0">
             <circle cx="${pt.x}" cy="${pt.y}" r="7" fill="rgba(236, 72, 153, 0.25)" filter="url(#glowEffect)" />
             <circle cx="${pt.x}" cy="${pt.y}" r="4.5" fill="#ffffff" stroke="#ec4899" stroke-width="2.5">
-              <title>Špička: ${pt.wpm} WPM (v čase ${timeStr})</title>
+              <title>Špička: ${pt.wpm} WPM (${timeStr}${wordsStr})</title>
             </circle>
             <text x="${pt.x}" y="${Math.max(padding.top + 8, pt.y - 10)}" font-size="10" font-weight="800" fill="#ec4899" text-anchor="middle">${pt.wpm} WPM</text>
           </g>
@@ -520,7 +511,7 @@ export class StatsCharts {
       } else {
         svg += `
           <circle cx="${pt.x}" cy="${pt.y}" r="3.5" fill="#ffffff" stroke="#3b82f6" stroke-width="2" class="chart-point">
-            <title>${pt.wpm} WPM (v čase ${timeStr})</title>
+            <title>${pt.wpm} WPM (${timeStr}${wordsStr})</title>
           </circle>
         `;
       }

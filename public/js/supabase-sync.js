@@ -855,8 +855,10 @@ export class SupabaseSync {
     const samples = Array.isArray(session.intraSessionSamples ?? session.timelineSamples)
       ? (session.intraSessionSamples ?? session.timelineSamples)
       : [];
-    const avgWpm = Math.round(session.avgWpm ?? session.wpm ?? 220);
-    const validSpeeds = samples.map(s => Number(s.instantaneousWpm || s.wpm || 0)).filter(w => w >= 80 && w <= 650);
+    const durMin = dur / 60;
+    const calcAvg = (durMin > 0 && session.wordsRead > 0) ? Math.round(session.wordsRead / durMin) : 0;
+    const avgWpm = Math.round(session.avgWpm ?? session.wpm ?? (calcAvg > 0 ? calcAvg : 220));
+    const validSpeeds = samples.map(s => Number(s.wpm || s.instantaneousWpm || 0)).filter(w => w >= 30 && w <= 800);
     const peakWpm = session.peakWpm
       ? Math.round(session.peakWpm)
       : (validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm);
