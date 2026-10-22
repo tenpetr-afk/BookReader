@@ -240,8 +240,23 @@ export class StorageManager {
   }
 
   async syncWithCloud(options) {
-    const { supabaseSync } = await import("./supabase-sync.js");
-    return await supabaseSync.syncAll(options);
+    try {
+      const { supabaseSync } = await import("./supabase-sync.js");
+      return await supabaseSync.syncAll(options);
+    } catch (err) {
+      console.warn("[StorageManager] syncWithCloud selhal:", err);
+      return { success: false, reason: "sync_failed" };
+    }
+  }
+
+  async pushReadingSessionAndStatsToCloud(session) {
+    try {
+      const { supabaseSync } = await import("./supabase-sync.js");
+      return await supabaseSync.pushSessionAndStats(session);
+    } catch (err) {
+      console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
+      return null;
+    }
   }
 
   normalizeBookProgress(book) {
@@ -429,14 +444,20 @@ export class StorageManager {
 
   /**
    * Uloží detailní relaci čtení do reading_sessions a synchronizuje i do sessions (legacy)
+   * Ukládá POUZE validní relace s délkou alespoň 5 minut (>= 300 sekund).
    * @param {Object} sessionData
    */
   async saveReadingSession(sessionData) {
     if (!sessionData) return null;
-    const db = await this.getDB();
 
-    const timestamp = sessionData.timestamp || Date.now();
-    const durationSeconds = Math.max(0, Math.round(sessionData.durationSeconds ?? sessionData.activeSeconds ?? 0));
+    const durationSeconds = Math.max(0, Math.round(sessionData.durationSeconds ?? sessionData.activeSeconds ?? sessionData.duration ?? 0));
+    // Striktní vynucení minimálního prahu 5 minut pro uložení do historie relací
+    if (durationSeconds < 300) {
+      return null;
+    }
+
+    const db = await this.getDB();
+    const timestamp = sessionData.timestamp || (sessionData.startTime ? new Date(sessionData.startTime).getTime() : Date.now());
     const startTime = sessionData.startTime || new Date(timestamp - (durationSeconds * 1000)).toISOString();
     const endTime = sessionData.endTime || new Date(timestamp).toISOString();
     let wordsRead = Math.max(0, Math.round(sessionData.wordsRead ?? 0));
@@ -457,10 +478,12 @@ export class StorageManager {
     }
 
     const localDate = this.getLocalDateString(sessionData.date || startTime || timestamp);
-    const sessionId = sessionData.sessionId || `session_${timestamp}_${Math.random().toString(36).substring(2, 9)}`;
+    const sessionId = sessionData.sessionId || sessionData.id || `session_${timestamp}_${Math.random().toString(36).substring(2, 9)}`;
 
     // Filtrace vzorků timelineSamples od umělých clampů
-    const rawSamples = Array.isArray(sessionData.timelineSamples) ? sessionData.timelineSamples : [];
+    const rawSamples = Array.isArray(sessionData.timelineSamples || sessionData.intraSessionSamples) 
+      ? (sessionData.timelineSamples || sessionData.intraSessionSamples) 
+      : [];
     const cleanedSamples = rawSamples.filter(s => {
       const sw = Number(s.instantaneousWpm || s.wpm || 0);
       return sw >= 80 && sw <= 650;
@@ -470,22 +493,34 @@ export class StorageManager {
       instantaneousWpm: Math.round(s.instantaneousWpm || s.wpm || avgWpm)
     }));
 
+    // Výpočet špičkové rychlosti
+    const validSpeeds = cleanedSamples.map(s => s.instantaneousWpm).filter(w => w >= 80 && w <= 650);
+    const peakWpm = sessionData.peakWpm 
+      ? Math.round(sessionData.peakWpm) 
+      : (validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm);
+
+    const updatedAt = sessionData.updatedAt || sessionData.updated_at || new Date().toISOString();
+
     const normalizedSession = {
       sessionId,
       id: sessionId,
-      bookId: sessionData.bookId || "",
-      bookTitle: sessionData.bookTitle || "",
-      chapterIndex: sessionData.chapterIndex ?? 0,
+      bookId: sessionData.bookId || sessionData.book_id || "",
+      bookTitle: sessionData.bookTitle || sessionData.book_title || "",
+      chapterIndex: sessionData.chapterIndex ?? sessionData.chapter_index ?? 0,
       startTime,
       endTime,
       durationSeconds,
       activeSeconds: durationSeconds,
+      duration: durationSeconds,
       wordsRead,
       avgWpm,
+      peakWpm,
       wpm: avgWpm,
       timelineSamples: cleanedSamples,
+      intraSessionSamples: cleanedSamples,
       date: localDate,
-      timestamp
+      timestamp,
+      updatedAt
     };
 
     return new Promise((resolve, reject) => {
@@ -518,6 +553,60 @@ export class StorageManager {
         reject(tx.error);
       };
     });
+  }
+
+  /**
+   * Smaže čtecí relaci z IndexedDB i localStorage
+   */
+  async deleteReadingSession(sessionId) {
+    if (!sessionId) return;
+    const db = await this.getDB();
+    return new Promise((resolve) => {
+      const stores = [];
+      if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
+      if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
+
+      if (stores.length === 0) {
+        this._removeSessionFromLocalStorage(sessionId);
+        return resolve();
+      }
+
+      const tx = db.transaction(stores, "readwrite");
+      if (db.objectStoreNames.contains("reading_sessions")) {
+        tx.objectStore("reading_sessions").delete(sessionId);
+      }
+      if (db.objectStoreNames.contains("sessions")) {
+        const sStore = tx.objectStore("sessions");
+        const req = sStore.getAll();
+        req.onsuccess = () => {
+          for (const row of (req.result || [])) {
+            if (row.sessionId === sessionId || row.id === sessionId) {
+              sStore.delete(row.id);
+            }
+          }
+        };
+      }
+
+      tx.oncomplete = () => {
+        this._removeSessionFromLocalStorage(sessionId);
+        resolve();
+      };
+      tx.onerror = () => {
+        this._removeSessionFromLocalStorage(sessionId);
+        resolve();
+      };
+    });
+  }
+
+  _removeSessionFromLocalStorage(sessionId) {
+    try {
+      const raw = localStorage.getItem("lumina_reading_sessions");
+      if (raw) {
+        const list = JSON.parse(raw);
+        const filtered = list.filter(s => s.sessionId !== sessionId && s.id !== sessionId);
+        localStorage.setItem("lumina_reading_sessions", JSON.stringify(filtered));
+      }
+    } catch (_) {}
   }
 
   _cacheSessionToLocalStorage(session) {
@@ -560,6 +649,11 @@ export class StorageManager {
             return resolve(results);
           }
         }
+        // Filtrovat pouze relace s aktivní dobou alespoň 5 minut (>= 300 sekund)
+        results = results.filter(s => {
+          const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
+          return dur >= 300;
+        });
         // Seřadit sestupně (nejnovější nahoře)
         results.sort((a, b) => (b.timestamp || new Date(b.startTime).getTime() || 0) - (a.timestamp || new Date(a.startTime).getTime() || 0));
         resolve(results);
@@ -568,7 +662,10 @@ export class StorageManager {
       request.onerror = () => {
         try {
           const raw = localStorage.getItem("lumina_reading_sessions");
-          if (raw) return resolve(JSON.parse(raw));
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            return resolve(parsed.filter(s => (s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0) >= 300));
+          }
         } catch (_) {}
         resolve([]);
       };
@@ -818,11 +915,12 @@ export class StorageManager {
         totalWords += words;
 
         // Detekce anomálií:
+        // - relace kratší než 5 minut (< 300s)
         // - wpm ležící na umělých stropech/dnech (<= 150 WPM nebo >= 650 WPM)
         // - tempo slov nad 650 WPM
         // - masivní počty slov při nízkém čase (např. > 5000 slov za < 15 minut)
         // - datum v surovém formátu ISO s časem (obsahující T)
-        if (wpm <= 150 || wpm >= 650 || pace > 650 ||
+        if (sec < 300 || wpm <= 150 || wpm >= 650 || pace > 650 ||
             (words > 5000 && sec < 900) || (min < 0.5 && words > 200) ||
             (typeof s.date === "string" && s.date.includes("T"))) {
           hasAnomaly = true;
@@ -872,7 +970,14 @@ export class StorageManager {
     let totalWords = 0;
 
     for (const session of allSessions) {
-      const durationSec = Math.max(0, session.durationSeconds ?? session.activeSeconds ?? 0);
+      const durationSec = Math.max(0, session.durationSeconds ?? session.activeSeconds ?? session.duration ?? 0);
+      // Úplné odstranění relací nesplňujících minimální práh 5 minut (300 sekund)
+      if (durationSec < 300) {
+        await this.deleteReadingSession(session.sessionId || session.id);
+        normalizedCount++;
+        continue;
+      }
+
       const durationMin = durationSec / 60;
       let words = Math.max(0, session.wordsRead || 0);
       let avgWpm = session.avgWpm ?? session.wpm ?? 220;
@@ -1202,6 +1307,10 @@ export async function uploadBook(book) {
 
 export async function syncWithCloud(options) {
   return await storage.syncWithCloud(options);
+}
+
+export async function pushReadingSessionAndStatsToCloud(session) {
+  return await storage.pushReadingSessionAndStatsToCloud(session);
 }
 
 export function normalizeBookProgress(book) {

@@ -257,9 +257,11 @@ export class StatsCharts {
       return;
     }
 
-    const durationSeconds = Number(sessionData.durationSeconds ?? sessionData.activeSeconds ?? 0);
+    const durationSeconds = Number(sessionData.durationSeconds ?? sessionData.activeSeconds ?? sessionData.duration ?? 0);
     const avgWpm = Number(sessionData.avgWpm ?? sessionData.wpm ?? 220);
-    let rawSamples = Array.isArray(sessionData.timelineSamples) ? [...sessionData.timelineSamples] : [];
+    let rawSamples = Array.isArray(sessionData.timelineSamples || sessionData.intraSessionSamples || sessionData.intra_session_samples) 
+      ? [...(sessionData.timelineSamples || sessionData.intraSessionSamples || sessionData.intra_session_samples)] 
+      : [];
 
     // 1. Extrakce a normalizace vzorků (Monotonic Elapsed Active Time)
     let parsedSamples = rawSamples.map(s => {

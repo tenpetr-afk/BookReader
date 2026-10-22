@@ -9,6 +9,7 @@ import { storage } from "./storage.js";
 export const MIN_VALID_WPM = 80;
 export const MAX_VALID_WPM = 650;
 export const DEFAULT_NORMAL_WPM = 220;
+export const MIN_SESSION_DURATION_SEC = 300; // Minimální délka relace pro uložení (5 minut)
 
 /**
  * Vrátí datum ve formátu YYYY-MM-DD v lokálním časovém pásmu
@@ -45,6 +46,7 @@ export class ReadingTracker {
     this.sessionStartTimestamp = null;
     this.sessionStartTime = null;
     this.sessionWordsRead = 0;
+    this.sessionDailySecondsCommitted = 0; // Kolik sekund bylo odesláno do denní statistiky (pouze po dosažení 5 min)
     this.chapterAccumulatedWords = 0;
     this.chapterInitialScrollPercent = 0;
     this.currentScrollPercent = 0;
@@ -357,6 +359,7 @@ export class ReadingTracker {
     this.sessionStartTime = new Date(now).toISOString();
     this.activeTimeMs = 0;
     this.sessionWordsRead = 0;
+    this.sessionDailySecondsCommitted = 0;
     this.chapterAccumulatedWords = 0;
     this.currentChapterIndex = chapterIndex;
     this.currentChapterWords = chapterWords || 1;
@@ -430,9 +433,21 @@ export class ReadingTracker {
         // Zaznamenáme postup aktivního čtení do klouzavého okna
         this.recordActiveProgress();
 
-        // Synchronizace s denní statistikou v sekundách přesně ve stejný okamžik a ze stejného zdroje!
-        const todayKey = getLocalDateKey();
-        storage.addDailyReadingSeconds(todayKey, deltaSec);
+        // Synchronizace s denní statistikou v sekundách:
+        // Do denní statistiky započítáváme relaci až po dosažení prahu 5 minut (>= 300 sekund)
+        if (elapsedSec >= MIN_SESSION_DURATION_SEC) {
+          const todayKey = getLocalDateKey();
+          if (this.sessionDailySecondsCommitted === 0) {
+            storage.addDailyReadingSeconds(todayKey, elapsedSec);
+            this.sessionDailySecondsCommitted = elapsedSec;
+          } else {
+            const deltaCommitted = elapsedSec - this.sessionDailySecondsCommitted;
+            if (deltaCommitted > 0) {
+              storage.addDailyReadingSeconds(todayKey, deltaCommitted);
+              this.sessionDailySecondsCommitted = elapsedSec;
+            }
+          }
+        }
 
         // Periodický odběr vzorku rychlosti pro intra-session timeline (každých 12 sekund aktivního čtení)
         if (elapsedSec - this.lastSampleActiveSec >= TIMELINE_SAMPLE_INTERVAL_SEC) {
@@ -654,7 +669,8 @@ export class ReadingTracker {
    */
   getCurrentSessionSnapshot() {
     const activeSeconds = Math.floor(this.activeTimeMs / 1000);
-    if (!this.currentBookId || activeSeconds < 3) return null;
+    // Živý snímek poskytujeme pouze pro relace splňující minimální práh 5 minut (300 sekund)
+    if (!this.currentBookId || activeSeconds < MIN_SESSION_DURATION_SEC) return null;
 
     const currentWpm = this.getCurrentWpm();
     const samples = [...this.timelineSamples];
@@ -673,8 +689,15 @@ export class ReadingTracker {
       }
     }
 
+    // Výpočet špičkové rychlosti
+    const validSpeeds = samples
+      .map(s => Number(s.instantaneousWpm) || 0)
+      .filter(w => w >= MIN_VALID_WPM && w <= MAX_VALID_WPM);
+    const peakWpm = validSpeeds.length > 0 ? Math.max(...validSpeeds, currentWpm) : currentWpm;
+
     return {
       sessionId: this.currentSessionId || "session_current",
+      id: this.currentSessionId || "session_current",
       bookId: this.currentBookId,
       bookTitle: this.currentBookTitle || "Aktuální kniha",
       chapterIndex: this.currentChapterIndex,
@@ -682,10 +705,13 @@ export class ReadingTracker {
       endTime: null,
       durationSeconds: activeSeconds,
       activeSeconds: activeSeconds,
+      duration: activeSeconds,
       wordsRead: this.sessionWordsRead,
       avgWpm: currentWpm,
+      peakWpm: peakWpm,
       wpm: currentWpm,
       timelineSamples: samples,
+      intraSessionSamples: samples,
       isLive: true,
       date: getLocalDateKey(this.sessionStartTimestamp || Date.now())
     };
@@ -703,8 +729,8 @@ export class ReadingTracker {
     const bookTitle = this.currentBookTitle;
     const wordsRead = this.sessionWordsRead;
 
-    // Ukládáme pouze relace delší než 4 sekundy s reálným čtením
-    if (bookId && activeSeconds >= 4) {
+    // Ukládáme POUZE relace s aktivní dobou čtení alespoň 5 minut (>= 300 sekund)
+    if (bookId && activeSeconds >= MIN_SESSION_DURATION_SEC) {
       const avgWpm = wordsRead > 0 ? this.getCurrentWpm() : 0;
       const now = Date.now();
       const endTime = new Date(now).toISOString();
@@ -725,8 +751,17 @@ export class ReadingTracker {
         }
       }
 
+      // Výpočet špičkové rychlosti (peakWpm)
+      const validSpeeds = this.timelineSamples
+        .map(s => Number(s.instantaneousWpm) || 0)
+        .filter(w => w >= MIN_VALID_WPM && w <= MAX_VALID_WPM);
+      const peakWpm = validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm;
+
+      const sessionId = this.currentSessionId || `session_${now}_${Math.random().toString(36).substring(2, 9)}`;
+
       const sessionRecord = {
-        sessionId: this.currentSessionId || `session_${now}_${Math.random().toString(36).substring(2, 9)}`,
+        sessionId: sessionId,
+        id: sessionId,
         bookId: bookId,
         bookTitle: bookTitle,
         chapterIndex: this.currentChapterIndex,
@@ -734,16 +769,20 @@ export class ReadingTracker {
         endTime: endTime,
         durationSeconds: activeSeconds,
         activeSeconds: activeSeconds,
+        duration: activeSeconds,
         wordsRead: wordsRead,
         avgWpm: avgWpm,
+        peakWpm: peakWpm,
         wpm: avgWpm,
         timelineSamples: [...this.timelineSamples],
+        intraSessionSamples: [...this.timelineSamples],
         date: dateKey,
-        timestamp: now
+        timestamp: now,
+        updatedAt: new Date(now).toISOString()
       };
 
       try {
-        await storage.saveReadingSession(sessionRecord);
+        const savedSession = await storage.saveReadingSession(sessionRecord);
 
         // Aktualizujeme data v knize bez zbytečné kumulace
         const book = await storage.getBook(bookId);
@@ -760,8 +799,28 @@ export class ReadingTracker {
             lastWpm: avgWpm
           });
         }
+
+        // PUSH DO SUPABASE: Odeslání platné relace (>= 5 min) a aktualizovaného souhrnu statistik
+        storage.pushReadingSessionAndStatsToCloud(savedSession || sessionRecord).catch(err => {
+          console.warn("[LuminaSync] Varování při pushi čtecí relace do Supabase:", err);
+        });
+
       } catch (err) {
         console.warn("Chyba při ukládání čtecí relace:", err);
+      }
+    } else {
+      // Relace trvala méně než 5 minut (< 300s): kompletně zahodit záznam relace!
+      if (activeSeconds > 0) {
+        console.log(`[LuminaTracker] Relace čtení byla zahozena (trvala ${activeSeconds}s < 300s minimálního prahu).`);
+      }
+      // Pouze uložit aktuální pozici rozečtení (kapitola a scroll) do knihy bez přičtení slov či historie
+      if (bookId) {
+        try {
+          await storage.updateBookProgress(bookId, {
+            currentChapterIndex: this.currentChapterIndex,
+            scrollPercent: this.currentScrollPercent
+          });
+        } catch (_) {}
       }
     }
 
@@ -770,6 +829,7 @@ export class ReadingTracker {
     this.sessionStartTime = null;
     this.activeTimeMs = 0;
     this.sessionWordsRead = 0;
+    this.sessionDailySecondsCommitted = 0;
     this.validReadingTimeMs = 0;
     this.validWordsRead = 0;
     this.currentReadingBlockId = null;
@@ -782,6 +842,7 @@ export class ReadingTracker {
     this.chapterInitialScrollPercent = this.currentScrollPercent;
     this.timelineSamples = [];
     this.progressHistory = [];
+    this.activeProgressHistory = [];
   }
 
   /**
@@ -822,16 +883,22 @@ export class ReadingTracker {
    * avgWpm = vážený průměr z validních úseků v pásmu [80, 650] WPM (žádné umělé clampingy)
    */
   static async computeGlobalStats() {
-    const sessions = await storage.getAllReadingSessions();
+    const rawSessions = await storage.getAllReadingSessions();
     const books = await storage.getAllBooks();
     const dailyStorageMap = storage.getDailyReadingTimeMap();
+
+    // Filtrujeme striktně pouze relace s aktivní dobou čtení >= 5 minut (300 sekund)
+    const sessions = (rawSessions || []).filter(s => {
+      const sec = Math.max(0, Math.round(s.activeSeconds ?? s.durationSeconds ?? s.duration ?? 0));
+      return sec >= MIN_SESSION_DURATION_SEC;
+    });
 
     // Seskupení relací do denních souhrnů (dailySessions) podle lokálního data
     const dailyMap = new Map();
 
     sessions.forEach(s => {
       const dateStr = getLocalDateKey(s.date || s.startTime || s.timestamp || new Date());
-      const sec = Math.max(0, Math.round(s.activeSeconds ?? s.durationSeconds ?? 0));
+      const sec = Math.max(0, Math.round(s.activeSeconds ?? s.durationSeconds ?? s.duration ?? 0));
       const words = Math.max(0, Math.round(s.wordsRead ?? 0));
 
       if (!dailyMap.has(dateStr)) {
@@ -848,9 +915,11 @@ export class ReadingTracker {
       entry.sessions.push(s);
     });
 
-    // Synchronizace s denní statistikou z tickeru v localStorage
+    // Synchronizace s denní statistikou z tickeru v localStorage (pouze platný čas >= 5 min)
     for (const [dateStr, rawSec] of Object.entries(dailyStorageMap)) {
       const sec = Math.max(0, Math.round(Number(rawSec) || 0));
+      if (sec < MIN_SESSION_DURATION_SEC) continue;
+
       if (!dailyMap.has(dateStr)) {
         dailyMap.set(dateStr, {
           date: dateStr,
@@ -866,9 +935,9 @@ export class ReadingTracker {
       }
     }
 
-    // Zahrnutí právě probíhající aktivní relace (live snapshot)
-    const liveSnapshot = tracker.getCurrentSessionSnapshot();
-    if (liveSnapshot && liveSnapshot.activeSeconds > 0) {
+    // Zahrnutí právě probíhající aktivní relace (live snapshot pouze pokud >= 5 minut)
+    const liveSnapshot = (typeof tracker !== "undefined" && tracker) ? tracker.getCurrentSessionSnapshot() : null;
+    if (liveSnapshot && liveSnapshot.activeSeconds >= MIN_SESSION_DURATION_SEC) {
       const todayStr = getLocalDateKey();
       if (!dailyMap.has(todayStr)) {
         dailyMap.set(todayStr, {
@@ -899,26 +968,28 @@ export class ReadingTracker {
 
     sessions.forEach(s => {
       const w = s.avgWpm ?? s.wpm ?? 0;
-      const dur = s.durationSeconds ?? s.activeSeconds ?? 0;
+      const dur = s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0;
       const words = s.wordsRead ?? 0;
-      if (words > 0 && w >= MIN_VALID_WPM && w <= MAX_VALID_WPM && dur >= 10) {
+      if (words > 0 && w >= MIN_VALID_WPM && w <= MAX_VALID_WPM && dur >= MIN_SESSION_DURATION_SEC) {
         weightedWpmSum += w * dur;
         totalValidDuration += dur;
       }
     });
 
-    let averageWpm = DEFAULT_NORMAL_WPM;
-    if (totalValidDuration > 0) {
-      averageWpm = Math.round(weightedWpmSum / totalValidDuration);
-    } else if (totalActiveTime > 60 && totalWords > 0) {
-      const rawPace = Math.round(totalWords / (totalActiveTime / 60));
-      if (rawPace >= MIN_VALID_WPM && rawPace <= MAX_VALID_WPM) {
-        averageWpm = rawPace;
+    let averageWpm = 0;
+    if (totalActiveTime > 0 && totalWords > 0) {
+      if (totalValidDuration > 0) {
+        averageWpm = Math.round(weightedWpmSum / totalValidDuration);
+      } else if (totalActiveTime > 60) {
+        const rawPace = Math.round(totalWords / (totalActiveTime / 60));
+        if (rawPace >= MIN_VALID_WPM && rawPace <= MAX_VALID_WPM) {
+          averageWpm = rawPace;
+        }
       }
     }
 
-    // Výpočet streak (počet po sobě jdoucích dní s čtením >= 10s)
-    const activeDates = new Set(dailySessions.filter(d => d.activeSeconds >= 10).map(d => d.date));
+    // Výpočet streak (počet po sobě jdoucích dní s validním čtením >= 5 minut)
+    const activeDates = new Set(dailySessions.filter(d => d.activeSeconds >= MIN_SESSION_DURATION_SEC).map(d => d.date));
     let streak = 0;
     let checkDate = new Date();
     
@@ -979,8 +1050,8 @@ export class ReadingTracker {
     const wpmHistory = sessions
       .filter(s => {
         const rawSpeed = s.avgWpm ?? s.wpm ?? 0;
-        const dur = s.durationSeconds ?? s.activeSeconds ?? 0;
-        return rawSpeed >= MIN_VALID_WPM && rawSpeed <= MAX_VALID_WPM && dur >= 10;
+        const dur = s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0;
+        return rawSpeed >= MIN_VALID_WPM && rawSpeed <= MAX_VALID_WPM && dur >= MIN_SESSION_DURATION_SEC;
       })
       .slice(-20)
       .map((s, idx) => ({

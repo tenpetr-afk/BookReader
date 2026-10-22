@@ -60,63 +60,145 @@ export class LuminaApp {
   }
 
   async init() {
-    this.cacheDom();
-    const isInReader = this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden");
-    if (isInReader) {
-      document.body.classList.add("in-reader-view");
-    } else {
-      document.body.classList.remove("in-reader-view");
+    // 1. Spolehlivé a okamžité nastavení verze aplikace
+    try {
+      const versionEl = document.getElementById("app-version-badge");
+      if (versionEl) {
+        versionEl.textContent = APP_VERSION;
+      }
+    } catch (e) {
+      console.warn("[LuminaApp] Chyba při nastavování version badge:", e);
     }
-    const versionEl = this.dom.versionBadge || document.getElementById("app-version-badge");
-    if (versionEl) {
-      versionEl.textContent = APP_VERSION;
-    }
-    this.initRuler();
-    this.applySettings();
-    this.bindEvents();
-    this.initScrubber();
-    this.initPillScrubber();
-    this.bindKeyboardShortcuts();
-    this.initCloudSync();
 
-    // Automatická kontrola a migrace poškozených dat čtení na startu aplikace
+    try {
+      this.cacheDom();
+    } catch (e) {
+      console.error("[LuminaApp] Chyba při cacheDom:", e);
+    }
+
+    if (this.dom.versionBadge) {
+      this.dom.versionBadge.textContent = APP_VERSION;
+    }
+
+    try {
+      const isInReader = this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden");
+      if (isInReader) {
+        document.body.classList.add("in-reader-view");
+      } else {
+        document.body.classList.remove("in-reader-view");
+      }
+    } catch (_) {}
+
+    // 2. Nastavení a pravítko
+    try {
+      this.applySettings();
+    } catch (e) {
+      console.warn("[LuminaApp] Chyba při aplikování nastavení:", e);
+    }
+
+    try {
+      this.initRuler();
+    } catch (e) {
+      console.warn("[LuminaApp] Chyba při inicializaci pravítka:", e);
+    }
+
+    // 3. Klíčové navázání událostí - MUSÍ proběhnout vždy, aby tlačítka nezůstala hluchá
+    try {
+      this.bindEvents();
+    } catch (e) {
+      console.error("[LuminaApp] Kritická chyba při bindEvents:", e);
+    }
+
+    try {
+      this.initScrubber();
+      this.initPillScrubber();
+    } catch (e) {
+      console.warn("[LuminaApp] Chyba při inicializaci scrubberu:", e);
+    }
+
+    try {
+      this.bindKeyboardShortcuts();
+    } catch (e) {
+      console.warn("[LuminaApp] Chyba při bindování klávesových zkratek:", e);
+    }
+
+    try {
+      this.initCloudSync();
+    } catch (e) {
+      console.warn("[LuminaApp] Chyba při inicializaci cloud sync:", e);
+    }
+
+    // 4. Automatická kontrola a migrace statistik v IndexedDB
     try {
       await storage.sanitizeCorruptedStats();
     } catch (e) {
       console.warn("[LuminaApp] Chyba při startovní kontrole integrity statistik:", e);
     }
 
-    // Načíst knihy z IndexedDB s cloudovou hydratací
-    let books = await storage.getAllBooks();
-    if (books.length === 0) {
-      if (supabaseSync.isOnline()) {
-        try {
-          await this.loadLibrary();
-          books = await storage.getAllBooks();
-        } catch (e) {
-          console.warn("[Supabase Sync] Nepodařilo se hydratovat knihy z cloudu:", e);
-        }
-      }
-      if (books.length === 0) {
-        // Automaticky nabídnout nebo nahrát vzorovou knihu
-        await this.loadBundledSampleBook();
-      }
-    } else {
-      this.renderLibrary();
+    // 5. Načíst knihy z IndexedDB s bezpečnou cloudovou hydratací
+    let books = [];
+    try {
+      books = await storage.getAllBooks();
+    } catch (dbErr) {
+      console.error("[LuminaApp] Chyba při načítání knih z IndexedDB:", dbErr);
+      books = [];
     }
 
-    // Spuštění asynchronní synchronizace s cloudem v pozadí
-    setTimeout(() => {
-      this.syncWithCloud(false);
-    }, 1000);
-
-    // Zkontrolovat naposledy čtenou knihu a obnovit stav čtení při znovunačtení
-    const lastBookId = storage.getLastActiveBookId();
-    const activeView = localStorage.getItem("lumina_active_view");
-    if (lastBookId && books.some(b => b.id === lastBookId)) {
-      if (activeView === "reader") {
-        await this.openBook(lastBookId);
+    try {
+      if (books.length === 0) {
+        let cloudLoaded = false;
+        if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
+          try {
+            await this.loadLibrary();
+            books = await storage.getAllBooks();
+            if (books && books.length > 0) cloudLoaded = true;
+          } catch (e) {
+            console.warn("[Supabase Sync] Nepodařilo se hydratovat knihy z cloudu:", e);
+          }
+        }
+        if (!cloudLoaded && (!books || books.length === 0)) {
+          // Automaticky nabídnout nebo nahrát vzorovou knihu
+          try {
+            await this.loadBundledSampleBook();
+            books = await storage.getAllBooks();
+          } catch (sampleErr) {
+            console.warn("[LuminaApp] Nepodařilo se načíst vzorovou knihu:", sampleErr);
+          }
+        }
       }
+    } catch (loadErr) {
+      console.warn("[LuminaApp] Chyba při synchronizaci/načítání výchozí knihovny:", loadErr);
+    }
+
+    // 6. Vykreslit knihovnu (vždy zobrazit existující knihy nebo prázdný stav)
+    try {
+      await this.renderLibrary();
+    } catch (renderErr) {
+      console.error("[LuminaApp] Chyba při renderLibrary:", renderErr);
+    }
+
+    // 7. Spuštění asynchronní synchronizace s cloudem v pozadí (neblokující)
+    try {
+      setTimeout(() => {
+        try {
+          this.syncWithCloud(false).catch(err => {
+            console.warn("[LuminaApp] Chyba při tiché synchronizaci na pozadí:", err);
+          });
+        } catch (_) {}
+      }, 1000);
+    } catch (_) {}
+
+    // 8. Zkontrolovat naposledy čtenou knihu a obnovit stav čtení při znovunačtení
+    try {
+      const lastBookId = storage.getLastActiveBookId();
+      const activeView = localStorage.getItem("lumina_active_view");
+      if (lastBookId && books && books.some(b => b.id === lastBookId)) {
+        if (activeView === "reader") {
+          await this.openBook(lastBookId);
+        }
+      }
+    } catch (restoreErr) {
+      console.warn("[LuminaApp] Chyba při obnovení rozečtené knihy:", restoreErr);
     }
   }
 
@@ -824,21 +906,25 @@ export class LuminaApp {
 
   bindEvents() {
     // 1. Nahrávání souborů
-    this.dom.btnUpload.addEventListener("click", () => {
-      if (this.isImporting) return;
-      this.dom.fileInput.click();
-    });
-    this.dom.fileInput.addEventListener("change", (e) => {
-      if (this.isImporting) {
-        e.target.value = "";
-        return;
-      }
-      if (e.target.files && e.target.files.length > 0) {
-        const file = e.target.files[0];
-        e.target.value = ""; // Reset hodnoty okamžitě po přečtení
-        this.handleFileUpload(file);
-      }
-    });
+    if (this.dom.btnUpload) {
+      this.dom.btnUpload.addEventListener("click", () => {
+        if (this.isImporting) return;
+        if (this.dom.fileInput) this.dom.fileInput.click();
+      });
+    }
+    if (this.dom.fileInput) {
+      this.dom.fileInput.addEventListener("change", (e) => {
+        if (this.isImporting) {
+          e.target.value = "";
+          return;
+        }
+        if (e.target.files && e.target.files.length > 0) {
+          const file = e.target.files[0];
+          e.target.value = ""; // Reset hodnoty okamžitě po přečtení
+          this.handleFileUpload(file);
+        }
+      });
+    }
 
     // Drag & drop
     const dropTargets = [document.body];
@@ -894,49 +980,52 @@ export class LuminaApp {
     let lastSwipeTime = 0;
     let lastTapTime = 0;
 
-    this.dom.zoneTouchPrev.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
-        this.closeFloatingDock();
-        e.preventDefault();
-        return;
-      }
-      if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
-        this.dom.rulerQuickPopover.classList.add("is-hidden");
-        if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
-        e.preventDefault();
-        return;
-      }
-      if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating || this.ruler?.isLineLocked) {
-        e.preventDefault();
-        return;
-      }
-      if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
-        this.ruler.stepLine(-1, true);
-        return;
-      }
-      // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
-      if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 500) {
-        e.preventDefault();
-        return;
-      }
-      // Při zapnutém pravítku slouží Apple Pencil výhradně k pozicování pravítka, nikoliv k přepínání stránek
-      if (this.ruler?.enabled && this.ruler?.isPenEvent(e)) {
-        return;
-      }
-      if (this.ruler && this.ruler.enabled) {
-        if (this.ruler.followMode === "mouse") {
+    if (this.dom.zoneTouchPrev) {
+      this.dom.zoneTouchPrev.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+          this.closeFloatingDock();
+          e.preventDefault();
           return;
         }
-        const dir = this.getRulerTapDirection(e.clientX, e.clientY);
-        this.ruler.stepLine(dir, true);
-      } else {
-        this.prevPage();
-      }
-    });
+        if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
+          this.dom.rulerQuickPopover.classList.add("is-hidden");
+          if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+          e.preventDefault();
+          return;
+        }
+        if (this.isUiOrOverlayEvent(e)) return;
+        if (this.isNavigating || this.ruler?.isLineLocked) {
+          e.preventDefault();
+          return;
+        }
+        if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
+          this.ruler.stepLine(-1, true);
+          return;
+        }
+        // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
+        if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 500) {
+          e.preventDefault();
+          return;
+        }
+        // Při zapnutém pravítku slouží Apple Pencil výhradně k pozicování pravítka, nikoliv k přepínání stránek
+        if (this.ruler?.enabled && this.ruler?.isPenEvent(e)) {
+          return;
+        }
+        if (this.ruler && this.ruler.enabled) {
+          if (this.ruler.followMode === "mouse") {
+            return;
+          }
+          const dir = this.getRulerTapDirection(e.clientX, e.clientY);
+          this.ruler.stepLine(dir, true);
+        } else {
+          this.prevPage();
+        }
+      });
+    }
 
-    this.dom.zoneTouchNext.addEventListener("click", (e) => {
+    if (this.dom.zoneTouchNext) {
+      this.dom.zoneTouchNext.addEventListener("click", (e) => {
       e.stopPropagation();
       if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
         this.closeFloatingDock();
@@ -977,6 +1066,7 @@ export class LuminaApp {
         this.nextPage();
       }
     });
+    }
 
     // Přejetí prstem po obrazovce na iPadu (Touch Swipe) & Klepnutí (Tap) pro posun pravítka
     let touchStartX = 0;
@@ -3200,7 +3290,7 @@ export class LuminaApp {
     try {
       await supabaseSync.syncAll({ silent: true });
     } catch (e) {
-      console.error("[Supabase Sync] Chyba při načítání knihovny z cloudu:", e);
+      console.warn("[Supabase Sync] Chyba při načítání knihovny z cloudu:", e);
     }
     await storage.deduplicateBooks();
     const books = await storage.getAllBooks();
@@ -3345,6 +3435,18 @@ export class LuminaApp {
     supabaseSync.onStatusChange((status) => {
       this.updateSyncUI(status);
     });
+
+    supabaseSync.onSyncCompleted(async (stats) => {
+      console.log("[LuminaApp] Cloud sync byl dokončen, obnovuji statistiky a knihovnu:", stats);
+      await this.refreshStatsUI();
+      await this.renderLibrary();
+    });
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("lumina-sync-completed", async () => {
+        await this.refreshStatsUI();
+      });
+    }
   }
 
   updateSyncUI(status) {
@@ -3398,15 +3500,19 @@ export class LuminaApp {
     if (res?.success) {
       const stats = res.stats || {};
       const parts = [];
-      if (stats.downloaded > 0) parts.push(`staženo: ${stats.downloaded}`);
-      if (stats.uploaded > 0) parts.push(`nahráno: ${stats.uploaded}`);
+      if (stats.downloaded > 0) parts.push(`staženo knih: ${stats.downloaded}`);
+      if (stats.uploaded > 0) parts.push(`nahráno knih: ${stats.uploaded}`);
       if (stats.updatedFromCloud > 0) parts.push(`postup z cloudu`);
       if (stats.uploadedToCloud > 0) parts.push(`postup odeslán`);
+      if (stats.sessionsDownloaded > 0) parts.push(`relace staženy: ${stats.sessionsDownloaded}`);
+      if (stats.sessionsUploaded > 0) parts.push(`relace odeslány: ${stats.sessionsUploaded}`);
+      if (stats.sessionsMerged > 0) parts.push(`statistiky sloučeny`);
       
       const msg = parts.length > 0
         ? `Cloudová synchronizace dokončena (${parts.join(", ")})`
-        : "Všechny knihy a postup čtení jsou aktuální.";
+        : "Všechny knihy a statistiky čtení jsou aktuální.";
       this.showToast(msg, "success");
+      await this.refreshStatsUI();
       await this.renderLibrary();
     } else if (res?.reason === "offline") {
       this.showToast("Zařízení je offline. Knihovna funguje plně lokálně.", "warning");
@@ -3418,17 +3524,22 @@ export class LuminaApp {
   }
 
   async syncWithCloud(interactive = false) {
-    const res = await supabaseSync.syncAll({ silent: !interactive });
-    if (res?.success && (res.stats?.downloaded > 0 || res.stats?.updatedFromCloud > 0)) {
-      await this.renderLibrary();
-      if (this.currentBook) {
-        const refreshed = await storage.getBook(this.currentBook.id);
-        if (refreshed && (refreshed.lastReadAt || 0) > (this.currentBook.lastReadAt || 0)) {
-          this.currentBook = refreshed;
+    try {
+      const res = await supabaseSync.syncAll({ silent: !interactive });
+      if (res?.success && (res.stats?.downloaded > 0 || res.stats?.updatedFromCloud > 0)) {
+        await this.renderLibrary();
+        if (this.currentBook) {
+          const refreshed = await storage.getBook(this.currentBook.id);
+          if (refreshed && (refreshed.lastReadAt || 0) > (this.currentBook.lastReadAt || 0)) {
+            this.currentBook = refreshed;
+          }
         }
       }
+      return res;
+    } catch (err) {
+      console.warn("[LuminaApp] syncWithCloud selhal:", err);
+      return { success: false, reason: "error" };
     }
-    return res;
   }
 
   // --- ČTENÍ KNIHY ---
@@ -5979,6 +6090,29 @@ export class LuminaApp {
     }
   }
 
+  async refreshStatsUI() {
+    try {
+      const stats = await ReadingTracker.computeGlobalStats();
+
+      if (this.dom.statTotalTime) this.dom.statTotalTime.textContent = stats.totalTimeFormatted;
+      if (this.dom.statAvgWpm) {
+        const isStatsEmpty = !stats || !stats.totalSeconds || !stats.totalWords || !stats.averageWpm;
+        this.dom.statAvgWpm.textContent = isStatsEmpty ? "0 WPM" : `${Math.round(stats.averageWpm)} WPM`;
+      }
+      if (this.dom.statTotalWords) this.dom.statTotalWords.textContent = stats.totalWords.toLocaleString("cs-CZ");
+      if (this.dom.statStreak) this.dom.statStreak.textContent = `${stats.streak} ${stats.streak === 1 ? "den" : (stats.streak >= 2 && stats.streak <= 4 ? "dny" : "dní")}`;
+
+      // Vykreslení globálních grafů
+      if (this.dom.dailyChartContainer) StatsCharts.renderDailyActivityChart(this.dom.dailyChartContainer, stats.last7Days);
+      if (this.dom.wpmChartContainer) StatsCharts.renderWpmProgressChart(this.dom.wpmChartContainer, stats.wpmHistory, stats.averageWpm);
+
+      // Načtení detailních čtecích relací a vykreslení intra-session časové osy
+      await this.initSessionAnalytics();
+    } catch (err) {
+      console.warn("[LuminaApp] Varování při obnově statistik UI:", err);
+    }
+  }
+
   async openStatsModal() {
     this.closeFloatingDock();
     if (this.dom.statsModal) this.dom.statsModal.classList.add("open");
@@ -5990,32 +6124,27 @@ export class LuminaApp {
       console.warn("Chyba při auto-normalizaci statistik:", e);
     }
 
-    const stats = await ReadingTracker.computeGlobalStats();
-
-    if (this.dom.statTotalTime) this.dom.statTotalTime.textContent = stats.totalTimeFormatted;
-    if (this.dom.statAvgWpm) this.dom.statAvgWpm.textContent = `${stats.averageWpm} WPM`;
-    if (this.dom.statTotalWords) this.dom.statTotalWords.textContent = stats.totalWords.toLocaleString("cs-CZ");
-    if (this.dom.statStreak) this.dom.statStreak.textContent = `${stats.streak} ${stats.streak === 1 ? "den" : (stats.streak >= 2 && stats.streak <= 4 ? "dny" : "dní")}`;
-
-    // Vykreslení globálních grafů
-    if (this.dom.dailyChartContainer) StatsCharts.renderDailyActivityChart(this.dom.dailyChartContainer, stats.last7Days);
-    if (this.dom.wpmChartContainer) StatsCharts.renderWpmProgressChart(this.dom.wpmChartContainer, stats.wpmHistory, stats.averageWpm);
-
-    // Načtení detailních čtecích relací a vykreslení intra-session časové osy
-    await this.initSessionAnalytics();
+    await this.refreshStatsUI();
   }
 
   async initSessionAnalytics() {
-    const savedSessions = await storage.getAllReadingSessions();
+    const rawSessions = await storage.getAllReadingSessions();
+    // Filtrujeme striktně pouze relace s délkou alespoň 5 minut (>= 300 sekund)
+    const savedSessions = (rawSessions || []).filter(s => {
+      const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
+      return dur >= 300;
+    });
+
     const liveSnapshot = tracker.getCurrentSessionSnapshot();
 
     const allSessions = [];
-    if (liveSnapshot && liveSnapshot.durationSeconds >= 3) {
+    if (liveSnapshot && (liveSnapshot.durationSeconds ?? liveSnapshot.activeSeconds ?? liveSnapshot.duration ?? 0) >= 300) {
       allSessions.push(liveSnapshot);
     }
 
     for (const s of savedSessions) {
-      if (!allSessions.some(existing => existing.sessionId === s.sessionId)) {
+      const sid = s.sessionId || s.id;
+      if (!allSessions.some(existing => (existing.sessionId === sid || existing.id === sid))) {
         allSessions.push(s);
       }
     }
@@ -6030,9 +6159,9 @@ export class LuminaApp {
     this.renderSessionHistoryList();
 
     if (allSessions.length > 0) {
-      const targetId = (this._selectedSessionId && allSessions.some(s => s.sessionId === this._selectedSessionId))
+      const targetId = (this._selectedSessionId && allSessions.some(s => (s.sessionId === this._selectedSessionId || s.id === this._selectedSessionId)))
         ? this._selectedSessionId
-        : allSessions[0].sessionId;
+        : (allSessions[0].sessionId || allSessions[0].id);
       this.selectSession(targetId);
     } else {
       this.renderEmptySessionTimeline();
@@ -6126,10 +6255,10 @@ export class LuminaApp {
 
   selectSession(sessionId) {
     if (!this._availableSessions) return;
-    const session = this._availableSessions.find(s => s.sessionId === sessionId);
+    const session = this._availableSessions.find(s => s.sessionId === sessionId || s.id === sessionId);
     if (!session) return;
 
-    this._selectedSessionId = sessionId;
+    this._selectedSessionId = session.sessionId || session.id;
 
     if (this.dom.sessionPickerSelect && this.dom.sessionPickerSelect.value !== sessionId) {
       this.dom.sessionPickerSelect.value = sessionId;
@@ -6148,9 +6277,13 @@ export class LuminaApp {
 
     const avgWpm = session.avgWpm || 220;
     const maxPace = Math.min(650, Math.max(280, Math.round(avgWpm * 1.65)));
-    const samples = Array.isArray(session.timelineSamples) ? session.timelineSamples : [];
-    const speeds = samples.map(s => Number(s.instantaneousWpm) || 0).filter(w => w >= 60).map(w => Math.min(maxPace, w));
-    const peakWpm = speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm;
+    const samples = Array.isArray(session.timelineSamples || session.intraSessionSamples) 
+      ? (session.timelineSamples || session.intraSessionSamples) 
+      : [];
+    const speeds = samples.map(s => Number(s.instantaneousWpm || s.wpm) || 0).filter(w => w >= 60).map(w => Math.min(maxPace, w));
+    const peakWpm = session.peakWpm 
+      ? session.peakWpm 
+      : (speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm);
 
     if (this.dom.sessionBadgeDuration) {
       this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(session.durationSeconds);
@@ -6817,10 +6950,34 @@ export class LuminaApp {
 }
 
 // Spuštění aplikace po načtení DOM
-document.addEventListener("DOMContentLoaded", () => {
-  if (document.getElementById("view-library")) {
-    const app = new LuminaApp();
-    app.init();
-    window.luminaApp = app;
+function bootstrapLumina() {
+  if (typeof window !== "undefined" && window.__luminaAppInitialized) return;
+
+  // 1. Spolehlivě nastavit verzi v badge okamžitě
+  try {
+    const badge = document.getElementById("app-version-badge");
+    if (badge) badge.textContent = APP_VERSION;
+  } catch (_) {}
+
+  // 2. Inicializovat aplikaci
+  if (typeof document !== "undefined" && (document.getElementById("view-library") || document.body)) {
+    if (typeof window !== "undefined") window.__luminaAppInitialized = true;
+    try {
+      const app = new LuminaApp();
+      if (typeof window !== "undefined") window.luminaApp = app;
+      app.init().catch(err => {
+        console.error("[LuminaApp] Kritická neošetřená chyba v app.init():", err);
+      });
+    } catch (err) {
+      console.error("[LuminaApp] Kritická chyba při vytváření LuminaApp instance:", err);
+    }
   }
-});
+}
+
+if (typeof document !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootstrapLumina);
+  } else {
+    bootstrapLumina();
+  }
+}

@@ -4,7 +4,7 @@
  * obousměrnou synchronizaci mezi zařízeními a offline-first fungování.
  */
 
-import { supabase, STORAGE_BUCKET, SUPABASE_URL } from './supabase-client.js';
+import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js';
 import { storage, computeFileHash } from './storage.js';
 import { EpubParser } from './epub-parser.js';
 
@@ -12,6 +12,7 @@ export class SupabaseSync {
   constructor() {
     this.status = "idle"; // "idle" | "syncing" | "synced" | "error" | "offline"
     this.statusListeners = new Set();
+    this.syncCompletedListeners = new Set();
     this.pendingProgress = null;
     this.progressDebounceTimer = null;
     this.isSyncing = false;
@@ -41,6 +42,25 @@ export class SupabaseSync {
     return () => this.statusListeners.delete(callback);
   }
 
+  // Registrace posluchače dokončení synchronizace
+  onSyncCompleted(callback) {
+    this.syncCompletedListeners.add(callback);
+    return () => this.syncCompletedListeners.delete(callback);
+  }
+
+  notifySyncCompleted(stats) {
+    for (const listener of this.syncCompletedListeners) {
+      try {
+        listener(stats);
+      } catch (e) {
+        console.warn("[SupabaseSync] Chyba v posluchači syncCompleted:", e);
+      }
+    }
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("lumina-sync-completed", { detail: { stats } }));
+    }
+  }
+
   setStatus(status) {
     if (this.status === status) return;
     this.status = status;
@@ -64,19 +84,21 @@ export class SupabaseSync {
     this.setStatus("offline");
   }
 
+  isConfigured() {
+    return Boolean(supabase && SUPABASE_URL && SUPABASE_ANON_KEY);
+  }
+
   isOnline() {
-    return typeof navigator !== "undefined" ? navigator.onLine : true;
+    const navOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
+    return navOnline && this.isConfigured();
   }
 
   /**
    * Nahraje knihu a její binární soubor do Supabase Storage a zapíše metadata do tabulky books
    */
-  /**
-   * Nahraje knihu a její binární soubor do Supabase Storage a zapíše metadata do tabulky books
-   */
   async uploadBook(book) {
-    if (!this.isOnline()) {
-      console.warn("[Supabase Sync] Nelze nahrát knihu: zařízení je offline.");
+    if (!this.isOnline() || !supabase) {
+      console.warn("[Supabase Sync] Nelze nahrát knihu: zařízení je offline nebo chybí Supabase klient.");
       return null;
     }
 
@@ -204,7 +226,7 @@ export class SupabaseSync {
    * Smaže knihu z cloudu (tabulka books i binární soubor ve Storage)
    */
   async deleteBook(bookId) {
-    if (!this.isOnline()) return;
+    if (!this.isOnline() || !supabase) return;
 
     try {
       console.log(`[SupabaseSync] Mažu knihu ${bookId} z cloudu...`);
@@ -260,7 +282,7 @@ export class SupabaseSync {
    * Okamžité odeslání čekajícího postupu čtení
    */
   async flushPendingProgress() {
-    if (!this.pendingProgress || !this.isOnline()) return;
+    if (!this.pendingProgress || !this.isOnline() || !supabase) return;
 
     const { bookId, progressData } = this.pendingProgress;
     this.pendingProgress = null;
@@ -389,7 +411,7 @@ export class SupabaseSync {
    * Kompletní obousměrná synchronizace mezi IndexedDB a Supabase
    */
   async syncAll(options = {}) {
-    if (!this.isOnline()) {
+    if (!this.isOnline() || !supabase) {
       this.setStatus("offline");
       return { success: false, reason: "offline" };
     }
@@ -506,7 +528,7 @@ export class SupabaseSync {
             }
 
             if (dlErr || !blob) {
-              console.error("[Supabase Sync] Nepodařilo se stáhnout soubor knihy z cloudu:", storagePath, dlErr);
+              console.warn("[Supabase Sync] Nepodařilo se stáhnout soubor knihy z cloudu (soubor neexistuje v úložišti):", storagePath, dlErr?.message || dlErr);
               continue;
             }
 
@@ -771,8 +793,21 @@ export class SupabaseSync {
         }
       }
 
+      // 5. Synchronizace čtecích relací a agregovaných statistik (reading_sessions & reading_stats_summary)
+      try {
+        const statsRes = await this.syncReadingStatsAndSessions();
+        if (statsRes) {
+          stats.sessionsDownloaded = statsRes.downloaded || 0;
+          stats.sessionsUploaded = statsRes.uploaded || 0;
+          stats.sessionsMerged = statsRes.merged || 0;
+        }
+      } catch (statsErr) {
+        console.warn("[SupabaseSync] Varování při synchronizaci čtecích statistik:", statsErr);
+      }
+
       this._lastSyncTime = Date.now();
       this.setStatus("synced");
+      this.notifySyncCompleted(stats);
       return { success: true, stats };
     } catch (err) {
       console.warn("[SupabaseSync] Synchronizace selhala:", err);
@@ -780,6 +815,284 @@ export class SupabaseSync {
       return { success: false, error: err };
     } finally {
       this.isSyncing = false;
+    }
+  }
+
+  /**
+   * Pomocná metoda pro bezpečný zápis do tabulky Supabase s automatickým fallbackem camelCase -> snake_case
+   */
+  async _upsertRow(table, payload, conflictCol = "id") {
+    if (!this.isOnline() || !supabase) {
+      return { success: false, reason: "offline" };
+    }
+    let { error } = await supabase.from(table).upsert(payload, { onConflict: conflictCol });
+    if (error) {
+      if (error.code === "PGRST204" || error.code === "42703" || error.message?.includes("column")) {
+        const snakePayload = {};
+        for (const [k, v] of Object.entries(payload)) {
+          const snakeK = k.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+          snakePayload[snakeK] = v;
+        }
+        const retry = await supabase.from(table).upsert(snakePayload, { onConflict: conflictCol });
+        if (retry.error) {
+          return { success: false, error: retry.error };
+        }
+        return { success: true };
+      }
+      return { success: false, error };
+    }
+    return { success: true };
+  }
+
+  /**
+   * Odešle jednu validní relaci (>= 5 min) do Supabase (reading_sessions)
+   */
+  async pushSingleSession(session) {
+    if (!this.isOnline() || !supabase || !session) return null;
+    const dur = Math.max(0, Math.round(session.durationSeconds ?? session.activeSeconds ?? session.duration ?? 0));
+    if (dur < 300) return null; // Striktně zahodit relace < 5 minut
+
+    const samples = Array.isArray(session.intraSessionSamples ?? session.timelineSamples)
+      ? (session.intraSessionSamples ?? session.timelineSamples)
+      : [];
+    const avgWpm = Math.round(session.avgWpm ?? session.wpm ?? 220);
+    const validSpeeds = samples.map(s => Number(s.instantaneousWpm || s.wpm || 0)).filter(w => w >= 80 && w <= 650);
+    const peakWpm = session.peakWpm
+      ? Math.round(session.peakWpm)
+      : (validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm);
+
+    const id = session.id || session.sessionId;
+    const startTime = session.startTime || new Date(session.timestamp || Date.now()).toISOString();
+    const updatedAt = session.updatedAt || session.updated_at || new Date().toISOString();
+
+    const payload = {
+      id: id,
+      bookId: session.bookId || "",
+      startTime: startTime,
+      duration: dur,
+      wordsRead: Math.max(0, Math.round(session.wordsRead || 0)),
+      avgWpm: avgWpm,
+      peakWpm: peakWpm,
+      intraSessionSamples: samples,
+      updatedAt: updatedAt
+    };
+
+    return await this._upsertRow("reading_sessions", payload, "id");
+  }
+
+  /**
+   * Synchronizuje nově dokončenou relaci a přepočítané souhrnné statistiky do Supabase
+   */
+  async pushSessionAndStats(session) {
+    if (!this.isOnline() || !supabase || !session) return;
+    const dur = Math.max(0, Math.round(session.durationSeconds ?? session.activeSeconds ?? session.duration ?? 0));
+    if (dur < 300) return; // Pouze relace >= 5 minut
+
+    try {
+      await this.pushSingleSession(session);
+      await this.syncStatsSummary();
+    } catch (err) {
+      console.warn("[SupabaseSync] Varování při odesílání relace a statistik:", err);
+    }
+  }
+
+  /**
+   * Synchronizuje souhrnné statistiky čtení (reading_stats_summary) mezi zařízeními
+   */
+  async syncStatsSummary() {
+    if (!this.isOnline() || !supabase) return null;
+
+    try {
+      const { ReadingTracker } = await import("./tracker.js");
+      const localStats = await ReadingTracker.computeGlobalStats();
+
+      // 1. Zkusit stáhnout stávající summary z cloudu
+      const { data: cloudSummaryList, error: sumErr } = await supabase
+        .from("reading_stats_summary")
+        .select("*")
+        .limit(1);
+
+      if (sumErr) {
+        if (sumErr.code !== "PGRST205") {
+          console.warn("[SupabaseSync] Tabulka reading_stats_summary není dostupná:", sumErr.message || sumErr);
+        }
+        return null;
+      }
+
+      const cloudSummary = Array.isArray(cloudSummaryList) && cloudSummaryList.length > 0 ? cloudSummaryList[0] : null;
+
+      // 2. Sestavit mapu denních minut
+      const dailyMinutesMap = {};
+      const localDailyStorage = storage.getDailyReadingTimeMap();
+      for (const [dStr, sec] of Object.entries(localDailyStorage)) {
+        if (sec >= 300) {
+          dailyMinutesMap[dStr] = Math.round(sec / 60);
+        }
+      }
+
+      for (const ds of (localStats.dailySessions || [])) {
+        if (ds.activeSeconds >= 300) {
+          dailyMinutesMap[ds.date] = Math.max(dailyMinutesMap[ds.date] || 0, Math.round(ds.activeSeconds / 60));
+        }
+      }
+
+      // 3. Idempotentní sloučení s cloudovou mapou denních minut
+      if (cloudSummary) {
+        const cloudMap = cloudSummary.dailyMinutesMap || cloudSummary.daily_minutes_map || {};
+        for (const [dateStr, minutes] of Object.entries(cloudMap)) {
+          const m = Number(minutes) || 0;
+          if (m >= 5) {
+            const currentM = dailyMinutesMap[dateStr] || 0;
+            if (m > currentM) {
+              dailyMinutesMap[dateStr] = m;
+              storage.setDailyReadingSeconds(dateStr, m * 60);
+            }
+          }
+        }
+      }
+
+      // 4. Poslední datum čtení
+      const allDates = Object.keys(dailyMinutesMap).sort();
+      const lastReadDate = allDates.length > 0 ? allDates[allDates.length - 1] : storage.getLocalDateString();
+
+      const summaryPayload = {
+        id: "global",
+        totalWordsRead: localStats.totalWords,
+        totalReadingSeconds: localStats.totalActiveTime,
+        globalAvgWpm: localStats.averageWpm,
+        streakDays: localStats.streak,
+        lastReadDate: lastReadDate,
+        dailyMinutesMap: dailyMinutesMap,
+        updatedAt: new Date().toISOString()
+      };
+
+      return await this._upsertRow("reading_stats_summary", summaryPayload, "id");
+    } catch (err) {
+      console.warn("[SupabaseSync] Chyba při synchronizaci souhrnných statistik:", err);
+      return null;
+    }
+  }
+
+  /**
+   * Kompletní obousměrná synchronizace čtecích relací a statistik (reading_sessions & reading_stats_summary)
+   */
+  async syncReadingStatsAndSessions() {
+    if (!this.isOnline() || !supabase) return null;
+
+    const result = { downloaded: 0, uploaded: 0, merged: 0 };
+
+    try {
+      // 1. Stáhnout čtecí relace z cloudu
+      const { data: cloudSessionsRaw, error: sessErr } = await supabase
+        .from("reading_sessions")
+        .select("*");
+
+      if (sessErr) {
+        if (sessErr.code !== "PGRST205") {
+          console.warn("[SupabaseSync] Tabulka reading_sessions není dostupná:", sessErr.message || sessErr);
+        }
+        return result;
+      }
+
+      const cloudSessions = Array.isArray(cloudSessionsRaw) ? cloudSessionsRaw : [];
+
+      // 2. Načíst lokální relace z IndexedDB (pouze validní >= 300s)
+      const localSessions = await storage.getAllReadingSessions();
+      const localMap = new Map();
+      for (const s of localSessions) {
+        const sid = s.sessionId || s.id;
+        if (sid) localMap.set(sid, s);
+      }
+
+      const cloudIdsProcessed = new Set();
+
+      // 3. Idempotentní sloučení cloudových relací do lokálního IndexedDB
+      for (const cs of cloudSessions) {
+        const id = cs.id || cs.sessionId;
+        if (!id) continue;
+        cloudIdsProcessed.add(id);
+
+        const duration = Math.max(0, Math.round(cs.duration ?? cs.durationSeconds ?? cs.activeSeconds ?? 0));
+        // Striktně zahazujeme jakoukoli relaci kratší než 5 minut
+        if (duration < 300) continue;
+
+        const csUpdatedAt = new Date(cs.updatedAt || cs.updated_at || cs.startTime || cs.start_time || 0).getTime();
+        const localMatch = localMap.get(id);
+
+        if (!localMatch) {
+          // Relace je v cloudu, ale ne lokálně -> uložit lokálně
+          const normalized = {
+            sessionId: id,
+            id: id,
+            bookId: cs.bookId || cs.book_id || "",
+            bookTitle: cs.bookTitle || cs.book_title || "Kniha",
+            chapterIndex: cs.chapterIndex || cs.chapter_index || 0,
+            startTime: cs.startTime || cs.start_time || new Date().toISOString(),
+            durationSeconds: duration,
+            activeSeconds: duration,
+            duration: duration,
+            wordsRead: cs.wordsRead ?? cs.words_read ?? 0,
+            avgWpm: cs.avgWpm ?? cs.avg_wpm ?? 220,
+            peakWpm: cs.peakWpm ?? cs.peak_wpm ?? (cs.avgWpm ?? cs.avg_wpm ?? 220),
+            wpm: cs.avgWpm ?? cs.avg_wpm ?? 220,
+            timelineSamples: cs.intraSessionSamples || cs.intra_session_samples || cs.timelineSamples || [],
+            intraSessionSamples: cs.intraSessionSamples || cs.intra_session_samples || cs.timelineSamples || [],
+            date: cs.date || storage.getLocalDateString(cs.startTime || cs.start_time || Date.now()),
+            timestamp: new Date(cs.startTime || cs.start_time || Date.now()).getTime(),
+            updatedAt: cs.updatedAt || cs.updated_at || new Date().toISOString()
+          };
+          await storage.saveReadingSession(normalized);
+          result.downloaded++;
+          result.merged++;
+        } else {
+          // Relace existuje lokálně i v cloudu -> porovnat čas poslední aktualizace
+          const localUpdatedAt = new Date(localMatch.updatedAt || localMatch.updated_at || localMatch.timestamp || localMatch.startTime || 0).getTime();
+
+          if (csUpdatedAt > localUpdatedAt + 1000) {
+            // Cloud je novější -> aktualizovat lokálně
+            const normalized = {
+              ...localMatch,
+              bookId: cs.bookId || cs.book_id || localMatch.bookId,
+              wordsRead: cs.wordsRead ?? cs.words_read ?? localMatch.wordsRead,
+              avgWpm: cs.avgWpm ?? cs.avg_wpm ?? localMatch.avgWpm,
+              peakWpm: cs.peakWpm ?? cs.peak_wpm ?? localMatch.peakWpm,
+              wpm: cs.avgWpm ?? cs.avg_wpm ?? localMatch.avgWpm,
+              durationSeconds: duration,
+              activeSeconds: duration,
+              duration: duration,
+              timelineSamples: cs.intraSessionSamples || cs.intra_session_samples || localMatch.timelineSamples,
+              intraSessionSamples: cs.intraSessionSamples || cs.intra_session_samples || localMatch.timelineSamples,
+              updatedAt: cs.updatedAt || cs.updated_at || new Date().toISOString()
+            };
+            await storage.saveReadingSession(normalized);
+            result.merged++;
+          } else if (localUpdatedAt > csUpdatedAt + 1000) {
+            // Lokální stav je novější -> odeslat do cloudu
+            await this.pushSingleSession(localMatch);
+            result.uploaded++;
+          }
+        }
+      }
+
+      // 4. Lokální relace, které ještě nejsou v cloudu -> odeslat do cloudu
+      for (const [localId, localSess] of localMap.entries()) {
+        if (!cloudIdsProcessed.has(localId)) {
+          const dur = Math.max(0, Math.round(localSess.durationSeconds ?? localSess.activeSeconds ?? localSess.duration ?? 0));
+          if (dur >= 300) {
+            await this.pushSingleSession(localSess);
+            result.uploaded++;
+            result.merged++;
+          }
+        }
+      }
+
+      // 5. Synchronizace agregovaného souhrnu statistik
+      await this.syncStatsSummary();
+
+      return result;
+    } catch (err) {
+      console.warn("[SupabaseSync] Chyba při synchronizaci statistik a relací:", err);
+      return result;
     }
   }
 }
