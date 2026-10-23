@@ -450,8 +450,12 @@ export class LuminaApp {
     this.ruler.readingMode = this.readingMode;
 
     // Kontinuální akreditace slov při posunu pravítka po řádcích a slovech
+    this.wordsCreditedOnCurrentPage = 0;
     this.ruler.onProgress = (type, count) => {
-      tracker.attributeWords(count);
+      if (count > 0) {
+        this.wordsCreditedOnCurrentPage = (this.wordsCreditedOnCurrentPage || 0) + count;
+        tracker.attributeWords(count);
+      }
     };
 
     // Callback pro ruler.js: vrátí true pokud je otevřen jakýkoliv panel/zásuvka,
@@ -2320,6 +2324,17 @@ export class LuminaApp {
           this.dom.btnRecalcStats.disabled = true;
           this.dom.btnRecalcStats.textContent = "⏳ Přepočítávám...";
           const res = await storage.recalculateAndNormalizeStats();
+          if (supabaseSync && supabaseSync.isOnline()) {
+            try {
+              const allSessions = await storage.getAllReadingSessions();
+              for (const s of allSessions) {
+                await supabaseSync.pushSingleSession(s);
+              }
+              await supabaseSync.syncStatsSummary();
+            } catch (syncErr) {
+              console.warn("Varování při cloudové synchronizaci přepočtených statistik:", syncErr);
+            }
+          }
           this.showToast(`Statistiky byly přepočítány a normalizovány (${res.normalizedCount} relací upraveno).`, "success");
           await this.openStatsModal();
         } catch (err) {
@@ -3706,8 +3721,14 @@ export class LuminaApp {
   }
 
   onPdfPageRendered(currentPage, numPages, isReflow = false, isInitial = false) {
+    const prevPageIndex = this.currentPageIndex;
     this.currentPageIndex = currentPage - 1;
     this.totalPagesInChapter = numPages;
+    const isPageChanged = !isReflow && !isInitial && this.currentPageIndex !== prevPageIndex;
+    const direction = isPageChanged ? (this.currentPageIndex > prevPageIndex ? 1 : -1) : 0;
+    if (isPageChanged || isInitial) {
+      this.wordsCreditedOnCurrentPage = 0;
+    }
     if (this.currentBook) {
       const visibleWords = this.getVisibleWordsOnCurrentPage();
       tracker.onPageChange({
@@ -3716,6 +3737,7 @@ export class LuminaApp {
         chapterIndex: 0,
         pageIndex: this.currentPageIndex,
         visibleWords: visibleWords,
+        direction: direction,
         isReflow: !!isReflow,
         isInitialLoad: !!isInitial
       });
@@ -4715,7 +4737,6 @@ export class LuminaApp {
   }
 
   recalcPages() {
-    tracker.cancelCurrentPageDwell();
     if (this.isPdfMode) {
       if (this.pdfLoader) {
         this.totalPagesInChapter = this.pdfLoader.numPages || 1;
@@ -4933,6 +4954,9 @@ export class LuminaApp {
       }
 
       // Zaznamenání přechodu stránky do trackeru s přesným počtem viditelných slov a dwell time
+      if (isPageChanged || options.isInitialLoad) {
+        this.wordsCreditedOnCurrentPage = 0;
+      }
       if (this.currentBook) {
         const visibleWords = this.getVisibleWordsOnCurrentPage();
         tracker.onPageChange({
@@ -4941,6 +4965,7 @@ export class LuminaApp {
           chapterIndex: this.currentChapterIndex,
           pageIndex: this.currentPageIndex,
           visibleWords: visibleWords,
+          direction: direction,
           isReflow: !!options.isReflow,
           isInitialLoad: !!options.isInitialLoad,
           isNavigationJump: !!options.isNavigationJump
@@ -5096,8 +5121,12 @@ export class LuminaApp {
       // 4. Kapitola je skutečně dočtena: přechod na další kapitolu
       if (this.currentChapterIndex < this.currentParser.spine.length - 1) {
         console.log(`[LuminaReader] nextPage() advancing to next chapter -> ${this.currentChapterIndex + 1}`);
+        tracker.commitCurrentBlockDwell(1, this.getVisibleWordsOnCurrentPage());
+        this.wordsCreditedOnCurrentPage = 0;
         await this.navigateChapter(1, 0);
       } else {
+        tracker.commitCurrentBlockDwell(1, this.getVisibleWordsOnCurrentPage());
+        this.wordsCreditedOnCurrentPage = 0;
         this.showToast("Dočetli jste knihu až do konce! 🎉", "success");
         console.log("[LuminaReader] nextPage() reached end of book");
       }
@@ -5381,16 +5410,18 @@ export class LuminaApp {
           const maxSecScroll = Math.max(1, secHeight - vpHeight);
           const chapterScrollRatio = Math.max(0, Math.min(1, scrollIntoSec / maxSecScroll));
 
-          // Kontinuální akreditace slov při vertikálním skrolování
+          // Kontinuální akreditace slov při vertikálním skrolování (pokud není aktivní pravítko, které počítá přesně po řádcích/slovech)
           this._maxVScrollByChapter = this._maxVScrollByChapter || new Map();
           const prevRatio = this._maxVScrollByChapter.get(activeIdx) || 0;
           if (chapterScrollRatio > prevRatio) {
             const deltaRatio = chapterScrollRatio - prevRatio;
             this._maxVScrollByChapter.set(activeIdx, chapterScrollRatio);
-            const secWords = parseInt(activeSection.dataset.wordCount, 10) || 1000;
-            const wordsScrolled = Math.round(deltaRatio * secWords);
-            if (wordsScrolled > 0 && wordsScrolled <= 500) {
-              tracker.attributeWords(wordsScrolled);
+            if (!(this.ruler && this.ruler.enabled)) {
+              const secWords = parseInt(activeSection.dataset.wordCount, 10) || 1000;
+              const wordsScrolled = Math.round(deltaRatio * secWords);
+              if (wordsScrolled > 0 && wordsScrolled <= 500) {
+                tracker.attributeWords(wordsScrolled);
+              }
             }
           }
 
@@ -5411,7 +5442,8 @@ export class LuminaApp {
                 bookTitle: this.currentBook.title,
                 chapterIndex: activeIdx,
                 pageIndex: vPageIdx,
-                visibleWords: visibleWords
+                visibleWords: visibleWords,
+                isVerticalScroll: true
               });
             }
           }
@@ -6157,7 +6189,7 @@ export class LuminaApp {
     const liveSnapshot = tracker.getCurrentSessionSnapshot();
 
     const allSessions = [];
-    if (liveSnapshot && (liveSnapshot.durationSeconds ?? liveSnapshot.activeSeconds ?? liveSnapshot.duration ?? 0) >= 300) {
+    if (liveSnapshot && (liveSnapshot.durationSeconds ?? liveSnapshot.activeSeconds ?? liveSnapshot.duration ?? 0) >= 15) {
       allSessions.push(liveSnapshot);
     }
 
@@ -6294,19 +6326,23 @@ export class LuminaApp {
       });
     }
 
-    const durationMin = (session.durationSeconds || session.activeSeconds || 0) / 60;
-    const calcAvg = (durationMin > 0 && session.wordsRead > 0) ? Math.round(session.wordsRead / durationMin) : 0;
-    const avgWpm = session.avgWpm ?? (calcAvg > 0 ? calcAvg : 220);
-    const samples = Array.isArray(session.timelineSamples || session.intraSessionSamples) 
-      ? (session.timelineSamples || session.intraSessionSamples) 
+    const durationSec = Math.max(0, Number(session.durationSeconds ?? session.activeSeconds ?? session.duration ?? 0));
+    const wordsRead = Math.max(0, Number(session.wordsRead ?? session.words_read ?? 0));
+    const calcAvg = durationSec >= 10 ? Math.round((wordsRead / durationSec) * 60) : 0;
+    const avgWpm = (session.avgWpm !== undefined && session.avgWpm !== null)
+      ? Math.round(session.avgWpm)
+      : ((session.avg_wpm !== undefined && session.avg_wpm !== null) ? Math.round(session.avg_wpm) : calcAvg);
+    const samples = Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
+      ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
       : [];
     const speeds = samples.map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
-    const peakWpm = session.peakWpm 
-      ? session.peakWpm 
+    const rawPeak = session.peakWpm ?? session.peak_wpm;
+    const peakWpm = rawPeak 
+      ? Math.max(Math.round(rawPeak), avgWpm) 
       : (speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm);
 
     if (this.dom.sessionBadgeDuration) {
-      this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(session.durationSeconds);
+      this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(durationSec);
     }
     if (this.dom.sessionBadgePeakWpm) {
       this.dom.sessionBadgePeakWpm.textContent = `${peakWpm} WPM`;
@@ -6315,7 +6351,7 @@ export class LuminaApp {
       this.dom.sessionBadgeAvgWpm.textContent = `${avgWpm} WPM`;
     }
     if (this.dom.sessionBadgeWords) {
-      this.dom.sessionBadgeWords.textContent = (session.wordsRead || 0).toLocaleString("cs-CZ");
+      this.dom.sessionBadgeWords.textContent = wordsRead.toLocaleString("cs-CZ");
     }
 
     if (this.dom.sessionTimelineChartContainer) {

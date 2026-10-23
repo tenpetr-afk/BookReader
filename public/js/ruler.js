@@ -5013,6 +5013,9 @@ export class ReadingRuler {
           }
         }
         this.activeLineIndex = nearestLineIdx;
+        if (!this.wordTracking) {
+          this._checkLineProgress(nearestLineIdx);
+        }
       }
 
       this.rulerEl.classList.remove("word-tracking-mode", "is-snapped");
@@ -5110,6 +5113,7 @@ export class ReadingRuler {
         const targetLineIdx = this.getHysteresisLineIndex(curY, isPen, activeColumn);
         if (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) {
           this.activeLineIndex = targetLineIdx;
+          this._checkLineProgress(targetLineIdx);
           const geom = this.computeLineGeometry(targetLineIdx);
           if (geom) {
             this.height = geom.height;
@@ -5388,6 +5392,9 @@ export class ReadingRuler {
         return;
       }
       this.activeLineIndex = targetLineIdx;
+      if (!this.wordTracking) {
+        this._checkLineProgress(targetLineIdx);
+      }
       const closestLine = this.cachedLines[targetLineIdx];
 
       if (this.cachedWords.length > 0) {
@@ -5438,37 +5445,82 @@ export class ReadingRuler {
   }
 
   _checkLineProgress(idx) {
+    if (this.wordTracking || idx < 0) return;
+
+    if (this._maxLineIndexOnPage < 0) {
+      if (idx === 0) {
+        this._maxLineIndexOnPage = 0;
+        return;
+      }
+      if (idx > 0 && idx <= 4) {
+        this._maxLineIndexOnPage = 0;
+      } else {
+        this._maxLineIndexOnPage = idx;
+        return;
+      }
+    }
+
     if (idx > this._maxLineIndexOnPage && this._maxLineIndexOnPage >= 0) {
-      const deltaLines = idx - this._maxLineIndexOnPage;
+      const prevIdx = this._maxLineIndexOnPage;
       this._maxLineIndexOnPage = idx;
       let words = 0;
+
       if (this.cachedWords && this.cachedWords.length > 0) {
-        words = this.cachedWords.filter(w => w.lineIndex > (idx - deltaLines) && w.lineIndex <= idx).length;
+        words = this.cachedWords.filter(w => w.lineIndex > prevIdx && w.lineIndex <= idx).length;
       }
+
       if (!words || words <= 0) {
-        const pageWords = (this.app && typeof this.app.getVisibleWordsOnCurrentPage === "function") 
-          ? this.app.getVisibleWordsOnCurrentPage() 
-          : 250;
-        const totalLines = Math.max(1, this.cachedLines?.length || 25);
-        words = Math.round(deltaLines * (pageWords / totalLines));
+        const lines = Array.isArray(this.cachedLines) ? this.cachedLines : [];
+        let totalTextLines = 0;
+        let nonMediaBefore = 0;
+        let nonMediaAfter = 0;
+
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i] && !lines[i].isMedia) {
+            totalTextLines++;
+            if (i > 0 && i <= prevIdx) nonMediaBefore++;
+            if (i > 0 && i <= idx) nonMediaAfter++;
+          }
+        }
+
+        const progressedTextLines = nonMediaAfter - nonMediaBefore;
+        if (progressedTextLines > 0) {
+          const pageWords = (this.app && typeof this.app.getVisibleWordsOnCurrentPage === "function")
+            ? this.app.getVisibleWordsOnCurrentPage()
+            : 250;
+          const denom = Math.max(1, totalTextLines);
+          const cumBefore = Math.round((nonMediaBefore / denom) * pageWords);
+          const cumAfter = Math.round((nonMediaAfter / denom) * pageWords);
+          words = Math.max(1, cumAfter - cumBefore);
+        }
       }
+
       if (words > 0 && typeof this.onProgress === "function") {
         this.onProgress("line", words);
       }
-    } else if (this._maxLineIndexOnPage < 0 && idx >= 0) {
-      this._maxLineIndexOnPage = idx;
     }
   }
 
   _checkWordProgress(idx) {
+    if (idx < 0) return;
+    if (this._maxWordIndexOnPage < 0) {
+      if (idx === 0) {
+        this._maxWordIndexOnPage = 0;
+        return;
+      }
+      if (idx > 0 && idx <= 5) {
+        this._maxWordIndexOnPage = 0;
+      } else {
+        this._maxWordIndexOnPage = idx;
+        return;
+      }
+    }
     if (idx > this._maxWordIndexOnPage && this._maxWordIndexOnPage >= 0) {
       const delta = idx - this._maxWordIndexOnPage;
       this._maxWordIndexOnPage = idx;
       if (delta > 0 && typeof this.onProgress === "function") {
         this.onProgress("word", delta);
       }
-    } else if (this._maxWordIndexOnPage < 0 && idx >= 0) {
-      this._maxWordIndexOnPage = idx;
     }
   }
 
@@ -5628,6 +5680,8 @@ export class ReadingRuler {
    */
   resetPositionForPage(direction = 1, immediate = true) {
     this.clearPageTransitionTimersAndRAFs();
+    this._maxLineIndexOnPage = -1;
+    this._maxWordIndexOnPage = -1;
 
     const stage = this.getStageElement();
     if (stage) stage.classList.add("is-turning-page");
@@ -7158,6 +7212,9 @@ export class ReadingRuler {
         }
         if (closestIdx >= 0 && closestIdx !== this.activeLineIndex) {
           this.activeLineIndex = closestIdx;
+          if (!this.wordTracking) {
+            this._checkLineProgress(closestIdx);
+          }
           if (this.wordTracking && this.cachedWords.length > 0) {
             let wIdx = -1;
             for (let w = 0; w < this.cachedWords.length; w++) {

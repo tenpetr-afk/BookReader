@@ -460,40 +460,23 @@ export class StorageManager {
     const timestamp = sessionData.timestamp || (sessionData.startTime ? new Date(sessionData.startTime).getTime() : Date.now());
     const startTime = sessionData.startTime || new Date(timestamp - (durationSeconds * 1000)).toISOString();
     const endTime = sessionData.endTime || new Date(timestamp).toISOString();
-    let wordsRead = Math.max(0, Math.round(sessionData.wordsRead ?? 0));
+    let wordsRead = Math.max(0, Math.round(sessionData.words_read ?? sessionData.wordsRead ?? 0));
 
-    const durationMinutes = durationSeconds / 60;
-    const realAvgPace = (durationMinutes > 0.05 && wordsRead > 0) ? Math.round(wordsRead / durationMinutes) : 0;
-    let avgWpm = sessionData.avgWpm ?? sessionData.wpm ?? realAvgPace;
-    if (avgWpm <= 0 || isNaN(avgWpm)) {
-      avgWpm = realAvgPace;
-    }
+    // Striktní výpočet průměrného WPM podle vzorce: duration >= 10 ? Math.round((words_read / duration) * 60) : 0
+    const avgWpm = durationSeconds >= 10 ? Math.round((wordsRead / durationSeconds) * 60) : 0;
 
     const localDate = this.getLocalDateString(sessionData.date || startTime || timestamp);
     const sessionId = sessionData.sessionId || sessionData.id || `session_${timestamp}_${Math.random().toString(36).substring(2, 9)}`;
 
-    // Filtrace vzorků timelineSamples od extrémních chyb (zachováváme validní 1-minutové body)
-    const rawSamples = Array.isArray(sessionData.timelineSamples || sessionData.intraSessionSamples) 
-      ? (sessionData.timelineSamples || sessionData.intraSessionSamples) 
+    // Filtrace a normalizace 1-minutových vzorků intra_session_samples (bez umělých 220 WPM seed bodů na 0s)
+    const rawSamples = Array.isArray(sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples) 
+      ? (sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples) 
       : [];
-    const cleanedSamples = rawSamples.filter(s => {
-      const sw = Number(s.wpm ?? s.instantaneousWpm ?? 0);
-      return sw >= 20 && sw <= 800;
-    }).map(s => ({
-      minute: s.minute,
-      elapsedSeconds: Math.max(0, Math.round(s.elapsedSeconds || 0)),
-      words: s.words !== undefined ? Math.round(s.words) : Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
-      wpm: Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
-      instantaneousWpm: Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
-      timestamp: s.timestamp || timestamp,
-      isPartial: !!s.isPartial
-    }));
+    const cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSeconds, wordsRead, avgWpm, timestamp);
 
-    // Výpočet špičkové rychlosti
+    // Výpočet špičkové rychlosti: max ze vzorků, nikdy nižší než avg_wpm
     const validSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
-    const peakWpm = sessionData.peakWpm 
-      ? Math.round(sessionData.peakWpm) 
-      : (validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm);
+    const peakWpm = validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm;
 
     const updatedAt = sessionData.updatedAt || sessionData.updated_at || new Date().toISOString();
 
@@ -509,11 +492,15 @@ export class StorageManager {
       activeSeconds: durationSeconds,
       duration: durationSeconds,
       wordsRead,
+      words_read: wordsRead,
       avgWpm,
+      avg_wpm: avgWpm,
       peakWpm,
+      peak_wpm: peakWpm,
       wpm: avgWpm,
       timelineSamples: cleanedSamples,
       intraSessionSamples: cleanedSamples,
+      intra_session_samples: cleanedSamples,
       date: localDate,
       timestamp,
       updatedAt
@@ -886,59 +873,102 @@ export class StorageManager {
   }
 
   /**
+   * Pomocná metoda pro vyčištění intra_session_samples:
+   * - Odstraní umělé počáteční 220 WPM seed body (body v čase 0s nebo počáteční plochou sérii 220 WPM).
+   * - Normalizuje vzorky na čisté 1-minutové intervaly { minute, elapsedSeconds, t, words, wpm }.
+   */
+  _cleanIntraSessionSamples(rawSamples, durationSec, wordsRead, avgWpm, fallbackTimestamp = Date.now()) {
+    if (!Array.isArray(rawSamples) || rawSamples.length === 0) {
+      return [];
+    }
+
+    // 1. Odstranit body s elapsedSeconds <= 0 (počáteční 0s seed) a neplatné hodnoty
+    let list = rawSamples.map((s, idx) => {
+      const sec = Math.round(Number(s.elapsedSeconds ?? s.t ?? (s.minute ? s.minute * 60 : (idx + 1) * 60)));
+      const wpm = Math.round(Number(s.wpm ?? s.instantaneousWpm ?? 0));
+      const words = s.words !== undefined ? Math.round(Number(s.words)) : wpm;
+      const minute = Number(s.minute) > 0 ? Number(s.minute) : Math.max(1, Math.ceil(sec / 60));
+      return {
+        minute,
+        elapsedSeconds: sec,
+        t: sec,
+        words: Math.max(0, words),
+        wpm: Math.max(0, wpm),
+        instantaneousWpm: Math.max(0, wpm),
+        timestamp: s.timestamp || fallbackTimestamp,
+        isPartial: !!s.isPartial
+      };
+    }).filter(s => s.elapsedSeconds > 0 && s.wpm >= 0 && s.wpm <= 1000);
+
+    // 2. Odstranit počáteční umělé ploché 220 WPM seed body
+    // (pokud na začátku relace leží sekvence bodů s přesně 220 WPM a průměr relace je odlišný nebo následují reálné body)
+    let leading220Count = 0;
+    while (leading220Count < list.length && list[leading220Count].wpm === 220) {
+      leading220Count++;
+    }
+    if (leading220Count > 0) {
+      const hasNon220After = leading220Count < list.length;
+      const avgDiffersFrom220 = Math.abs(avgWpm - 220) > 5;
+      if (leading220Count >= 2 || (leading220Count === 1 && (hasNon220After || avgDiffersFrom220))) {
+        list = list.slice(leading220Count);
+      }
+    }
+
+    // 3. Seřadit vzestupně podle času a deduplikovat
+    list.sort((a, b) => a.elapsedSeconds - b.elapsedSeconds);
+    const deduped = [];
+    for (const item of list) {
+      if (deduped.length === 0 || deduped[deduped.length - 1].elapsedSeconds !== item.elapsedSeconds) {
+        deduped.push(item);
+      } else {
+        deduped[deduped.length - 1] = item;
+      }
+    }
+
+    return deduped;
+  }
+
+  /**
    * Automatická kontrola integrity dat (sanity-check):
-   * Pokud celkové tempo čtení překročí 650 WPM nebo jednotlivé relace vykazují poškozená data
-   * (umělé stropy/dna <= 150 WPM nebo >= 650 WPM, nafouknutá slova ze skimování),
-   * provede se automatická sanitizace a normalizace.
+   * Detekuje relace s nekonzistentním avg_wpm / peak_wpm nebo s umělými 220 WPM seed body
+   * a automaticky je opraví.
    */
   async sanitizeCorruptedStats() {
     try {
       const allSessions = await this.getAllReadingSessions();
       if (!allSessions || allSessions.length === 0) return { sanitized: false };
 
-      let totalSec = 0;
-      let totalWords = 0;
       let hasAnomaly = false;
 
       for (const s of allSessions) {
-        const sec = Math.max(0, s.durationSeconds ?? s.activeSeconds ?? 0);
-        const words = Math.max(0, s.wordsRead ?? 0);
-        const wpm = s.avgWpm ?? s.wpm ?? 0;
-        const min = sec / 60;
-        const pace = min > 0.05 ? Math.round(words / min) : wpm;
+        const sec = Math.max(0, Math.round(s.duration ?? s.durationSeconds ?? s.activeSeconds ?? 0));
+        const words = Math.max(0, Math.round(s.words_read ?? s.wordsRead ?? 0));
+        const storedAvg = s.avg_wpm ?? s.avgWpm ?? s.wpm ?? 0;
+        const expectedAvg = sec >= 10 ? Math.round((words / sec) * 60) : 0;
 
-        totalSec += sec;
-        totalWords += words;
-
-        // Detekce anomálií:
-        // - relace kratší než 5 minut (< 300s)
-        // - wpm ležící na umělých stropech/dnech (<= 150 WPM nebo >= 650 WPM)
-        // - tempo slov nad 650 WPM
-        // - masivní počty slov při nízkém čase (např. > 5000 slov za < 15 minut)
-        // - datum v surovém formátu ISO s časem (obsahující T)
-        if (sec < 300 || wpm <= 150 || wpm >= 650 || pace > 650 ||
-            (words > 5000 && sec < 900) || (min < 0.5 && words > 200) ||
-            (typeof s.date === "string" && s.date.includes("T"))) {
+        if (sec < 300 || storedAvg !== expectedAvg || (typeof s.date === "string" && s.date.includes("T"))) {
           hasAnomaly = true;
+          break;
         }
 
-        // Kontrola vzorků časové osy
-        if (Array.isArray(s.timelineSamples)) {
-          for (const sample of s.timelineSamples) {
-            const sw = Number(sample.instantaneousWpm || sample.wpm || 0);
-            if (sw <= 150 || sw >= 650) {
-              hasAnomaly = true;
-              break;
-            }
-          }
+        const samples = Array.isArray(s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
+          ? (s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
+          : [];
+        if (samples.some(pt => (Number(pt.elapsedSeconds ?? pt.t ?? 60) <= 0) || (Number(pt.wpm) === 220 && Math.abs(expectedAvg - 220) > 10))) {
+          hasAnomaly = true;
+          break;
+        }
+
+        const speeds = samples.map(pt => Number(pt.wpm) || 0).filter(w => w > 0);
+        const expectedPeak = speeds.length > 0 ? Math.max(...speeds, expectedAvg) : expectedAvg;
+        const storedPeak = s.peak_wpm ?? s.peakWpm ?? 0;
+        if (storedPeak < expectedAvg || storedPeak !== expectedPeak) {
+          hasAnomaly = true;
+          break;
         }
       }
 
-      const totalMin = totalSec / 60;
-      const globalPace = totalMin > 0.1 ? Math.round(totalWords / totalMin) : 0;
-
-      if (hasAnomaly || globalPace > 650 || (totalWords > 50000 && totalSec < 7200)) {
-        console.warn(`[LuminaStorage] Zjištěna poškozená data čtení (${totalWords} slov za ${(totalSec / 60).toFixed(1)} min = ${globalPace} WPM). Spouštím auto-sanitizaci.`);
+      if (hasAnomaly) {
         const res = await this.recalculateAndNormalizeStats();
         return { sanitized: true, ...res };
       }
@@ -951,10 +981,10 @@ export class StorageManager {
   }
 
   /**
-   * Projde všechny čtecí relace a knihy a opraví poškozené / nafouknuté metriky:
-   * 1. Odfiltruje historické vzorky v wpmHistory a timelineSamples ležící na umělých stropech/dnech (<= 150 WPM nebo >= 650 WPM).
-   * 2. Přepočítá totalWords a avgWpm do realistických hodnot odpovídajících skutečnému odměřenému času čtení (standard 220 WPM).
-   * 3. Synchronizuje celkový čas a denní statistiku v sekundách.
+   * Projde všechny čtecí relace v localStorage i IndexedDB a sjednotí jejich metriky:
+   * 1. Odstraní umělé počáteční 220 WPM ploché seed body z intra_session_samples.
+   * 2. Přepočítá avg_wpm = Math.round((session.words_read / session.duration) * 60) a peak_wpm z vyčištěných vzorků.
+   * 3. Přepočítá celkový souhrn (reading_stats_summary a denní časy) z opravených relací.
    */
   async recalculateAndNormalizeStats() {
     const allSessions = await this.getAllReadingSessions();
@@ -966,7 +996,7 @@ export class StorageManager {
     let totalWords = 0;
 
     for (const session of allSessions) {
-      const durationSec = Math.max(0, session.durationSeconds ?? session.activeSeconds ?? session.duration ?? 0);
+      const durationSec = Math.max(0, Math.round(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0));
       // Úplné odstranění relací nesplňujících minimální práh 5 minut (300 sekund)
       if (durationSec < 300) {
         await this.deleteReadingSession(session.sessionId || session.id);
@@ -974,73 +1004,79 @@ export class StorageManager {
         continue;
       }
 
-      const durationMin = durationSec / 60;
-      let words = Math.max(0, session.wordsRead || 0);
-      let changed = false;
+      const words = Math.max(0, Math.round(session.words_read ?? session.wordsRead ?? 0));
+      const avgWpm = durationSec >= 10 ? Math.round((words / durationSec) * 60) : 0;
 
-      const calculatedPace = durationMin > 0.05 ? Math.round(words / durationMin) : 0;
-      let avgWpm = session.avgWpm ?? session.wpm ?? calculatedPace;
+      const rawSamples = Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
+        ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
+        : [];
+      const fallbackTs = session.timestamp || (session.startTime ? new Date(session.startTime).getTime() : Date.now());
+      let cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSec, words, avgWpm, fallbackTs);
 
-      // 1. Detekce a oprava zjevně poškozených nebo dříve nesprávně přepsaných relací:
-      if (isNaN(avgWpm) || avgWpm <= 0) {
-        avgWpm = calculatedPace > 0 ? calculatedPace : 220;
-        changed = true;
-      } else if (Math.abs(avgWpm - calculatedPace) > 25 && calculatedPace >= 40 && calculatedPace <= 650) {
-        // Pokud byla relace v minulosti nesprávně přepsána (např. 1,193 slov za 15m 08s zafixována na 220 místo 79 WPM):
-        // Obnovíme skutečný naměřený průměr odpovídající slovům a délce relace!
-        avgWpm = calculatedPace;
-        changed = true;
+      // Pokud po odstranění falešných 220 WPM bodů nezůstaly žádné vzorky, vygenerujeme čisté 1-minutové body odpovídající relaci
+      if (cleanedSamples.length === 0 && durationSec >= 60 && words > 0) {
+        const fullMins = Math.floor(durationSec / 60);
+        for (let m = 1; m <= fullMins; m++) {
+          cleanedSamples.push({
+            minute: m,
+            elapsedSeconds: m * 60,
+            t: m * 60,
+            words: avgWpm,
+            wpm: avgWpm,
+            instantaneousWpm: avgWpm,
+            timestamp: fallbackTs,
+            isPartial: false
+          });
+        }
+        const remSec = durationSec - fullMins * 60;
+        if (remSec >= 15) {
+          cleanedSamples.push({
+            minute: fullMins + 1,
+            elapsedSeconds: durationSec,
+            t: durationSec,
+            words: Math.round((avgWpm * remSec) / 60),
+            wpm: avgWpm,
+            instantaneousWpm: avgWpm,
+            timestamp: fallbackTs,
+            isPartial: true
+          });
+        }
       }
 
-      // 2. Normalizace a zachování vzorků v timelineSamples (1-minutové buckety)
-      const samples = Array.isArray(session.timelineSamples) ? session.timelineSamples : [];
-      let samplesChanged = false;
-      let cleanedSamples = samples.filter(s => {
-        const sw = Number(s.wpm ?? s.instantaneousWpm ?? 0);
-        return sw >= 20 && sw <= 800;
-      }).map(s => ({
-        minute: s.minute ?? (s.elapsedSeconds ? Math.round(s.elapsedSeconds / 60) : 1),
-        elapsedSeconds: Math.max(0, Math.round(s.elapsedSeconds || 0)),
-        words: s.words !== undefined ? Math.round(s.words) : Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
-        wpm: Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
-        instantaneousWpm: Math.round(s.wpm ?? s.instantaneousWpm ?? avgWpm),
-        timestamp: s.timestamp || session.timestamp || Date.now(),
-        isPartial: !!s.isPartial
-      }));
-
-      // Pokud relace neměla vzorky, doplníme referenční koncový bod
-      if (cleanedSamples.length === 0 && durationSec >= 15) {
-        cleanedSamples = [
-          { minute: 1, elapsedSeconds: durationSec, words: words, wpm: avgWpm, instantaneousWpm: avgWpm, timestamp: session.timestamp || Date.now() }
-        ];
-        samplesChanged = true;
-      }
-
-      // Výpočet špičkové rychlosti
       const sampleSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
       const peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds, avgWpm) : avgWpm;
-      if (session.peakWpm !== peakWpm) {
-        session.peakWpm = peakWpm;
-        changed = true;
-      }
 
-      // 3. Normalizace data relace do YYYY-MM-DD
       const normalizedDate = this.getLocalDateString(session.date || session.startTime || session.timestamp);
-      if (session.date !== normalizedDate) {
-        session.date = normalizedDate;
-        changed = true;
-      }
+      const prevAvg = session.avg_wpm ?? session.avgWpm ?? session.wpm;
+      const prevPeak = session.peak_wpm ?? session.peakWpm;
 
-      if (changed || samplesChanged || session.avgWpm !== avgWpm) {
-        session.wordsRead = words;
-        session.durationSeconds = durationSec;
-        session.activeSeconds = durationSec;
-        session.avgWpm = avgWpm;
-        session.wpm = avgWpm;
-        session.peakWpm = peakWpm;
-        session.timelineSamples = cleanedSamples;
-        session.intraSessionSamples = cleanedSamples;
-        await this.saveReadingSession(session);
+      const changed = (
+        prevAvg !== avgWpm ||
+        prevPeak !== peakWpm ||
+        session.date !== normalizedDate ||
+        cleanedSamples.length !== rawSamples.length ||
+        session.words_read !== words ||
+        session.duration !== durationSec
+      );
+
+      session.wordsRead = words;
+      session.words_read = words;
+      session.durationSeconds = durationSec;
+      session.activeSeconds = durationSec;
+      session.duration = durationSec;
+      session.avgWpm = avgWpm;
+      session.avg_wpm = avgWpm;
+      session.wpm = avgWpm;
+      session.peakWpm = peakWpm;
+      session.peak_wpm = peakWpm;
+      session.timelineSamples = cleanedSamples;
+      session.intraSessionSamples = cleanedSamples;
+      session.intra_session_samples = cleanedSamples;
+      session.date = normalizedDate;
+      session.updatedAt = new Date().toISOString();
+
+      await this.saveReadingSession(session);
+      if (changed) {
         normalizedCount++;
       }
 
@@ -1050,24 +1086,24 @@ export class StorageManager {
       totalWords += words;
     }
 
-    // Uložit normalizovanou mapu denních časů do localStorage
+    // Uložit normalizovanou mapu denních časů a reading_stats_summary do localStorage
     try {
       localStorage.setItem("luminareader_daily_reading_time", JSON.stringify(dailyReadingMap));
+      const globalAvgWpm = totalActiveSeconds > 0 ? Math.round((totalWords / totalActiveSeconds) * 60) : 0;
+      const summaryObj = {
+        id: "global",
+        total_words_read: totalWords,
+        totalWordsRead: totalWords,
+        total_reading_seconds: totalActiveSeconds,
+        totalReadingSeconds: totalActiveSeconds,
+        global_avg_wpm: globalAvgWpm,
+        globalAvgWpm: globalAvgWpm,
+        updatedAt: new Date().toISOString()
+      };
+      localStorage.setItem("reading_stats_summary", JSON.stringify(summaryObj));
     } catch (_) {}
 
-    // Celková kontrola: pokud celkový součet slov stále přesahuje 650 WPM, normalizujeme na standard 220 WPM
-    const totalMinutes = totalActiveSeconds / 60;
-    if (totalMinutes > 0.1 && (totalWords / totalMinutes > 650)) {
-      for (const session of allSessions) {
-        const sMin = (session.durationSeconds ?? session.activeSeconds ?? 0) / 60;
-        session.wordsRead = Math.round(sMin * 220);
-        session.avgWpm = 220;
-        session.wpm = 220;
-        await this.saveReadingSession(session);
-      }
-    }
-
-    // Normalizovat knihy
+    // Opravit případný přestřelený počet slov u knih (bez přepisování lastWpm na 220)
     for (const book of books) {
       let bookChanged = false;
       if (book.totalWords > 0 && book.wordsRead > book.totalWords) {
@@ -1075,8 +1111,8 @@ export class StorageManager {
         book.wordsRead = Math.round((prog / 100) * book.totalWords);
         bookChanged = true;
       }
-      if (book.lastWpm && (book.lastWpm <= 150 || book.lastWpm >= 650)) {
-        book.lastWpm = 220;
+      if (book.lastWpm === 220) {
+        delete book.lastWpm;
         bookChanged = true;
       }
       if (bookChanged) {

@@ -852,16 +852,13 @@ export class SupabaseSync {
     const dur = Math.max(0, Math.round(session.durationSeconds ?? session.activeSeconds ?? session.duration ?? 0));
     if (dur < 300) return null; // Striktně zahodit relace < 5 minut
 
-    const samples = Array.isArray(session.intraSessionSamples ?? session.timelineSamples)
-      ? (session.intraSessionSamples ?? session.timelineSamples)
+    const samples = Array.isArray(session.intra_session_samples ?? session.intraSessionSamples ?? session.timelineSamples)
+      ? (session.intra_session_samples ?? session.intraSessionSamples ?? session.timelineSamples)
       : [];
-    const durMin = dur / 60;
-    const calcAvg = (durMin > 0 && session.wordsRead > 0) ? Math.round(session.wordsRead / durMin) : 0;
-    const avgWpm = Math.round(session.avgWpm ?? session.wpm ?? (calcAvg > 0 ? calcAvg : 220));
-    const validSpeeds = samples.map(s => Number(s.wpm || s.instantaneousWpm || 0)).filter(w => w >= 30 && w <= 800);
-    const peakWpm = session.peakWpm
-      ? Math.round(session.peakWpm)
-      : (validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm);
+    const wordsRead = Math.max(0, Math.round(session.words_read ?? session.wordsRead ?? 0));
+    const avgWpm = dur >= 10 ? Math.round((wordsRead / dur) * 60) : 0;
+    const validSpeeds = samples.map(s => Number(s.wpm || s.instantaneousWpm || 0)).filter(w => w > 0 && w <= 1000);
+    const peakWpm = validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm;
 
     const id = session.id || session.sessionId;
     const startTime = session.startTime || new Date(session.timestamp || Date.now()).toISOString();
@@ -872,7 +869,7 @@ export class SupabaseSync {
       bookId: session.bookId || "",
       startTime: startTime,
       duration: dur,
-      wordsRead: Math.max(0, Math.round(session.wordsRead || 0)),
+      wordsRead: wordsRead,
       avgWpm: avgWpm,
       peakWpm: peakWpm,
       intraSessionSamples: samples,
@@ -1023,6 +1020,11 @@ export class SupabaseSync {
 
         if (!localMatch) {
           // Relace je v cloudu, ale ne lokálně -> uložit lokálně
+          const csWords = Math.max(0, Math.round(cs.wordsRead ?? cs.words_read ?? 0));
+          const csAvgWpm = duration >= 10 ? Math.round((csWords / duration) * 60) : 0;
+          const csSamples = cs.intraSessionSamples || cs.intra_session_samples || cs.timelineSamples || [];
+          const csSpeeds = Array.isArray(csSamples) ? csSamples.map(s => Number(s.wpm) || 0).filter(w => w > 0) : [];
+          const csPeakWpm = csSpeeds.length > 0 ? Math.max(...csSpeeds, csAvgWpm) : csAvgWpm;
           const normalized = {
             sessionId: id,
             id: id,
@@ -1033,12 +1035,16 @@ export class SupabaseSync {
             durationSeconds: duration,
             activeSeconds: duration,
             duration: duration,
-            wordsRead: cs.wordsRead ?? cs.words_read ?? 0,
-            avgWpm: cs.avgWpm ?? cs.avg_wpm ?? 220,
-            peakWpm: cs.peakWpm ?? cs.peak_wpm ?? (cs.avgWpm ?? cs.avg_wpm ?? 220),
-            wpm: cs.avgWpm ?? cs.avg_wpm ?? 220,
-            timelineSamples: cs.intraSessionSamples || cs.intra_session_samples || cs.timelineSamples || [],
-            intraSessionSamples: cs.intraSessionSamples || cs.intra_session_samples || cs.timelineSamples || [],
+            wordsRead: csWords,
+            words_read: csWords,
+            avgWpm: csAvgWpm,
+            avg_wpm: csAvgWpm,
+            peakWpm: csPeakWpm,
+            peak_wpm: csPeakWpm,
+            wpm: csAvgWpm,
+            timelineSamples: csSamples,
+            intraSessionSamples: csSamples,
+            intra_session_samples: csSamples,
             date: cs.date || storage.getLocalDateString(cs.startTime || cs.start_time || Date.now()),
             timestamp: new Date(cs.startTime || cs.start_time || Date.now()).getTime(),
             updatedAt: cs.updatedAt || cs.updated_at || new Date().toISOString()
