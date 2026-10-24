@@ -342,12 +342,13 @@ export class StatsCharts {
             });
           }
           const remSec = durationSeconds - fullMins * 60;
-          if (remSec >= 15) {
+          if (remSec >= 20) {
+            const partialWords = Math.round((avgWpm * remSec) / 60);
             dedupedSamples.push({
               minute: fullMins + 1,
               sec: durationSeconds,
-              words: Math.round((avgWpm * remSec) / 60),
-              wpm: avgWpm,
+              words: partialWords,
+              wpm: partialWords,
               isPartial: true
             });
           }
@@ -384,12 +385,14 @@ export class StatsCharts {
 
     const maxElapsed = Math.max(durationSeconds, curvePoints[curvePoints.length - 1].sec, 60);
 
-    // 5. Výpočet špičkové rychlosti (Peak WPM) - nikdy nesmí být nižší než avgWpm
-    const sampleSpeeds = dedupedSamples.map(s => s.wpm).filter(w => w > 0);
+    // 5. Výpočet špičkové rychlosti (Peak WPM) striktně z plných minut (bez isPartial)
+    const fullMinuteSamples = dedupedSamples.filter(s => !s.isPartial);
+    const sampleSpeeds = (fullMinuteSamples.length > 0 ? fullMinuteSamples : dedupedSamples)
+      .map(s => s.wpm).filter(w => w > 0);
     const rawPeak = sessionData.peak_wpm ?? sessionData.peakWpm;
     const peakWpm = rawPeak 
-      ? Math.max(Math.round(rawPeak), avgWpm) 
-      : (sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds, avgWpm) : avgWpm);
+      ? Math.round(rawPeak) 
+      : (sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds) : avgWpm);
 
     // Synchronizujeme odznaky špičkového a průměrného tempa v UI
     const peakBadge = document.getElementById("session-badge-peak-wpm");
@@ -537,13 +540,14 @@ export class StatsCharts {
     // 5. Hlavní čára grafu
     svg += `<path d="${curvePath}" fill="none" stroke="#3b82f6" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" />`;
 
-    // 6. Nalezení bodu se špičkovou rychlostí (Peak WPM) mezi reálnými vzorky
+    // 6. Nalezení bodu se špičkovou rychlostí (Peak WPM) mezi reálnými vzorky (z plných minut, pokud existují)
+    const nonAnchorPoints = points.filter(p => !p.isAnchor);
+    const fullMinutePoints = nonAnchorPoints.filter(p => !p.isPartial);
+    const candidatePoints = fullMinutePoints.length > 0 ? fullMinutePoints : nonAnchorPoints;
     let peakPoint = null;
-    for (const pt of points) {
-      if (!pt.isAnchor) {
-        if (!peakPoint || pt.wpm > peakPoint.wpm) {
-          peakPoint = pt;
-        }
+    for (const pt of candidatePoints) {
+      if (!peakPoint || pt.wpm > peakPoint.wpm) {
+        peakPoint = pt;
       }
     }
 
@@ -554,7 +558,8 @@ export class StatsCharts {
       const isPeak = peakPoint && pt === peakPoint && (peakPoint.wpm > avgWpm || points.filter(p => !p.isAnchor).length === 1);
       const minNum = pt.minute || Math.max(1, Math.ceil(pt.sec / 60)) || idx;
       const wordsInMin = pt.words !== undefined ? pt.words : pt.wpm;
-      const tooltipLabel = `${minNum}. minuta: ${wordsInMin} slov (${pt.wpm} WPM)`;
+      const partialLabel = pt.isPartial ? " (neúplná minuta)" : "";
+      const tooltipLabel = `${minNum}. minuta${partialLabel}: ${wordsInMin} slov (${pt.wpm} WPM)`;
 
       if (isPeak) {
         svg += `

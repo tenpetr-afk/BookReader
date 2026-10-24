@@ -474,9 +474,12 @@ export class StorageManager {
       : [];
     const cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSeconds, wordsRead, avgWpm, timestamp);
 
-    // Výpočet špičkové rychlosti: max ze vzorků, nikdy nižší než avg_wpm
-    const validSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
-    const peakWpm = validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm;
+    // Výpočet špičkové rychlosti: striktně z dokončených 60s minut (bez isPartial)
+    const fullMinuteSamples = cleanedSamples.filter(s => !s.isPartial);
+    const validSpeeds = fullMinuteSamples.map(s => s.wpm).filter(w => w > 0);
+    const peakWpm = validSpeeds.length > 0 
+      ? Math.max(...validSpeeds) 
+      : (sessionData.peak_wpm ?? sessionData.peakWpm ?? avgWpm);
 
     const updatedAt = sessionData.updatedAt || sessionData.updated_at || new Date().toISOString();
 
@@ -925,6 +928,43 @@ export class StorageManager {
       }
     }
 
+    // 4. Detekce a normalizace koncové neúplné minuty (trailing partial minute)
+    if (deduped.length >= 2) {
+      const lastIndex = deduped.length - 1;
+      const last = deduped[lastIndex];
+      const prev = deduped[lastIndex - 1];
+
+      let partialSec = 0;
+      if (durationSec > 0 && (durationSec % 60 !== 0) && Math.abs(last.elapsedSeconds - durationSec) <= 5) {
+        partialSec = durationSec % 60;
+      } else if (last.elapsedSeconds > prev.elapsedSeconds && (last.elapsedSeconds - prev.elapsedSeconds) < 60) {
+        partialSec = last.elapsedSeconds - prev.elapsedSeconds;
+      } else if (last.isPartial && durationSec > 0 && (durationSec % 60 !== 0)) {
+        partialSec = durationSec % 60;
+      }
+
+      const isTrailingPartial = last.isPartial || (partialSec > 0 && partialSec < 60) || (last.elapsedSeconds % 60 !== 0);
+
+      if (isTrailingPartial) {
+        if (partialSec > 0 && partialSec < 20) {
+          // Aktivní sekundy < 20: nepřipojovat samostatný bod grafu
+          deduped.pop();
+        } else {
+          last.isPartial = true;
+          // Pokud byl bod extrapolován a překračuje předchozí minutu o více než 1.5x
+          if (prev.wpm > 0 && last.wpm > prev.wpm * 1.5) {
+            let actualWords = last.words;
+            if (actualWords >= last.wpm && partialSec >= 20 && partialSec < 60) {
+              actualWords = Math.round((last.wpm * partialSec) / 60);
+            }
+            last.words = Math.max(0, Math.round(actualWords));
+            last.wpm = Math.min(last.words, Math.round(prev.wpm * 1.5));
+            last.instantaneousWpm = last.wpm;
+          }
+        }
+      }
+    }
+
     return deduped;
   }
 
@@ -959,10 +999,21 @@ export class StorageManager {
           break;
         }
 
-        const speeds = samples.map(pt => Number(pt.wpm) || 0).filter(w => w > 0);
-        const expectedPeak = speeds.length > 0 ? Math.max(...speeds, expectedAvg) : expectedAvg;
+        // Kontrola neúplné koncové minuty s přestřeleným WPM
+        if (samples.length >= 2) {
+          const last = samples[samples.length - 1];
+          const prev = samples[samples.length - 2];
+          if ((last.isPartial || (sec % 60 !== 0)) && prev.wpm > 0 && last.wpm > prev.wpm * 1.5) {
+            hasAnomaly = true;
+            break;
+          }
+        }
+
+        const fullMinuteSamples = samples.filter(pt => !pt.isPartial);
+        const speeds = fullMinuteSamples.map(pt => Number(pt.wpm) || 0).filter(w => w > 0);
+        const expectedPeak = speeds.length > 0 ? Math.max(...speeds) : expectedAvg;
         const storedPeak = s.peak_wpm ?? s.peakWpm ?? 0;
-        if (storedPeak < expectedAvg || storedPeak !== expectedPeak) {
+        if (storedPeak !== expectedPeak) {
           hasAnomaly = true;
           break;
         }
@@ -1029,22 +1080,63 @@ export class StorageManager {
           });
         }
         const remSec = durationSec - fullMins * 60;
-        if (remSec >= 15) {
+        if (remSec >= 20) {
+          const partialWords = Math.round((avgWpm * remSec) / 60);
           cleanedSamples.push({
             minute: fullMins + 1,
             elapsedSeconds: durationSec,
             t: durationSec,
-            words: Math.round((avgWpm * remSec) / 60),
-            wpm: avgWpm,
-            instantaneousWpm: avgWpm,
+            words: partialWords,
+            wpm: partialWords, // Bez extrapolace
+            instantaneousWpm: partialWords,
             timestamp: fallbackTs,
             isPartial: true
           });
         }
       }
 
-      const sampleSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
-      const peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds, avgWpm) : avgWpm;
+      // Explicitní normalizace koncových neúplných minut v historických relacích:
+      // Pokud byl poslední vzorek extrapolovaný dílčí minutový bod překračující předchozí minutu o více než 1.5x,
+      // zastropovat / přepočítat jej a aktualizovat peak_wpm na nejvyšší vzorek z PLNÝCH minut.
+      if (cleanedSamples.length >= 2) {
+        const lastIdx = cleanedSamples.length - 1;
+        const last = cleanedSamples[lastIdx];
+        const prev = cleanedSamples[lastIdx - 1];
+        let partialSec = 0;
+        if (durationSec > 0 && (durationSec % 60 !== 0) && Math.abs(last.elapsedSeconds - durationSec) <= 5) {
+          partialSec = durationSec % 60;
+        } else if (last.elapsedSeconds > prev.elapsedSeconds && (last.elapsedSeconds - prev.elapsedSeconds) < 60) {
+          partialSec = last.elapsedSeconds - prev.elapsedSeconds;
+        } else if (last.isPartial && durationSec > 0 && (durationSec % 60 !== 0)) {
+          partialSec = durationSec % 60;
+        }
+
+        const isTrailingPartial = last.isPartial || (partialSec > 0 && partialSec < 60) || (last.elapsedSeconds % 60 !== 0);
+
+        if (isTrailingPartial) {
+          if (partialSec > 0 && partialSec < 20) {
+            cleanedSamples.pop();
+          } else {
+            last.isPartial = true;
+            if (prev.wpm > 0 && last.wpm > prev.wpm * 1.5) {
+              let actualWords = last.words;
+              if (actualWords >= last.wpm && partialSec >= 20 && partialSec < 60) {
+                actualWords = Math.round((last.wpm * partialSec) / 60);
+              }
+              last.words = Math.max(0, Math.round(actualWords));
+              last.wpm = Math.min(last.words, Math.round(prev.wpm * 1.5));
+              last.instantaneousWpm = last.wpm;
+            }
+          }
+        }
+      }
+
+      // Výpočet špičkové rychlosti (peak_wpm) striktně z dokončených celých 60s minut:
+      const fullMinuteSamples = cleanedSamples.filter(s => !s.isPartial);
+      const fullMinuteSpeeds = fullMinuteSamples.map(s => s.wpm).filter(w => w > 0);
+      const peakWpm = fullMinuteSpeeds.length > 0
+        ? Math.max(...fullMinuteSpeeds)
+        : avgWpm;
 
       const normalizedDate = this.getLocalDateString(session.date || session.startTime || session.timestamp);
       const prevAvg = session.avg_wpm ?? session.avgWpm ?? session.wpm;
