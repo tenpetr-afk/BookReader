@@ -8,6 +8,196 @@ import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './sup
 import { storage, computeFileHash } from './storage.js';
 import { EpubParser } from './epub-parser.js';
 
+/**
+ * Serializuje lokální objekt čtecí relace do striktního formátu databázového schématu reading_sessions (snake_case).
+ */
+export function serializeSessionForSupabase(session) {
+  return {
+    id: String(session.id || session.sessionId),
+    book_id: String(session.bookId || session.book_id || "global"),
+    start_time: new Date(session.startTime || session.start_time || Date.now()).toISOString(),
+    duration: Math.round(Number(session.durationSeconds ?? session.duration ?? 0)),
+    words_read: Math.round(Number(session.totalWords ?? session.words_read ?? session.wordsRead ?? 0)),
+    avg_wpm: Math.round(Number(session.avgWpm ?? session.avg_wpm ?? 0)),
+    peak_wpm: Math.round(Number(session.peakWpm ?? session.peak_wpm ?? 0)),
+    intra_session_samples: Array.isArray(session.intra_session_samples)
+      ? session.intra_session_samples
+      : (Array.isArray(session.intraSessionSamples)
+        ? session.intraSessionSamples
+        : (Array.isArray(session.timelineSamples) ? session.timelineSamples : [])),
+    updated_at: new Date().toISOString()
+  };
+}
+
+/**
+ * Deserializuje řádek z tabulky reading_sessions zpět do objektu kompatibilního s frontendem LuminaReaderu.
+ */
+export function deserializeSessionFromSupabase(row) {
+  const duration = Math.max(0, Math.round(Number(row.duration ?? 0)));
+  const wordsRead = Math.max(0, Math.round(Number(row.words_read ?? 0)));
+  const avgWpm = Math.max(0, Math.round(Number(row.avg_wpm ?? 0)));
+  const peakWpm = Math.max(0, Math.round(Number(row.peak_wpm ?? avgWpm)));
+  const samples = Array.isArray(row.intra_session_samples) ? row.intra_session_samples : [];
+  const startTime = row.start_time || new Date().toISOString();
+  const dateStr = startTime ? startTime.split("T")[0] : new Date().toISOString().split("T")[0];
+
+  return {
+    id: row.id,
+    sessionId: row.id,
+    bookId: row.book_id,
+    book_id: row.book_id,
+    startTime: startTime,
+    start_time: startTime,
+    duration: duration,
+    durationSeconds: duration,
+    activeSeconds: duration,
+    words_read: wordsRead,
+    totalWords: wordsRead,
+    wordsRead: wordsRead,
+    avg_wpm: avgWpm,
+    avgWpm: avgWpm,
+    peak_wpm: peakWpm,
+    peakWpm: peakWpm,
+    wpm: avgWpm,
+    intra_session_samples: samples,
+    intraSessionSamples: samples,
+    timelineSamples: samples,
+    updatedAt: row.updated_at,
+    updated_at: row.updated_at,
+    date: dateStr,
+    timestamp: new Date(startTime).getTime()
+  };
+}
+
+/**
+ * Odešle relaci čtení do Supabase tabulky reading_sessions a následně aktualizuje reading_stats_summary.
+ */
+export async function syncSessionToSupabase(session = null) {
+  if (!session) {
+    if (typeof window !== "undefined" && window.tracker && typeof window.tracker.flushSession === "function" && window.tracker.hasFlushableSession && window.tracker.hasFlushableSession()) {
+      return await window.tracker.flushSession();
+    }
+    return await supabaseSync.syncReadingStatsAndSessions();
+  }
+
+  if (!supabaseSync.isOnline() || !supabase) {
+    return { success: false, reason: "offline" };
+  }
+
+  const dur = Math.max(0, Math.round(Number(session.durationSeconds ?? session.duration ?? session.activeSeconds ?? 0)));
+  if (dur < 300) {
+    return null; // Pouze relace >= 5 minut (300 sekund)
+  }
+
+  try {
+    const payload = serializeSessionForSupabase(session);
+    const { data, error } = await supabase
+      .from("reading_sessions")
+      .upsert(payload, { onConflict: "id" });
+
+    if (error) {
+      console.warn("[SupabaseSync] Chyba při upsertu reading_sessions:", error.message || error);
+      return { success: false, error };
+    }
+
+    // Aktualizovat agregovaný souhrn statistik
+    await supabaseSync.syncStatsSummary();
+    return { success: true, data };
+  } catch (err) {
+    console.warn("[SupabaseSync] Výjimka v syncSessionToSupabase:", err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * Stáhne ze Supabase všechny čtecí relace a sloučí je do lokálního IndexedDB úložiště.
+ */
+export async function pullSessionsFromSupabase() {
+  if (!supabaseSync.isOnline() || !supabase) return [];
+
+  try {
+    const { data: cloudSessionsRaw, error: sessErr } = await supabase
+      .from("reading_sessions")
+      .select("*")
+      .order("start_time", { ascending: false });
+
+    if (sessErr) {
+      if (sessErr.code !== "PGRST205") {
+        console.warn("[SupabaseSync] reading_sessions pull selhal:", sessErr.message || sessErr);
+      }
+      return [];
+    }
+
+    const cloudSessions = Array.isArray(cloudSessionsRaw) ? cloudSessionsRaw : [];
+    if (cloudSessions.length === 0) return [];
+
+    const localSessions = await storage.getAllReadingSessions();
+    const localMap = new Map();
+    for (const s of localSessions) {
+      const sid = s.sessionId || s.id;
+      if (sid) localMap.set(sid, s);
+    }
+
+    const mergedList = [];
+    for (const cs of cloudSessions) {
+      const deserialized = deserializeSessionFromSupabase(cs);
+      const id = deserialized.id;
+      if (!id) continue;
+
+      const duration = Math.max(0, Math.round(deserialized.duration || 0));
+      if (duration < 300) continue; // Pouze >= 5 minut
+
+      const localMatch = localMap.get(id);
+      const csUpdatedAt = new Date(deserialized.updatedAt || deserialized.startTime || 0).getTime();
+
+      if (!localMatch) {
+        await storage.saveReadingSession(deserialized);
+        mergedList.push(deserialized);
+      } else {
+        const localUpdatedAt = new Date(localMatch.updatedAt || localMatch.updated_at || localMatch.timestamp || localMatch.startTime || 0).getTime();
+        if (csUpdatedAt > localUpdatedAt + 1000) {
+          const merged = {
+            ...localMatch,
+            ...deserialized,
+            bookTitle: localMatch.bookTitle || localMatch.title || deserialized.bookTitle || "Kniha"
+          };
+          await storage.saveReadingSession(merged);
+          mergedList.push(merged);
+        }
+      }
+    }
+
+    // Sloučit i denní minuty ze souhrnu statistik
+    try {
+      const { data: summaryList } = await supabase
+        .from("reading_stats_summary")
+        .select("*")
+        .limit(1);
+
+      if (summaryList && summaryList.length > 0) {
+        const cloudSummary = summaryList[0];
+        const cloudMap = cloudSummary.daily_minutes_map || cloudSummary.dailyMinutesMap || {};
+        for (const [dateStr, minutes] of Object.entries(cloudMap)) {
+          const m = Number(minutes) || 0;
+          if (m >= 5) {
+            const currentSec = storage.getDailyReadingSeconds(dateStr);
+            if (m * 60 > currentSec) {
+              storage.setDailyReadingSeconds(dateStr, m * 60);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[SupabaseSync] Varování při slučování souhrnu v pullSessions:", e);
+    }
+
+    return mergedList;
+  } catch (err) {
+    console.warn("[SupabaseSync] Chyba při stahování relací:", err);
+    return [];
+  }
+}
+
 export class SupabaseSync {
   constructor() {
     this.status = "idle"; // "idle" | "syncing" | "synced" | "error" | "offline"
@@ -845,54 +1035,31 @@ export class SupabaseSync {
   }
 
   /**
-   * Odešle jednu validní relaci (>= 5 min) do Supabase (reading_sessions)
+   * Odešle jednu validní relaci (>= 5 min) do Supabase (reading_sessions) a aktualizuje souhrn.
    */
   async pushSingleSession(session) {
-    if (!this.isOnline() || !supabase || !session) return null;
-    const dur = Math.max(0, Math.round(session.durationSeconds ?? session.activeSeconds ?? session.duration ?? 0));
-    if (dur < 300) return null; // Striktně zahodit relace < 5 minut
-
-    const samples = Array.isArray(session.intra_session_samples ?? session.intraSessionSamples ?? session.timelineSamples)
-      ? (session.intra_session_samples ?? session.intraSessionSamples ?? session.timelineSamples)
-      : [];
-    const wordsRead = Math.max(0, Math.round(session.words_read ?? session.wordsRead ?? 0));
-    const avgWpm = dur >= 10 ? Math.round((wordsRead / dur) * 60) : 0;
-    const validSpeeds = samples.map(s => Number(s.wpm || s.instantaneousWpm || 0)).filter(w => w > 0 && w <= 1000);
-    const peakWpm = validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm;
-
-    const id = session.id || session.sessionId;
-    const startTime = session.startTime || new Date(session.timestamp || Date.now()).toISOString();
-    const updatedAt = session.updatedAt || session.updated_at || new Date().toISOString();
-
-    const payload = {
-      id: id,
-      bookId: session.bookId || "",
-      startTime: startTime,
-      duration: dur,
-      wordsRead: wordsRead,
-      avgWpm: avgWpm,
-      peakWpm: peakWpm,
-      intraSessionSamples: samples,
-      updatedAt: updatedAt
-    };
-
-    return await this._upsertRow("reading_sessions", payload, "id");
+    return await syncSessionToSupabase(session);
   }
 
   /**
-   * Synchronizuje nově dokončenou relaci a přepočítané souhrnné statistiky do Supabase
+   * Synchronizuje nově dokončenou relaci a přepočítané souhrnné statistiky do Supabase.
    */
   async pushSessionAndStats(session) {
-    if (!this.isOnline() || !supabase || !session) return;
-    const dur = Math.max(0, Math.round(session.durationSeconds ?? session.activeSeconds ?? session.duration ?? 0));
-    if (dur < 300) return; // Pouze relace >= 5 minut
+    return await syncSessionToSupabase(session);
+  }
 
-    try {
-      await this.pushSingleSession(session);
-      await this.syncStatsSummary();
-    } catch (err) {
-      console.warn("[SupabaseSync] Varování při odesílání relace a statistik:", err);
-    }
+  /**
+   * Odešle relaci čtení do Supabase a aktualizuje statistiky.
+   */
+  async syncSessionToSupabase(session) {
+    return await syncSessionToSupabase(session);
+  }
+
+  /**
+   * Stáhne a sloučí čtecí relace ze Supabase do lokálního úložiště.
+   */
+  async pullSessionsFromSupabase() {
+    return await pullSessionsFromSupabase();
   }
 
   /**
@@ -937,7 +1104,7 @@ export class SupabaseSync {
 
       // 3. Idempotentní sloučení s cloudovou mapou denních minut
       if (cloudSummary) {
-        const cloudMap = cloudSummary.dailyMinutesMap || cloudSummary.daily_minutes_map || {};
+        const cloudMap = cloudSummary.daily_minutes_map || cloudSummary.dailyMinutesMap || {};
         for (const [dateStr, minutes] of Object.entries(cloudMap)) {
           const m = Number(minutes) || 0;
           if (m >= 5) {
@@ -956,16 +1123,25 @@ export class SupabaseSync {
 
       const summaryPayload = {
         id: "global",
-        totalWordsRead: localStats.totalWords,
-        totalReadingSeconds: localStats.totalActiveTime,
-        globalAvgWpm: localStats.averageWpm,
-        streakDays: localStats.streak,
-        lastReadDate: lastReadDate,
-        dailyMinutesMap: dailyMinutesMap,
-        updatedAt: new Date().toISOString()
+        total_words_read: Math.round(Number(localStats.totalWords || 0)),
+        total_reading_seconds: Math.round(Number(localStats.totalActiveTime || 0)),
+        global_avg_wpm: Math.round(Number(localStats.averageWpm || 220)),
+        streak_days: Math.round(Number(localStats.streak || 0)),
+        last_read_date: lastReadDate,
+        daily_minutes_map: dailyMinutesMap,
+        updated_at: new Date().toISOString()
       };
 
-      return await this._upsertRow("reading_stats_summary", summaryPayload, "id");
+      const { data, error } = await supabase
+        .from("reading_stats_summary")
+        .upsert(summaryPayload, { onConflict: "id" });
+
+      if (error) {
+        console.warn("[SupabaseSync] Chyba při upsertu reading_stats_summary:", error.message || error);
+        return { success: false, error };
+      }
+
+      return { success: true, data };
     } catch (err) {
       console.warn("[SupabaseSync] Chyba při synchronizaci souhrnných statistik:", err);
       return null;
@@ -1007,49 +1183,21 @@ export class SupabaseSync {
 
       // 3. Idempotentní sloučení cloudových relací do lokálního IndexedDB
       for (const cs of cloudSessions) {
-        const id = cs.id || cs.sessionId;
+        const s = deserializeSessionFromSupabase(cs);
+        const id = s.id;
         if (!id) continue;
         cloudIdsProcessed.add(id);
 
-        const duration = Math.max(0, Math.round(cs.duration ?? cs.durationSeconds ?? cs.activeSeconds ?? 0));
+        const duration = Math.max(0, Math.round(Number(s.duration || 0)));
         // Striktně zahazujeme jakoukoli relaci kratší než 5 minut
         if (duration < 300) continue;
 
-        const csUpdatedAt = new Date(cs.updatedAt || cs.updated_at || cs.startTime || cs.start_time || 0).getTime();
+        const csUpdatedAt = new Date(s.updatedAt || s.startTime || 0).getTime();
         const localMatch = localMap.get(id);
 
         if (!localMatch) {
           // Relace je v cloudu, ale ne lokálně -> uložit lokálně
-          const csWords = Math.max(0, Math.round(cs.wordsRead ?? cs.words_read ?? 0));
-          const csAvgWpm = duration >= 10 ? Math.round((csWords / duration) * 60) : 0;
-          const csSamples = cs.intraSessionSamples || cs.intra_session_samples || cs.timelineSamples || [];
-          const csSpeeds = Array.isArray(csSamples) ? csSamples.map(s => Number(s.wpm) || 0).filter(w => w > 0) : [];
-          const csPeakWpm = csSpeeds.length > 0 ? Math.max(...csSpeeds, csAvgWpm) : csAvgWpm;
-          const normalized = {
-            sessionId: id,
-            id: id,
-            bookId: cs.bookId || cs.book_id || "",
-            bookTitle: cs.bookTitle || cs.book_title || "Kniha",
-            chapterIndex: cs.chapterIndex || cs.chapter_index || 0,
-            startTime: cs.startTime || cs.start_time || new Date().toISOString(),
-            durationSeconds: duration,
-            activeSeconds: duration,
-            duration: duration,
-            wordsRead: csWords,
-            words_read: csWords,
-            avgWpm: csAvgWpm,
-            avg_wpm: csAvgWpm,
-            peakWpm: csPeakWpm,
-            peak_wpm: csPeakWpm,
-            wpm: csAvgWpm,
-            timelineSamples: csSamples,
-            intraSessionSamples: csSamples,
-            intra_session_samples: csSamples,
-            date: cs.date || storage.getLocalDateString(cs.startTime || cs.start_time || Date.now()),
-            timestamp: new Date(cs.startTime || cs.start_time || Date.now()).getTime(),
-            updatedAt: cs.updatedAt || cs.updated_at || new Date().toISOString()
-          };
-          await storage.saveReadingSession(normalized);
+          await storage.saveReadingSession(s);
           result.downloaded++;
           result.merged++;
         } else {
@@ -1058,25 +1206,16 @@ export class SupabaseSync {
 
           if (csUpdatedAt > localUpdatedAt + 1000) {
             // Cloud je novější -> aktualizovat lokálně
-            const normalized = {
+            const merged = {
               ...localMatch,
-              bookId: cs.bookId || cs.book_id || localMatch.bookId,
-              wordsRead: cs.wordsRead ?? cs.words_read ?? localMatch.wordsRead,
-              avgWpm: cs.avgWpm ?? cs.avg_wpm ?? localMatch.avgWpm,
-              peakWpm: cs.peakWpm ?? cs.peak_wpm ?? localMatch.peakWpm,
-              wpm: cs.avgWpm ?? cs.avg_wpm ?? localMatch.avgWpm,
-              durationSeconds: duration,
-              activeSeconds: duration,
-              duration: duration,
-              timelineSamples: cs.intraSessionSamples || cs.intra_session_samples || localMatch.timelineSamples,
-              intraSessionSamples: cs.intraSessionSamples || cs.intra_session_samples || localMatch.timelineSamples,
-              updatedAt: cs.updatedAt || cs.updated_at || new Date().toISOString()
+              ...s,
+              bookTitle: localMatch.bookTitle || localMatch.title || s.bookTitle || "Kniha"
             };
-            await storage.saveReadingSession(normalized);
+            await storage.saveReadingSession(merged);
             result.merged++;
           } else if (localUpdatedAt > csUpdatedAt + 1000) {
             // Lokální stav je novější -> odeslat do cloudu
-            await this.pushSingleSession(localMatch);
+            await syncSessionToSupabase(localMatch);
             result.uploaded++;
           }
         }
@@ -1085,9 +1224,9 @@ export class SupabaseSync {
       // 4. Lokální relace, které ještě nejsou v cloudu -> odeslat do cloudu
       for (const [localId, localSess] of localMap.entries()) {
         if (!cloudIdsProcessed.has(localId)) {
-          const dur = Math.max(0, Math.round(localSess.durationSeconds ?? localSess.activeSeconds ?? localSess.duration ?? 0));
+          const dur = Math.max(0, Math.round(Number(localSess.durationSeconds ?? localSess.duration ?? localSess.activeSeconds ?? 0)));
           if (dur >= 300) {
-            await this.pushSingleSession(localSess);
+            await syncSessionToSupabase(localSess);
             result.uploaded++;
             result.merged++;
           }
@@ -1098,6 +1237,11 @@ export class SupabaseSync {
       await this.syncStatsSummary();
 
       return result;
+    } catch (err) {
+      console.warn("[SupabaseSync] Chyba při synchronizaci statistik a relací:", err);
+      return result;
+    }
+  }
     } catch (err) {
       console.warn("[SupabaseSync] Chyba při synchronizaci statistik a relací:", err);
       return result;

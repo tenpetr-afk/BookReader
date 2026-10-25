@@ -251,11 +251,21 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js");
-      return await supabaseSync.pushSessionAndStats(session);
+      const { syncSessionToSupabase } = await import("./supabase-sync.js");
+      return await syncSessionToSupabase(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
       return null;
+    }
+  }
+
+  async pullSessionsFromCloud() {
+    try {
+      const { pullSessionsFromSupabase } = await import("./supabase-sync.js");
+      return await pullSessionsFromSupabase();
+    } catch (err) {
+      console.warn("[StorageManager] pullSessionsFromCloud selhal:", err);
+      return [];
     }
   }
 
@@ -885,23 +895,31 @@ export class StorageManager {
       return [];
     }
 
-    // 1. Odstranit body s elapsedSeconds <= 0 (počáteční 0s seed) a neplatné hodnoty
-    let list = rawSamples.map((s, idx) => {
-      const sec = Math.round(Number(s.elapsedSeconds ?? s.t ?? (s.minute ? s.minute * 60 : (idx + 1) * 60)));
-      const wpm = Math.round(Number(s.wpm ?? s.instantaneousWpm ?? 0));
-      const words = s.words !== undefined ? Math.round(Number(s.words)) : wpm;
-      const minute = Number(s.minute) > 0 ? Number(s.minute) : Math.max(1, Math.ceil(sec / 60));
-      return {
-        minute,
-        elapsedSeconds: sec,
-        t: sec,
-        words: Math.max(0, words),
-        wpm: Math.max(0, wpm),
-        instantaneousWpm: Math.max(0, wpm),
-        timestamp: s.timestamp || fallbackTimestamp,
-        isPartial: !!s.isPartial
-      };
-    }).filter(s => s.elapsedSeconds > 0 && s.wpm >= 0 && s.wpm <= 1000);
+    // 1. Odstranit body s elapsedSeconds <= 0 (počáteční 0s seed nebo ukotvení), minute <= 0 a neplatné hodnoty
+    let list = rawSamples
+      .filter(s => {
+        if (!s || s.isAnchor) return false;
+        if (s.minute !== undefined && Number(s.minute) === 0) return false;
+        const secVal = Number(s.elapsedSeconds ?? s.t ?? s.elapsedActiveSeconds ?? s.elapsedTime ?? s.sec);
+        if (!isNaN(secVal) && secVal <= 0) return false;
+        return true;
+      })
+      .map((s, idx) => {
+        const sec = Math.round(Number(s.elapsedSeconds ?? s.t ?? (s.minute ? s.minute * 60 : (idx + 1) * 60)));
+        const wpm = Math.round(Number(s.wpm ?? s.instantaneousWpm ?? 0));
+        const words = s.words !== undefined ? Math.round(Number(s.words)) : wpm;
+        const minute = Number(s.minute) > 0 ? Number(s.minute) : Math.max(1, Math.ceil(sec / 60));
+        return {
+          minute,
+          elapsedSeconds: sec,
+          t: sec,
+          words: Math.max(0, words),
+          wpm: Math.max(0, wpm),
+          instantaneousWpm: Math.max(0, wpm),
+          timestamp: s.timestamp || fallbackTimestamp,
+          isPartial: !!s.isPartial
+        };
+      }).filter(s => s.elapsedSeconds > 0 && s.minute > 0 && s.wpm >= 0 && s.wpm <= 1000);
 
     // 2. Odstranit počáteční umělé ploché 220 WPM seed body
     // (pokud na začátku relace leží sekvence bodů s přesně 220 WPM a průměr relace je odlišný nebo následují reálné body)
@@ -1432,6 +1450,14 @@ export async function syncWithCloud(options) {
 
 export async function pushReadingSessionAndStatsToCloud(session) {
   return await storage.pushReadingSessionAndStatsToCloud(session);
+}
+
+export async function syncSessionToSupabase(session) {
+  return await storage.pushReadingSessionAndStatsToCloud(session);
+}
+
+export async function pullSessionsFromSupabase() {
+  return await storage.pullSessionsFromCloud();
 }
 
 export function normalizeBookProgress(book) {
