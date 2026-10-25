@@ -678,7 +678,7 @@ export class ReadingTracker {
   }
 
   /**
-   * Sestaví finální pole vzorků (včetně případné neuzavřené poslední minuty >= 15s) a sjednocené metriky
+   * Sestaví finální pole vzorků (včetně případné neuzavřené poslední minuty >= 20s bez extrapolace) a sjednocené metriky
    */
   _buildSessionMetrics(totalActiveSeconds) {
     const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
@@ -687,22 +687,28 @@ export class ReadingTracker {
 
     const samples = this.intra_session_samples.map(s => ({ ...s }));
 
-    // Pokud neuzavřená poslední minuta trvá >= 15s a obsahuje přečtená slova (> 0), připojíme dílčí vzorek
-    if (this.currentMinuteActiveSeconds >= 15 && partialWords > 0) {
-      const partialWpm = Math.round((this.currentMinuteWords / this.currentMinuteActiveSeconds) * 60);
+    // Trailing neúplná minuta (aktivní sekundy v aktuální minutě < 60):
+    // Pokud active seconds < 20, NEPŘIPOJUJEME samostatný bod grafu.
+    // Slova a sekundy jsou plně započteny v wordsRead (totalWords) a totalActiveSeconds (durationSeconds).
+    // Pokud active seconds >= 20:
+    // Bod zaznamenáme BEZ extrapolace (* 60 / partialSeconds).
+    if (this.currentMinuteActiveSeconds >= 20) {
+      const partialMinuteWords = Math.round(this.currentMinuteWords);
+      const completedMinutesCount = this.intra_session_samples.filter(s => !s.isPartial).length;
       samples.push({
-        minute: this.completedMinutesCount,
+        minute: completedMinutesCount + 1,
         elapsedSeconds: totalActiveSeconds,
         t: totalActiveSeconds,
-        words: partialWords,
-        wpm: partialWpm,
+        words: partialMinuteWords,
+        wpm: partialMinuteWords, // Skutečná slova připsaná v tomto koncovém minutovém bucketu bez násobitele
         isPartial: true
       });
     }
 
     const avgWpm = totalActiveSeconds >= 10 ? Math.round((wordsRead / totalActiveSeconds) * 60) : 0;
-    const peakWpm = samples.length > 0
-      ? Math.max(...samples.map(s => Number(s.wpm) || 0), avgWpm)
+    const fullMinuteSamples = samples.filter(s => !s.isPartial);
+    const peakWpm = fullMinuteSamples.length > 0
+      ? Math.max(...fullMinuteSamples.map(s => Number(s.wpm) || 0))
       : avgWpm;
 
     return {
@@ -934,8 +940,9 @@ export class ReadingTracker {
       const samples = Array.isArray(s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
         ? (s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
         : [];
-      const sampleWpms = samples.map(pt => Number(pt.wpm ?? pt.instantaneousWpm ?? 0)).filter(w => w > 0);
-      const truePeakWpm = sampleWpms.length > 0 ? Math.max(...sampleWpms, trueAvgWpm) : trueAvgWpm;
+      const fullMinuteSamples = samples.filter(pt => !pt.isPartial);
+      const sampleWpms = fullMinuteSamples.map(pt => Number(pt.wpm ?? pt.instantaneousWpm ?? 0)).filter(w => w > 0);
+      const truePeakWpm = sampleWpms.length > 0 ? Math.max(...sampleWpms) : trueAvgWpm;
 
       s.duration = dur;
       s.durationSeconds = dur;
