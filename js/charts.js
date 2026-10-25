@@ -279,42 +279,32 @@ export class StatsCharts {
       ? [...(sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples)] 
       : [];
 
-    // 1. Extrakce a normalizace 1-minutových vzorků (odfiltrování syntetických 0s ukotvení a neplatných hodnot)
-    let parsedSamples = rawSamples
-      .filter(s => {
-        if (!s) return false;
-        if (s.isAnchor) return false;
-        if (s.minute !== undefined && Number(s.minute) === 0) return false;
-        const secVal = Number(s.elapsedSeconds ?? s.t ?? s.elapsedActiveSeconds ?? s.elapsedTime ?? s.sec);
-        if (!isNaN(secVal) && secVal <= 0) return false;
-        return true;
-      })
-      .map((s, idx) => {
-        let sec = Number(s.elapsedSeconds ?? s.t ?? s.elapsedActiveSeconds ?? s.elapsedTime ?? s.sec);
-        const minuteFromProp = Number(s.minute);
-        if (isNaN(sec) || sec <= 0) {
-          if (!isNaN(minuteFromProp) && minuteFromProp > 0) {
-            sec = minuteFromProp * 60;
-          } else {
-            sec = (idx + 1) * 60;
-          }
+    // 1. Extrakce a normalizace 1-minutových vzorků
+    let parsedSamples = rawSamples.map((s, idx) => {
+      let sec = Number(s.elapsedSeconds ?? s.t ?? s.elapsedActiveSeconds ?? s.elapsedTime);
+      const minuteFromProp = Number(s.minute);
+      if (isNaN(sec) || sec <= 0) {
+        if (!isNaN(minuteFromProp) && minuteFromProp > 0) {
+          sec = minuteFromProp * 60;
+        } else {
+          sec = (idx + 1) * 60;
         }
-        const wpm = Math.max(0, Math.round(Number(s.wpm ?? s.instantaneousWpm ?? 0)));
-        const words = s.words !== undefined
-          ? Math.max(0, Math.round(Number(s.words)))
-          : wpm;
-        const minute = (!isNaN(minuteFromProp) && minuteFromProp > 0)
-          ? minuteFromProp
-          : Math.max(1, Math.ceil(sec / 60));
-        return {
-          minute,
-          sec: Math.max(1, Math.round(sec)),
-          words,
-          wpm,
-          isPartial: !!s.isPartial
-        };
-      })
-      .filter(s => s.wpm >= 0 && s.wpm <= 1000 && s.sec > 0 && s.minute > 0);
+      }
+      const wpm = Math.max(0, Math.round(Number(s.wpm ?? s.instantaneousWpm ?? 0)));
+      const words = s.words !== undefined
+        ? Math.max(0, Math.round(Number(s.words)))
+        : wpm;
+      const minute = (!isNaN(minuteFromProp) && minuteFromProp > 0)
+        ? minuteFromProp
+        : Math.max(1, Math.ceil(sec / 60));
+      return {
+        minute,
+        sec: Math.max(1, Math.round(sec)),
+        words,
+        wpm,
+        isPartial: !!s.isPartial
+      };
+    }).filter(s => s.wpm >= 0 && s.wpm <= 1000 && s.sec > 0);
 
     // 2. Striktní vzestupné řazení podle času
     parsedSamples.sort((a, b) => a.sec - b.sec);
@@ -382,8 +372,11 @@ export class StatsCharts {
       }
     }
 
-    // 4. Konstrukce bodů křivky: začíná čistě od 1. minuty bez syntetického 0s bodu a pokrývá délku relace až do konce
+    // 4. Konstrukce bodů křivky: pokrývá celou délku relace až do konce (žádná prázdná mezera vpravo)
     const curvePoints = [];
+    if (dedupedSamples[0].sec > 0) {
+      curvePoints.push({ sec: 0, wpm: dedupedSamples[0].wpm, isAnchor: true });
+    }
     curvePoints.push(...dedupedSamples);
     const lastSample = dedupedSamples[dedupedSamples.length - 1];
     if (durationSeconds > lastSample.sec) {
@@ -452,9 +445,7 @@ export class StatsCharts {
 
     // Sestavení plynulé Bézierovy křivky (Cubic Bezier Spline) garantovaně bez smyček v X
     let curvePath = `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
-    if (points.length === 1) {
-      curvePath += ` L ${(points[0].x + 0.1).toFixed(1)},${points[0].y.toFixed(1)}`;
-    } else if (points.length === 2) {
+    if (points.length === 2) {
       curvePath += ` L ${points[1].x.toFixed(1)},${points[1].y.toFixed(1)}`;
     } else {
       for (let i = 0; i < points.length - 1; i++) {
@@ -485,9 +476,7 @@ export class StatsCharts {
     }
 
     // Uzavřená plocha pod křivkou pro gradient
-    const areaPath = points.length === 1
-      ? `${curvePath} Z`
-      : `${curvePath} L ${points[points.length - 1].x.toFixed(1)},${padding.top + chartH} L ${points[0].x.toFixed(1)},${padding.top + chartH} Z`;
+    const areaPath = `${curvePath} L ${points[points.length - 1].x.toFixed(1)},${padding.top + chartH} L ${points[0].x.toFixed(1)},${padding.top + chartH} Z`;
 
     let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" class="stats-svg-chart timeline-svg-chart" role="img" aria-label="Graf rychlosti v čase relace">
       <defs>
