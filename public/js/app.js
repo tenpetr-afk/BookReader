@@ -170,15 +170,6 @@ export class LuminaApp {
       console.warn("[LuminaApp] Chyba při synchronizaci/načítání výchozí knihovny:", loadErr);
     }
 
-    // Synchronizace / stažení vzdálených relací a statistik z Supabase při startu aplikace
-    if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
-      try {
-        await supabaseSync.pullSessionsFromSupabase();
-      } catch (pullErr) {
-        console.warn("[LuminaApp] Varování při úvodním pullSessionsFromSupabase:", pullErr);
-      }
-    }
-
     // 6. Vykreslit knihovnu (vždy zobrazit existující knihy nebo prázdný stav)
     try {
       await this.renderLibrary();
@@ -2364,7 +2355,7 @@ export class LuminaApp {
         try {
           this.dom.btnResetStats.disabled = true;
           await storage.resetReadingStats();
-          await tracker.stopSession();
+          tracker.stopSession();
           tracker.creditedBlocks.clear();
           this.showToast("Data čtení byla úspěšně resetována.", "success");
           await this.openStatsModal();
@@ -3575,53 +3566,6 @@ export class LuminaApp {
 
   async openBook(bookId) {
     this.showToast("Otevírám knihu...", "info");
-
-    // Stažení nejnovějších relací a ověření postupu z cloudu při otevření knihy
-    if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
-      try {
-        await supabaseSync.pullSessionsFromSupabase();
-
-        // Ověříme, zda cloud nemá novější postup pro tuto knihu
-        const { data: cloudBook } = await supabase
-          .from("books")
-          .select("current_chapter, current_page, scroll_progress, pdf_ruler_height, updated_at")
-          .eq("id", bookId)
-          .maybeSingle();
-
-        if (cloudBook && cloudBook.updated_at) {
-          const cloudTime = new Date(cloudBook.updated_at).getTime();
-          const localBookBefore = await storage.getBook(bookId);
-          const localTime = localBookBefore?.lastReadAt || localBookBefore?.addedAt || 0;
-          if (cloudTime > localTime + 1000) {
-            const chIdx = Number(cloudBook.current_chapter) || 0;
-            const pIdx = Math.max(0, (Number(cloudBook.current_page) || 1) - 1);
-            const scroll = Number(cloudBook.scroll_progress) || 0;
-            const updates = {
-              currentChapterIndex: chIdx,
-              currentPageIndex: pIdx,
-              currentPage: pIdx + 1,
-              scrollPercent: scroll,
-              scroll_progress: scroll,
-              pageRatio: scroll,
-              lastReadAt: cloudTime
-            };
-            if (cloudBook.pdf_ruler_height) {
-              updates.pdfRulerConfig = {
-                height: cloudBook.pdf_ruler_height,
-                stepSize: cloudBook.pdf_ruler_height
-              };
-            }
-            await storage.updateBookProgress(bookId, updates);
-            try {
-              localStorage.setItem(`lumina_progress_${bookId}`, JSON.stringify(updates));
-            } catch (e) {}
-          }
-        }
-      } catch (syncErr) {
-        console.warn("[LuminaApp] Varování při synchronizaci s cloudem v openBook:", syncErr);
-      }
-    }
-
     const book = await storage.getBook(bookId);
     if (!book) {
       this.showToast("Kniha nebyla v databázi nalezena.", "error");
@@ -5680,10 +5624,10 @@ export class LuminaApp {
 
   // --- ZOBRAZENÍ A MODÁLY ---
 
-  async showLibraryView() {
+  showLibraryView() {
     this.saveProgress(true);
     localStorage.setItem("lumina_active_view", "library");
-    await tracker.stopSession();
+    tracker.stopSession();
     this.closeDrawer("toc");
     this.closeDrawer("settings");
     this.closeStatsModal();
@@ -6224,24 +6168,6 @@ export class LuminaApp {
     this.closeFloatingDock();
     if (this.dom.statsModal) this.dom.statsModal.classList.add("open");
 
-    // 1. Pokud probíhá aktivní relace a dosáhla limitu pro uložení, ukončíme ji a vyčkáme na odeslání do Supabase
-    if (tracker && typeof tracker.hasFlushableSession === "function" && tracker.hasFlushableSession()) {
-      try {
-        await tracker.flushSession();
-      } catch (flushErr) {
-        console.warn("[LuminaApp] Varování při flushSession v openStatsModal:", flushErr);
-      }
-    }
-
-    // 2. Synchronizujeme a stáhneme relace ze Supabase pro aktuální statistiky napříč zařízeními
-    if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
-      try {
-        await supabaseSync.syncReadingStatsAndSessions();
-      } catch (syncErr) {
-        console.warn("[LuminaApp] Varování při synchronizaci statistik před otevřením modálu:", syncErr);
-      }
-    }
-
     // Pojistka integrity dat: detekce a automatická oprava poškozených nebo nafouknutých hodnot
     try {
       await storage.sanitizeCorruptedStats();
@@ -6409,13 +6335,11 @@ export class LuminaApp {
     const samples = Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
       ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
       : [];
-    const fullMinuteSamples = samples.filter(s => !s.isPartial);
-    const speeds = (fullMinuteSamples.length > 0 ? fullMinuteSamples : samples)
-      .map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
+    const speeds = samples.map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
     const rawPeak = session.peakWpm ?? session.peak_wpm;
     const peakWpm = rawPeak 
-      ? Math.round(rawPeak) 
-      : (speeds.length > 0 ? Math.max(...speeds) : avgWpm);
+      ? Math.max(Math.round(rawPeak), avgWpm) 
+      : (speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm);
 
     if (this.dom.sessionBadgeDuration) {
       this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(durationSec);
