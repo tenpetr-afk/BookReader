@@ -131,6 +131,16 @@ export class ReadingTracker {
     window.addEventListener("beforeunload", () => {
       this.flushSession();
     });
+    window.addEventListener("pagehide", () => {
+      this.flushSession();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        if (typeof this.hasFlushableSession === "function" && this.hasFlushableSession()) {
+          this.flushSession();
+        }
+      }
+    });
   }
 
   /**
@@ -678,31 +688,46 @@ export class ReadingTracker {
   }
 
   /**
-   * Sestaví finální pole vzorků (včetně případné neuzavřené poslední minuty >= 15s) a sjednocené metriky
+   * Sestaví finální pole vzorků (včetně případné neuzavřené poslední minuty >= 20s bez extrapolace) a sjednocené metriky.
+   * Garantuje, že první reálný datový bod reprezentuje dokončenou 1. minutu a neobsahuje žádné syntetické 0s body.
    */
   _buildSessionMetrics(totalActiveSeconds) {
-    const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+    // Odfiltrujeme případné neplatné či syntetické ukotvovací vzorky na 0s
+    const validSamples = (this.intra_session_samples || []).filter(s => {
+      if (!s || s.isAnchor) return false;
+      const sec = Number(s.elapsedSeconds ?? s.t ?? 0);
+      const min = Number(s.minute ?? 0);
+      return (sec > 0 || isNaN(sec)) && (min > 0 || isNaN(min)) && sec !== 0 && min !== 0;
+    });
+
+    const completedWords = validSamples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
     const partialWords = Math.max(0, Math.round(this.currentMinuteWords));
     const wordsRead = completedWords + partialWords;
 
-    const samples = this.intra_session_samples.map(s => ({ ...s }));
+    const samples = validSamples.map(s => ({ ...s }));
 
-    // Pokud neuzavřená poslední minuta trvá >= 15s a obsahuje přečtená slova (> 0), připojíme dílčí vzorek
-    if (this.currentMinuteActiveSeconds >= 15 && partialWords > 0) {
-      const partialWpm = Math.round((this.currentMinuteWords / this.currentMinuteActiveSeconds) * 60);
+    // Trailing neúplná minuta (aktivní sekundy v aktuální minutě < 60):
+    // Pokud active seconds < 20, NEPŘIPOJUJEME samostatný bod grafu.
+    // Slova a sekundy jsou plně započteny v wordsRead (totalWords) a totalActiveSeconds (durationSeconds).
+    // Pokud active seconds >= 20:
+    // Bod zaznamenáme BEZ extrapolace (* 60 / partialSeconds).
+    if (this.currentMinuteActiveSeconds >= 20) {
+      const partialMinuteWords = Math.round(this.currentMinuteWords);
+      const completedMinutesCount = validSamples.filter(s => !s.isPartial).length;
       samples.push({
-        minute: this.completedMinutesCount,
+        minute: completedMinutesCount + 1,
         elapsedSeconds: totalActiveSeconds,
         t: totalActiveSeconds,
-        words: partialWords,
-        wpm: partialWpm,
+        words: partialMinuteWords,
+        wpm: partialMinuteWords, // Skutečná slova připsaná v tomto koncovém minutovém bucketu bez násobitele
         isPartial: true
       });
     }
 
     const avgWpm = totalActiveSeconds >= 10 ? Math.round((wordsRead / totalActiveSeconds) * 60) : 0;
-    const peakWpm = samples.length > 0
-      ? Math.max(...samples.map(s => Number(s.wpm) || 0), avgWpm)
+    const fullMinuteSamples = samples.filter(s => !s.isPartial);
+    const peakWpm = fullMinuteSamples.length > 0
+      ? Math.max(...fullMinuteSamples.map(s => Number(s.wpm) || 0))
       : avgWpm;
 
     return {
@@ -712,6 +737,20 @@ export class ReadingTracker {
       peakWpm,
       samples
     };
+  }
+
+  /**
+   * Vrátí aktuální počet aktivních sekund v probíhající relaci
+   */
+  getActiveDurationSeconds() {
+    return Math.max(0, ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds);
+  }
+
+  /**
+   * Zjistí, zda je aktuální relace dostatečně dlouhá pro uložení a synchronizaci (>= 5 minut)
+   */
+  hasFlushableSession() {
+    return Boolean(this.currentBookId && this.getActiveDurationSeconds() >= MIN_SESSION_DURATION_SEC);
   }
 
   /**
@@ -816,9 +855,11 @@ export class ReadingTracker {
         }
 
         // PUSH DO SUPABASE: Odeslání platné relace (>= 5 min) a aktualizovaného souhrnu statistik
-        storage.pushReadingSessionAndStatsToCloud(savedSession || sessionRecord).catch(err => {
-          console.warn("[LuminaSync] Varování při pushi čtecí relace do Supabase:", err);
-        });
+        try {
+          await storage.pushReadingSessionAndStatsToCloud(savedSession || sessionRecord);
+        } catch (syncErr) {
+          console.warn("[LuminaSync] Varování při pushi čtecí relace do Supabase:", syncErr);
+        }
 
       } catch (err) {
         console.warn("Chyba při ukládání čtecí relace:", err);
@@ -873,8 +914,8 @@ export class ReadingTracker {
   /**
    * Ukončí měření čtení (např. při návratu do knihovny)
    */
-  stopSession() {
-    this.flushSession();
+  async stopSession() {
+    await this.flushSession();
     if (this.timerInterval) clearInterval(this.timerInterval);
     this.creditedBlocks.clear();
     this.committedPageKeys.clear();
@@ -934,8 +975,9 @@ export class ReadingTracker {
       const samples = Array.isArray(s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
         ? (s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
         : [];
-      const sampleWpms = samples.map(pt => Number(pt.wpm ?? pt.instantaneousWpm ?? 0)).filter(w => w > 0);
-      const truePeakWpm = sampleWpms.length > 0 ? Math.max(...sampleWpms, trueAvgWpm) : trueAvgWpm;
+      const fullMinuteSamples = samples.filter(pt => !pt.isPartial && !pt.isAnchor && (Number(pt.elapsedSeconds ?? pt.t ?? 0) > 0 || Number(pt.minute ?? 0) > 0));
+      const sampleWpms = fullMinuteSamples.map(pt => Number(pt.wpm ?? pt.instantaneousWpm ?? 0)).filter(w => w > 0);
+      const truePeakWpm = sampleWpms.length > 0 ? Math.max(...sampleWpms) : trueAvgWpm;
 
       s.duration = dur;
       s.durationSeconds = dur;
