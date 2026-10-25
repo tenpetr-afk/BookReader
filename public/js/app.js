@@ -6335,13 +6335,11 @@ export class LuminaApp {
     const samples = Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
       ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
       : [];
-    const fullMinuteSamples = samples.filter(s => !s.isPartial);
-    const speeds = (fullMinuteSamples.length > 0 ? fullMinuteSamples : samples)
-      .map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
+    const speeds = samples.map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
     const rawPeak = session.peakWpm ?? session.peak_wpm;
     const peakWpm = rawPeak 
-      ? Math.round(rawPeak) 
-      : (speeds.length > 0 ? Math.max(...speeds) : avgWpm);
+      ? Math.max(Math.round(rawPeak), avgWpm) 
+      : (speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm);
 
     if (this.dom.sessionBadgeDuration) {
       this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(durationSec);
