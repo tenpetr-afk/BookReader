@@ -2327,9 +2327,7 @@ export class LuminaApp {
           if (supabaseSync && supabaseSync.isOnline()) {
             try {
               const allSessions = await storage.getAllReadingSessions();
-              for (const s of allSessions) {
-                await supabaseSync.pushSingleSession(s);
-              }
+              await supabaseSync.pushMultipleSessions(allSessions);
               await supabaseSync.syncStatsSummary();
             } catch (syncErr) {
               console.warn("Varování při cloudové synchronizaci přepočtených statistik:", syncErr);
@@ -2357,6 +2355,13 @@ export class LuminaApp {
           await storage.resetReadingStats();
           tracker.stopSession();
           tracker.creditedBlocks.clear();
+          if (supabaseSync && supabaseSync.isOnline()) {
+            try {
+              await supabaseSync.clearCloudReadingStats();
+            } catch (cloudErr) {
+              console.warn("Varování při resetování cloudových statistik:", cloudErr);
+            }
+          }
           this.showToast("Data čtení byla úspěšně resetována.", "success");
           await this.openStatsModal();
         } catch (err) {
@@ -3461,12 +3466,6 @@ export class LuminaApp {
       await this.refreshStatsUI();
       await this.renderLibrary();
     });
-
-    if (typeof window !== "undefined") {
-      window.addEventListener("lumina-sync-completed", async () => {
-        await this.refreshStatsUI();
-      });
-    }
   }
 
   updateSyncUI(status) {
@@ -6233,19 +6232,26 @@ export class LuminaApp {
 
     this._availableSessions.forEach((s) => {
       const opt = document.createElement("option");
-      opt.value = s.sessionId;
+      const sid = s.sessionId || s.id;
+      opt.value = sid;
 
-      const durationStr = ReadingTracker.formatDurationDetailed(s.durationSeconds);
-      const wordsStr = (s.wordsRead || 0).toLocaleString("cs-CZ");
-      const speedStr = `${s.avgWpm || (s.durationSeconds > 0 ? Math.round((s.wordsRead || 0) / (s.durationSeconds / 60)) : 0)} WPM`;
+      const dur = Math.max(0, Math.round(Number(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0)));
+      const words = Math.max(0, Math.round(Number(s.wordsRead ?? s.words_read ?? 0)));
+      const calcAvg = dur >= 10 ? Math.round((words / dur) * 60) : 0;
+      const avg = Math.round(Number(s.avgWpm ?? s.avg_wpm ?? s.wpm ?? calcAvg));
+
+      const durationStr = ReadingTracker.formatDurationDetailed(dur);
+      const wordsStr = words.toLocaleString("cs-CZ");
+      const speedStr = `${avg} WPM`;
 
       if (s.isLive) {
         opt.textContent = `🔴 [Aktivní relace] ${durationStr} • ${wordsStr} slov • ${speedStr}`;
       } else {
-        const d = new Date(s.startTime || s.timestamp || Date.now());
+        const d = new Date(s.startTime || s.start_time || s.timestamp || Date.now());
         const dateStr = d.toLocaleDateString("cs-CZ", { day: "numeric", month: "numeric" });
         const timeStr = d.toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" });
-        const title = s.bookTitle ? (s.bookTitle.length > 18 ? s.bookTitle.slice(0, 18) + "…" : s.bookTitle) : "";
+        const rawTitle = s.bookTitle || s.book_title || "";
+        const title = rawTitle ? (rawTitle.length > 18 ? rawTitle.slice(0, 18) + "…" : rawTitle) : "";
         opt.textContent = `${dateStr} ${timeStr} • ${durationStr} • ${wordsStr} slov • ${speedStr}${title ? ` (${title})` : ""}`;
       }
 
@@ -6265,24 +6271,30 @@ export class LuminaApp {
     this._availableSessions.forEach((s) => {
       const item = document.createElement("div");
       item.className = "session-item";
-      item.dataset.sessionId = s.sessionId;
-      if (s.sessionId === this._selectedSessionId) {
+      const sid = s.sessionId || s.id;
+      item.dataset.sessionId = sid;
+      if (sid === this._selectedSessionId) {
         item.classList.add("active");
       }
 
-      const durationStr = ReadingTracker.formatDurationDetailed(s.durationSeconds);
-      const wordsStr = `${(s.wordsRead || 0).toLocaleString("cs-CZ")} slov`;
-      const speedStr = `${s.avgWpm || (s.durationSeconds > 0 ? Math.round((s.wordsRead || 0) / (s.durationSeconds / 60)) : 0)} WPM`;
+      const dur = Math.max(0, Math.round(Number(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0)));
+      const words = Math.max(0, Math.round(Number(s.wordsRead ?? s.words_read ?? 0)));
+      const calcAvg = dur >= 10 ? Math.round((words / dur) * 60) : 0;
+      const avg = Math.round(Number(s.avgWpm ?? s.avg_wpm ?? s.wpm ?? calcAvg));
+
+      const durationStr = ReadingTracker.formatDurationDetailed(dur);
+      const wordsStr = `${words.toLocaleString("cs-CZ")} slov`;
+      const speedStr = `${avg} WPM`;
 
       let dateFormatted = "";
       if (s.isLive) {
         dateFormatted = "Právě probíhající relace";
       } else {
-        const d = new Date(s.startTime || s.timestamp || Date.now());
+        const d = new Date(s.startTime || s.start_time || s.timestamp || Date.now());
         dateFormatted = `${d.toLocaleDateString("cs-CZ", { day: "numeric", month: "numeric", year: "numeric" })} v ${d.toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })}`;
       }
 
-      const bookTitle = s.bookTitle || "Elektronická kniha";
+      const bookTitle = s.bookTitle || s.book_title || "Elektronická kniha";
 
       item.innerHTML = `
         <div class="session-item-left">
@@ -6297,7 +6309,7 @@ export class LuminaApp {
       `;
 
       item.addEventListener("click", () => {
-        this.selectSession(s.sessionId);
+        this.selectSession(sid);
       });
 
       this.dom.sessionHistoryList.appendChild(item);
@@ -6309,20 +6321,17 @@ export class LuminaApp {
     const session = this._availableSessions.find(s => s.sessionId === sessionId || s.id === sessionId);
     if (!session) return;
 
-    this._selectedSessionId = session.sessionId || session.id;
+    const sid = session.sessionId || session.id;
+    this._selectedSessionId = sid;
 
-    if (this.dom.sessionPickerSelect && this.dom.sessionPickerSelect.value !== sessionId) {
-      this.dom.sessionPickerSelect.value = sessionId;
+    if (this.dom.sessionPickerSelect && this.dom.sessionPickerSelect.value !== sid) {
+      this.dom.sessionPickerSelect.value = sid;
     }
 
     if (this.dom.sessionHistoryList) {
       const items = this.dom.sessionHistoryList.querySelectorAll(".session-item");
       items.forEach(el => {
-        if (el.dataset.sessionId === sessionId) {
-          el.classList.add("active");
-        } else {
-          el.classList.remove("active");
-        }
+        el.classList.toggle("active", el.dataset.sessionId === sid);
       });
     }
 

@@ -259,6 +259,16 @@ export class StorageManager {
     }
   }
 
+  async pushReadingSessionsToCloud(sessions) {
+    try {
+      const { supabaseSync } = await import("./supabase-sync.js");
+      return await supabaseSync.pushMultipleSessions(sessions);
+    } catch (err) {
+      console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
+      return null;
+    }
+  }
+
   normalizeBookProgress(book) {
     if (!book) return 0;
     let progressValue = 0;
@@ -612,7 +622,14 @@ export class StorageManager {
     const db = await this.getDB();
     return new Promise((resolve) => {
       if (!db.objectStoreNames.contains("reading_sessions")) {
-        return this.getAllSessions().then(resolve);
+        return this._getOldSessions().then(oldList => {
+          const filtered = (oldList || []).filter(s => {
+            const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
+            return dur >= 300;
+          });
+          filtered.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
+          resolve(filtered);
+        });
       }
 
       const tx = db.transaction("reading_sessions", "readonly");
@@ -621,15 +638,19 @@ export class StorageManager {
 
       request.onsuccess = async () => {
         let results = request.result || [];
-        // Pokud je reading_sessions prázdné, ale staré sessions existují, migrujeme je
-        if (results.length === 0 && db.objectStoreNames.contains("sessions")) {
+        // Pokud je reading_sessions prázdné, ale staré sessions existují, bezpečně a jednorázově migrujeme
+        if (results.length === 0 && !this._sessionsMigrated && db.objectStoreNames.contains("sessions")) {
+          this._sessionsMigrated = true;
           const oldSessions = await this._getOldSessions();
-          if (oldSessions.length > 0) {
-            for (const oldS of oldSessions) {
+          const validOld = (oldSessions || []).filter(s => {
+            const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
+            return dur >= 300;
+          });
+          if (validOld.length > 0) {
+            for (const oldS of validOld) {
               await this.saveReadingSession(oldS);
             }
-            results = await this.getAllReadingSessions();
-            return resolve(results);
+            results = validOld;
           }
         }
         // Filtrovat pouze relace s aktivní dobou alespoň 5 minut (>= 300 sekund)
@@ -638,7 +659,7 @@ export class StorageManager {
           return dur >= 300;
         });
         // Seřadit sestupně (nejnovější nahoře)
-        results.sort((a, b) => (b.timestamp || new Date(b.startTime).getTime() || 0) - (a.timestamp || new Date(a.startTime).getTime() || 0));
+        results.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
         resolve(results);
       };
 
@@ -1073,7 +1094,9 @@ export class StorageManager {
       session.intraSessionSamples = cleanedSamples;
       session.intra_session_samples = cleanedSamples;
       session.date = normalizedDate;
-      session.updatedAt = new Date().toISOString();
+      if (changed || !session.updatedAt) {
+        session.updatedAt = new Date().toISOString();
+      }
 
       await this.saveReadingSession(session);
       if (changed) {
@@ -1144,6 +1167,8 @@ export class StorageManager {
 
     try {
       localStorage.removeItem("lumina_reading_sessions");
+      localStorage.removeItem("luminareader_daily_reading_time");
+      localStorage.removeItem("reading_stats_summary");
     } catch (_) {}
 
     // Resetovat slova a rychlost u knih bez smazání samotných knih a jejich postupu
@@ -1340,6 +1365,10 @@ export async function syncWithCloud(options) {
 
 export async function pushReadingSessionAndStatsToCloud(session) {
   return await storage.pushReadingSessionAndStatsToCloud(session);
+}
+
+export async function pushReadingSessionsToCloud(sessions) {
+  return await storage.pushReadingSessionsToCloud(sessions);
 }
 
 export function normalizeBookProgress(book) {
