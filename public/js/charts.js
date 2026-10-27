@@ -310,7 +310,7 @@ export class StatsCharts {
     parsedSamples.sort((a, b) => a.sec - b.sec);
 
     // 3. Monotónní deduplikace podle času
-    const dedupedSamples = [];
+    let dedupedSamples = [];
     for (const sample of parsedSamples) {
       if (dedupedSamples.length === 0) {
         dedupedSamples.push({ ...sample });
@@ -325,6 +325,12 @@ export class StatsCharts {
           dedupedSamples.push({ ...sample });
         }
       }
+    }
+
+    // Oříznutí počátečních nulových vzorků (pokud relace začala neaktivitou před zahájením čtení)
+    const firstActiveIdx = dedupedSamples.findIndex(s => s.wpm > 0 || s.words > 0);
+    if (firstActiveIdx > 0) {
+      dedupedSamples = dedupedSamples.slice(firstActiveIdx);
     }
 
     // Pokud relace nemá uložené vzorky, ale má trvání a slova, vytvoříme 1-minutové body
@@ -371,15 +377,19 @@ export class StatsCharts {
       }
     }
 
-    // 4. Konstrukce bodů křivky: pokrývá celou délku relace až do konce (žádná prázdná mezera vpravo)
+    // 4. Konstrukce bodů křivky: ukotvení na t = 0 bez umělé nulové police a pokrývající celou relaci
     const curvePoints = [];
     if (dedupedSamples[0].sec > 0) {
-      curvePoints.push({ sec: 0, wpm: dedupedSamples[0].wpm, isAnchor: true });
+      const firstSampleWpm = dedupedSamples[0].wpm;
+      const anchorStartWpm = firstSampleWpm > 0 ? firstSampleWpm : (avgWpm > 0 ? avgWpm : 0);
+      curvePoints.push({ sec: 0, wpm: anchorStartWpm, isAnchor: true });
     }
     curvePoints.push(...dedupedSamples);
     const lastSample = dedupedSamples[dedupedSamples.length - 1];
     if (durationSeconds > lastSample.sec) {
-      curvePoints.push({ sec: durationSeconds, wpm: lastSample.wpm, isAnchor: true });
+      const lastSampleWpm = lastSample.wpm;
+      const anchorEndWpm = lastSampleWpm > 0 ? lastSampleWpm : (avgWpm > 0 ? avgWpm : 0);
+      curvePoints.push({ sec: durationSeconds, wpm: anchorEndWpm, isAnchor: true });
     }
 
     const maxElapsed = Math.max(durationSeconds, curvePoints[curvePoints.length - 1].sec, 60);
@@ -405,6 +415,9 @@ export class StatsCharts {
     const allYValues = [...sampleSpeeds];
     if (avgWpm > 0) allYValues.push(avgWpm);
     if (peakWpm > 0) allYValues.push(peakWpm);
+    curvePoints.forEach(p => {
+      if (p.wpm > 0) allYValues.push(p.wpm);
+    });
     const dataMin = allYValues.length > 0 ? Math.min(...allYValues) : 0;
     const dataMax = allYValues.length > 0 ? Math.max(...allYValues) : 200;
     const minY = Math.max(0, Math.floor((dataMin * 0.8) / 20) * 20);
@@ -440,7 +453,7 @@ export class StatsCharts {
       isAnchor: !!s.isAnchor
     }));
 
-    // Sestavení plynulé Bézierovy křivky (Cubic Bezier Spline) garantovaně bez smyček v X
+    // Sestavení plynulé Bézierovy křivky (Cubic Bezier Spline) garantovaně bez smyček v X a bez propadů pod 0
     let curvePath = `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
     if (points.length === 2) {
       curvePath += ` L ${points[1].x.toFixed(1)},${points[1].y.toFixed(1)}`;
@@ -452,21 +465,35 @@ export class StatsCharts {
         const p3 = points[i + 2] || p2;
 
         const dx = p2.x - p1.x;
-        const m1 = (p2.y - p0.y) / (p2.x - p0.x || 1);
-        const m2 = (p3.y - p1.y) / (p3.x - p1.x || 1);
+        // Tangenty v bodech p1 a p2
+        let m1 = (p2.y - p0.y) / (p2.x - p0.x || 1);
+        let m2 = (p3.y - p1.y) / (p3.x - p1.x || 1);
+
+        // Ochrana proti přestřelení lokálních extrémů (Fritsch-Carlson monotonicita):
+        // Pokud p1 nebo p2 je lokální extrém (změna směru), tangenta musí být nulová
+        const d1 = (p2.y - p1.y) / (dx || 1);
+        const d0 = (p1.y - p0.y) / (p1.x - p0.x || 1);
+        const d2 = (p3.y - p2.y) / (p3.x - p2.x || 1);
+
+        if (d0 * d1 <= 0) m1 = 0;
+        if (d1 * d2 <= 0) m2 = 0;
 
         // Striktně monotónní v X: cp1x a cp2x jsou vždy vnitřní body úseku [p1.x, p2.x]
         const cp1x = p1.x + dx / 3;
         const cp2x = p2.x - dx / 3;
 
-        // Kontrolní body Y s omezením sklonu proti přestřelení
+        // Kontrolní body Y
         let cp1y = p1.y + m1 * (dx / 3);
         let cp2y = p2.y - m2 * (dx / 3);
 
-        const minYVal = Math.min(p1.y, p2.y) - Math.abs(p2.y - p1.y) * 0.3;
-        const maxYVal = Math.max(p1.y, p2.y) + Math.abs(p2.y - p1.y) * 0.3;
-        cp1y = Math.max(padding.top, Math.min(padding.top + chartH, Math.max(minYVal, Math.min(maxYVal, cp1y))));
-        cp2y = Math.max(padding.top, Math.min(padding.top + chartH, Math.max(minYVal, Math.min(maxYVal, cp2y))));
+        // Clamping kontrolních bodů: nesmí přestřelit data ani hranice grafu [padding.top, padding.top + chartH]
+        const segmentMinY = Math.min(p1.y, p2.y);
+        const segmentMaxY = Math.max(p1.y, p2.y);
+        const allowedTop = Math.max(padding.top, segmentMinY - Math.abs(p2.y - p1.y) * 0.25);
+        const allowedBottom = Math.min(padding.top + chartH, segmentMaxY + Math.abs(p2.y - p1.y) * 0.25);
+
+        cp1y = Math.max(allowedTop, Math.min(allowedBottom, cp1y));
+        cp2y = Math.max(allowedTop, Math.min(allowedBottom, cp2y));
 
         curvePath += ` C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
       }
