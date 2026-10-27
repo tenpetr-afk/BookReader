@@ -2873,6 +2873,7 @@ export class ReadingRuler {
 
       // 1. Extract rects ONLY from visible TEXT_NODEs via TreeWalker
       const styleCache = new Map();
+      const blockRectCache = new Map();
       const parentRectCache = new Map();
       const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
@@ -2894,33 +2895,86 @@ export class ReadingRuler {
         const parent = textNode.parentElement;
         if (!parent) continue;
 
-        let parentRect = parentRectCache.get(parent);
-        if (!parentRect) {
-          parentRect = parent.getBoundingClientRect();
-          parentRectCache.set(parent, parentRect);
+        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre') || parent;
+
+        // Pre-filter at the block element level first so Bionic <b> nodes in offscreen paragraphs
+        // never trigger thousands of per-word getBoundingClientRect() calls across the chapter.
+        let blockRect = blockRectCache.get(blockElement);
+        if (!blockRect) {
+          blockRect = blockElement.getBoundingClientRect();
+          blockRectCache.set(blockElement, blockRect);
         }
 
         if (!isVertical && hasValidStageBounds) {
           if (
-            parentRect.right < stageLeft - 20 ||
-            parentRect.left > stageRight + 20 ||
-            parentRect.bottom < stageTop - 20 ||
-            parentRect.top > stageBottom + 20
+            blockRect.right < stageLeft - 20 ||
+            blockRect.left > stageRight + 20 ||
+            blockRect.bottom < stageTop - 20 ||
+            blockRect.top > stageBottom + 20
           ) {
             continue;
           }
         } else if (isVertical) {
           if (
-            parentRect.right < -20 ||
-            parentRect.left > viewW + 20 ||
-            parentRect.bottom < -20 ||
-            parentRect.top > viewH + 20
+            blockRect.right < -20 ||
+            blockRect.left > viewW + 20 ||
+            blockRect.bottom < -20 ||
+            blockRect.top > viewH + 20
           ) {
             continue;
           }
         }
 
-        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div') || parent;
+        const isBionicFixation = parent.tagName === 'B' && (
+          parent.classList.contains('bionic-fixation') || parent.classList.contains('bionic-bold')
+        );
+
+        // When Bionic reading is active, each word has a <b class="bionic-fixation"> prefix followed
+        // by an unbolded suffix text node on the exact same line. Skip the suffix text node in detectLines()
+        // to avoid doubling/tripling Range.getClientRects() calls per word.
+        if (!isBionicFixation) {
+          const prevSib = textNode.previousSibling;
+          if (
+            prevSib &&
+            prevSib.nodeType === Node.ELEMENT_NODE &&
+            prevSib.tagName === 'B' &&
+            (prevSib.classList.contains('bionic-fixation') || prevSib.classList.contains('bionic-bold'))
+          ) {
+            continue;
+          }
+        }
+
+        let parentRect = null;
+        if (parent === blockElement) {
+          parentRect = blockRect;
+        } else {
+          parentRect = parentRectCache.get(parent);
+          if (!parentRect) {
+            parentRect = parent.getBoundingClientRect();
+            parentRectCache.set(parent, parentRect);
+          }
+
+          if (!isVertical && hasValidStageBounds) {
+            if (
+              parentRect.right < stageLeft - 20 ||
+              parentRect.left > stageRight + 20 ||
+              parentRect.bottom < stageTop - 20 ||
+              parentRect.top > stageBottom + 20
+            ) {
+              continue;
+            }
+          } else if (isVertical) {
+            if (
+              parentRect.right < -20 ||
+              parentRect.left > viewW + 20 ||
+              parentRect.bottom < -20 ||
+              parentRect.top > viewH + 20
+            ) {
+              continue;
+            }
+          }
+        }
+
         let compStyle = styleCache.get(blockElement);
         if (!compStyle) {
           try {
@@ -2944,8 +2998,15 @@ export class ReadingRuler {
         const fontSize = Math.max(6, Math.round(pdfTf ? (rawFontSize * pdfTf.scaleY) : rawFontSize));
 
         try {
-          range.selectNodeContents(textNode);
-          const rects = range.getClientRects();
+          // Fast path for Bionic <b class="bionic-fixation">: reuse parentRect directly instead of
+          // allocating a DOMRectList via range.selectNodeContents() + range.getClientRects().
+          let rects;
+          if (isBionicFixation && parentRect && parentRect.width > 0 && parentRect.height > 0 && parentRect.height <= fontSize * 2.2) {
+            rects = [parentRect];
+          } else {
+            range.selectNodeContents(textNode);
+            rects = range.getClientRects();
+          }
           if (!rects || rects.length === 0) continue;
 
           for (let i = 0; i < rects.length; i++) {
@@ -3377,7 +3438,8 @@ export class ReadingRuler {
           const tcLeft = textContainerRect ? Math.round(textContainerRect.left) : Math.round(stageRect.left);
           const tcRight = textContainerRect ? Math.round(textContainerRect.right) : Math.round(stageRect.right);
           const textMinL = minLeft0 < Infinity ? Math.round(minLeft0 - horizontalPadding) : tcLeft;
-          const textMaxR = maxRight0 > -Infinity ? Math.round(maxRight0 + horizontalPadding) : tcRight;
+          const rawMaxR = (!this.isPdfMode && this.app?.settings?.fastReading) ? tcRight : maxRight0;
+          const textMaxR = rawMaxR > -Infinity ? Math.round(rawMaxR + horizontalPadding) : tcRight;
           c0Left = Math.max(tcLeft, textMinL);
           c0Right = Math.min(tcRight, textMaxR);
           if (c0Right <= c0Left) {
@@ -3420,7 +3482,9 @@ export class ReadingRuler {
           // Single-column mode: enforce colLeft and colWidth to align with the actual text column
           // Never extend or bleed to viewport x = 0 or window.innerWidth
           const minLineLeft = minLeft0 < Infinity ? minLeft0 : stageRect.left;
-          const maxLineRight = maxRight0 > -Infinity ? maxRight0 : stageRect.right;
+          const maxLineRight = (!this.isPdfMode && this.app?.settings?.fastReading)
+            ? stageRect.right
+            : (maxRight0 > -Infinity ? maxRight0 : stageRect.right);
           const hPadding = 10; // px
           c0Left = Math.max(Math.round(stageRect.left), Math.round(minLineLeft - hPadding));
           c0Right = Math.min(Math.round(stageRect.right), Math.round(maxLineRight + hPadding));
@@ -3888,12 +3952,124 @@ export class ReadingRuler {
       const range = document.createRange();
       // Podpora všech unicode mezer, nezlomitelných mezer i neviditelných dělicích znaků
       const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g;
+      const leadingNonSpaceRegex = /^[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/;
+      const trailingNonSpaceRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+$/;
       const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
 
       const visitedBionicSpans = new Set();
+      const consumedTextOffsets = new Map();
+      const blockRectCache = new Map();
       const parentRectCache = new Map();
       const viewW = window.innerWidth;
       const viewH = window.innerHeight;
+
+      const pushRangeRectsToWords = (cleanToken, pdfTf) => {
+        const clientRects = range.getClientRects();
+        if (!clientRects || clientRects.length === 0) return;
+
+        const subRects = [];
+        for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
+          const rect = clientRects[rIdx];
+          let rTop = rect.top;
+          let rBottom = rect.bottom;
+          let rHeight = rect.height;
+          let rLeft = rect.left;
+          let rRight = rect.right;
+
+          if (pdfTf) {
+            const relTop = rect.top - pdfTf.textLayerRect.top;
+            const relBottom = rect.bottom - pdfTf.textLayerRect.top;
+            rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+            rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+            rHeight = rBottom - rTop;
+
+            const relLeft = rect.left - pdfTf.textLayerRect.left;
+            const relRight = rect.right - pdfTf.textLayerRect.left;
+            rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+            rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+          }
+
+          const rWidth = rRight - rLeft;
+          if (
+            rWidth > 0.5 &&
+            rHeight > 2 &&
+            rRight > stageLeft + 2 &&
+            rLeft < stageRight - 2 &&
+            (isVertical || (rBottom > stageTop && rTop < stageBottom))
+          ) {
+            if (!isVertical && hasValidStageBounds) {
+              const midX = (rLeft + rRight) / 2;
+              if (midX <= stageLeft + 2 || midX >= stageRight - 2) continue;
+            }
+            subRects.push({
+              left: rLeft,
+              top: rTop,
+              right: rRight,
+              bottom: rBottom,
+              width: rWidth,
+              height: rHeight
+            });
+          }
+        }
+
+        if (subRects.length === 0) return;
+
+        if (subRects.length > 1) {
+          subRects.sort((a, b) => (a.top - b.top) || (a.left - b.left));
+        }
+
+        const lineMergedRects = [];
+        for (let sIdx = 0; sIdx < subRects.length; sIdx++) {
+          const r = subRects[sIdx];
+          if (lineMergedRects.length === 0) {
+            lineMergedRects.push({
+              left: r.left,
+              top: r.top,
+              right: r.right,
+              bottom: r.bottom,
+              width: r.width,
+              height: r.height
+            });
+          } else {
+            const prevR = lineMergedRects[lineMergedRects.length - 1];
+            const prevCenterY = (prevR.top + prevR.bottom) / 2;
+            const rCenterY = (r.top + r.bottom) / 2;
+            if (Math.abs(rCenterY - prevCenterY) <= 8 || Math.abs(r.top - prevR.top) <= 6) {
+              prevR.left = Math.min(prevR.left, r.left);
+              prevR.top = Math.min(prevR.top, r.top);
+              prevR.right = Math.max(prevR.right, r.right);
+              prevR.bottom = Math.max(prevR.bottom, r.bottom);
+              prevR.width = prevR.right - prevR.left;
+              prevR.height = prevR.bottom - prevR.top;
+            } else {
+              lineMergedRects.push({
+                left: r.left,
+                top: r.top,
+                right: r.right,
+                bottom: r.bottom,
+                width: r.width,
+                height: r.height
+              });
+            }
+          }
+        }
+
+        for (let sIdx = 0; sIdx < lineMergedRects.length; sIdx++) {
+          const r = lineMergedRects[sIdx];
+          words.push({
+            text: cleanToken,
+            left: r.left,
+            right: r.right,
+            top: r.top + vScrollTop,
+            bottom: r.bottom + vScrollTop,
+            width: r.width,
+            height: r.height,
+            centerX: r.left + r.width / 2,
+            centerY: r.top + r.height / 2 + vScrollTop
+          });
+        }
+      };
+
       while ((node = walker.nextNode())) {
         const parent = node.parentElement;
         if (!parent) continue;
@@ -3901,7 +4077,35 @@ export class ReadingRuler {
         if (parentTag === 'SCRIPT' || parentTag === 'STYLE') continue;
         if (parent.closest('svg, audio, video')) continue;
 
-        let pRect = parentRectCache.get(parent);
+        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre') || parent;
+        let bRect = blockRectCache.get(blockElement);
+        if (!bRect) {
+          bRect = blockElement.getBoundingClientRect();
+          blockRectCache.set(blockElement, bRect);
+        }
+
+        // Fast block-level filter: skip entire offscreen paragraphs before measuring inline <b> elements
+        if (!isVertical && hasValidStageBounds) {
+          if (
+            bRect.right < stageLeft - 20 ||
+            bRect.left > stageRight + 20 ||
+            bRect.bottom < stageTop - 20 ||
+            bRect.top > stageBottom + 20
+          ) {
+            continue;
+          }
+        } else if (isVertical) {
+          if (
+            bRect.right < -20 ||
+            bRect.left > viewW + 20 ||
+            bRect.bottom < -20 ||
+            bRect.top > viewH + 20
+          ) {
+            continue;
+          }
+        }
+
+        let pRect = parent === blockElement ? bRect : parentRectCache.get(parent);
         if (!pRect) {
           pRect = parent.getBoundingClientRect();
           parentRectCache.set(parent, pRect);
@@ -3932,7 +4136,94 @@ export class ReadingRuler {
         const textLayer = isPdfEl ? parent.closest('.textLayer') : null;
         const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
 
-        const bionicSpan = node.parentElement ? node.parentElement.closest('.bionic-word') : null;
+        // Streamlined Bionic fixation (<b class="bionic-fixation">Bo</b>ld) without wrapper spans:
+        // Combine the <b class="bionic-fixation"> node and its immediately following unbolded suffix text
+        // into a single Range so each word is measured once.
+        const isBionicFixationEl = parentTag === 'B' && (
+          parent.classList.contains('bionic-fixation') || parent.classList.contains('bionic-bold')
+        );
+        if (isBionicFixationEl && !parent.closest('.bionic-word')) {
+          if (visitedBionicSpans.has(parent)) continue;
+          visitedBionicSpans.add(parent);
+
+          let rawToken = parent.textContent || "";
+          let startNode = parent;
+          let startOffset = null;
+
+          // Include any leading non-whitespace punctuation immediately preceding <b class="bionic-fixation">
+          const prevSib = parent.previousSibling;
+          if (prevSib && prevSib.nodeType === Node.TEXT_NODE) {
+            const prevText = prevSib.textContent || "";
+            const prevConsumed = consumedTextOffsets.get(prevSib) || 0;
+            const unconsumedPrev = prevText.slice(prevConsumed);
+            const leadMatch = trailingNonSpaceRegex.exec(unconsumedPrev);
+            if (leadMatch && leadMatch[0].length > 0) {
+              rawToken = leadMatch[0] + rawToken;
+              startNode = prevSib;
+              startOffset = prevText.length - leadMatch[0].length;
+            }
+          }
+
+          let endNode = parent;
+          let endOffset = null;
+          let cursor = parent.nextSibling;
+
+          while (cursor) {
+            if (cursor.nodeType === Node.TEXT_NODE) {
+              const t = cursor.textContent || "";
+              const m = leadingNonSpaceRegex.exec(t);
+              if (m && m[0].length > 0) {
+                rawToken += m[0];
+                endNode = cursor;
+                endOffset = m[0].length;
+                consumedTextOffsets.set(cursor, m[0].length);
+                if (
+                  m[0].length === t.length &&
+                  cursor.nextSibling &&
+                  cursor.nextSibling.nodeType === Node.ELEMENT_NODE &&
+                  cursor.nextSibling.tagName === 'B' &&
+                  (cursor.nextSibling.classList.contains('bionic-fixation') || cursor.nextSibling.classList.contains('bionic-bold'))
+                ) {
+                  cursor = cursor.nextSibling;
+                  continue;
+                }
+              }
+              break;
+            } else if (
+              cursor.nodeType === Node.ELEMENT_NODE &&
+              cursor.tagName === 'B' &&
+              (cursor.classList.contains('bionic-fixation') || cursor.classList.contains('bionic-bold'))
+            ) {
+              visitedBionicSpans.add(cursor);
+              rawToken += cursor.textContent || "";
+              endNode = cursor;
+              endOffset = null;
+              cursor = cursor.nextSibling;
+            } else {
+              break;
+            }
+          }
+
+          const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
+          if (!cleanToken) continue;
+
+          try {
+            if (startNode !== parent && startOffset !== null) {
+              range.setStart(startNode, startOffset);
+            } else {
+              range.setStartBefore(parent);
+            }
+            if (endNode !== parent && endOffset !== null) {
+              range.setEnd(endNode, endOffset);
+            } else {
+              range.setEndAfter(endNode);
+            }
+            pushRangeRectsToWords(cleanToken, pdfTf);
+          } catch (e) {}
+          continue;
+        }
+
+        const bionicSpan = parent.closest('.bionic-word');
         if (bionicSpan) {
           if (visitedBionicSpans.has(bionicSpan)) continue;
           visitedBionicSpans.add(bionicSpan);
@@ -3943,110 +4234,7 @@ export class ReadingRuler {
 
           try {
             range.selectNodeContents(bionicSpan);
-            const clientRects = range.getClientRects();
-            if (!clientRects || clientRects.length === 0) continue;
-
-            const subRects = [];
-            for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
-              const rect = clientRects[rIdx];
-              let rTop = rect.top;
-              let rBottom = rect.bottom;
-              let rHeight = rect.height;
-              let rLeft = rect.left;
-              let rRight = rect.right;
-
-              if (pdfTf) {
-                const relTop = rect.top - pdfTf.textLayerRect.top;
-                const relBottom = rect.bottom - pdfTf.textLayerRect.top;
-                rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
-                rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
-                rHeight = rBottom - rTop;
-
-                const relLeft = rect.left - pdfTf.textLayerRect.left;
-                const relRight = rect.right - pdfTf.textLayerRect.left;
-                rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
-                rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
-              }
-
-              const rWidth = rRight - rLeft;
-              if (
-                rWidth > 0.5 &&
-                rHeight > 2 &&
-                rRight > stageLeft + 2 &&
-                rLeft < stageRight - 2 &&
-                (isVertical || (rBottom > stageTop && rTop < stageBottom))
-              ) {
-                if (!isVertical && hasValidStageBounds) {
-                  const midX = (rLeft + rRight) / 2;
-                  if (midX <= stageLeft + 2 || midX >= stageRight - 2) continue;
-                }
-                subRects.push({
-                  left: rLeft,
-                  top: rTop,
-                  right: rRight,
-                  bottom: rBottom,
-                  width: rWidth,
-                  height: rHeight
-                });
-              }
-            }
-
-            if (subRects.length === 0) continue;
-
-            if (subRects.length > 1) {
-              subRects.sort((a, b) => (a.top - b.top) || (a.left - b.left));
-            }
-
-            const lineMergedRects = [];
-            for (let sIdx = 0; sIdx < subRects.length; sIdx++) {
-              const r = subRects[sIdx];
-              if (lineMergedRects.length === 0) {
-                lineMergedRects.push({
-                  left: r.left,
-                  top: r.top,
-                  right: r.right,
-                  bottom: r.bottom,
-                  width: r.width,
-                  height: r.height
-                });
-              } else {
-                const prevR = lineMergedRects[lineMergedRects.length - 1];
-                const prevCenterY = (prevR.top + prevR.bottom) / 2;
-                const rCenterY = (r.top + r.bottom) / 2;
-                if (Math.abs(rCenterY - prevCenterY) <= 8 || Math.abs(r.top - prevR.top) <= 6) {
-                  prevR.left = Math.min(prevR.left, r.left);
-                  prevR.top = Math.min(prevR.top, r.top);
-                  prevR.right = Math.max(prevR.right, r.right);
-                  prevR.bottom = Math.max(prevR.bottom, r.bottom);
-                  prevR.width = prevR.right - prevR.left;
-                  prevR.height = prevR.bottom - prevR.top;
-                } else {
-                  lineMergedRects.push({
-                    left: r.left,
-                    top: r.top,
-                    right: r.right,
-                    bottom: r.bottom,
-                    width: r.width,
-                    height: r.height
-                  });
-                }
-              }
-            }
-
-            for (let sIdx = 0; sIdx < lineMergedRects.length; sIdx++) {
-              const r = lineMergedRects[sIdx];
-              words.push({
-                text: cleanToken,
-                left: r.left,
-                right: r.right,
-                top: r.top + vScrollTop,
-                bottom: r.bottom + vScrollTop,
-                width: r.width,
-                height: r.height,
-                centerX: r.left + r.width / 2,
-                centerY: r.top + r.height / 2 + vScrollTop
-              });
-            }
+            pushRangeRectsToWords(cleanToken, pdfTf);
           } catch (e) {
             // Ignore range errors
           }
@@ -4056,125 +4244,36 @@ export class ReadingRuler {
         const text = node.textContent;
         if (!text || !text.trim()) continue;
 
+        const consumedStart = consumedTextOffsets.get(node) || 0;
+        if (consumedStart >= text.length) continue;
+
+        const nextSibIsBionic = !!(
+          node.nextSibling &&
+          node.nextSibling.nodeType === Node.ELEMENT_NODE &&
+          node.nextSibling.tagName === 'B' &&
+          (node.nextSibling.classList.contains('bionic-fixation') || node.nextSibling.classList.contains('bionic-bold'))
+        );
+
         let match;
-        wordRegex.lastIndex = 0;
+        wordRegex.lastIndex = consumedStart;
         while ((match = wordRegex.exec(text)) !== null) {
           const rawToken = match[0];
+          const start = match.index;
+          const end = start + rawToken.length;
+
+          // If this token is leading punctuation attached directly to a following <b class="bionic-fixation">,
+          // let the <b class="bionic-fixation"> branch merge and measure it in a single Range.
+          if (nextSibIsBionic && end === text.length) {
+            continue;
+          }
+
           const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
           if (!cleanToken) continue;
 
-          const start = match.index;
-          const end = start + rawToken.length;
           try {
             range.setStart(node, start);
             range.setEnd(node, end);
-            const clientRects = range.getClientRects();
-            if (!clientRects || clientRects.length === 0) continue;
-
-            // Extrahujeme všechny validní bounding boxy viditelné na aktuální stránce/sloupci
-            const subRects = [];
-            for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
-              const rect = clientRects[rIdx];
-              let rTop = rect.top;
-              let rBottom = rect.bottom;
-              let rHeight = rect.height;
-              let rLeft = rect.left;
-              let rRight = rect.right;
-
-              if (pdfTf) {
-                const relTop = rect.top - pdfTf.textLayerRect.top;
-                const relBottom = rect.bottom - pdfTf.textLayerRect.top;
-                rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
-                rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
-                rHeight = rBottom - rTop;
-
-                const relLeft = rect.left - pdfTf.textLayerRect.left;
-                const relRight = rect.right - pdfTf.textLayerRect.left;
-                rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
-                rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
-              }
-
-              const rWidth = rRight - rLeft;
-              if (
-                rWidth > 0.5 &&
-                rHeight > 2 &&
-                rRight > stageLeft + 2 &&
-                rLeft < stageRight - 2 &&
-                (isVertical || (rBottom > stageTop && rTop < stageBottom))
-              ) {
-                if (!isVertical && hasValidStageBounds) {
-                  const midX = (rLeft + rRight) / 2;
-                  if (midX <= stageLeft + 2 || midX >= stageRight - 2) continue;
-                }
-                subRects.push({
-                  left: rLeft,
-                  top: rTop,
-                  right: rRight,
-                  bottom: rBottom,
-                  width: rWidth,
-                  height: rHeight
-                });
-              }
-            }
-
-            if (subRects.length === 0) continue;
-
-            // Pouze v rámci jednoho rozděleného slova seřadíme jeho části shora dolů (řádek 1 před řádkem 2)
-            if (subRects.length > 1) {
-              subRects.sort((a, b) => (a.top - b.top) || (a.left - b.left));
-            }
-
-            // Sloučíme fragmenty na stejném řádku (např. slovo a připojený spojovník / hyphen)
-            const lineMergedRects = [];
-            for (let sIdx = 0; sIdx < subRects.length; sIdx++) {
-              const r = subRects[sIdx];
-              if (lineMergedRects.length === 0) {
-                lineMergedRects.push({
-                  left: r.left,
-                  top: r.top,
-                  right: r.right,
-                  bottom: r.bottom,
-                  width: r.width,
-                  height: r.height
-                });
-              } else {
-                const prevR = lineMergedRects[lineMergedRects.length - 1];
-                const prevCenterY = (prevR.top + prevR.bottom) / 2;
-                const rCenterY = (r.top + r.bottom) / 2;
-                if (Math.abs(rCenterY - prevCenterY) <= 8 || Math.abs(r.top - prevR.top) <= 6) {
-                  prevR.left = Math.min(prevR.left, r.left);
-                  prevR.top = Math.min(prevR.top, r.top);
-                  prevR.right = Math.max(prevR.right, r.right);
-                  prevR.bottom = Math.max(prevR.bottom, r.bottom);
-                  prevR.width = prevR.right - prevR.left;
-                  prevR.height = prevR.bottom - prevR.top;
-                } else {
-                  lineMergedRects.push({
-                    left: r.left,
-                    top: r.top,
-                    right: r.right,
-                    bottom: r.bottom,
-                    width: r.width,
-                    height: r.height
-                  });
-                }
-              }
-            }
-
-            for (let sIdx = 0; sIdx < lineMergedRects.length; sIdx++) {
-              const r = lineMergedRects[sIdx];
-              words.push({
-                text: cleanToken,
-                left: r.left,
-                right: r.right,
-                top: r.top + vScrollTop,
-                bottom: r.bottom + vScrollTop,
-                width: r.width,
-                height: r.height,
-                centerX: r.left + r.width / 2,
-                centerY: r.top + r.height / 2 + vScrollTop
-              });
-            }
+            pushRangeRectsToWords(cleanToken, pdfTf);
           } catch (e) {}
         }
       }
@@ -6001,11 +6100,7 @@ export class ReadingRuler {
             this.maskLeftEl.classList.add("is-snapped");
             this.maskRightEl.classList.add("is-snapped");
 
-            // Atomické usazení: nejprve aplikujeme přesné souřadnice skrytému elementu
-            this.applyPosition();
-            void this.rulerEl.offsetWidth; // Vynutí layout pro eliminaci skoku
-
-            // Až po usazení na skutečný řádek vrátíme viditelnost
+            // Usazení na cílový řádek bez dvojího synchronního reflow
             this.isPageTransitioning = false;
             this.rulerEl.classList.remove("is-page-transitioning");
             this.applyPosition();
@@ -6018,9 +6113,6 @@ export class ReadingRuler {
               this.targetY = geom.targetY;
               this.currentY = this.targetY;
             }
-            this.applyPosition();
-            void this.rulerEl.offsetWidth;
-
             this.isPageTransitioning = false;
             this.rulerEl.classList.remove("is-page-transitioning");
             this.applyPosition();
@@ -6069,11 +6161,7 @@ export class ReadingRuler {
           this.maskLeftEl.classList.add("is-snapped");
           this.maskRightEl.classList.add("is-snapped");
 
-          // Atomické usazení: nejprve aplikujeme přesné souřadnice skrytému elementu
-          this.applyPosition();
-          void this.rulerEl.offsetWidth; // Vynutí layout před zobrazením
-
-          // Až po usazení na skutečný řádek vrátíme viditelnost
+          // Usazení na cílový řádek bez dvojího synchronního reflow
           this.isPageTransitioning = false;
           this.rulerEl.classList.remove("is-page-transitioning");
           this.applyPosition();

@@ -4642,93 +4642,24 @@ export class LuminaApp {
 
   toBionicReadingHtml(html) {
     if (!html || typeof html !== "string") return html;
+    if (this._bionicCacheSource === html && this._bionicCacheResult) {
+      return this._bionicCacheResult;
+    }
     try {
-      const doc = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
-      const root = doc.body;
+      // Single-pass HTML-aware regex: skips script/style/code/pre/svg blocks, HTML comments, tags, and entities,
+      // and wraps only the bold prefix of each Unicode word in <b class="bionic-fixation"> without wrapper spans.
+      const htmlBionicRegex = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 
-      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-      const textNodes = [];
-      let node;
+      const result = html.replace(htmlBionicRegex, (match, skippedToken, word) => {
+        if (skippedToken) return skippedToken;
+        const len = word.length;
+        const boldLen = len <= 3 ? 1 : Math.ceil(len * 0.45);
+        return `<b class="bionic-fixation">${word.slice(0, boldLen)}</b>${word.slice(boldLen)}`;
+      });
 
-      while ((node = walker.nextNode())) {
-        if (node.parentElement) {
-          const tag = node.parentElement.tagName.toUpperCase();
-          if (tag === "SCRIPT" || tag === "STYLE" || tag === "CODE" || tag === "PRE" || tag === "SVG") {
-            continue;
-          }
-        }
-        textNodes.push(node);
-      }
-
-      const wordTokenRegex = /([^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+)/g;
-      const letterRegex = /[\p{L}\p{N}]+/gu;
-
-      for (const textNode of textNodes) {
-        const text = textNode.textContent;
-        if (!text || !text.trim()) continue;
-
-        const frag = doc.createDocumentFragment();
-        let lastIdx = 0;
-        let match;
-        wordTokenRegex.lastIndex = 0;
-
-        while ((match = wordTokenRegex.exec(text)) !== null) {
-          if (match.index > lastIdx) {
-            frag.appendChild(doc.createTextNode(text.substring(lastIdx, match.index)));
-          }
-
-          const rawWord = match[0];
-          letterRegex.lastIndex = 0;
-          let subLast = 0;
-          let letterMatch;
-          const wordSpan = doc.createElement("span");
-          wordSpan.className = "bionic-word";
-
-          let hasLetters = false;
-          while ((letterMatch = letterRegex.exec(rawWord)) !== null) {
-            hasLetters = true;
-            if (letterMatch.index > subLast) {
-              wordSpan.appendChild(doc.createTextNode(rawWord.substring(subLast, letterMatch.index)));
-            }
-            const letters = letterMatch[0];
-            const len = letters.length;
-            let boldLen;
-            if (len <= 1) boldLen = 1;
-            else if (len <= 3) boldLen = 1;
-            else if (len <= 5) boldLen = 2;
-            else boldLen = Math.ceil(len * 0.45);
-
-            const b = doc.createElement("b");
-            b.className = "bionic-bold";
-            b.textContent = letters.slice(0, boldLen);
-            wordSpan.appendChild(b);
-
-            if (boldLen < len) {
-              wordSpan.appendChild(doc.createTextNode(letters.slice(boldLen)));
-            }
-            subLast = letterMatch.index + len;
-          }
-
-          if (hasLetters) {
-            if (subLast < rawWord.length) {
-              wordSpan.appendChild(doc.createTextNode(rawWord.substring(subLast)));
-            }
-            frag.appendChild(wordSpan);
-          } else {
-            frag.appendChild(doc.createTextNode(rawWord));
-          }
-
-          lastIdx = match.index + rawWord.length;
-        }
-
-        if (lastIdx < text.length) {
-          frag.appendChild(doc.createTextNode(text.substring(lastIdx)));
-        }
-
-        textNode.parentNode.replaceChild(frag, textNode);
-      }
-
-      return root.innerHTML;
+      this._bionicCacheSource = html;
+      this._bionicCacheResult = result;
+      return result;
     } catch (e) {
       console.warn("Chyba při formátování rychlého čtení (Bionic):", e);
       return html;

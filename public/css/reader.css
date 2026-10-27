@@ -68,6 +68,8 @@ body.columns-2 {
   display: inline;
 }
 
+.bionic-fixation,
+b.bionic-fixation,
 .bionic-bold,
 b.bionic-bold {
   font-weight: 700 !important;
