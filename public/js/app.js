@@ -569,6 +569,10 @@ export class LuminaApp {
     document.documentElement.classList.add(`theme-${s.theme}`);
     document.body.classList.add(`theme-${s.theme}`);
 
+    if ((s.theme === "dark" || s.theme === "oled") && this.isPdfMode && this.pdfLoader) {
+      this.pdfLoader.ensureDarkModeImagesExtracted?.();
+    }
+
     document.documentElement.setAttribute("data-font", s.fontFamily);
 
     document.documentElement.style.setProperty("--reader-font-size", `${s.fontSize}px`);
@@ -3748,11 +3752,7 @@ export class LuminaApp {
 
     // Re-synchronize reading ruler with the freshly rendered text layer
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.refreshLines();
-      if (this.ruler.wordTracking) {
-        this.ruler.refreshWords();
-      }
-      this.ruler.applyPosition();
+      this.ruler.onPageChange(direction, isPageChanged, true);
     }
   }
 
@@ -4398,7 +4398,7 @@ export class LuminaApp {
     if (targetPage !== "last") {
       this.currentPageIndex = (typeof targetPage === "number") ? targetPage : (targetPage?.pageIndex ?? 0);
       if (this.dom.readerContent) {
-        this.dom.readerContent.style.transform = "translateX(0px)";
+        this.dom.readerContent.style.transform = "translate3d(0px, 0, 0)";
       }
     } else {
       this.currentPageIndex = 0;
@@ -4799,60 +4799,13 @@ export class LuminaApp {
     }
 
     // Horizontální stránkovaný režim EPUB:
-    const stage = this.dom.pagedStage;
-    const content = this.dom.readerContent;
+    if (this.ruler && this.ruler.enabled && this.ruler.cachedWords && this.ruler.cachedWords.length > 0) {
+      return this.ruler.cachedWords.length;
+    }
+
     const chapterWords = this.currentChapterWords || 1000;
     const pages = Math.max(1, this.totalPagesInChapter || 1);
-    const fallbackWords = Math.max(40, Math.min(650, Math.round(chapterWords / pages)));
-
-    if (!stage || !content) {
-      return fallbackWords;
-    }
-
-    try {
-      const stageRect = stage.getBoundingClientRect();
-      const minX = stageRect.left - 5;
-      const maxX = stageRect.right + 5;
-      const minY = stageRect.top - 5;
-      const maxY = stageRect.bottom + 5;
-
-      const blocks = content.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote");
-      if (!blocks || blocks.length === 0) return fallbackWords;
-
-      let countedWords = 0;
-      let matchedAny = false;
-
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i];
-        const text = block.textContent?.trim();
-        if (!text) continue;
-
-        const rects = block.getClientRects();
-        if (!rects || rects.length === 0) continue;
-
-        let visibleRects = 0;
-        for (let r = 0; r < rects.length; r++) {
-          const rect = rects[r];
-          if (rect.right > minX && rect.left < maxX && rect.bottom > minY && rect.top < maxY) {
-            visibleRects++;
-          }
-        }
-
-        if (visibleRects > 0) {
-          matchedAny = true;
-          const wordsInBlock = text.split(/\s+/).filter(Boolean).length;
-          countedWords += Math.round(wordsInBlock * (visibleRects / rects.length));
-        }
-      }
-
-      if (matchedAny && countedWords >= 20) {
-        return Math.max(40, Math.min(600, countedWords));
-      }
-    } catch (e) {
-      console.warn("Chyba při počítání viditelných slov na stránce:", e);
-    }
-
-    return fallbackWords;
+    return Math.max(40, Math.min(650, Math.round(chapterWords / pages)));
   }
 
   goToPage(pageIndex, explicitDirection = null, immediateRuler = true, options = {}) {
@@ -4949,7 +4902,7 @@ export class LuminaApp {
     try {
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transition = "none";
-        this.dom.readerContent.style.transform = `translateX(-${(this.currentPageIndex * exactStep).toFixed(3)}px)`;
+        this.dom.readerContent.style.transform = `translate3d(-${(this.currentPageIndex * exactStep).toFixed(2)}px, 0, 0)`;
       }
 
       // Zaznamenání přechodu stránky do trackeru s přesným počtem viditelných slov a dwell time
@@ -5264,7 +5217,7 @@ export class LuminaApp {
         this.dom.readerContent.style.transition = "none";
         this.dom.readerContent.style.opacity = "0";
         if (targetPage !== "last") {
-          this.dom.readerContent.style.transform = "translateX(0px)";
+          this.dom.readerContent.style.transform = "translate3d(0px, 0, 0)";
         }
       }
       if (this.ruler && this.ruler.enabled) {

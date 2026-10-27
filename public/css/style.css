@@ -2172,6 +2172,8 @@ body.is-turning-page .ruler-word-wave,
   --ruler-glow-rgb: 245, 158, 11;
   z-index: 20 !important;
   pointer-events: none !important;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .reading-ruler.is-visible {
@@ -2187,6 +2189,13 @@ body.is-turning-page .ruler-word-wave,
 .ruler-mask {
   z-index: 15 !important;
   pointer-events: none !important;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.paged-content {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .reading-ruler {
@@ -2429,11 +2438,11 @@ body.in-reader-view.reader-chrome-hidden .paged-footer-bar {
 .ruler-split-pill {
   display: inline-flex;
   align-items: center;
-  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.45)));
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35)));
-  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
+  box-shadow: var(--shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.08));
   border-radius: 8px;
   padding: 2px;
   height: 34px;
@@ -2523,11 +2532,11 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   width: 36px;
   height: 34px;
   border-radius: 8px;
-  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.45)));
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35)));
-  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
+  box-shadow: var(--shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.08));
   color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   cursor: pointer;
   display: flex;
@@ -2554,9 +2563,9 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
 
 .btn-reader-menu-fab.active,
 .btn-reader-menu-fab[aria-expanded="true"] {
-  background: rgba(37, 99, 235, 0.85) !important;
-  backdrop-filter: blur(16px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+  background: #2563eb !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   border-color: rgba(255, 255, 255, 0.45) !important;
   color: #ffffff !important;
   box-shadow: 0 8px 24px rgba(37, 99, 235, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.5) !important;
@@ -2615,8 +2624,8 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   height: 38px;
   border-radius: 50%;
   background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
   box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
   color: var(--text-color, var(--text-main));
@@ -2644,8 +2653,8 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   border-color: var(--border-color);
   box-shadow: var(--shadow-md, var(--glass-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.12)));
   filter: brightness(1.04);
-  backdrop-filter: blur(14px) saturate(190%);
-  -webkit-backdrop-filter: blur(14px) saturate(190%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transform: scale(1.08);
 }
 
@@ -2666,8 +2675,8 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   height: 40px;
   border-radius: 9999px;
   background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
   box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
   color: var(--text-color, var(--text-main));
@@ -2858,10 +2867,10 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   right: auto;
   transform: translateX(-50%) translateY(0) scale(1);
   transform-origin: bottom center;
-  background: var(--bg-surface-elevated, var(--bg-secondary, rgba(255, 255, 255, 0.92)));
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid var(--border-color, var(--glass-border, rgba(0, 0, 0, 0.12)));
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.06);
   color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   padding: 8px 14px;
@@ -3242,11 +3251,11 @@ body.is-pdf-mode .reader-header .header-title-wrapper {
 
 /* Tlačítko zpět s frosted liquid-glass kapslí pro vysoký kontrast na světlém i tmavém PDF */
 body.is-pdf-mode .btn-back-library {
-  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.65))) !important;
-  backdrop-filter: blur(12px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
-  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35))) !important;
-  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.12))) !important;
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.12)) !important;
+  box-shadow: var(--shadow-sm, 0 4px 16px rgba(0, 0, 0, 0.12)) !important;
   color: var(--text-color, var(--text-main)) !important;
   border-radius: var(--radius-full, 9999px) !important;
   padding: 0.45rem 0.95rem !important;
@@ -3255,9 +3264,9 @@ body.is-pdf-mode .btn-back-library {
 }
 
 body.is-pdf-mode .btn-back-library:hover {
-  background: var(--bg-hover, var(--glass-bg-hover, rgba(255, 255, 255, 0.8))) !important;
-  border-color: var(--border-color, var(--glass-border-hover, rgba(255, 255, 255, 0.55))) !important;
-  box-shadow: var(--shadow-md, var(--glass-shadow-hover, 0 6px 20px rgba(0, 0, 0, 0.18))) !important;
+  background: var(--bg-hover, var(--bg-secondary)) !important;
+  border-color: var(--border-color) !important;
+  box-shadow: var(--shadow-md, 0 6px 20px rgba(0, 0, 0, 0.18)) !important;
 }
 
 /* Plovoucí kapsle pro název knihy v záhlaví */
@@ -3266,11 +3275,11 @@ body.is-pdf-mode .header-title-wrapper {
   align-items: center !important;
   padding: 0.4rem 1rem !important;
   border-radius: var(--radius-full, 9999px) !important;
-  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.65))) !important;
-  backdrop-filter: blur(12px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
-  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35))) !important;
-  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.12))) !important;
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.12)) !important;
+  box-shadow: var(--shadow-sm, 0 4px 16px rgba(0, 0, 0, 0.12)) !important;
   color: var(--text-color, var(--text-main)) !important;
   text-shadow: none !important;
   max-width: 60vw !important;
@@ -3314,11 +3323,11 @@ body.is-pdf-mode .footer-book-pages {
   align-items: center !important;
   padding: 0.35rem 0.85rem !important;
   border-radius: var(--radius-full, 9999px) !important;
-  background: var(--bg-secondary, var(--glass-bg, rgba(255, 255, 255, 0.65))) !important;
-  backdrop-filter: blur(12px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
-  border: 1px solid var(--border-color, var(--glass-border, rgba(255, 255, 255, 0.35))) !important;
-  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 4px 16px rgba(0, 0, 0, 0.12))) !important;
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.12)) !important;
+  box-shadow: var(--shadow-sm, 0 4px 16px rgba(0, 0, 0, 0.12)) !important;
   color: var(--text-color, var(--text-main)) !important;
   text-shadow: none !important;
   font-weight: 600 !important;
@@ -3411,9 +3420,9 @@ html.mode-vertical .footer-actions-group,
 [data-reading-mode="vertical"] #footer-remaining-chapter,
 [data-reading-mode="vertical"] #footer-book-pages,
 [data-reading-mode="vertical"] .footer-actions-group {
-  background: var(--bg-secondary, rgba(0, 0, 0, 0.06)) !important;
-  backdrop-filter: blur(14px) saturate(160%) !important;
-  -webkit-backdrop-filter: blur(14px) saturate(160%) !important;
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1)) !important;
   box-shadow: var(--shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08)) !important;
   border-radius: 9999px !important;
@@ -3822,4 +3831,29 @@ html.mode-vertical.reader-chrome-hidden .footer-actions-group,
     min-width: 32px !important;
   }
 }
+
+/* Odstranění náročného backdrop-filter na dotykových zařízeních (iPad A10 GPU optimalizace) */
+@media (hover: none) and (pointer: coarse) {
+  .ruler-split-pill,
+  .btn-reader-menu-fab,
+  .dock-action-btn,
+  .dock-action-btn-wide,
+  .pill-scrubber-capsule,
+  .apple-books-capsule,
+  .pill-scrubber-tooltip,
+  .liquid-glass-badge,
+  body.in-reader-view .btn-back-library,
+  body.is-pdf-mode .btn-back-library,
+  body.mode-vertical .btn-back-library,
+  body.in-reader-view .header-title-wrapper,
+  body.is-pdf-mode .header-title-wrapper,
+  body.mode-vertical .header-title-wrapper,
+  #footer-remaining-chapter,
+  #footer-book-pages,
+  .footer-actions-group {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
 
