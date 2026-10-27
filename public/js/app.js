@@ -15,7 +15,8 @@ import { supabase } from "./supabase-client.js";
 
 export const APP_VERSION = "v1.21.0";
 
-const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
+const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
+const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
 
 export class LuminaApp {
   constructor() {
@@ -51,9 +52,11 @@ export class LuminaApp {
     this.readingMode = localStorage.getItem("lumina_reading_mode") || "horizontal";
     this._verticalScrollBound = false;
 
-    // Kontinuální vertikální čtení kapitol
+    // Kontinuální vertikální čtení kapitol & Viewport-only Bionic cache
     this._chapterDataCache = new Map();
     this._bionicHtmlCache = new Map();
+    this._originalBlockHtml = new WeakMap();
+    this._bionicBlockHtml = new WeakMap();
     this._bionicIdleCallbackId = null;
     this._isLoadingNextChapter = false;
     this._isLoadingPrevChapter = false;
@@ -701,6 +704,9 @@ export class LuminaApp {
     if (this.dom.settingFastReading) {
       this.setSwitchState(this.dom.settingFastReading, !!s.fastReading);
     }
+    if (this.dom.readerContent && !this.isPdfMode) {
+      this.dom.readerContent.classList.toggle("bionic-active", !!s.fastReading);
+    }
     // Režimy pravítka
     this.dom.rulerModeSelects.forEach(btn => {
       btn.classList.toggle("active", (btn.dataset.rulerMode || btn.dataset.rulerStyle) === s.ruler.mode);
@@ -917,6 +923,9 @@ export class LuminaApp {
     }
 
     this.checkVerticalInfiniteScroll();
+    if (this.settings.fastReading) {
+      this.updateVisibleBionicNodes();
+    }
     this.updatePageUI();
     this.saveProgress();
   }
@@ -3592,6 +3601,8 @@ export class LuminaApp {
       this.currentBook = book;
       this._chapterDataCache = new Map();
       this._bionicHtmlCache = new Map();
+      this._originalBlockHtml = new WeakMap();
+      this._bionicBlockHtml = new WeakMap();
       this._isLoadingNextChapter = false;
       this._isLoadingPrevChapter = false;
       this._isModeTransitioning = false;
@@ -4054,11 +4065,7 @@ export class LuminaApp {
     section.className = "epub-chapter-section";
     section.dataset.chapterIndex = String(chapterIndex);
 
-    let html = rawHtml || "";
-    if (this.settings.fastReading) {
-      html = this.toBionicReadingHtml(html, chapterIndex);
-    }
-    section.innerHTML = html;
+    section.innerHTML = rawHtml || "";
 
     const imgs = section.querySelectorAll("img");
     imgs.forEach(img => {
@@ -4210,6 +4217,9 @@ export class LuminaApp {
       if (!this.dom.readerContent.querySelector(`.epub-chapter-section[data-chapter-index="${nextIdx}"]`)) {
         const sectionEl = this.createChapterSectionElement(nextIdx, chapterData.html);
         this.dom.readerContent.appendChild(sectionEl);
+        if (this.settings.fastReading) {
+          this.updateVisibleBionicNodes();
+        }
 
         this.attachImageLoadHandlers(sectionEl, false);
 
@@ -4252,6 +4262,9 @@ export class LuminaApp {
 
         const addedHeight = vp.scrollHeight - prevScrollHeight;
         vp.scrollTop = prevScrollTop + addedHeight;
+        if (this.settings.fastReading) {
+          this.updateVisibleBionicNodes();
+        }
 
         if (this.ruler && this.ruler.enabled && Number.isFinite(this.ruler.currentY)) {
           this.ruler.currentY += addedHeight;
@@ -4306,6 +4319,7 @@ export class LuminaApp {
       if (this.dom.bookTitleEl && this.currentBook?.title) this.dom.bookTitleEl.textContent = this.currentBook.title;
 
       // Vyprázdníme #reader-content a vložíme pouze sekci cílové kapitoly
+      this.dom.readerContent.classList.toggle("bionic-active", !!this.settings.fastReading);
       this.dom.readerContent.innerHTML = "";
       const sectionEl = this.createChapterSectionElement(this.currentChapterIndex, chapterData.html);
       this.dom.readerContent.appendChild(sectionEl);
@@ -4337,6 +4351,7 @@ export class LuminaApp {
         }
       }
 
+      this.updateVisibleBionicNodes();
       this.updatePageUI();
 
       if (this.ruler && this.ruler.enabled) {
@@ -4588,16 +4603,109 @@ export class LuminaApp {
 
   renderChapterHtml() {
     if (!this.dom.readerContent) return;
-    let html = this.currentRawChapterHtml || "";
-    if (this.settings.fastReading) {
-      html = this.toBionicReadingHtml(html, this.currentChapterIndex);
-    }
-    this.dom.readerContent.innerHTML = html;
+    this.dom.readerContent.classList.toggle("bionic-active", !!this.settings.fastReading);
+    this.dom.readerContent.innerHTML = this.currentRawChapterHtml || "";
     const imgs = this.dom.readerContent.querySelectorAll("img");
     imgs.forEach(img => {
       img.loading = "eager";
       img.decoding = "async";
     });
+  }
+
+  updateVisibleBionicNodes() {
+    if (!this.dom.readerContent || this.isPdfMode) return;
+    if (!this._originalBlockHtml) {
+      this._originalBlockHtml = new WeakMap();
+    }
+    if (!this._bionicBlockHtml) {
+      this._bionicBlockHtml = new WeakMap();
+    }
+
+    const isFast = !!this.settings.fastReading;
+    this.dom.readerContent.classList.toggle("bionic-active", isFast);
+
+    if (!isFast) {
+      const appliedEls = this.dom.readerContent.querySelectorAll('[data-bionic-applied="true"]');
+      for (let i = 0; i < appliedEls.length; i++) {
+        const el = appliedEls[i];
+        const origHtml = this._originalBlockHtml.get(el);
+        if (origHtml !== undefined) {
+          el.innerHTML = origHtml;
+        }
+        el.removeAttribute("data-bionic-applied");
+      }
+      return;
+    }
+
+    const isVertical = this.isVerticalReadingMode();
+    const stage = this.dom.pagedStage || document.getElementById("paged-stage");
+    const vp = this.dom.pagedViewport || document.getElementById("paged-viewport");
+
+    let leftBound = 0;
+    let rightBound = window.innerWidth;
+    let topBound = 0;
+    let bottomBound = window.innerHeight;
+
+    if (isVertical) {
+      const vpRect = vp ? vp.getBoundingClientRect() : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, height: window.innerHeight };
+      const pageH = vpRect.height || window.innerHeight;
+      leftBound = vpRect.left - 20;
+      rightBound = vpRect.right + 20;
+      topBound = vpRect.top - pageH;
+      bottomBound = vpRect.bottom + pageH;
+    } else if (stage) {
+      const stageRect = stage.getBoundingClientRect();
+      if (stageRect.width > 20 && stageRect.height > 20) {
+        leftBound = stageRect.left + 2;
+        rightBound = stageRect.right - 2;
+        topBound = stageRect.top - 10;
+        bottomBound = stageRect.bottom + 10;
+      }
+    }
+
+    const blocks = this.dom.readerContent.querySelectorAll(BIONIC_BLOCK_SELECTOR);
+    for (let i = 0; i < blocks.length; i++) {
+      const el = blocks[i];
+      const isApplied = el.dataset.bionicApplied === "true";
+
+      if (!isApplied && el.querySelector(BIONIC_BLOCK_SELECTOR)) {
+        continue;
+      }
+
+      const rect = el.getBoundingClientRect();
+      const isVisible = (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.right > leftBound &&
+        rect.left < rightBound &&
+        rect.bottom > topBound &&
+        rect.top < bottomBound
+      );
+
+      if (isVisible) {
+        if (!isApplied) {
+          if (!/[\p{L}\p{N}]/u.test(el.textContent || "")) continue;
+          let origHtml = this._originalBlockHtml.get(el);
+          if (origHtml === undefined) {
+            origHtml = el.innerHTML;
+            this._originalBlockHtml.set(el, origHtml);
+          }
+          let bionicHtml = this._bionicBlockHtml.get(el);
+          if (bionicHtml === undefined) {
+            bionicHtml = this.toBionicReadingHtml(origHtml);
+            this._bionicBlockHtml.set(el, bionicHtml);
+          }
+          el.innerHTML = bionicHtml;
+          el.dataset.bionicApplied = "true";
+        }
+      } else if (isApplied) {
+        const origHtml = this._originalBlockHtml.get(el);
+        if (origHtml !== undefined) {
+          el.innerHTML = origHtml;
+        }
+        el.removeAttribute("data-bionic-applied");
+      }
+    }
   }
 
   applyFastReadingMode() {
@@ -4612,98 +4720,16 @@ export class LuminaApp {
       this._bionicIdleCallbackId = null;
     }
 
-    if (this.isVerticalReadingMode() && !this.isPdfMode) {
-      const renderSection = (sec) => {
-        const idx = parseInt(sec.dataset.chapterIndex, 10);
-        const chData = this._chapterDataCache?.get(idx);
-        if (chData) {
-          let html = chData.html;
-          if (this.settings.fastReading) {
-            html = this.toBionicReadingHtml(html, idx);
-          }
-          sec.innerHTML = html;
-          const imgs = sec.querySelectorAll("img");
-          imgs.forEach(img => {
-            img.loading = "eager";
-            img.decoding = "async";
-          });
-        }
-      };
+    this.dom.readerContent.classList.toggle("bionic-active", !!this.settings.fastReading);
+    this.updateVisibleBionicNodes();
 
-      const sections = Array.from(this.dom.readerContent.querySelectorAll(".epub-chapter-section"));
-      const vp = this.dom.pagedViewport;
-      const vpRect = vp ? vp.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
-      const activeSec = this.getActiveVerticalChapterSection();
-      const offscreenSections = [];
-
-      for (let i = 0; i < sections.length; i++) {
-        const sec = sections[i];
-        const rect = sec.getBoundingClientRect();
-        const isVisible = sec === activeSec || (rect.bottom >= vpRect.top - 100 && rect.top <= vpRect.bottom + 100);
-        if (isVisible) {
-          renderSection(sec);
-        } else {
-          offscreenSections.push(sec);
-        }
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.refreshLines();
+      if (this.ruler.wordTracking) {
+        this.ruler.refreshWords();
       }
-
-      if (this.ruler && this.ruler.enabled) {
-        if (typeof this.ruler.refreshLinesDebounced === "function") {
-          this.ruler.refreshLinesDebounced(100);
-        } else {
-          this.ruler.refreshLines();
-        }
-      }
-
-      if (offscreenSections.length > 0) {
-        const scheduleIdle = typeof window.requestIdleCallback === "function"
-          ? (cb) => window.requestIdleCallback(cb, { timeout: 300 })
-          : (cb) => setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 }), 16);
-
-        const processOffscreen = (deadline) => {
-          this._bionicIdleCallbackId = null;
-          while (offscreenSections.length > 0) {
-            const sec = offscreenSections.shift();
-            if (sec && sec.isConnected) {
-              const secRectBefore = sec.getBoundingClientRect();
-              const wasAboveViewport = vp && secRectBefore.bottom <= vpRect.top;
-              const prevScrollHeight = vp ? vp.scrollHeight : 0;
-              renderSection(sec);
-              if (wasAboveViewport && vp) {
-                const heightDelta = vp.scrollHeight - prevScrollHeight;
-                if (heightDelta !== 0) {
-                  vp.scrollTop += heightDelta;
-                }
-              }
-            }
-            if (
-              offscreenSections.length > 0 &&
-              deadline &&
-              typeof deadline.timeRemaining === "function" &&
-              deadline.timeRemaining() < 5
-            ) {
-              break;
-            }
-          }
-          if (offscreenSections.length > 0) {
-            this._bionicIdleCallbackId = scheduleIdle(processOffscreen);
-          }
-        };
-
-        this._bionicIdleCallbackId = scheduleIdle(processOffscreen);
-      }
-      return;
+      this.ruler.applyPosition();
     }
-
-    if (!this.currentRawChapterHtml) return;
-    const curPageIndex = this.currentPageIndex;
-    this.renderChapterHtml();
-    requestAnimationFrame(() => {
-      this.recomputeGlobalPagination();
-      this.recalcPages();
-      this.goToPage(Math.min(curPageIndex, Math.max(0, this.totalPagesInChapter - 1)), null, true, { isReflow: true });
-      this.renderScrubberTicks();
-    });
   }
 
   toBionicReadingHtml(html, chapterIndex = null) {
@@ -4839,6 +4865,7 @@ export class LuminaApp {
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transform = "none";
       }
+      this.updateVisibleBionicNodes();
       this.updatePageUI();
       this.saveProgress();
       if (this.ruler && this.ruler.enabled) {
@@ -4916,6 +4943,7 @@ export class LuminaApp {
         this.dom.readerContent.style.transition = "none";
         this.dom.readerContent.style.transform = `translate3d(-${(this.currentPageIndex * exactStep).toFixed(2)}px, 0, 0)`;
       }
+      this.updateVisibleBionicNodes();
 
       // Zaznamenání přechodu stránky do trackeru s přesným počtem viditelných slov a dwell time
       if (isPageChanged || options.isInitialLoad) {
@@ -6070,7 +6098,7 @@ export class LuminaApp {
 
     while (node = walker.nextNode()) {
       if (node.textContent.toLowerCase().includes(lowerQ)) {
-        foundParent = node.parentElement;
+        foundParent = node.parentElement?.closest(BIONIC_BLOCK_SELECTOR) || node.parentElement;
         break;
       }
     }

@@ -63,17 +63,24 @@ body.columns-2 {
   word-spacing: 0.12em;
 }
 
-/* Rychlé čtení (Bionic reading) */
+/* Rychlé čtení (Bionic reading) - Zero-Reflow synthetic emboldening */
 .bionic-word {
   display: inline;
+}
+
+#reader-content.bionic-active {
+  color: color-mix(in srgb, var(--text-main, var(--text-color, currentColor)) 82%, transparent);
 }
 
 .bionic-fixation,
 b.bionic-fixation,
 .bionic-bold,
 b.bionic-bold {
-  font-weight: 700;
-  /* Avoid layout-altering properties like letter-spacing, padding, or margin on inline <b> tags */
+  font-weight: inherit;
+  -webkit-text-stroke: 0.45px currentColor;
+  text-shadow: 0.15px 0 0 currentColor, -0.15px 0 0 currentColor;
+  letter-spacing: 0;
+  color: var(--text-main, var(--text-color, currentColor));
 }
 
 /* ==========================================================================
