@@ -2875,6 +2875,92 @@ export class ReadingRuler {
       const styleCache = new Map();
       const blockRectCache = new Map();
       const parentRectCache = new Map();
+      const offscreenBlocks = new Set();
+      const hasTextLayer = this.isPdfMode || !!content.querySelector('.textLayer');
+      const maxColSpan = (!isVertical && hasValidStageBounds)
+        ? Math.max(120, (isTwoColEarly ? stageRect.width * 0.55 : stageRect.width) - 4)
+        : Math.max(120, viewW);
+
+      const pushLineRect = (r, parentEl, blockEl, fontSize, isPdfEl, pdfTf, pageSlot) => {
+        let rTop = r.top;
+        let rBottom = r.bottom;
+        let rHeight = r.height;
+        let lineLeft = r.left;
+        let lineRight = r.right;
+
+        if (pdfTf) {
+          const relTop = r.top - pdfTf.textLayerRect.top;
+          const relBottom = r.bottom - pdfTf.textLayerRect.top;
+          rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+          rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+          rHeight = rBottom - rTop;
+
+          const relLeft = lineLeft - pdfTf.textLayerRect.left;
+          const relRight = lineRight - pdfTf.textLayerRect.left;
+          lineLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+          lineRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+        }
+
+        // Tighten stage boundary clipping in horizontal/paged mode
+        if (!isVertical && hasValidStageBounds) {
+          if (!(lineRight > stageLeft + 2 && lineLeft < stageRight - 2 && rBottom > stageTop && rTop < stageBottom)) {
+            return;
+          }
+          const rMidX = (lineLeft + lineRight) / 2;
+          if (rMidX <= stageLeft + 2 || rMidX >= stageRight - 2) {
+            return;
+          }
+        }
+
+        const inStage = !hasValidStageBounds || isVertical || (
+          lineRight > stageLeft + 2 &&
+          lineLeft < stageRight - 2 &&
+          rBottom > stageTop &&
+          rTop < stageBottom
+        );
+
+        if (inStage && rHeight >= 6 && (lineRight - lineLeft) >= 4) {
+          rawLines.push({
+            el: parentEl,
+            element: parentEl,
+            blockElement: blockEl,
+            pageSlot,
+            canvasRect: pdfTf ? pdfTf.canvasRect : null,
+            fontSize,
+            top: rTop + vScrollTop,
+            bottom: rBottom + vScrollTop,
+            left: lineLeft,
+            right: lineRight,
+            height: rHeight,
+            centerY: rTop + rHeight / 2 + vScrollTop,
+            hasText: true,
+            isPdfLine: !!isPdfEl
+          });
+        }
+      };
+
+      let lastBlockElement = null;
+      let lastOffsetParent = null;
+      let lastOffsetTop = null;
+      let lastOffsetLeft = -Infinity;
+      let lastLineFirstOffsetLeft = -Infinity;
+      let lastLineVisible = false;
+      let pendingBionicLineEnd = null;
+
+      const flushPendingBionicLineEnd = () => {
+        if (!pendingBionicLineEnd) return;
+        const p = pendingBionicLineEnd;
+        pendingBionicLineEnd = null;
+        let rect = parentRectCache.get(p.parent);
+        if (!rect) {
+          rect = p.parent.getBoundingClientRect();
+          parentRectCache.set(p.parent, rect);
+        }
+        if (rect && rect.width > 0 && rect.height > 0 && rect.height <= p.fontSize * 2.2) {
+          pushLineRect(rect, p.parent, p.blockElement, p.fontSize, p.isPdfEl, p.pdfTf, p.pageSlot);
+        }
+      };
+
       const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
           const parent = node.parentElement;
@@ -2896,6 +2982,9 @@ export class ReadingRuler {
         if (!parent) continue;
 
         const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre') || parent;
+        if (offscreenBlocks.has(blockElement)) {
+          continue;
+        }
 
         // Pre-filter at the block element level first so Bionic <b> nodes in offscreen paragraphs
         // never trigger thousands of per-word getBoundingClientRect() calls across the chapter.
@@ -2903,24 +2992,41 @@ export class ReadingRuler {
         if (!blockRect) {
           blockRect = blockElement.getBoundingClientRect();
           blockRectCache.set(blockElement, blockRect);
+
+          if (!isVertical && hasValidStageBounds) {
+            if (
+              blockRect.right < stageLeft - 20 ||
+              blockRect.left > stageRight + 20 ||
+              blockRect.bottom < stageTop - 20 ||
+              blockRect.top > stageBottom + 20
+            ) {
+              offscreenBlocks.add(blockElement);
+              continue;
+            }
+          } else if (isVertical) {
+            if (
+              blockRect.right < -20 ||
+              blockRect.left > viewW + 20 ||
+              blockRect.bottom < -20 ||
+              blockRect.top > viewH + 20
+            ) {
+              offscreenBlocks.add(blockElement);
+              continue;
+            }
+          }
         }
 
-        if (!isVertical && hasValidStageBounds) {
-          if (
-            blockRect.right < stageLeft - 20 ||
-            blockRect.left > stageRight + 20 ||
-            blockRect.bottom < stageTop - 20 ||
-            blockRect.top > stageBottom + 20
-          ) {
+        let compStyle = styleCache.get(blockElement);
+        if (!compStyle) {
+          try {
+            compStyle = window.getComputedStyle(blockElement);
+            styleCache.set(blockElement, compStyle);
+          } catch (e) {
+            offscreenBlocks.add(blockElement);
             continue;
           }
-        } else if (isVertical) {
-          if (
-            blockRect.right < -20 ||
-            blockRect.left > viewW + 20 ||
-            blockRect.bottom < -20 ||
-            blockRect.top > viewH + 20
-          ) {
+          if (compStyle.display === 'none' || compStyle.visibility === 'hidden' || parseFloat(compStyle.opacity) === 0) {
+            offscreenBlocks.add(blockElement);
             continue;
           }
         }
@@ -2930,8 +3036,9 @@ export class ReadingRuler {
         );
 
         // When Bionic reading is active, each word has a <b class="bionic-fixation"> prefix followed
-        // by an unbolded suffix text node on the exact same line. Skip the suffix text node in detectLines()
-        // to avoid doubling/tripling Range.getClientRects() calls per word.
+        // by an unbolded suffix text node on the exact same line. Skip the suffix text node (and any
+        // pure-punctuation leading text node attached to a following <b class="bionic-fixation">) in
+        // detectLines() to avoid redundant Range.getClientRects() calls per word.
         if (!isBionicFixation) {
           const prevSib = textNode.previousSibling;
           if (
@@ -2942,6 +3049,67 @@ export class ReadingRuler {
           ) {
             continue;
           }
+          const nextSib = textNode.nextSibling;
+          if (
+            nextSib &&
+            nextSib.nodeType === Node.ELEMENT_NODE &&
+            nextSib.tagName === 'B' &&
+            (nextSib.classList.contains('bionic-fixation') || nextSib.classList.contains('bionic-bold')) &&
+            !/[\p{L}\p{N}]/u.test(textNode.textContent || "")
+          ) {
+            continue;
+          }
+        }
+
+        const rawFontSize = parseFloat(parent.style?.fontSize) || parseFloat(compStyle.fontSize) || 16;
+        const isPdfEl = hasTextLayer && (this.isPdfMode || !!parent.closest('.textLayer'));
+        const textLayer = isPdfEl ? parent.closest('.textLayer') : null;
+        const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
+        const pageSlot = isPdfEl ? (parent.closest('.pdf-page-slot, .pdf-page-container') || textLayer) : null;
+        const fontSize = Math.max(6, Math.round(pdfTf ? (rawFontSize * pdfTf.scaleY) : rawFontSize));
+
+        // Key optimization (offsetTop fast-skip for Bionic reading):
+        // Within the same blockElement and column, consecutive <b class="bionic-fixation"> elements
+        // on the same visual line share the exact same parent.offsetTop (with increasing offsetLeft).
+        // Only measure the first and last <b class="bionic-fixation"> of each visual line instead of
+        // calling getBoundingClientRect() on all 10-15 words in the middle of the line.
+        if (isBionicFixation) {
+          const curOffsetTop = parent.offsetTop;
+          const curOffsetLeft = parent.offsetLeft;
+          const curOffsetParent = parent.offsetParent;
+
+          if (
+            blockElement === lastBlockElement &&
+            curOffsetParent === lastOffsetParent &&
+            curOffsetTop === lastOffsetTop &&
+            curOffsetLeft >= lastOffsetLeft &&
+            (curOffsetLeft - lastLineFirstOffsetLeft) < maxColSpan
+          ) {
+            lastOffsetLeft = curOffsetLeft;
+            if (lastLineVisible) {
+              pendingBionicLineEnd = {
+                parent,
+                blockElement,
+                fontSize,
+                isPdfEl,
+                pdfTf,
+                pageSlot
+              };
+            }
+            continue;
+          }
+
+          flushPendingBionicLineEnd();
+          lastBlockElement = blockElement;
+          lastOffsetParent = curOffsetParent;
+          lastOffsetTop = curOffsetTop;
+          lastOffsetLeft = curOffsetLeft;
+          lastLineFirstOffsetLeft = curOffsetLeft;
+          lastLineVisible = false;
+        } else {
+          flushPendingBionicLineEnd();
+          lastBlockElement = null;
+          lastOffsetTop = null;
         }
 
         let parentRect = null;
@@ -2961,6 +3129,9 @@ export class ReadingRuler {
               parentRect.bottom < stageTop - 20 ||
               parentRect.top > stageBottom + 20
             ) {
+              if (parentRect.left > stageRight + 20 && !isTwoColEarly) {
+                offscreenBlocks.add(blockElement);
+              }
               continue;
             }
           } else if (isVertical) {
@@ -2970,105 +3141,34 @@ export class ReadingRuler {
               parentRect.bottom < -20 ||
               parentRect.top > viewH + 20
             ) {
+              if (parentRect.top > viewH + 20) {
+                offscreenBlocks.add(blockElement);
+              }
               continue;
             }
           }
         }
 
-        let compStyle = styleCache.get(blockElement);
-        if (!compStyle) {
-          try {
-            compStyle = window.getComputedStyle(blockElement);
-            styleCache.set(blockElement, compStyle);
-          } catch (e) {
-            continue;
-          }
+        if (isBionicFixation) {
+          lastLineVisible = true;
         }
-
-        if (compStyle.display === 'none' || compStyle.visibility === 'hidden' || parseFloat(compStyle.opacity) === 0) {
-          continue;
-        }
-
-        const rawFontSize = parseFloat(parent.style?.fontSize) || parseFloat(compStyle.fontSize) || 16;
-
-        const isPdfEl = this.isPdfMode || !!parent.closest('.textLayer');
-        const textLayer = isPdfEl ? parent.closest('.textLayer') : null;
-        const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
-        const pageSlot = isPdfEl ? (parent.closest('.pdf-page-slot, .pdf-page-container') || textLayer) : null;
-        const fontSize = Math.max(6, Math.round(pdfTf ? (rawFontSize * pdfTf.scaleY) : rawFontSize));
 
         try {
-          // Fast path for Bionic <b class="bionic-fixation">: reuse parentRect directly instead of
-          // allocating a DOMRectList via range.selectNodeContents() + range.getClientRects().
-          let rects;
           if (isBionicFixation && parentRect && parentRect.width > 0 && parentRect.height > 0 && parentRect.height <= fontSize * 2.2) {
-            rects = [parentRect];
-          } else {
-            range.selectNodeContents(textNode);
-            rects = range.getClientRects();
+            pushLineRect(parentRect, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
+            continue;
           }
+          range.selectNodeContents(textNode);
+          const rects = range.getClientRects();
           if (!rects || rects.length === 0) continue;
 
           for (let i = 0; i < rects.length; i++) {
-            const r = rects[i];
-            let rTop = r.top;
-            let rBottom = r.bottom;
-            let rHeight = r.height;
-            let lineLeft = r.left;
-            let lineRight = r.right;
-
-            if (pdfTf) {
-              const relTop = r.top - pdfTf.textLayerRect.top;
-              const relBottom = r.bottom - pdfTf.textLayerRect.top;
-              rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
-              rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
-              rHeight = rBottom - rTop;
-
-              const relLeft = lineLeft - pdfTf.textLayerRect.left;
-              const relRight = lineRight - pdfTf.textLayerRect.left;
-              lineLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
-              lineRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
-            }
-
-            // Tighten stage boundary clipping in horizontal/paged mode
-            if (!isVertical && hasValidStageBounds) {
-              if (!(lineRight > stageLeft + 2 && lineLeft < stageRight - 2 && rBottom > stageTop && rTop < stageBottom)) {
-                continue;
-              }
-              const rMidX = (lineLeft + lineRight) / 2;
-              if (rMidX <= stageLeft + 2 || rMidX >= stageRight - 2) {
-                continue;
-              }
-            }
-
-            const inStage = !hasValidStageBounds || isVertical || (
-              lineRight > stageLeft + 2 &&
-              lineLeft < stageRight - 2 &&
-              rBottom > stageTop &&
-              rTop < stageBottom
-            );
-
-            if (inStage && rHeight >= 6 && (lineRight - lineLeft) >= 4) {
-              rawLines.push({
-                el: parent,
-                element: parent,
-                blockElement,
-                pageSlot,
-                canvasRect: pdfTf ? pdfTf.canvasRect : null,
-                fontSize,
-                top: rTop + vScrollTop,
-                bottom: rBottom + vScrollTop,
-                left: lineLeft,
-                right: lineRight,
-                height: rHeight,
-                centerY: rTop + rHeight / 2 + vScrollTop,
-                hasText: true,
-                isPdfLine: !!isPdfEl
-              });
-            }
+            pushLineRect(rects[i], parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
           }
         } catch (e) {}
       }
+
+      flushPendingBionicLineEnd();
 
       // Detekce samostatných obrázků, ilustrací a multimediálních elementů
       const mediaCandidates = content.querySelectorAll('img, figure, .chapter-illustration, svg');
@@ -3893,7 +3993,7 @@ export class ReadingRuler {
    */
   refreshWords() {
     this.cachedWords = [];
-    if (this.isImageOnlyPdf) {
+    if (!this.wordTracking || this.isImageOnlyPdf) {
       return [];
     }
     try {
@@ -3913,6 +4013,7 @@ export class ReadingRuler {
       const viewport = isVertical ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
       const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
       const hasValidStageBounds = stageRect.width > 50 && stageRect.height > 50;
+      const hasTextLayer = this.isPdfMode || !!content.querySelector('.textLayer');
 
       // PDF coordinate normalization map against underlying <canvas>
       const pdfTransformMap = new Map();
@@ -3960,12 +4061,105 @@ export class ReadingRuler {
       const consumedTextOffsets = new Map();
       const blockRectCache = new Map();
       const parentRectCache = new Map();
+      const offscreenBlocks = new Set();
       const viewW = window.innerWidth;
       const viewH = window.innerHeight;
+      const maxColSpan = (!isVertical && hasValidStageBounds)
+        ? Math.max(120, (this.isTwoCol ? stageRect.width * 0.55 : stageRect.width) - 4)
+        : Math.max(120, viewW);
+
+      let lastBionicBlock = null;
+      let lastBionicOffsetParent = null;
+      let lastBionicOffsetTop = null;
+      let lastBionicOffsetLeft = -Infinity;
+      let lastBionicLineFirstOffsetLeft = -Infinity;
+      let lastBionicColFirstOffsetLeft = -Infinity;
+      let lastBionicLineStatus = 0; // 1 = onscreen, -1 = offscreen-before, 2 = offscreen-after
+      let offscreenStrideCount = 0;
+
+      const consumeBionicWordSiblings = (bEl) => {
+        visitedBionicSpans.add(bEl);
+        let cur = bEl.nextSibling;
+        while (cur) {
+          if (cur.nodeType === Node.TEXT_NODE) {
+            const t = cur.textContent || "";
+            const m = leadingNonSpaceRegex.exec(t);
+            if (m && m[0].length > 0) {
+              consumedTextOffsets.set(cur, m[0].length);
+              if (
+                m[0].length === t.length &&
+                cur.nextSibling &&
+                cur.nextSibling.nodeType === Node.ELEMENT_NODE &&
+                cur.nextSibling.tagName === 'B' &&
+                (cur.nextSibling.classList.contains('bionic-fixation') || cur.nextSibling.classList.contains('bionic-bold'))
+              ) {
+                cur = cur.nextSibling;
+                continue;
+              }
+            }
+            break;
+          } else if (
+            cur.nodeType === Node.ELEMENT_NODE &&
+            cur.tagName === 'B' &&
+            (cur.classList.contains('bionic-fixation') || cur.classList.contains('bionic-bold'))
+          ) {
+            visitedBionicSpans.add(cur);
+            cur = cur.nextSibling;
+          } else {
+            break;
+          }
+        }
+      };
 
       const pushRangeRectsToWords = (cleanToken, pdfTf) => {
         const clientRects = range.getClientRects();
-        if (!clientRects || clientRects.length === 0) return;
+        if (!clientRects || clientRects.length === 0) return 0;
+
+        // Fast path for single-line words (1 or 2 inline boxes on the same line) without temporary array allocations
+        if (!pdfTf && (clientRects.length === 1 || clientRects.length === 2)) {
+          const r0 = clientRects[0];
+          const r1 = clientRects.length === 2 ? clientRects[1] : null;
+          if (!r1 || Math.abs(r0.top - r1.top) <= 6) {
+            const rLeft = r1 ? Math.min(r0.left, r1.left) : r0.left;
+            const rRight = r1 ? Math.max(r0.right, r1.right) : r0.right;
+            const rTop = r1 ? Math.min(r0.top, r1.top) : r0.top;
+            const rBottom = r1 ? Math.max(r0.bottom, r1.bottom) : r0.bottom;
+            const rWidth = rRight - rLeft;
+            const rHeight = rBottom - rTop;
+
+            if (!isVertical && hasValidStageBounds && rLeft > stageRight + 20) {
+              return 2; // Offscreen to the right
+            }
+            if (isVertical && rTop > viewH + 20) {
+              return 2; // Offscreen below
+            }
+            if (
+              rWidth > 0.5 &&
+              rHeight > 2 &&
+              rRight > stageLeft + 2 &&
+              rLeft < stageRight - 2 &&
+              (isVertical || (rBottom > stageTop && rTop < stageBottom))
+            ) {
+              if (!isVertical && hasValidStageBounds) {
+                const midX = (rLeft + rRight) / 2;
+                if (midX <= stageLeft + 2 || midX >= stageRight - 2) return -1;
+              }
+              words.push({
+                text: cleanToken,
+                left: rLeft,
+                right: rRight,
+                top: rTop + vScrollTop,
+                bottom: rBottom + vScrollTop,
+                width: rWidth,
+                height: rHeight,
+                centerX: rLeft + rWidth / 2,
+                centerY: rTop + rHeight / 2 + vScrollTop
+              });
+              return 1;
+            }
+            return -1;
+          }
+        }
 
         const subRects = [];
         for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
@@ -4012,7 +4206,7 @@ export class ReadingRuler {
           }
         }
 
-        if (subRects.length === 0) return;
+        if (subRects.length === 0) return -1;
 
         if (subRects.length > 1) {
           subRects.sort((a, b) => (a.top - b.top) || (a.left - b.left));
@@ -4068,6 +4262,7 @@ export class ReadingRuler {
             centerY: r.top + r.height / 2 + vScrollTop
           });
         }
+        return 1;
       };
 
       while ((node = walker.nextNode())) {
@@ -4078,61 +4273,42 @@ export class ReadingRuler {
         if (parent.closest('svg, audio, video')) continue;
 
         const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre') || parent;
+        if (offscreenBlocks.has(blockElement)) continue;
+
         let bRect = blockRectCache.get(blockElement);
         if (!bRect) {
           bRect = blockElement.getBoundingClientRect();
           blockRectCache.set(blockElement, bRect);
-        }
 
-        // Fast block-level filter: skip entire offscreen paragraphs before measuring inline <b> elements
-        if (!isVertical && hasValidStageBounds) {
-          if (
-            bRect.right < stageLeft - 20 ||
-            bRect.left > stageRight + 20 ||
-            bRect.bottom < stageTop - 20 ||
-            bRect.top > stageBottom + 20
-          ) {
-            continue;
-          }
-        } else if (isVertical) {
-          if (
-            bRect.right < -20 ||
-            bRect.left > viewW + 20 ||
-            bRect.bottom < -20 ||
-            bRect.top > viewH + 20
-          ) {
-            continue;
-          }
-        }
-
-        let pRect = parent === blockElement ? bRect : parentRectCache.get(parent);
-        if (!pRect) {
-          pRect = parent.getBoundingClientRect();
-          parentRectCache.set(parent, pRect);
-        }
-
-        // Rychlý layout filtr: přeskočíme textové uzly zcela mimo viditelnou část stage nebo viewportu
-        if (!isVertical && hasValidStageBounds) {
-          if (
-            pRect.right < stageLeft - 20 ||
-            pRect.left > stageRight + 20 ||
-            pRect.bottom < stageTop - 20 ||
-            pRect.top > stageBottom + 20
-          ) {
-            continue;
-          }
-        } else if (isVertical) {
-          if (
-            pRect.right < -20 ||
-            pRect.left > viewW + 20 ||
-            pRect.bottom < -20 ||
-            pRect.top > viewH + 20
-          ) {
-            continue;
+          // Fast block-level filter: skip entire offscreen paragraphs before measuring inline <b> elements
+          if (!isVertical && hasValidStageBounds) {
+            if (
+              bRect.right < stageLeft - 20 ||
+              bRect.left > stageRight + 20 ||
+              bRect.bottom < stageTop - 20 ||
+              bRect.top > stageBottom + 20
+            ) {
+              offscreenBlocks.add(blockElement);
+              continue;
+            }
+          } else if (isVertical) {
+            if (
+              bRect.right < -20 ||
+              bRect.left > viewW + 20 ||
+              bRect.bottom < -20 ||
+              bRect.top > viewH + 20
+            ) {
+              offscreenBlocks.add(blockElement);
+              continue;
+            }
           }
         }
 
-        const isPdfEl = this.isPdfMode || !!parent.closest('.textLayer');
+        const isBlockWhollyVisible = (!isVertical && hasValidStageBounds)
+          ? (bRect.left >= stageLeft - 5 && bRect.right <= stageRight + 5 && bRect.top >= stageTop - 5 && bRect.bottom <= stageBottom + 5)
+          : (isVertical ? (bRect.left >= -5 && bRect.right <= viewW + 5 && bRect.top >= -5 && bRect.bottom <= viewH + 5) : true);
+
+        const isPdfEl = hasTextLayer && (this.isPdfMode || !!parent.closest('.textLayer'));
         const textLayer = isPdfEl ? parent.closest('.textLayer') : null;
         const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
 
@@ -4144,63 +4320,181 @@ export class ReadingRuler {
         );
         if (isBionicFixationEl && !parent.closest('.bionic-word')) {
           if (visitedBionicSpans.has(parent)) continue;
+
+          // If the block straddles columns/pages in horizontal mode (or viewport in vertical mode),
+          // pre-filter using parent.offsetTop / offsetLeft and stride sampling so offscreen columns
+          // are skipped without calling getBoundingClientRect() or range.getClientRects() on every word.
+          if (!isBlockWhollyVisible) {
+            const curOffsetTop = parent.offsetTop;
+            const curOffsetLeft = parent.offsetLeft;
+            const curOffsetParent = parent.offsetParent;
+
+            if (
+              blockElement === lastBionicBlock &&
+              curOffsetParent === lastBionicOffsetParent &&
+              curOffsetTop === lastBionicOffsetTop &&
+              curOffsetLeft >= lastBionicOffsetLeft &&
+              (curOffsetLeft - lastBionicLineFirstOffsetLeft) < maxColSpan
+            ) {
+              lastBionicOffsetLeft = curOffsetLeft;
+              if (lastBionicLineStatus !== 1) {
+                consumeBionicWordSiblings(parent);
+                continue;
+              }
+            } else if (
+              !isVertical &&
+              hasValidStageBounds &&
+              blockElement === lastBionicBlock &&
+              curOffsetParent === lastBionicOffsetParent &&
+              lastBionicLineStatus === -1 &&
+              curOffsetTop > lastBionicOffsetTop &&
+              Math.abs(curOffsetLeft - lastBionicColFirstOffsetLeft) < 60 &&
+              offscreenStrideCount < 15
+            ) {
+              lastBionicOffsetTop = curOffsetTop;
+              lastBionicOffsetLeft = curOffsetLeft;
+              lastBionicLineFirstOffsetLeft = curOffsetLeft;
+              offscreenStrideCount++;
+              consumeBionicWordSiblings(parent);
+              continue;
+            } else {
+              offscreenStrideCount = 0;
+              lastBionicBlock = blockElement;
+              lastBionicOffsetParent = curOffsetParent;
+              lastBionicOffsetTop = curOffsetTop;
+              lastBionicOffsetLeft = curOffsetLeft;
+              lastBionicLineFirstOffsetLeft = curOffsetLeft;
+
+              let pRect = parentRectCache.get(parent);
+              if (!pRect) {
+                pRect = parent.getBoundingClientRect();
+                parentRectCache.set(parent, pRect);
+              }
+
+              if (!isVertical && hasValidStageBounds) {
+                if (pRect.left > stageRight + 20) {
+                  lastBionicLineStatus = 2;
+                  if (!this.isTwoCol) {
+                    offscreenBlocks.add(blockElement);
+                  }
+                  consumeBionicWordSiblings(parent);
+                  continue;
+                }
+                if (
+                  pRect.right < stageLeft - 20 ||
+                  pRect.bottom < stageTop - 20 ||
+                  pRect.top > stageBottom + 20
+                ) {
+                  lastBionicLineStatus = -1;
+                  lastBionicColFirstOffsetLeft = pRect.right < stageLeft - 60 ? curOffsetLeft : -Infinity;
+                  consumeBionicWordSiblings(parent);
+                  continue;
+                }
+                lastBionicLineStatus = 1;
+              } else if (isVertical) {
+                if (pRect.top > viewH + 20) {
+                  lastBionicLineStatus = 2;
+                  offscreenBlocks.add(blockElement);
+                  consumeBionicWordSiblings(parent);
+                  continue;
+                }
+                if (
+                  pRect.bottom < -20 ||
+                  pRect.right < -20 ||
+                  pRect.left > viewW + 20
+                ) {
+                  lastBionicLineStatus = -1;
+                  consumeBionicWordSiblings(parent);
+                  continue;
+                }
+                lastBionicLineStatus = 1;
+              } else {
+                lastBionicLineStatus = 1;
+              }
+            }
+          }
+
           visitedBionicSpans.add(parent);
 
           let rawToken = parent.textContent || "";
-          let startNode = parent;
-          let startOffset = null;
+          let startNode = node;
+          let startOffset = 0;
 
           // Include any leading non-whitespace punctuation immediately preceding <b class="bionic-fixation">
           const prevSib = parent.previousSibling;
           if (prevSib && prevSib.nodeType === Node.TEXT_NODE) {
             const prevText = prevSib.textContent || "";
             const prevConsumed = consumedTextOffsets.get(prevSib) || 0;
-            const unconsumedPrev = prevText.slice(prevConsumed);
-            const leadMatch = trailingNonSpaceRegex.exec(unconsumedPrev);
-            if (leadMatch && leadMatch[0].length > 0) {
-              rawToken = leadMatch[0] + rawToken;
-              startNode = prevSib;
-              startOffset = prevText.length - leadMatch[0].length;
+            if (prevConsumed < prevText.length) {
+              const unconsumedPrev = prevText.slice(prevConsumed);
+              const leadMatch = trailingNonSpaceRegex.exec(unconsumedPrev);
+              if (leadMatch && leadMatch[0].length > 0) {
+                rawToken = leadMatch[0] + rawToken;
+                startNode = prevSib;
+                startOffset = prevText.length - leadMatch[0].length;
+              }
             }
           }
 
-          let endNode = parent;
-          let endOffset = null;
-          let cursor = parent.nextSibling;
+          let endNode = node;
+          let endOffset = (node.textContent || "").length;
+          const nextSib = parent.nextSibling;
 
-          while (cursor) {
-            if (cursor.nodeType === Node.TEXT_NODE) {
-              const t = cursor.textContent || "";
-              const m = leadingNonSpaceRegex.exec(t);
-              if (m && m[0].length > 0) {
-                rawToken += m[0];
-                endNode = cursor;
-                endOffset = m[0].length;
-                consumedTextOffsets.set(cursor, m[0].length);
-                if (
-                  m[0].length === t.length &&
-                  cursor.nextSibling &&
-                  cursor.nextSibling.nodeType === Node.ELEMENT_NODE &&
-                  cursor.nextSibling.tagName === 'B' &&
-                  (cursor.nextSibling.classList.contains('bionic-fixation') || cursor.nextSibling.classList.contains('bionic-bold'))
-                ) {
-                  cursor = cursor.nextSibling;
-                  continue;
+          if (nextSib && nextSib.nodeType === Node.TEXT_NODE) {
+            const t = nextSib.textContent || "";
+            const m = leadingNonSpaceRegex.exec(t);
+            if (m && m[0].length > 0) {
+              const suffixLen = m[0].length;
+              rawToken += m[0];
+              endNode = nextSib;
+              endOffset = suffixLen;
+              consumedTextOffsets.set(nextSib, suffixLen);
+
+              if (
+                suffixLen === t.length &&
+                nextSib.nextSibling &&
+                nextSib.nextSibling.nodeType === Node.ELEMENT_NODE &&
+                nextSib.nextSibling.tagName === 'B' &&
+                (nextSib.nextSibling.classList.contains('bionic-fixation') || nextSib.nextSibling.classList.contains('bionic-bold'))
+              ) {
+                let cursor = nextSib.nextSibling;
+                while (cursor) {
+                  if (cursor.nodeType === Node.TEXT_NODE) {
+                    const ct = cursor.textContent || "";
+                    const cm = leadingNonSpaceRegex.exec(ct);
+                    if (cm && cm[0].length > 0) {
+                      rawToken += cm[0];
+                      endNode = cursor;
+                      endOffset = cm[0].length;
+                      consumedTextOffsets.set(cursor, cm[0].length);
+                      if (
+                        cm[0].length === ct.length &&
+                        cursor.nextSibling &&
+                        cursor.nextSibling.nodeType === Node.ELEMENT_NODE &&
+                        cursor.nextSibling.tagName === 'B' &&
+                        (cursor.nextSibling.classList.contains('bionic-fixation') || cursor.nextSibling.classList.contains('bionic-bold'))
+                      ) {
+                        cursor = cursor.nextSibling;
+                        continue;
+                      }
+                    }
+                    break;
+                  } else if (
+                    cursor.nodeType === Node.ELEMENT_NODE &&
+                    cursor.tagName === 'B' &&
+                    (cursor.classList.contains('bionic-fixation') || cursor.classList.contains('bionic-bold'))
+                  ) {
+                    visitedBionicSpans.add(cursor);
+                    const bText = cursor.textContent || "";
+                    rawToken += bText;
+                    endNode = cursor.firstChild || cursor;
+                    endOffset = cursor.firstChild ? bText.length : null;
+                    cursor = cursor.nextSibling;
+                  } else {
+                    break;
+                  }
                 }
               }
-              break;
-            } else if (
-              cursor.nodeType === Node.ELEMENT_NODE &&
-              cursor.tagName === 'B' &&
-              (cursor.classList.contains('bionic-fixation') || cursor.classList.contains('bionic-bold'))
-            ) {
-              visitedBionicSpans.add(cursor);
-              rawToken += cursor.textContent || "";
-              endNode = cursor;
-              endOffset = null;
-              cursor = cursor.nextSibling;
-            } else {
-              break;
             }
           }
 
@@ -4208,12 +4502,8 @@ export class ReadingRuler {
           if (!cleanToken) continue;
 
           try {
-            if (startNode !== parent && startOffset !== null) {
-              range.setStart(startNode, startOffset);
-            } else {
-              range.setStartBefore(parent);
-            }
-            if (endNode !== parent && endOffset !== null) {
+            range.setStart(startNode, startOffset);
+            if (endOffset !== null) {
               range.setEnd(endNode, endOffset);
             } else {
               range.setEndAfter(endNode);
@@ -4221,6 +4511,33 @@ export class ReadingRuler {
             pushRangeRectsToWords(cleanToken, pdfTf);
           } catch (e) {}
           continue;
+        }
+
+        if (!isBlockWhollyVisible && parent !== blockElement) {
+          let pRect = parentRectCache.get(parent);
+          if (!pRect) {
+            pRect = parent.getBoundingClientRect();
+            parentRectCache.set(parent, pRect);
+          }
+          if (!isVertical && hasValidStageBounds) {
+            if (
+              pRect.right < stageLeft - 20 ||
+              pRect.left > stageRight + 20 ||
+              pRect.bottom < stageTop - 20 ||
+              pRect.top > stageBottom + 20
+            ) {
+              continue;
+            }
+          } else if (isVertical) {
+            if (
+              pRect.right < -20 ||
+              pRect.left > viewW + 20 ||
+              pRect.bottom < -20 ||
+              pRect.top > viewH + 20
+            ) {
+              continue;
+            }
+          }
         }
 
         const bionicSpan = parent.closest('.bionic-word');
@@ -4273,7 +4590,10 @@ export class ReadingRuler {
           try {
             range.setStart(node, start);
             range.setEnd(node, end);
-            pushRangeRectsToWords(cleanToken, pdfTf);
+            const pushStatus = pushRangeRectsToWords(cleanToken, pdfTf);
+            if (pushStatus === 2 && !this.isTwoCol) {
+              break;
+            }
           } catch (e) {}
         }
       }
@@ -8889,6 +9209,7 @@ export class ReadingRuler {
         this.rulerEl.classList.add("word-tracking-mode");
       }
     } else {
+      this.cachedWords = [];
       this.previewWidth = 0;
       this.totalWidth = 0;
       if (this.rulerEl) {

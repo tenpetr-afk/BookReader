@@ -15,6 +15,8 @@ import { supabase } from "./supabase-client.js";
 
 export const APP_VERSION = "v1.21.0";
 
+const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
+
 export class LuminaApp {
   constructor() {
     this.currentBook = null;
@@ -51,6 +53,8 @@ export class LuminaApp {
 
     // Kontinuální vertikální čtení kapitol
     this._chapterDataCache = new Map();
+    this._bionicHtmlCache = new Map();
+    this._bionicIdleCallbackId = null;
     this._isLoadingNextChapter = false;
     this._isLoadingPrevChapter = false;
     this._isModeTransitioning = false;
@@ -3587,6 +3591,7 @@ export class LuminaApp {
     try {
       this.currentBook = book;
       this._chapterDataCache = new Map();
+      this._bionicHtmlCache = new Map();
       this._isLoadingNextChapter = false;
       this._isLoadingPrevChapter = false;
       this._isModeTransitioning = false;
@@ -4051,7 +4056,7 @@ export class LuminaApp {
 
     let html = rawHtml || "";
     if (this.settings.fastReading) {
-      html = this.toBionicReadingHtml(html);
+      html = this.toBionicReadingHtml(html, chapterIndex);
     }
     section.innerHTML = html;
 
@@ -4585,7 +4590,7 @@ export class LuminaApp {
     if (!this.dom.readerContent) return;
     let html = this.currentRawChapterHtml || "";
     if (this.settings.fastReading) {
-      html = this.toBionicReadingHtml(html);
+      html = this.toBionicReadingHtml(html, this.currentChapterIndex);
     }
     this.dom.readerContent.innerHTML = html;
     const imgs = this.dom.readerContent.querySelectorAll("img");
@@ -4598,15 +4603,23 @@ export class LuminaApp {
   applyFastReadingMode() {
     if (!this.currentBook || !this.dom.readerContent || this.isPdfMode) return;
 
+    if (this._bionicIdleCallbackId) {
+      if (typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(this._bionicIdleCallbackId);
+      } else {
+        clearTimeout(this._bionicIdleCallbackId);
+      }
+      this._bionicIdleCallbackId = null;
+    }
+
     if (this.isVerticalReadingMode() && !this.isPdfMode) {
-      const sections = this.dom.readerContent.querySelectorAll(".epub-chapter-section");
-      sections.forEach(sec => {
+      const renderSection = (sec) => {
         const idx = parseInt(sec.dataset.chapterIndex, 10);
         const chData = this._chapterDataCache?.get(idx);
         if (chData) {
           let html = chData.html;
           if (this.settings.fastReading) {
-            html = this.toBionicReadingHtml(html);
+            html = this.toBionicReadingHtml(html, idx);
           }
           sec.innerHTML = html;
           const imgs = sec.querySelectorAll("img");
@@ -4615,13 +4628,69 @@ export class LuminaApp {
             img.decoding = "async";
           });
         }
-      });
+      };
+
+      const sections = Array.from(this.dom.readerContent.querySelectorAll(".epub-chapter-section"));
+      const vp = this.dom.pagedViewport;
+      const vpRect = vp ? vp.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const activeSec = this.getActiveVerticalChapterSection();
+      const offscreenSections = [];
+
+      for (let i = 0; i < sections.length; i++) {
+        const sec = sections[i];
+        const rect = sec.getBoundingClientRect();
+        const isVisible = sec === activeSec || (rect.bottom >= vpRect.top - 100 && rect.top <= vpRect.bottom + 100);
+        if (isVisible) {
+          renderSection(sec);
+        } else {
+          offscreenSections.push(sec);
+        }
+      }
+
       if (this.ruler && this.ruler.enabled) {
         if (typeof this.ruler.refreshLinesDebounced === "function") {
           this.ruler.refreshLinesDebounced(100);
         } else {
           this.ruler.refreshLines();
         }
+      }
+
+      if (offscreenSections.length > 0) {
+        const scheduleIdle = typeof window.requestIdleCallback === "function"
+          ? (cb) => window.requestIdleCallback(cb, { timeout: 300 })
+          : (cb) => setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 }), 16);
+
+        const processOffscreen = (deadline) => {
+          this._bionicIdleCallbackId = null;
+          while (offscreenSections.length > 0) {
+            const sec = offscreenSections.shift();
+            if (sec && sec.isConnected) {
+              const secRectBefore = sec.getBoundingClientRect();
+              const wasAboveViewport = vp && secRectBefore.bottom <= vpRect.top;
+              const prevScrollHeight = vp ? vp.scrollHeight : 0;
+              renderSection(sec);
+              if (wasAboveViewport && vp) {
+                const heightDelta = vp.scrollHeight - prevScrollHeight;
+                if (heightDelta !== 0) {
+                  vp.scrollTop += heightDelta;
+                }
+              }
+            }
+            if (
+              offscreenSections.length > 0 &&
+              deadline &&
+              typeof deadline.timeRemaining === "function" &&
+              deadline.timeRemaining() < 5
+            ) {
+              break;
+            }
+          }
+          if (offscreenSections.length > 0) {
+            this._bionicIdleCallbackId = scheduleIdle(processOffscreen);
+          }
+        };
+
+        this._bionicIdleCallbackId = scheduleIdle(processOffscreen);
       }
       return;
     }
@@ -4634,31 +4703,43 @@ export class LuminaApp {
       this.recalcPages();
       this.goToPage(Math.min(curPageIndex, Math.max(0, this.totalPagesInChapter - 1)), null, true, { isReflow: true });
       this.renderScrubberTicks();
-      if (this.ruler && this.ruler.enabled && this.ruler.wordTracking) {
-        this.ruler.refreshWords();
-      }
     });
   }
 
-  toBionicReadingHtml(html) {
+  toBionicReadingHtml(html, chapterIndex = null) {
     if (!html || typeof html !== "string") return html;
-    if (this._bionicCacheSource === html && this._bionicCacheResult) {
-      return this._bionicCacheResult;
+    if (!this._bionicHtmlCache) {
+      this._bionicHtmlCache = new Map();
     }
+    const cacheKey = (chapterIndex !== null && chapterIndex !== undefined && !Number.isNaN(chapterIndex))
+      ? `${this.currentBook?.id || "book"}:${chapterIndex}:${html.length}`
+      : `raw:${html.length}:${html.slice(0, 48)}:${html.slice(-48)}`;
+
+    const cachedEntry = this._bionicHtmlCache.get(cacheKey);
+    if (cachedEntry && cachedEntry.source === html) {
+      this._bionicHtmlCache.delete(cacheKey);
+      this._bionicHtmlCache.set(cacheKey, cachedEntry);
+      return cachedEntry.result;
+    }
+
     try {
       // Single-pass HTML-aware regex: skips script/style/code/pre/svg blocks, HTML comments, tags, and entities,
       // and wraps only the bold prefix of each Unicode word in <b class="bionic-fixation"> without wrapper spans.
-      const htmlBionicRegex = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
-
-      const result = html.replace(htmlBionicRegex, (match, skippedToken, word) => {
+      HTML_BIONIC_REGEX.lastIndex = 0;
+      const result = html.replace(HTML_BIONIC_REGEX, (match, skippedToken, word) => {
         if (skippedToken) return skippedToken;
         const len = word.length;
         const boldLen = len <= 3 ? 1 : Math.ceil(len * 0.45);
         return `<b class="bionic-fixation">${word.slice(0, boldLen)}</b>${word.slice(boldLen)}`;
       });
 
-      this._bionicCacheSource = html;
-      this._bionicCacheResult = result;
+      if (this._bionicHtmlCache.size >= 10) {
+        const oldestKey = this._bionicHtmlCache.keys().next().value;
+        if (oldestKey !== undefined) {
+          this._bionicHtmlCache.delete(oldestKey);
+        }
+      }
+      this._bionicHtmlCache.set(cacheKey, { source: html, result });
       return result;
     } catch (e) {
       console.warn("Chyba při formátování rychlého čtení (Bionic):", e);
@@ -4730,11 +4811,11 @@ export class LuminaApp {
     }
 
     // Horizontální stránkovaný režim EPUB:
-    if (this.ruler && this.ruler.enabled && this.ruler.cachedWords && this.ruler.cachedWords.length > 0) {
+    if (this.ruler && this.ruler.enabled && this.ruler.wordTracking && this.ruler.cachedWords && this.ruler.cachedWords.length > 0) {
       return this.ruler.cachedWords.length;
     }
 
-    const chapterWords = this.currentChapterWords || 1000;
+    const chapterWords = this.currentChapterWords || tracker.currentChapterWords || 1000;
     const pages = Math.max(1, this.totalPagesInChapter || 1);
     return Math.max(40, Math.min(650, Math.round(chapterWords / pages)));
   }

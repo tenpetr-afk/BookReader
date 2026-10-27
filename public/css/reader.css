@@ -72,8 +72,8 @@ body.columns-2 {
 b.bionic-fixation,
 .bionic-bold,
 b.bionic-bold {
-  font-weight: 700 !important;
-  color: inherit;
+  font-weight: 700;
+  /* Avoid layout-altering properties like letter-spacing, padding, or margin on inline <b> tags */
 }
 
 /* ==========================================================================
