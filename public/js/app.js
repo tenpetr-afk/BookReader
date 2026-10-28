@@ -5026,21 +5026,23 @@ export class LuminaApp {
         this.saveProgress(false);
       }, 150);
 
-      // Odložená aktualizace pravítka do requestAnimationFrame, aby se otočení stránky vykreslilo okamžitě
+      // Odložená aktualizace pravítka do double requestAnimationFrame po layout flush na WebKitu/iPadu
       if (this.ruler && this.ruler.enabled) {
         if (this._rulerPageChangeRafId) {
           cancelAnimationFrame(this._rulerPageChangeRafId);
+          this._rulerPageChangeRafId = null;
         }
         this._rulerPageChangeRafId = requestAnimationFrame(() => {
-          this._rulerPageChangeRafId = null;
-          try {
-            if (this.ruler && this.ruler.enabled) {
-              this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
-              this.ruler.forceReleaseNavigationLocks();
+          this._rulerPageChangeRafId = requestAnimationFrame(() => {
+            this._rulerPageChangeRafId = null;
+            try {
+              if (this.ruler && this.ruler.enabled) {
+                this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
+              }
+            } catch (rulerErr) {
+              console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
             }
-          } catch (rulerErr) {
-            console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
-          }
+          });
         });
       }
 

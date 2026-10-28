@@ -400,6 +400,14 @@ export class ReadingRuler {
     this.navigatingPageLockoutEndTime = 0;
     this.dragCooldownEndTime = 0;
 
+    if (this.rulerEl) {
+      this.rulerEl.classList.remove("is-page-transitioning");
+      if (this.enabled) {
+        this.rulerEl.style.opacity = "1";
+        this.rulerEl.style.visibility = "visible";
+      }
+    }
+
     const stage = this.getStageElement();
     if (stage) stage.classList.remove("is-turning-page");
     document.body.classList.remove("is-turning-page");
@@ -6302,43 +6310,28 @@ export class ReadingRuler {
    * - direction >= 0 (vpřed / nová kapitola): přichytí na první řádek / první slovo (index 0)
    * - direction < 0 (vzad / konec kapitoly): přichytí na poslední řádek / poslední slovo
    */
-  resetPositionForPage(direction = 1, immediate = true) {
+  resetPositionForPage(direction = 1, isPageChanged = true) {
     this.clearPageTransitionTimersAndRAFs();
     this._maxLineIndexOnPage = -1;
     this._maxWordIndexOnPage = -1;
 
-    const stage = this.getStageElement();
-    if (stage) stage.classList.add("is-turning-page");
-    document.body.classList.add("is-turning-page");
-    const content = document.getElementById("reader-content");
-    if (content) content.classList.add("is-turning-page");
+    // Clear the transition lock:
+    this.isPageTransitioning = false;
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
+    this.isLineLocked = false;
+    this.suppressLineAdvancement = false;
+    this.navigatingPageLockoutEndTime = 0;
 
-    this.hideForPageTransition();
+    const stage = this.getStageElement();
+    const content = document.getElementById("reader-content");
+
     this.disableWordTransition();
     this.setNoTransition(true);
     this.previousActiveLineIndex = -1;
     if (this.rulerEl) {
       this.rulerEl.style.transition = "none";
     }
-
-    this.isLineLocked = true;
-    this.isNavigating = true;
-    this.isNavigatingPage = true;
-    this.navigatingPageLockoutEndTime = Date.now() + 250;
-    this.navigatingPageTimer = setTimeout(() => {
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.navigatingPageLockoutEndTime = 0;
-      this.navigatingPageTimer = null;
-    }, 250);
-
-    this._navSafetyTimer = setTimeout(() => {
-      if (this.isNavigating || this.isLineLocked || this.suppressLineAdvancement) {
-        console.warn('Navigation lock timed out in resetPositionForPage. Forcing release.');
-        this.clearPageTransitionTimersAndRAFs();
-        this.forceReleaseNavigationLocks();
-      }
-    }, 300); // 300ms maximum lock lifetime
 
     const isBackward = direction < 0;
 
@@ -6348,6 +6341,13 @@ export class ReadingRuler {
         this.forceReleaseNavigationLocks();
         return;
       }
+
+      this.isPageTransitioning = false;
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      this.suppressLineAdvancement = false;
+      this.navigatingPageLockoutEndTime = 0;
 
       try {
         if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
@@ -6367,8 +6367,17 @@ export class ReadingRuler {
             this.currentY = this.targetY;
             this.isPageTransitioning = false;
             if (this.rulerEl) {
-              this.rulerEl.classList.remove("is-page-transitioning");
+              this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
+              this.rulerEl.classList.add("is-visible");
+              this.rulerEl.style.removeProperty("transition");
+              this.rulerEl.style.display = "block";
+              this.rulerEl.style.opacity = "1";
+              this.rulerEl.style.visibility = "visible";
             }
+            if (this.maskTopEl) this.maskTopEl.style.display = "";
+            if (this.maskBottomEl) this.maskBottomEl.style.display = "";
+            if (this.maskLeftEl) this.maskLeftEl.style.display = "";
+            if (this.maskRightEl) this.maskRightEl.style.display = "";
             this.applyPosition();
             return;
           }
@@ -6390,125 +6399,73 @@ export class ReadingRuler {
           this.currentY = this.targetY;
           this.isPageTransitioning = false;
           if (this.rulerEl) {
-            this.rulerEl.classList.remove("is-page-transitioning");
+            this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
+            this.rulerEl.classList.add("is-visible");
+            this.rulerEl.style.removeProperty("transition");
+            this.rulerEl.style.display = "block";
+            this.rulerEl.style.opacity = "1";
+            this.rulerEl.style.visibility = "visible";
           }
+          if (this.maskTopEl) this.maskTopEl.style.display = "";
+          if (this.maskBottomEl) this.maskBottomEl.style.display = "";
+          if (this.maskLeftEl) this.maskLeftEl.style.display = "";
+          if (this.maskRightEl) this.maskRightEl.style.display = "";
           this.applyPosition();
           return;
         }
 
+        // Refresh lines and words for the active page:
         this.refreshLines();
         if (this.wordTracking) {
           this.refreshWords();
         }
 
-        // Fallback ochrana: Pokud na stránce není detekován žádný řádek, pravítko zůstane skryté (v PDF režimu se použije plynulá clona)
-        if (this.cachedLines.length === 0) {
-          if (this.isPdfMode) {
-            const isVertical = this.isVerticalMode();
-            const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
-
-            if (isVertical && vp) {
-              this.height = this.pdfRulerHeight || 32;
-              const targetContainer = document.querySelector(`.pdf-page-container[data-page-number="${this.app?.pdfLoader?.currentPage || 1}"]`);
-              if (targetContainer) {
-                const cRect = targetContainer.getBoundingClientRect();
-                const offsetTop = targetContainer.offsetTop || (cRect.top + vp.scrollTop);
-                this.targetY = isBackward ? Math.round(offsetTop + cRect.height - this.height) : Math.round(offsetTop + 20);
-              } else {
-                this.targetY = isBackward ? Math.round(vp.scrollTop + vp.clientHeight - 80) : Math.round(vp.scrollTop + 80);
-              }
-              this.currentY = this.targetY;
-              this.isPageTransitioning = false;
-              if (this.rulerEl) {
-                this.rulerEl.classList.remove("is-page-transitioning");
-              }
-              this.applyPosition();
-              return;
-            }
-
-            this.height = this.pdfRulerHeight || 32;
-            const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
-            const stageRect = stage ? stage.getBoundingClientRect() : { top: 60, bottom: window.innerHeight - 60 };
-            const canvas = document.querySelector("#reader-content canvas");
-            let topBound = stageRect.top;
-            let bottomBound = stageRect.bottom;
-            if (canvas) {
-              const cRect = canvas.getBoundingClientRect();
-              if (cRect.height > 50) {
-                topBound = cRect.top;
-                bottomBound = cRect.bottom;
-              }
-            }
-            this.targetY = isBackward ? Math.round(bottomBound - this.height) : Math.round(topBound);
-            this.currentY = this.targetY;
-            this.isPageTransitioning = false;
-            if (this.rulerEl) {
-              this.rulerEl.classList.remove("is-page-transitioning");
-            }
-            this.applyPosition();
-            return;
-          }
-          this.isPageTransitioning = false;
-          if (this.rulerEl) {
-            this.rulerEl.style.display = "none";
-            this.rulerEl.style.opacity = "0";
-            this.rulerEl.style.visibility = "hidden";
-            this.rulerEl.classList.remove("is-visible");
-            this.rulerEl.classList.add("is-hidden");
-          }
-          this.clearFocusTextMask();
-          return;
-        }
-
         if (this.wordTracking) {
-          if (this.cachedWords.length > 0) {
-            const targetWordIdx = isBackward ? this.cachedWords.length - 1 : 0;
+          if (this.cachedWords && this.cachedWords.length > 0) {
+            const targetWordIdx = direction >= 0 ? 0 : this.cachedWords.length - 1;
             this.activeWordIndex = targetWordIdx;
-            const targetWord = this.cachedWords[targetWordIdx];
+            this.setWordWindow(this.activeWordIndex);
 
+            const targetWord = this.cachedWords[targetWordIdx];
             if (targetWord && targetWord.lineIndex != null) {
               this.activeLineIndex = targetWord.lineIndex;
             } else {
-              this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
+              this.activeLineIndex = direction >= 0 ? 0 : (this.cachedLines?.length ? this.cachedLines.length - 1 : 0);
             }
 
             const isVertical = this.isVerticalMode();
             const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
             const vScrollTop = vp ? vp.scrollTop : 0;
-            this.lastPointerX = targetWord.centerX;
-            this.lastPointerY = isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY;
-            this.lastValidPointerX = this.lastPointerX;
-            this.lastValidPointerY = this.lastPointerY;
+            if (targetWord) {
+              this.lastPointerX = targetWord.centerX;
+              this.lastPointerY = isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY;
+              this.lastValidPointerX = this.lastPointerX;
+              this.lastValidPointerY = this.lastPointerY;
+            }
 
-            this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
-            this.maskTopEl.classList.add("is-snapped");
-            this.maskBottomEl.classList.add("is-snapped");
-            this.maskLeftEl.classList.add("is-snapped");
-            this.maskRightEl.classList.add("is-snapped");
-
-            // Usazení na cílový řádek bez dvojího synchronního reflow
-            this.isPageTransitioning = false;
-            this.rulerEl.classList.remove("is-page-transitioning");
-            this.applyPosition();
+            if (this.rulerEl) this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
+            if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
+            if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
+            if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
+            if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
           } else {
-            this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
-            this.rulerEl.classList.remove("word-tracking-mode");
-            const geom = this.computeLineGeometry(this.activeLineIndex);
+            // Fallback to line mode bounds on line 0 so the ruler never hides completely
+            this.activeLineIndex = 0;
+            const geom = this.computeLineGeometry(0);
             if (geom) {
               this.height = geom.height;
               this.targetY = geom.targetY;
-              this.currentY = this.targetY;
+              this.currentY = geom.targetY;
             }
-            this.isPageTransitioning = false;
-            this.rulerEl.classList.remove("is-page-transitioning");
-            this.applyPosition();
           }
         } else {
-          const targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
+          const targetLineIdx = (this.cachedLines && this.cachedLines.length > 0)
+            ? (direction < 0 ? this.cachedLines.length - 1 : 0)
+            : 0;
           this.activeLineIndex = targetLineIdx;
 
-          if (this.cachedWords.length > 0) {
-            if (isBackward) {
+          if (this.cachedWords && this.cachedWords.length > 0) {
+            if (direction < 0) {
               let lastWordIdx = this.cachedWords.length - 1;
               for (let i = this.cachedWords.length - 1; i >= 0; i--) {
                 if (this.cachedWords[i].lineIndex === targetLineIdx) {
@@ -6524,34 +6481,49 @@ export class ReadingRuler {
             this.activeWordIndex = 0;
           }
 
-          this.rulerEl.classList.remove("word-tracking-mode");
+          if (this.rulerEl) this.rulerEl.classList.remove("word-tracking-mode");
           const geom = this.computeLineGeometry(targetLineIdx);
           if (geom) {
             this.height = geom.height;
             this.targetY = geom.targetY;
-            this.currentY = this.targetY;
+            this.currentY = geom.targetY;
           }
 
           const isVertical = this.isVerticalMode();
           const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
           const vScrollTop = vp ? vp.scrollTop : 0;
-          const line = this.cachedLines[targetLineIdx];
-          this.lastPointerX = line.left != null ? line.left : 100;
-          this.lastPointerY = isVertical ? Math.round(line.centerY - vScrollTop) : line.centerY;
+          const line = this.cachedLines && this.cachedLines[targetLineIdx];
+          this.lastPointerX = line && line.left != null ? line.left : 100;
+          this.lastPointerY = line ? (isVertical ? Math.round(line.centerY - vScrollTop) : line.centerY) : 150;
           this.lastValidPointerX = this.lastPointerX;
           this.lastValidPointerY = this.lastPointerY;
 
-          this.rulerEl.classList.add("is-snapped");
-          this.maskTopEl.classList.add("is-snapped");
-          this.maskBottomEl.classList.add("is-snapped");
-          this.maskLeftEl.classList.add("is-snapped");
-          this.maskRightEl.classList.add("is-snapped");
-
-          // Usazení na cílový řádek bez dvojího synchronního reflow
-          this.isPageTransitioning = false;
-          this.rulerEl.classList.remove("is-page-transitioning");
-          this.applyPosition();
+          if (this.rulerEl) this.rulerEl.classList.add("is-snapped");
+          if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
+          if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
+          if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
+          if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
         }
+
+        // Explicitly UNHIDE and reveal the ruler DOM elements:
+        if (this.rulerEl) {
+          this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
+          this.rulerEl.classList.add("is-visible");
+          this.rulerEl.style.removeProperty("transition");
+          this.rulerEl.style.display = "block";
+          this.rulerEl.style.opacity = "1";
+          this.rulerEl.style.visibility = "visible";
+          if (this.wordTracking) {
+            this.rulerEl.classList.add("word-tracking-mode");
+          }
+        }
+        if (this.maskTopEl) this.maskTopEl.style.display = "";
+        if (this.maskBottomEl) this.maskBottomEl.style.display = "";
+        if (this.maskLeftEl) this.maskLeftEl.style.display = "";
+        if (this.maskRightEl) this.maskRightEl.style.display = "";
+
+        // Immediately execute this.applyPosition(); so the ruler sits perfectly on the first word of the new page.
+        this.applyPosition();
       } catch (err) {
         console.error("[ReadingRuler] Error in resetPositionForPage:", err);
       } finally {
@@ -6567,14 +6539,7 @@ export class ReadingRuler {
       });
     };
 
-    if (immediate) {
-      performReset();
-    } else {
-      this.pageChangeRafId = requestAnimationFrame(() => {
-        this.pageChangeRafId = null;
-        performReset();
-      });
-    }
+    performReset();
   }
 
   getReaderContainer() {
@@ -9380,27 +9345,12 @@ export class ReadingRuler {
    * Vyvolá se při přechodu na jinou stránku nebo kapitolu.
    * Okamžitě a synchronně usadí pravítko na cílový řádek bez jakéhokoliv časovače či prodlevy.
    */
-  onPageChange(direction = 0, isPageChanged = true, immediate = true) {
+  onPageChange(direction = 0, isPageChanged = true, immediateRuler = true) {
     if (!this.enabled) {
       this.forceReleaseNavigationLocks();
       return;
     }
     this.clearPageTransitionTimersAndRAFs();
-    this.isLineLocked = true;
-    this.isNavigatingPage = true;
-    this.navigatingPageLockoutEndTime = Date.now() + 300;
-
-    const stage = this.getStageElement();
-    if (stage) stage.classList.add("is-turning-page");
-    document.body.classList.add("is-turning-page");
-    const content = document.getElementById("reader-content");
-    if (content) content.classList.add("is-turning-page");
-
-    clearTimeout(this._navSafetyTimer);
-    this._navSafetyTimer = setTimeout(() => {
-      this.forceReleaseNavigationLocks();
-    }, 300); // 300ms maximum lock lifetime
-
     this.disableWordTransition();
     if (this.wordTransitionTimer) {
       clearTimeout(this.wordTransitionTimer);
@@ -9413,23 +9363,71 @@ export class ReadingRuler {
       clearTimeout(this.pageChangeTimer);
       this.pageChangeTimer = null;
     }
+    const content = document.getElementById("reader-content");
     if (content && this._onTransitionEnd) {
       content.removeEventListener("transitionend", this._onTransitionEnd);
       this._onTransitionEnd = null;
     }
-
-    this.hideForPageTransition();
 
     this.penHistory = [];
     this.touchHistory = [];
     this._maxLineIndexOnPage = -1;
     this._maxWordIndexOnPage = -1;
 
-    // Okamžité synchronní usazení pravítka na nové stránce podle směru listování
-    // Pro švihnutí stylusu vždy resynchronizovat na horní řádek příchozí stránky
+    // Clear the transition lock:
+    this.isPageTransitioning = false;
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
+
+    // Refresh lines and words for the active page:
+    this.refreshLines();
+    if (this.wordTracking) {
+      this.refreshWords();
+    }
+
     const targetDirection = this.flickResyncTopLine ? 1 : direction;
     this.flickResyncTopLine = false;
-    this.resetPositionForPage(targetDirection, immediate);
+
+    if (this.wordTracking) {
+      if (this.cachedWords && this.cachedWords.length > 0) {
+        this.activeWordIndex = (targetDirection >= 0 ? 0 : this.cachedWords.length - 1);
+        this.setWordWindow(this.activeWordIndex);
+        if (this.cachedWords[this.activeWordIndex] && this.cachedWords[this.activeWordIndex].lineIndex != null) {
+          this.activeLineIndex = this.cachedWords[this.activeWordIndex].lineIndex;
+        }
+      } else {
+        this.activeLineIndex = 0;
+        const geom = this.computeLineGeometry(0);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+          this.currentY = geom.targetY;
+        }
+      }
+    }
+
+    // Explicitly UNHIDE and reveal the ruler DOM elements:
+    if (this.rulerEl) {
+      this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
+      this.rulerEl.classList.add("is-visible");
+      this.rulerEl.style.removeProperty("transition");
+      this.rulerEl.style.display = "block";
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
+      if (this.wordTracking) {
+        this.rulerEl.classList.add("word-tracking-mode");
+      }
+    }
+    if (this.maskTopEl) this.maskTopEl.style.display = "";
+    if (this.maskBottomEl) this.maskBottomEl.style.display = "";
+    if (this.maskLeftEl) this.maskLeftEl.style.display = "";
+    if (this.maskRightEl) this.maskRightEl.style.display = "";
+
+    // Immediately execute this.applyPosition(); so the ruler sits perfectly on the first word of the new page.
+    this.applyPosition();
+
+    // Synchronize full position reset and geometry calculations
+    this.resetPositionForPage(targetDirection, isPageChanged);
   }
 
   destroy() {
