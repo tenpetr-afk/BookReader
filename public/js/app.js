@@ -52,12 +52,16 @@ export class LuminaApp {
     this.readingMode = localStorage.getItem("lumina_reading_mode") || "horizontal";
     this._verticalScrollBound = false;
 
-    // Kontinuální vertikální čtení kapitol & Viewport-only Bionic cache
+    // Kontinuální vertikální čtení kapitol & Bionic chapter cache
     this._chapterDataCache = new Map();
-    this._bionicHtmlCache = new Map();
-    this._originalBlockHtml = new WeakMap();
-    this._bionicBlockHtml = new WeakMap();
-    this._bionicIdleCallbackId = null;
+    this._bionicChapterCache = new Map();
+    this._cachedColumnStep = null;
+    this._isSliderDragging = false;
+    this._bionicSuspendedForDrag = false;
+    this._sliderCssRafId = null;
+    this._sliderCommitTimer = null;
+    this._saveLocalProgressTimer = null;
+    this._rulerPageChangeRafId = null;
     this._isLoadingNextChapter = false;
     this._isLoadingPrevChapter = false;
     this._isModeTransitioning = false;
@@ -544,6 +548,9 @@ export class LuminaApp {
   }
 
   getExactColumnStep() {
+    if (this._cachedColumnStep) {
+      return this._cachedColumnStep;
+    }
     if (!this.dom.pagedStage || !this.dom.readerContent) {
       return { stageWidth: 700, gap: 50, exactStep: 750 };
     }
@@ -555,11 +562,15 @@ export class LuminaApp {
     const gap = (!isNaN(colGap) && colGap > 0) ? colGap : (this.pageGap || 50);
 
     const exactStep = stageWidth + gap;
-    return {
+    const result = {
       stageWidth,
       gap,
       exactStep
     };
+    if (stageWidth > 0) {
+      this._cachedColumnStep = result;
+    }
+    return result;
   }
 
   getPageGap() {
@@ -567,6 +578,7 @@ export class LuminaApp {
   }
 
   applySettings() {
+    this._cachedColumnStep = null;
     const s = this.settings;
     document.documentElement.setAttribute("data-theme", s.theme);
     ["theme-light", "theme-warm", "theme-sepia", "theme-dark", "theme-oled"].forEach(t => {
@@ -923,9 +935,6 @@ export class LuminaApp {
     }
 
     this.checkVerticalInfiniteScroll();
-    if (this.settings.fastReading) {
-      this.updateVisibleBionicNodes();
-    }
     this.updatePageUI();
     this.saveProgress();
   }
@@ -1317,6 +1326,7 @@ export class LuminaApp {
     // Přizpůsobení stran při změně orientace iPadu (Portrait/Landscape) a velikosti okna
     let lastEffectiveCols = this.resolveEffectiveColumnCount();
     window.addEventListener("resize", () => {
+      this._cachedColumnStep = null;
       if (this.settings.columnsMode === "auto") {
         const newCols = this.resolveEffectiveColumnCount();
         if (newCols !== lastEffectiveCols) {
@@ -1951,94 +1961,98 @@ export class LuminaApp {
       });
     });
 
-    const triggerReflowSync = () => {
-      if (this.isPdfMode) return;
-      tracker.cancelCurrentPageDwell();
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          this.recomputeGlobalPagination();
-          this.recalcPages();
-          this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
-          this.renderScrubberTicks();
-          this.ruler?.refreshLines();
-          this.ruler?.applyPosition();
-        });
-      });
-    };
+    const beginSliderDrag = () => this.beginSliderDrag();
+    const finishSliderDrag = () => this.finishSliderDrag();
 
     if (this.dom.sliderFontSize) {
       this.dom.sliderFontSize.addEventListener("input", (e) => {
-        this.settings.fontSize = parseInt(e.target.value, 10);
-        if (this.dom.valFontSize) this.dom.valFontSize.textContent = `${this.settings.fontSize}px`;
-        document.documentElement.style.setProperty("--reader-font-size", `${this.settings.fontSize}px`);
-        storage.saveSettings(this.settings);
-        triggerReflowSync();
+        if (!this._isSliderDragging) beginSliderDrag();
+        const val = parseInt(e.target.value, 10);
+        this.settings.fontSize = val;
+        if (this.dom.valFontSize) this.dom.valFontSize.textContent = `${val}px`;
+        if (this._sliderCssRafId) cancelAnimationFrame(this._sliderCssRafId);
+        this._sliderCssRafId = requestAnimationFrame(() => {
+          this._sliderCssRafId = null;
+          document.documentElement.style.setProperty("--reader-font-size", `${this.settings.fontSize}px`);
+        });
+        clearTimeout(this._sliderCommitTimer);
+        this._sliderCommitTimer = setTimeout(() => finishSliderDrag(), 180);
       });
+      this.dom.sliderFontSize.addEventListener("change", () => finishSliderDrag());
     }
 
     if (this.dom.sliderLineHeight) {
       this.dom.sliderLineHeight.addEventListener("input", (e) => {
+        if (!this._isSliderDragging) beginSliderDrag();
         const val = parseFloat(e.target.value);
         this.settings.lineHeight = val;
         if (this.dom.valLineHeight) this.dom.valLineHeight.textContent = val.toFixed(1);
-        document.documentElement.style.setProperty("--reader-line-height", val);
-        storage.saveSettings(this.settings);
-        triggerReflowSync();
+        if (this._sliderCssRafId) cancelAnimationFrame(this._sliderCssRafId);
+        this._sliderCssRafId = requestAnimationFrame(() => {
+          this._sliderCssRafId = null;
+          document.documentElement.style.setProperty("--reader-line-height", this.settings.lineHeight);
+        });
+        clearTimeout(this._sliderCommitTimer);
+        this._sliderCommitTimer = setTimeout(() => finishSliderDrag(), 180);
       });
+      this.dom.sliderLineHeight.addEventListener("change", () => finishSliderDrag());
     }
 
     if (this.dom.sliderLetterSpacing) {
       this.dom.sliderLetterSpacing.addEventListener("input", (e) => {
+        if (!this._isSliderDragging) beginSliderDrag();
         const val = parseFloat(e.target.value);
         this.settings.letterSpacing = val;
         if (this.dom.valLetterSpacing) this.dom.valLetterSpacing.textContent = `${val}px`;
-        document.documentElement.style.setProperty("--reader-letter-spacing", `${val}px`);
-        storage.saveSettings(this.settings);
-        triggerReflowSync();
+        if (this._sliderCssRafId) cancelAnimationFrame(this._sliderCssRafId);
+        this._sliderCssRafId = requestAnimationFrame(() => {
+          this._sliderCssRafId = null;
+          document.documentElement.style.setProperty("--reader-letter-spacing", `${this.settings.letterSpacing}px`);
+        });
+        clearTimeout(this._sliderCommitTimer);
+        this._sliderCommitTimer = setTimeout(() => finishSliderDrag(), 180);
       });
+      this.dom.sliderLetterSpacing.addEventListener("change", () => finishSliderDrag());
     }
 
     if (this.dom.sliderWordSpacing) {
       this.dom.sliderWordSpacing.addEventListener("input", (e) => {
+        if (!this._isSliderDragging) beginSliderDrag();
         const val = parseFloat(e.target.value);
         this.settings.wordSpacing = val;
         if (this.dom.valWordSpacing) this.dom.valWordSpacing.textContent = `${val}px`;
-        document.documentElement.style.setProperty("--reader-word-spacing", `${val}px`);
-        storage.saveSettings(this.settings);
-        triggerReflowSync();
+        if (this._sliderCssRafId) cancelAnimationFrame(this._sliderCssRafId);
+        this._sliderCssRafId = requestAnimationFrame(() => {
+          this._sliderCssRafId = null;
+          document.documentElement.style.setProperty("--reader-word-spacing", `${this.settings.wordSpacing}px`);
+        });
+        clearTimeout(this._sliderCommitTimer);
+        this._sliderCommitTimer = setTimeout(() => finishSliderDrag(), 180);
       });
+      this.dom.sliderWordSpacing.addEventListener("change", () => finishSliderDrag());
     }
 
     if (this.dom.sliderPageMargin) {
       this.dom.sliderPageMargin.addEventListener("input", (e) => {
+        if (!this._isSliderDragging) beginSliderDrag();
         const val = parseInt(e.target.value, 10);
         this.settings.marginPercent = val;
         if (this.dom.valPageMargin) {
           this.dom.valPageMargin.textContent = `${val}%`;
         }
-        const stageWidthVw = `${100 - (val * 2)}vw`;
-        document.documentElement.style.setProperty("--reader-stage-width", stageWidthVw);
-        const colGapVw = `${(val * 0.25).toFixed(2)}vw`;
-        document.documentElement.style.setProperty("--col-gap", colGapVw);
-        storage.saveSettings(this.settings);
-
-        if (this.isPdfMode) {
-          this.ruler?.refreshLines();
-          this.ruler?.applyPosition();
-          return;
-        }
-
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            this.recomputeGlobalPagination();
-            this.recalcPages();
-            this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
-            this.renderScrubberTicks();
-            this.ruler?.refreshLines();
-            this.ruler?.applyPosition();
-          });
+        if (this._sliderCssRafId) cancelAnimationFrame(this._sliderCssRafId);
+        this._sliderCssRafId = requestAnimationFrame(() => {
+          this._sliderCssRafId = null;
+          const m = this.settings.marginPercent;
+          const stageWidthVw = `${100 - (m * 2)}vw`;
+          document.documentElement.style.setProperty("--reader-stage-width", stageWidthVw);
+          const colGapVw = `${(m * 0.25).toFixed(2)}vw`;
+          document.documentElement.style.setProperty("--col-gap", colGapVw);
         });
+        clearTimeout(this._sliderCommitTimer);
+        this._sliderCommitTimer = setTimeout(() => finishSliderDrag(), 180);
       });
+      this.dom.sliderPageMargin.addEventListener("change", () => finishSliderDrag());
     }
 
     if (this.dom.columnSelects) {
@@ -2046,6 +2060,7 @@ export class LuminaApp {
         btn.addEventListener("click", async () => {
           const mode = btn.dataset.columns || "auto";
           this.settings.columnsMode = mode;
+          this._cachedColumnStep = null;
           storage.saveSettings(this.settings);
           this.applySettings();
 
@@ -2287,6 +2302,7 @@ export class LuminaApp {
         this.setSwitchState(this.dom.settingShowFooter, val);
         document.body.classList.toggle("show-footer-bar", val);
         document.body.classList.toggle("hide-footer-bar", !val);
+        this._cachedColumnStep = null;
         storage.saveSettings(this.settings);
         if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
           if (this.isPdfMode) {
@@ -3600,9 +3616,8 @@ export class LuminaApp {
     try {
       this.currentBook = book;
       this._chapterDataCache = new Map();
-      this._bionicHtmlCache = new Map();
-      this._originalBlockHtml = new WeakMap();
-      this._bionicBlockHtml = new WeakMap();
+      this._bionicChapterCache = new Map();
+      this._cachedColumnStep = null;
       this._isLoadingNextChapter = false;
       this._isLoadingPrevChapter = false;
       this._isModeTransitioning = false;
@@ -3995,13 +4010,27 @@ export class LuminaApp {
       }
     }
 
-    // 1. Okamžitý synchronní zápis do localStorage pro ochranu před reloadem/pádem záložky
-    try {
-      localStorage.setItem(`lumina_progress_${this.currentBook.id}`, JSON.stringify(progressData));
-      localStorage.setItem("lumina_last_book_id", this.currentBook.id);
-      localStorage.setItem("lumina_active_view", "reader");
-    } catch (e) {
-      console.warn("[LuminaApp] Chyba při zápisu postupu do localStorage:", e);
+    // 1. Zápis do localStorage (debounced o 150ms během otáčení stránek, nebo okamžitý pokud immediate === true)
+    const doSaveLocalStorage = () => {
+      if (!this.currentBook) return;
+      try {
+        localStorage.setItem(`lumina_progress_${this.currentBook.id}`, JSON.stringify(progressData));
+        localStorage.setItem("lumina_last_book_id", this.currentBook.id);
+        localStorage.setItem("lumina_active_view", "reader");
+      } catch (e) {
+        console.warn("[LuminaApp] Chyba při zápisu postupu do localStorage:", e);
+      }
+    };
+
+    if (this._saveLocalProgressTimer) {
+      clearTimeout(this._saveLocalProgressTimer);
+      this._saveLocalProgressTimer = null;
+    }
+
+    if (immediate) {
+      doSaveLocalStorage();
+    } else {
+      this._saveLocalProgressTimer = setTimeout(doSaveLocalStorage, 150);
     }
 
     // 2. Trvalý asynchronní zápis do IndexedDB (debounced nebo okamžitý)
@@ -4065,7 +4094,10 @@ export class LuminaApp {
     section.className = "epub-chapter-section";
     section.dataset.chapterIndex = String(chapterIndex);
 
-    section.innerHTML = rawHtml || "";
+    const htmlToRender = this.settings.fastReading
+      ? this.toBionicReadingHtml(rawHtml || "", chapterIndex)
+      : (rawHtml || "");
+    section.innerHTML = htmlToRender;
 
     const imgs = section.querySelectorAll("img");
     imgs.forEach(img => {
@@ -4217,9 +4249,6 @@ export class LuminaApp {
       if (!this.dom.readerContent.querySelector(`.epub-chapter-section[data-chapter-index="${nextIdx}"]`)) {
         const sectionEl = this.createChapterSectionElement(nextIdx, chapterData.html);
         this.dom.readerContent.appendChild(sectionEl);
-        if (this.settings.fastReading) {
-          this.updateVisibleBionicNodes();
-        }
 
         this.attachImageLoadHandlers(sectionEl, false);
 
@@ -4262,9 +4291,6 @@ export class LuminaApp {
 
         const addedHeight = vp.scrollHeight - prevScrollHeight;
         vp.scrollTop = prevScrollTop + addedHeight;
-        if (this.settings.fastReading) {
-          this.updateVisibleBionicNodes();
-        }
 
         if (this.ruler && this.ruler.enabled && Number.isFinite(this.ruler.currentY)) {
           this.ruler.currentY += addedHeight;
@@ -4351,7 +4377,6 @@ export class LuminaApp {
         }
       }
 
-      this.updateVisibleBionicNodes();
       this.updatePageUI();
 
       if (this.ruler && this.ruler.enabled) {
@@ -4601,10 +4626,64 @@ export class LuminaApp {
     }
   }
 
+  beginSliderDrag() {
+    this._isSliderDragging = true;
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.hideForPageTransition();
+    }
+    if (
+      this.settings.fastReading &&
+      !this.isPdfMode &&
+      !this.isVerticalReadingMode() &&
+      this.currentRawChapterHtml &&
+      this.dom.readerContent
+    ) {
+      this.dom.readerContent.innerHTML = this.currentRawChapterHtml;
+      this._bionicSuspendedForDrag = true;
+    }
+  }
+
+  finishSliderDrag() {
+    if (!this._isSliderDragging) return;
+    this._isSliderDragging = false;
+    if (this._sliderCommitTimer) {
+      clearTimeout(this._sliderCommitTimer);
+      this._sliderCommitTimer = null;
+    }
+    if (this._bionicSuspendedForDrag) {
+      this.renderChapterHtml();
+      this._bionicSuspendedForDrag = false;
+    }
+    this._cachedColumnStep = null;
+    storage.saveSettings(this.settings);
+    tracker.cancelCurrentPageDwell();
+
+    requestAnimationFrame(() => {
+      if (this.isPdfMode) {
+        if (this.ruler && this.ruler.enabled) {
+          this.ruler.refreshLines();
+          this.ruler.applyPosition();
+        }
+        return;
+      }
+      this.recomputeGlobalPagination();
+      this.recalcPages();
+      this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
+      this.renderScrubberTicks();
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.refreshLines();
+        this.ruler.applyPosition();
+      }
+    });
+  }
+
   renderChapterHtml() {
     if (!this.dom.readerContent) return;
     this.dom.readerContent.classList.toggle("bionic-active", !!this.settings.fastReading);
-    this.dom.readerContent.innerHTML = this.currentRawChapterHtml || "";
+    const htmlToRender = this.settings.fastReading
+      ? this.toBionicReadingHtml(this.currentRawChapterHtml || "", this.currentChapterIndex)
+      : (this.currentRawChapterHtml || "");
+    this.dom.readerContent.innerHTML = htmlToRender;
     const imgs = this.dom.readerContent.querySelectorAll("img");
     imgs.forEach(img => {
       img.loading = "eager";
@@ -4612,139 +4691,64 @@ export class LuminaApp {
     });
   }
 
-  updateVisibleBionicNodes() {
-    if (!this.dom.readerContent || this.isPdfMode) return;
-    if (!this._originalBlockHtml) {
-      this._originalBlockHtml = new WeakMap();
-    }
-    if (!this._bionicBlockHtml) {
-      this._bionicBlockHtml = new WeakMap();
-    }
-
-    const isFast = !!this.settings.fastReading;
-    this.dom.readerContent.classList.toggle("bionic-active", isFast);
-
-    if (!isFast) {
-      const appliedEls = this.dom.readerContent.querySelectorAll('[data-bionic-applied="true"]');
-      for (let i = 0; i < appliedEls.length; i++) {
-        const el = appliedEls[i];
-        const origHtml = this._originalBlockHtml.get(el);
-        if (origHtml !== undefined) {
-          el.innerHTML = origHtml;
-        }
-        el.removeAttribute("data-bionic-applied");
-      }
-      return;
-    }
-
-    const isVertical = this.isVerticalReadingMode();
-    const stage = this.dom.pagedStage || document.getElementById("paged-stage");
-    const vp = this.dom.pagedViewport || document.getElementById("paged-viewport");
-
-    let leftBound = 0;
-    let rightBound = window.innerWidth;
-    let topBound = 0;
-    let bottomBound = window.innerHeight;
-
-    if (isVertical) {
-      const vpRect = vp ? vp.getBoundingClientRect() : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, height: window.innerHeight };
-      const pageH = vpRect.height || window.innerHeight;
-      leftBound = vpRect.left - 20;
-      rightBound = vpRect.right + 20;
-      topBound = vpRect.top - pageH;
-      bottomBound = vpRect.bottom + pageH;
-    } else if (stage) {
-      const stageRect = stage.getBoundingClientRect();
-      if (stageRect.width > 20 && stageRect.height > 20) {
-        leftBound = stageRect.left + 2;
-        rightBound = stageRect.right - 2;
-        topBound = stageRect.top - 10;
-        bottomBound = stageRect.bottom + 10;
-      }
-    }
-
-    const blocks = this.dom.readerContent.querySelectorAll(BIONIC_BLOCK_SELECTOR);
-    for (let i = 0; i < blocks.length; i++) {
-      const el = blocks[i];
-      const isApplied = el.dataset.bionicApplied === "true";
-
-      if (!isApplied && el.querySelector(BIONIC_BLOCK_SELECTOR)) {
-        continue;
-      }
-
-      const rect = el.getBoundingClientRect();
-      const isVisible = (
-        rect.width > 0 &&
-        rect.height > 0 &&
-        rect.right > leftBound &&
-        rect.left < rightBound &&
-        rect.bottom > topBound &&
-        rect.top < bottomBound
-      );
-
-      if (isVisible) {
-        if (!isApplied) {
-          if (!/[\p{L}\p{N}]/u.test(el.textContent || "")) continue;
-          let origHtml = this._originalBlockHtml.get(el);
-          if (origHtml === undefined) {
-            origHtml = el.innerHTML;
-            this._originalBlockHtml.set(el, origHtml);
-          }
-          let bionicHtml = this._bionicBlockHtml.get(el);
-          if (bionicHtml === undefined) {
-            bionicHtml = this.toBionicReadingHtml(origHtml);
-            this._bionicBlockHtml.set(el, bionicHtml);
-          }
-          el.innerHTML = bionicHtml;
-          el.dataset.bionicApplied = "true";
-        }
-      } else if (isApplied) {
-        const origHtml = this._originalBlockHtml.get(el);
-        if (origHtml !== undefined) {
-          el.innerHTML = origHtml;
-        }
-        el.removeAttribute("data-bionic-applied");
-      }
-    }
-  }
-
   applyFastReadingMode() {
     if (!this.currentBook || !this.dom.readerContent || this.isPdfMode) return;
 
-    if (this._bionicIdleCallbackId) {
-      if (typeof window.cancelIdleCallback === "function") {
-        window.cancelIdleCallback(this._bionicIdleCallbackId);
-      } else {
-        clearTimeout(this._bionicIdleCallbackId);
-      }
-      this._bionicIdleCallbackId = null;
-    }
-
     this.dom.readerContent.classList.toggle("bionic-active", !!this.settings.fastReading);
-    this.updateVisibleBionicNodes();
+
+    if (this.isVerticalReadingMode()) {
+      const vp = this.dom.pagedViewport;
+      const prevMaxScroll = vp ? Math.max(1, vp.scrollHeight - vp.clientHeight) : 1;
+      const vRatio = vp ? Math.max(0, Math.min(1, vp.scrollTop / prevMaxScroll)) : 0;
+
+      const sections = this.dom.readerContent.querySelectorAll(".epub-chapter-section");
+      sections.forEach(sec => {
+        const chIdx = parseInt(sec.dataset.chapterIndex, 10);
+        const rawHtml = this._chapterDataCache?.get(chIdx)?.html
+          || (chIdx === this.currentChapterIndex ? this.currentRawChapterHtml : null);
+        if (rawHtml !== null && rawHtml !== undefined) {
+          sec.innerHTML = this.settings.fastReading
+            ? this.toBionicReadingHtml(rawHtml, chIdx)
+            : rawHtml;
+        }
+      });
+
+      if (vp) {
+        const newMaxScroll = Math.max(0, vp.scrollHeight - vp.clientHeight);
+        vp.scrollTop = Math.round(vRatio * newMaxScroll);
+      }
+      this.recalcPages();
+    } else {
+      const ratio = this.totalPagesInChapter > 1
+        ? this.currentPageIndex / (this.totalPagesInChapter - 1)
+        : 0;
+      this.renderChapterHtml();
+      this.recalcPages();
+      const targetPage = this.totalPagesInChapter > 1
+        ? Math.max(0, Math.min(this.totalPagesInChapter - 1, Math.round(ratio * (this.totalPagesInChapter - 1))))
+        : 0;
+      this.goToPage(targetPage, null, true, { isReflow: true });
+    }
 
     if (this.ruler && this.ruler.enabled) {
       this.ruler.refreshLines();
-      if (this.ruler.wordTracking) {
-        this.ruler.refreshWords();
-      }
       this.ruler.applyPosition();
     }
   }
 
   toBionicReadingHtml(html, chapterIndex = null) {
     if (!html || typeof html !== "string") return html;
-    if (!this._bionicHtmlCache) {
-      this._bionicHtmlCache = new Map();
+    if (!this._bionicChapterCache) {
+      this._bionicChapterCache = new Map();
     }
     const cacheKey = (chapterIndex !== null && chapterIndex !== undefined && !Number.isNaN(chapterIndex))
       ? `${this.currentBook?.id || "book"}:${chapterIndex}:${html.length}`
       : `raw:${html.length}:${html.slice(0, 48)}:${html.slice(-48)}`;
 
-    const cachedEntry = this._bionicHtmlCache.get(cacheKey);
+    const cachedEntry = this._bionicChapterCache.get(cacheKey);
     if (cachedEntry && cachedEntry.source === html) {
-      this._bionicHtmlCache.delete(cacheKey);
-      this._bionicHtmlCache.set(cacheKey, cachedEntry);
+      this._bionicChapterCache.delete(cacheKey);
+      this._bionicChapterCache.set(cacheKey, cachedEntry);
       return cachedEntry.result;
     }
 
@@ -4759,13 +4763,13 @@ export class LuminaApp {
         return `<b class="bionic-fixation">${word.slice(0, boldLen)}</b>${word.slice(boldLen)}`;
       });
 
-      if (this._bionicHtmlCache.size >= 10) {
-        const oldestKey = this._bionicHtmlCache.keys().next().value;
+      if (this._bionicChapterCache.size >= 10) {
+        const oldestKey = this._bionicChapterCache.keys().next().value;
         if (oldestKey !== undefined) {
-          this._bionicHtmlCache.delete(oldestKey);
+          this._bionicChapterCache.delete(oldestKey);
         }
       }
-      this._bionicHtmlCache.set(cacheKey, { source: html, result });
+      this._bionicChapterCache.set(cacheKey, { source: html, result });
       return result;
     } catch (e) {
       console.warn("Chyba při formátování rychlého čtení (Bionic):", e);
@@ -4865,7 +4869,6 @@ export class LuminaApp {
       if (this.dom.readerContent) {
         this.dom.readerContent.style.transform = "none";
       }
-      this.updateVisibleBionicNodes();
       this.updatePageUI();
       this.saveProgress();
       if (this.ruler && this.ruler.enabled) {
@@ -4880,6 +4883,12 @@ export class LuminaApp {
     const { stageWidth, gap, exactStep } = this.getExactColumnStep();
     this.pageGap = gap;
     const offset = this.currentPageIndex * exactStep;
+
+    // Okamžitá hardwarově akcelerovaná CSS transformace stránky bez blokování snímku
+    if (this.dom.readerContent) {
+      this.dom.readerContent.style.transition = "none";
+      this.dom.readerContent.style.transform = `translate3d(-${offset.toFixed(2)}px, 0, 0)`;
+    }
 
     const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
     const direction = explicitDirection !== null
@@ -4897,7 +4906,7 @@ export class LuminaApp {
     this.isNavigating = true;
     this.isNavigatingPage = true;
     this.isLineLocked = true;
-    if (this.ruler) {
+    if (this.ruler && this.ruler.enabled) {
       this.ruler.isLineLocked = true;
       this.ruler.isNavigating = true;
       this.ruler.isNavigatingPage = true;
@@ -4909,7 +4918,7 @@ export class LuminaApp {
 
     clearTimeout(this._navSafetyTimer);
     this._navSafetyTimer = setTimeout(() => {
-      if (this.isNavigating || this.isLineLocked || this.ruler?.isLineLocked) {
+      if (this.isNavigating || this.isLineLocked || (this.ruler?.enabled && this.ruler?.isLineLocked)) {
         console.warn('Navigation lock timed out. Forcing release.');
         this.isNavigating = false;
         this.isNavigatingPage = false;
@@ -4917,7 +4926,7 @@ export class LuminaApp {
         if (stage) stage.classList.remove("is-turning-page");
         if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
         document.body.classList.remove("is-turning-page");
-        if (this.ruler) {
+        if (this.ruler && this.ruler.enabled) {
           this.ruler.forceReleaseNavigationLocks();
         }
       }
@@ -4932,19 +4941,13 @@ export class LuminaApp {
       if (stage) stage.classList.remove("is-turning-page");
       if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
       document.body.classList.remove("is-turning-page");
-      if (this.ruler) {
+      if (this.ruler && this.ruler.enabled) {
         this.ruler.forceReleaseNavigationLocks();
       }
       this.navigatingPageTimer = null;
     }, 200);
 
     try {
-      if (this.dom.readerContent) {
-        this.dom.readerContent.style.transition = "none";
-        this.dom.readerContent.style.transform = `translate3d(-${(this.currentPageIndex * exactStep).toFixed(2)}px, 0, 0)`;
-      }
-      this.updateVisibleBionicNodes();
-
       // Zaznamenání přechodu stránky do trackeru s přesným počtem viditelných slov a dwell time
       if (isPageChanged || options.isInitialLoad) {
         this.wordsCreditedOnCurrentPage = 0;
@@ -4970,14 +4973,25 @@ export class LuminaApp {
 
       this.updatePageUI();
 
-      // Uložení pozice do storage (debounced v saveProgress, synchronně do localStorage)
-      this.saveProgress();
+      // Odložené uložení pozice do storage (debounced o 150ms, aby localStorage neblokoval snímek)
+      this.saveProgress(false);
 
-      // Aktualizace řádků pro pravítko na nové stránce s přesným směrem a detekcí změny
-      try {
-        this.ruler?.onPageChange(direction, isPageChanged, immediateRuler);
-      } catch (rulerErr) {
-        console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
+      // Odložená aktualizace pravítka do requestAnimationFrame, aby se otočení stránky vykreslilo okamžitě
+      if (this.ruler && this.ruler.enabled) {
+        if (this._rulerPageChangeRafId) {
+          cancelAnimationFrame(this._rulerPageChangeRafId);
+        }
+        this._rulerPageChangeRafId = requestAnimationFrame(() => {
+          this._rulerPageChangeRafId = null;
+          try {
+            if (this.ruler && this.ruler.enabled) {
+              this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
+              this.ruler.forceReleaseNavigationLocks();
+            }
+          } catch (rulerErr) {
+            console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
+          }
+        });
       }
 
       requestAnimationFrame(() => {
@@ -4988,7 +5002,7 @@ export class LuminaApp {
     } catch (err) {
       console.error('Page navigation error:', err);
     } finally {
-      // Synchronní uvolnění navigačního zámku ihned po vykreslení DOMu a změření řádků
+      // Synchronní uvolnění navigačního zámku ihned po vykreslení DOMu
       clearTimeout(this._navSafetyTimer);
       if (this.navigatingPageTimer) {
         clearTimeout(this.navigatingPageTimer);
@@ -5000,7 +5014,7 @@ export class LuminaApp {
       if (stage) stage.classList.remove("is-turning-page");
       if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
       document.body.classList.remove("is-turning-page");
-      if (this.ruler) {
+      if (this.ruler && this.ruler.enabled && !this._rulerPageChangeRafId) {
         this.ruler.forceReleaseNavigationLocks();
       }
     }

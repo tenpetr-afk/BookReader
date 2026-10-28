@@ -63,24 +63,14 @@ body.columns-2 {
   word-spacing: 0.12em;
 }
 
-/* Rychlé čtení (Bionic reading) - Zero-Reflow synthetic emboldening */
+/* Rychlé čtení (Bionic reading) - Hardware-accelerated native bold */
 .bionic-word {
   display: inline;
 }
 
-#reader-content.bionic-active {
-  color: color-mix(in srgb, var(--text-main, var(--text-color, currentColor)) 82%, transparent);
-}
-
-.bionic-fixation,
-b.bionic-fixation,
-.bionic-bold,
-b.bionic-bold {
-  font-weight: inherit;
-  -webkit-text-stroke: 0.45px currentColor;
-  text-shadow: 0.15px 0 0 currentColor, -0.15px 0 0 currentColor;
-  letter-spacing: 0;
-  color: var(--text-main, var(--text-color, currentColor));
+.bionic-fixation, .bionic-bold {
+  font-weight: 700;
+  letter-spacing: -0.012em;
 }
 
 /* ==========================================================================
@@ -194,9 +184,9 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 /* Hloubková dědičnost typografie pro přebití vložených EPUB stylů */
 #reader-stage,
 #reader-content,
-#reader-content *:not(.textLayer):not(.textLayer *),
+#reader-content *:not(.textLayer):not(.textLayer *):not(.bionic-fixation):not(.bionic-bold),
 .paged-content,
-.paged-content * {
+.paged-content *:not(.bionic-fixation):not(.bionic-bold) {
   line-height: var(--reader-line-height) !important;
   letter-spacing: var(--reader-letter-spacing) !important;
   word-spacing: var(--reader-word-spacing) !important;

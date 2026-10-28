@@ -2799,8 +2799,11 @@ export class ReadingRuler {
    */
   detectLines() {
     this.cachedLines = [];
+    if (!this.enabled) {
+      return [];
+    }
     if (this.isImageOnlyPdf) {
-      return;
+      return [];
     }
     const range = document.createRange();
     try {
@@ -2950,11 +2953,8 @@ export class ReadingRuler {
         return null;
       };
 
-      let lastBlockEl = null;
-      let lastOffsetParent = null;
-      let lastOffsetTop = null;
-      let lastOffsetLeft = -Infinity;
-      let lastLineFirstOffsetLeft = -Infinity;
+      let lastBionicBlock = null;
+      let lastBionicOffsetTop = null;
       let lastLineObj = null;
 
       const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
@@ -3065,36 +3065,24 @@ export class ReadingRuler {
         const fontSize = Math.max(6, Math.round(pdfTf ? (rawFontSize * pdfTf.scaleY) : rawFontSize));
 
         // Key optimization (offsetTop fast-skip for Bionic reading):
-        // Within the same blockElement and column, consecutive <b class="bionic-fixation"> elements
+        // Within the same blockElement, consecutive <b class="bionic-fixation"> elements
         // on the same visual line share the exact same parent.offsetTop (within <= 2px).
         // Only measure the first <b class="bionic-fixation"> of each visual line (when offsetTop changes)
         // and use the block's/column's horizontal bounds for line width.
+        let curBionicOffsetTop = null;
         if (isBionicFixation) {
-          const curOffsetTop = parent.offsetTop;
-          const curOffsetLeft = parent.offsetLeft;
-          const curOffsetParent = parent.offsetParent;
-
+          curBionicOffsetTop = parent.offsetTop;
           if (
-            blockElement === lastBlockEl &&
-            curOffsetParent === lastOffsetParent &&
-            lastOffsetTop !== null &&
-            Math.abs(curOffsetTop - lastOffsetTop) <= 2 &&
-            curOffsetLeft >= lastOffsetLeft - 4 &&
-            (curOffsetLeft - lastLineFirstOffsetLeft) < maxColSpan
+            blockElement === lastBionicBlock &&
+            lastBionicOffsetTop !== null &&
+            Math.abs(curBionicOffsetTop - lastBionicOffsetTop) <= 2
           ) {
-            lastOffsetLeft = curOffsetLeft;
             continue;
           }
-
-          lastBlockEl = blockElement;
-          lastOffsetParent = curOffsetParent;
-          lastOffsetTop = curOffsetTop;
-          lastOffsetLeft = curOffsetLeft;
-          lastLineFirstOffsetLeft = curOffsetLeft;
           lastLineObj = null;
         } else {
-          lastBlockEl = null;
-          lastOffsetTop = null;
+          lastBionicBlock = null;
+          lastBionicOffsetTop = null;
           lastLineObj = null;
         }
 
@@ -3137,6 +3125,8 @@ export class ReadingRuler {
 
         try {
           if (isBionicFixation && parentRect && parentRect.width > 0 && parentRect.height > 0 && parentRect.height <= fontSize * 2.2) {
+            lastBionicBlock = blockElement;
+            lastBionicOffsetTop = curBionicOffsetTop;
             let colRightBound = stageRight;
             if (isVertical) {
               colRightBound = Math.min(viewW, blockRect.right);
@@ -3156,6 +3146,10 @@ export class ReadingRuler {
             };
             lastLineObj = pushLineRect(lineRect, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
             continue;
+          }
+          if (isBionicFixation) {
+            lastBionicBlock = blockElement;
+            lastBionicOffsetTop = curBionicOffsetTop;
           }
           range.selectNodeContents(textNode);
           const rects = range.getClientRects();
@@ -3989,7 +3983,10 @@ export class ReadingRuler {
    * Zmapuje přesné obdélníky všech viditelných slov na aktuální stránce.
    */
   refreshWords() {
-    if (!this.wordTracking) return [];
+    if (!this.enabled || !this.wordTracking) {
+      this.cachedWords = [];
+      return [];
+    }
     this.cachedWords = [];
     if (this.isImageOnlyPdf) {
       return [];
