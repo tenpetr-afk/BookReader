@@ -61,6 +61,10 @@ export class LuminaApp {
     this._sliderCssRafId = null;
     this._sliderCommitTimer = null;
     this._saveLocalProgressTimer = null;
+    this._saveProgressTimer = null;
+    this._supabaseSyncTimer = null;
+    this._libraryNeedsRefresh = false;
+    this._statsNeedRefresh = false;
     this._rulerPageChangeRafId = null;
     this._isLoadingNextChapter = false;
     this._isLoadingPrevChapter = false;
@@ -3495,6 +3499,12 @@ export class LuminaApp {
     });
 
     supabaseSync.onSyncCompleted(async (stats) => {
+      const isReaderActive = this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden");
+      if (isReaderActive) {
+        this._libraryNeedsRefresh = true;
+        this._statsNeedRefresh = true;
+        return;
+      }
       console.log("[LuminaApp] Cloud sync byl dokončen, obnovuji statistiky a knihovnu:", stats);
       await this.refreshStatsUI();
       await this.renderLibrary();
@@ -4033,6 +4043,9 @@ export class LuminaApp {
       this._saveLocalProgressTimer = setTimeout(doSaveLocalStorage, 150);
     }
 
+    // Příznak pro bezpečný refresh knihovny při návratu ze čtečky
+    this._libraryNeedsRefresh = true;
+
     // 2. Trvalý asynchronní zápis do IndexedDB (debounced nebo okamžitý)
     if (this.saveProgressTimer) {
       clearTimeout(this.saveProgressTimer);
@@ -4043,13 +4056,31 @@ export class LuminaApp {
       storage.updateBookProgress(this.currentBook.id, progressData).catch(err => {
         console.warn("[LuminaApp] Chyba při ukládání postupu do IndexedDB:", err);
       });
-      supabaseSync.syncProgress(this.currentBook.id, progressData, { immediate });
     };
 
     if (immediate) {
       doSaveIDB();
     } else {
       this.saveProgressTimer = setTimeout(doSaveIDB, 300);
+    }
+
+    // 3. Asynchronní cloud synchronizace (Supabase) - debounced minimálně o 1500ms
+    if (this._supabaseSyncTimer) {
+      clearTimeout(this._supabaseSyncTimer);
+      this._supabaseSyncTimer = null;
+    }
+
+    const doSyncCloud = (isImmediate) => {
+      supabaseSync.syncProgress(this.currentBook.id, progressData, { immediate: isImmediate });
+    };
+
+    if (immediate) {
+      doSyncCloud(true);
+    } else {
+      this._supabaseSyncTimer = setTimeout(() => {
+        this._supabaseSyncTimer = null;
+        doSyncCloud(false);
+      }, 1500);
     }
   }
 
@@ -4742,14 +4773,21 @@ export class LuminaApp {
       this._bionicChapterCache = new Map();
     }
     const cacheKey = (chapterIndex !== null && chapterIndex !== undefined && !Number.isNaN(chapterIndex))
-      ? `${this.currentBook?.id || "book"}:${chapterIndex}:${html.length}`
+      ? `${this.currentBook?.id || "book"}:${chapterIndex}`
       : `raw:${html.length}:${html.slice(0, 48)}:${html.slice(-48)}`;
 
     const cachedEntry = this._bionicChapterCache.get(cacheKey);
-    if (cachedEntry && cachedEntry.source === html) {
-      this._bionicChapterCache.delete(cacheKey);
-      this._bionicChapterCache.set(cacheKey, cachedEntry);
-      return cachedEntry.result;
+    if (cachedEntry) {
+      if (typeof cachedEntry === "string") {
+        this._bionicChapterCache.delete(cacheKey);
+        this._bionicChapterCache.set(cacheKey, cachedEntry);
+        return cachedEntry;
+      }
+      if (cachedEntry.source === html) {
+        this._bionicChapterCache.delete(cacheKey);
+        this._bionicChapterCache.set(cacheKey, cachedEntry);
+        return cachedEntry.result;
+      }
     }
 
     try {
@@ -4870,7 +4908,13 @@ export class LuminaApp {
         this.dom.readerContent.style.transform = "none";
       }
       this.updatePageUI();
-      this.saveProgress();
+      if (this._saveProgressTimer) {
+        clearTimeout(this._saveProgressTimer);
+      }
+      this._saveProgressTimer = setTimeout(() => {
+        this._saveProgressTimer = null;
+        this.saveProgress(false);
+      }, 150);
       if (this.ruler && this.ruler.enabled) {
         this.ruler.refreshLines();
         if (this.ruler.wordTracking) this.ruler.refreshWords();
@@ -4973,8 +5017,14 @@ export class LuminaApp {
 
       this.updatePageUI();
 
-      // Odložené uložení pozice do storage (debounced o 150ms, aby localStorage neblokoval snímek)
-      this.saveProgress(false);
+      // Odložené uložení pozice do storage (localStorage zápisy neběží synchronně během animačního snímku přechodu strany)
+      if (this._saveProgressTimer) {
+        clearTimeout(this._saveProgressTimer);
+      }
+      this._saveProgressTimer = setTimeout(() => {
+        this._saveProgressTimer = null;
+        this.saveProgress(false);
+      }, 150);
 
       // Odložená aktualizace pravítka do requestAnimationFrame, aby se otočení stránky vykreslilo okamžitě
       if (this.ruler && this.ruler.enabled) {
@@ -5630,7 +5680,7 @@ export class LuminaApp {
 
   // --- ZOBRAZENÍ A MODÁLY ---
 
-  showLibraryView() {
+  async showLibraryView() {
     this.saveProgress(true);
     localStorage.setItem("lumina_active_view", "library");
     tracker.stopSession();
@@ -5654,7 +5704,10 @@ export class LuminaApp {
       this.pdfLoader = null;
     }
     this.isPdfMode = false;
-    this.renderLibrary();
+    if (this._libraryNeedsRefresh) {
+      await this.renderLibrary();
+      this._libraryNeedsRefresh = false;
+    }
   }
 
   showReaderView() {
@@ -6182,6 +6235,7 @@ export class LuminaApp {
     }
 
     await this.refreshStatsUI();
+    this._statsNeedRefresh = false;
   }
 
   async initSessionAnalytics() {

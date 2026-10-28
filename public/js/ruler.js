@@ -2957,16 +2957,94 @@ export class ReadingRuler {
       let lastBionicOffsetTop = null;
       let lastLineObj = null;
 
-      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+      const BLOCK_TAGS = new Set([
+        "P", "LI", "BLOCKQUOTE", "H1", "H2", "H3", "H4", "H5", "H6",
+        "DIV", "SECTION", "ARTICLE", "HEADER", "FOOTER", "ASIDE", "NAV",
+        "TABLE", "TR", "TD", "TH", "PRE", "DD", "DT"
+      ]);
+
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            if (node === content) {
+              return NodeFilter.FILTER_SKIP;
+            }
+            const tag = node.tagName;
+            if (
+              tag === "SCRIPT" || tag === "STYLE" || tag === "SVG" || tag === "PICTURE" ||
+              tag === "BUTTON" ||
+              node.classList.contains("ruler-floating-controls") ||
+              node.classList.contains("ruler-quick-popover") ||
+              node.classList.contains("toast-container")
+            ) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            if (tag === "FIGURE" || node.classList.contains("chapter-illustration")) {
+              if (!node.closest("figcaption")) return NodeFilter.FILTER_REJECT;
+            }
+
+            // Ořezání celých blokových elementů (odstavců) mimo viditelný viewport ještě před sestoupením do vnořených uzlů
+            if (BLOCK_TAGS.has(tag)) {
+              let rect = blockRectCache.get(node);
+              if (!rect) {
+                rect = node.getBoundingClientRect();
+                blockRectCache.set(node, rect);
+              }
+
+              if (!isVertical && hasValidStageBounds) {
+                if (
+                  rect.right < stageLeft - 30 ||
+                  rect.left > stageRight + 30 ||
+                  rect.bottom < stageTop - 30 ||
+                  rect.top > stageBottom + 30
+                ) {
+                  offscreenBlocks.add(node);
+                  return NodeFilter.FILTER_REJECT;
+                }
+              } else if (isVertical) {
+                if (
+                  rect.bottom < -30 ||
+                  rect.top > viewH + 30 ||
+                  rect.right < -30 ||
+                  rect.left > viewW + 30
+                ) {
+                  offscreenBlocks.add(node);
+                  return NodeFilter.FILTER_REJECT;
+                }
+              }
+
+              let compStyle = styleCache.get(node);
+              if (!compStyle) {
+                try {
+                  compStyle = window.getComputedStyle(node);
+                  styleCache.set(node, compStyle);
+                } catch (e) {
+                  offscreenBlocks.add(node);
+                  return NodeFilter.FILTER_REJECT;
+                }
+              }
+              if (compStyle.display === "none" || compStyle.visibility === "hidden" || parseFloat(compStyle.opacity) === 0) {
+                offscreenBlocks.add(node);
+                return NodeFilter.FILTER_REJECT;
+              }
+
+              return NodeFilter.FILTER_SKIP;
+            }
+
+            return NodeFilter.FILTER_SKIP;
+          }
+
+          // Zpracování TEXT_NODE
           const parent = node.parentElement;
           if (!parent) return NodeFilter.FILTER_REJECT;
-          if (parent.closest('script, style, svg, picture')) return NodeFilter.FILTER_REJECT;
-          if (parent.closest('figure, .chapter-illustration') && !parent.closest('figcaption')) return NodeFilter.FILTER_REJECT;
-          if (parent.closest('.ruler-floating-controls, .ruler-quick-popover, .toast-container, button')) return NodeFilter.FILTER_REJECT;
 
-          const rawContentText = (node.textContent || "").replace(/[\s\u00A0\uFEFF]/g, "");
-          if (!rawContentText || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(rawContentText)) return NodeFilter.FILTER_REJECT;
+          const text = node.textContent;
+          if (!text || text.length === 0) return NodeFilter.FILTER_REJECT;
+
+          const rawContentText = text.replace(/[\s\u00A0\uFEFF]/g, "");
+          if (!rawContentText || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(rawContentText)) {
+            return NodeFilter.FILTER_REJECT;
+          }
 
           return NodeFilter.FILTER_ACCEPT;
         }
@@ -2977,39 +3055,15 @@ export class ReadingRuler {
         const parent = textNode.parentElement;
         if (!parent) continue;
 
-        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre') || parent;
+        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre, dd, dt') || parent;
         if (offscreenBlocks.has(blockElement)) {
           continue;
         }
 
-        // Pre-filter at the block element level first so Bionic <b> nodes in offscreen paragraphs
-        // never trigger thousands of per-word getBoundingClientRect() calls across the chapter.
         let blockRect = blockRectCache.get(blockElement);
         if (!blockRect) {
           blockRect = blockElement.getBoundingClientRect();
           blockRectCache.set(blockElement, blockRect);
-
-          if (!isVertical && hasValidStageBounds) {
-            if (
-              blockRect.right < stageLeft - 20 ||
-              blockRect.left > stageRight + 20 ||
-              blockRect.bottom < stageTop - 20 ||
-              blockRect.top > stageBottom + 20
-            ) {
-              offscreenBlocks.add(blockElement);
-              continue;
-            }
-          } else if (isVertical) {
-            if (
-              blockRect.right < -20 ||
-              blockRect.left > viewW + 20 ||
-              blockRect.bottom < -20 ||
-              blockRect.top > viewH + 20
-            ) {
-              offscreenBlocks.add(blockElement);
-              continue;
-            }
-          }
         }
 
         let compStyle = styleCache.get(blockElement);
@@ -3018,11 +3072,6 @@ export class ReadingRuler {
             compStyle = window.getComputedStyle(blockElement);
             styleCache.set(blockElement, compStyle);
           } catch (e) {
-            offscreenBlocks.add(blockElement);
-            continue;
-          }
-          if (compStyle.display === 'none' || compStyle.visibility === 'hidden' || parseFloat(compStyle.opacity) === 0) {
-            offscreenBlocks.add(blockElement);
             continue;
           }
         }
@@ -3031,10 +3080,8 @@ export class ReadingRuler {
           parent.classList.contains('bionic-fixation') || parent.classList.contains('bionic-bold')
         );
 
-        // When Bionic reading is active, each word has a <b class="bionic-fixation"> prefix followed
-        // by an unbolded suffix text node on the exact same line. Skip the suffix text node (and any
-        // pure-punctuation leading text node attached to a following <b class="bionic-fixation">) in
-        // detectLines() to avoid redundant Range.getClientRects() calls per word.
+        // Při aktivním bionickém čtení má každé slovo prefix <b class="bionic-fixation"> a za ním textový uzel
+        // na stejném řádku. Přeskočíme sufixový textový uzel i interpunkční uzly před dalším slovem.
         if (!isBionicFixation) {
           const prevSib = textNode.previousSibling;
           if (
@@ -3064,14 +3111,13 @@ export class ReadingRuler {
         const pageSlot = isPdfEl ? (parent.closest('.pdf-page-slot, .pdf-page-container') || textLayer) : null;
         const fontSize = Math.max(6, Math.round(pdfTf ? (rawFontSize * pdfTf.scaleY) : rawFontSize));
 
-        // Key optimization (offsetTop fast-skip for Bionic reading):
-        // Within the same blockElement, consecutive <b class="bionic-fixation"> elements
-        // on the same visual line share the exact same parent.offsetTop (within <= 2px).
-        // Only measure the first <b class="bionic-fixation"> of each visual line (when offsetTop changes)
-        // and use the block's/column's horizontal bounds for line width.
-        let curBionicOffsetTop = null;
+        // Rychlý skip podle offsetTop pro Bionic reading:
+        // V rámci stejného blockElement sdílejí po sobě jdoucí elementy <b class="bionic-fixation">
+        // na stejném vizuálním řádku stejný offsetTop (s tolerancí <= 2px).
+        // Měříme getBoundingClientRect() pouze jednou na začátku každého unikátního řádku a znovupoužijeme
+        // horizontální rozsah sloupce.
         if (isBionicFixation) {
-          curBionicOffsetTop = parent.offsetTop;
+          const curBionicOffsetTop = parent.offsetTop;
           if (
             blockElement === lastBionicBlock &&
             lastBionicOffsetTop !== null &&
@@ -3079,11 +3125,51 @@ export class ReadingRuler {
           ) {
             continue;
           }
-          lastLineObj = null;
+
+          let parentRect = parentRectCache.get(parent);
+          if (!parentRect) {
+            parentRect = parent.getBoundingClientRect();
+            parentRectCache.set(parent, parentRect);
+          }
+
+          if (parentRect && parentRect.width > 0 && parentRect.height > 0) {
+            lastBionicBlock = blockElement;
+            lastBionicOffsetTop = curBionicOffsetTop;
+
+            let colLeftBound = stageLeft;
+            let colRightBound = stageRight;
+            if (isVertical) {
+              colLeftBound = Math.max(0, blockRect.left);
+              colRightBound = Math.min(viewW, blockRect.right);
+            } else if (isTwoColEarly) {
+              if (parentRect.left < stageCenterX) {
+                colLeftBound = Math.max(stageLeft, blockRect.left);
+                colRightBound = Math.min(col0RightEarly, blockRect.right);
+              } else {
+                colLeftBound = Math.max(stageCenterX + colGapEarly / 2, blockRect.left);
+                colRightBound = Math.min(stageRight, blockRect.right);
+              }
+            } else {
+              colLeftBound = Math.max(stageLeft, blockRect.left);
+              colRightBound = Math.min(stageRight, blockRect.right);
+            }
+
+            const lineRect = {
+              top: parentRect.top,
+              bottom: parentRect.bottom,
+              height: parentRect.height,
+              left: colLeftBound,
+              right: colRightBound
+            };
+            lastLineObj = pushLineRect(lineRect, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
+            continue;
+          }
         } else {
-          lastBionicBlock = null;
-          lastBionicOffsetTop = null;
-          lastLineObj = null;
+          if (blockElement !== lastBionicBlock) {
+            lastBionicBlock = null;
+            lastBionicOffsetTop = null;
+            lastLineObj = null;
+          }
         }
 
         let parentRect = null;
@@ -3124,33 +3210,6 @@ export class ReadingRuler {
         }
 
         try {
-          if (isBionicFixation && parentRect && parentRect.width > 0 && parentRect.height > 0 && parentRect.height <= fontSize * 2.2) {
-            lastBionicBlock = blockElement;
-            lastBionicOffsetTop = curBionicOffsetTop;
-            let colRightBound = stageRight;
-            if (isVertical) {
-              colRightBound = Math.min(viewW, blockRect.right);
-            } else if (isTwoColEarly) {
-              colRightBound = (parentRect.left < stageCenterX)
-                ? Math.min(col0RightEarly, blockRect.right)
-                : Math.min(stageRight, blockRect.right);
-            } else {
-              colRightBound = Math.min(stageRight, blockRect.right);
-            }
-            const lineRect = {
-              top: parentRect.top,
-              bottom: parentRect.bottom,
-              height: parentRect.height,
-              left: parentRect.left,
-              right: Math.max(parentRect.right, colRightBound)
-            };
-            lastLineObj = pushLineRect(lineRect, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
-            continue;
-          }
-          if (isBionicFixation) {
-            lastBionicBlock = blockElement;
-            lastBionicOffsetTop = curBionicOffsetTop;
-          }
           range.selectNodeContents(textNode);
           const rects = range.getClientRects();
           if (!rects || rects.length === 0) continue;
