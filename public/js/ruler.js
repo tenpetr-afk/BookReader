@@ -46,6 +46,7 @@ export class ReadingRuler {
     this.height = 36; // aktuální efektivní výška
     this.uniformLineHeight = null; // Jednotná výška pravítka podle intra-paragraph pitch
     this.lineHeightByFontSize = new Map(); // Mapa výšek pravítka podle velikosti písma
+    this.glyphHeightByFontSize = new Map(); // Mapa mediánových výšek glyfů podle velikosti písma
     this.autoHeight = true; // Automatická výška podle velikosti řádku
     this.snapToLines = true; // Magnetická přilnavost k řádkům
     this.wordTracking = false; // Sledování jednotlivých slov
@@ -2823,6 +2824,7 @@ export class ReadingRuler {
       return [];
     }
     this.cachedLines = [];
+    this.glyphHeightByFontSize = new Map();
     if (!this.enabled) {
       return [];
     }
@@ -3104,9 +3106,19 @@ export class ReadingRuler {
           parent.classList.contains('bionic-fixation') || parent.classList.contains('bionic-bold')
         );
 
+        const blockHasBionic = (lastBionicBlock === blockElement) || (
+          blockElement.querySelector &&
+          (blockElement.querySelector('.bionic-fixation, .bionic-bold') !== null)
+        );
+
         // Při aktivním bionickém čtení má každé slovo prefix <b class="bionic-fixation"> a za ním textový uzel
         // na stejném řádku. Přeskočíme sufixový textový uzel i interpunkční uzly před dalším slovem.
         if (!isBionicFixation) {
+          if (blockHasBionic && lastBionicBlock === blockElement && lastBionicOffsetTop !== null) {
+            if (parent !== blockElement && parent.offsetTop != null && Math.abs(parent.offsetTop - lastBionicOffsetTop) <= 2) {
+              continue;
+            }
+          }
           const prevSib = textNode.previousSibling;
           if (
             prevSib &&
@@ -3152,7 +3164,22 @@ export class ReadingRuler {
 
           let parentRect = parentRectCache.get(parent);
           if (!parentRect) {
-            parentRect = parent.getBoundingClientRect();
+            let measuredRect = null;
+            const nextSib = parent.nextSibling;
+            if (nextSib && nextSib.nodeType === Node.TEXT_NODE && (nextSib.textContent || "").length > 0) {
+              try {
+                const bionicRange = document.createRange();
+                bionicRange.setStartBefore(parent);
+                const match = /^\S+/.exec(nextSib.textContent || "");
+                const endOffset = match ? match[0].length : Math.min(1, nextSib.textContent.length);
+                bionicRange.setEnd(nextSib, endOffset);
+                const rRects = bionicRange.getClientRects();
+                if (rRects && rRects.length > 0) {
+                  measuredRect = rRects[0];
+                }
+              } catch (e) {}
+            }
+            parentRect = measuredRect || parent.getBoundingClientRect();
             parentRectCache.set(parent, parentRect);
           }
 
@@ -3239,7 +3266,16 @@ export class ReadingRuler {
           if (!rects || rects.length === 0) continue;
 
           for (let i = 0; i < rects.length; i++) {
-            pushLineRect(rects[i], parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
+            const r = rects[i];
+            if (blockHasBionic && lastLineObj && lastLineObj.blockElement === blockElement) {
+              const rCenterY = r.top + r.height / 2 + vScrollTop;
+              if (Math.abs(rCenterY - lastLineObj.centerY) <= Math.max(4, lastLineObj.height * 0.5)) {
+                // A Bionic line was already recorded for this visual line in this block;
+                // do not merge mixed text node rects with different box metrics
+                continue;
+              }
+            }
+            pushLineRect(r, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
           }
         } catch (e) {}
       }
@@ -3403,17 +3439,21 @@ export class ReadingRuler {
               Math.abs(r.centerY - prev.centerY) <= Math.max(4, Math.min(r.height, prev.height) * 0.45)
             );
             if (shouldMerge) {
+              const prevW = Math.max(1, (prev.right ?? 0) - (prev.left ?? 0));
+              const totalW = prevW + fragW;
+              const weightedCenterY = ((prev.centerY * prevW) + (r.centerY * fragW)) / totalW;
               prev.top = Math.min(prev.top, r.top);
               prev.bottom = Math.max(prev.bottom, r.bottom);
               prev.left = Math.min(prev.left ?? r.left, r.left);
               prev.right = Math.max(prev.right ?? r.right, r.right);
               prev.height = prev.bottom - prev.top;
-              prev.centerY = prev.top + prev.height / 2;
-              if (prev.isPdfLine || r.isPdfLine) {
+              if (this.isPdfMode || prev.isPdfLine || r.isPdfLine) {
+                prev.centerY = prev.top + prev.height / 2;
                 prev._fsWeightedSum = (prev._fsWeightedSum || ((prev.fontSize || 16) * Math.max(1, prev.right - prev.left))) + (r.fontSize || 16) * fragW;
                 prev._fsWeightTotal = (prev._fsWeightTotal || Math.max(1, prev.right - prev.left)) + fragW;
                 prev.fontSize = Math.round(prev._fsWeightedSum / prev._fsWeightTotal);
               } else {
+                prev.centerY = weightedCenterY;
                 prev.fontSize = Math.max(prev.fontSize || 0, r.fontSize || 0);
               }
               prev.element = prev.element || r.element || r.el;
@@ -3829,6 +3869,7 @@ export class ReadingRuler {
           ? glyphHeights[Math.floor(glyphHeights.length / 2)]
           : (fs * 1.15);
         groupMedianGlyphHeights.set(fs, medianGlyphHeight);
+        this.glyphHeightByFontSize.set(fs, medianGlyphHeight);
 
         if (this.isPdfMode) {
           // PDF Mode:
@@ -3881,6 +3922,15 @@ export class ReadingRuler {
           this.lineHeightByFontSize.set(fs, targetHeight);
         } else {
           // EPUB Mode:
+          // Normalize EPUB line top/bottom using medianGlyphHeight so bold prefixes or diacritics on individual lines don't shift line.bottom
+          for (const l of groupLines) {
+            l.rawTop = l.top;
+            l.rawBottom = l.bottom;
+            l.height = medianGlyphHeight;
+            l.top = l.centerY - medianGlyphHeight / 2;
+            l.bottom = l.centerY + medianGlyphHeight / 2;
+          }
+
           // 1. Measure the median intra-paragraph line pitch (next.centerY - cur.centerY for consecutive lines
           //    in the same column and same block element where pitch >= fontSize * 1.05 && pitch <= fontSize * 2.8)
           const intraBlockPitches = [];
@@ -5040,8 +5090,8 @@ export class ReadingRuler {
         // Strict constant offset from active line bottom across all lines
         let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
         if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          // Clamped only so it does not collide with next line's ascenders
-          const maxAllowedY = Math.round(nextLine.top - 3);
+          // Clamped only if it would literally overlap the next line's normalized top
+          const maxAllowedY = Math.floor(nextLine.top - 1);
           coverTargetY = Math.min(coverTargetY, maxAllowedY);
           if (Number.isFinite(curBottom)) {
             coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
@@ -5128,13 +5178,15 @@ export class ReadingRuler {
           }
         }
       }
-      const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + (this.uniformLineHeight || this.height) / 2);
+      const curBottom = Number.isFinite(line.bottom)
+        ? line.bottom
+        : (line.centerY + (line.height || this.glyphHeightByFontSize?.get(Math.round(line.fontSize || 16)) || this.uniformLineHeight || this.height) / 2);
 
       // Strict constant offset from active line bottom across all lines (both intra-paragraph and isolated lines)
       let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
       if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-        // Clamped only so it does not collide with next line's ascenders
-        const maxAllowedY = Math.round(nextLine.top - 3);
+        // Clamped only if it would literally overlap the next line's normalized top
+        const maxAllowedY = Math.floor(nextLine.top - 1);
         coverTargetY = Math.min(coverTargetY, maxAllowedY);
         if (Number.isFinite(curBottom)) {
           coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
@@ -8247,11 +8299,11 @@ export class ReadingRuler {
       } else {
         const curBottom = Number.isFinite(currentLine.bottom)
           ? currentLine.bottom
-          : (currentLine.centerY + (currentLine.height || h) / 2);
+          : (currentLine.centerY + (currentLine.height || this.glyphHeightByFontSize?.get(Math.round(currentLine.fontSize || 16)) || h) / 2);
 
         let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
         if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          const maxAllowedY = Math.round(nextLine.top - 3);
+          const maxAllowedY = Math.floor(nextLine.top - 1);
           coverTargetY = Math.min(coverTargetY, maxAllowedY);
           if (Number.isFinite(curBottom)) {
             coverTargetY = Math.max(Math.round(curBottom), coverTargetY);

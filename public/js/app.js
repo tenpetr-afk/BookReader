@@ -171,15 +171,7 @@ export class LuminaApp {
             console.warn("[Supabase Sync] Nepodařilo se hydratovat knihy z cloudu:", e);
           }
         }
-        if (!cloudLoaded && (!books || books.length === 0)) {
-          // Automaticky nabídnout nebo nahrát vzorovou knihu
-          try {
-            await this.loadBundledSampleBook();
-            books = await storage.getAllBooks();
-          } catch (sampleErr) {
-            console.warn("[LuminaApp] Nepodařilo se načíst vzorovou knihu:", sampleErr);
-          }
-        }
+
       }
     } catch (loadErr) {
       console.warn("[LuminaApp] Chyba při synchronizaci/načítání výchozí knihovny:", loadErr);
@@ -229,7 +221,6 @@ export class LuminaApp {
       fileInput: document.getElementById("file-input"),
       dropZone: document.getElementById("drop-zone"),
       btnUpload: document.getElementById("btn-upload"),
-      btnLoadSample: document.getElementById("btn-load-sample"),
       btnToggleSettingsLib: document.getElementById("btn-toggle-settings-lib"),
       btnToggleStatsLib: document.getElementById("btn-toggle-stats-lib"),
       btnCloudSync: document.getElementById("btn-cloud-sync"),
@@ -1004,9 +995,6 @@ export class LuminaApp {
         }
       });
     });
-
-    // Vzorová kniha tlačítko
-    this.dom.btnLoadSample?.addEventListener("click", () => this.loadBundledSampleBook());
 
     // 2. Přepínání pohledů a stránkování
     if (this.dom.btnBackToLibrary) this.dom.btnBackToLibrary.addEventListener("click", () => this.showLibraryView());
@@ -3330,22 +3318,6 @@ export class LuminaApp {
       if (this.dom.fileInput) {
         this.dom.fileInput.value = "";
       }
-    }
-  }
-
-  async loadBundledSampleBook() {
-    if (this.isImporting) return;
-    try {
-      this.showToast("Načítám vzorovou knihu R.U.R...", "info");
-      const resp = await fetch("sample-books/rur.epub");
-      if (!resp.ok) throw new Error("Soubor rur.epub nebyl nalezen na serveru");
-      const blob = await resp.blob();
-      const file = new File([blob], "rur.epub", { type: "application/epub+zip" });
-      await this.handleFileUpload(file);
-    } catch (e) {
-      console.warn("Chyba při načítání vzorové knihy:", e);
-      this.showToast("Vzorovou knihu se nepodařilo načíst.", "error");
-      this.renderLibrary();
     }
   }
 
