@@ -2679,6 +2679,7 @@ export class LuminaApp {
     document.body.classList.add("in-reader-view");
     this.ruler.toggle();
     this.settings.ruler.enabled = this.ruler.enabled;
+    storage.saveSettings(this.settings);
     this.updateRulerToggleButtonUI();
     this.showToast(this.ruler.enabled ? "Pravítko zapnuto" : "Pravítko vypnuto", "info");
   }
@@ -3704,6 +3705,14 @@ export class LuminaApp {
           await this.pdfLoader.goToPage(targetPage);
         }
 
+        if (this.ruler && this.ruler.enabled) {
+          this.ruler.forceReleaseNavigationLocks();
+          this.ruler.refreshLines();
+          this.ruler.resetPositionForPage(1);
+          this.ruler.updateStyles();
+          this.ruler.applyPosition();
+        }
+
         await this.renderPdfToc();
         this.updatePageUI();
         tracker.startSession(bookId, book.title, 0, (book.totalWords || (this.pdfLoader.numPages * 250) || 1), 0);
@@ -3758,6 +3767,13 @@ export class LuminaApp {
         ? book.currentPageIndex
         : (book.pageRatio !== undefined ? { ratio: book.pageRatio } : 0);
       await this.loadCurrentChapter(targetPage);
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks();
+        this.ruler.refreshLines();
+        this.ruler.resetPositionForPage(1);
+        this.ruler.updateStyles();
+        this.ruler.applyPosition();
+      }
     } catch (err) {
       console.error("Chyba při otevírání knihy:", err);
       this.showToast(`Knihu se nepodařilo otevřít: ${err.message}`, "error");
@@ -4411,6 +4427,7 @@ export class LuminaApp {
       this.updatePageUI();
 
       if (this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks();
         this.ruler.refreshLines();
         if (this.ruler.wordTracking) this.ruler.refreshWords();
         if (this.ruler.followMode === "keyboard" && this.ruler.stationaryScreenY === null) {
@@ -4692,6 +4709,8 @@ export class LuminaApp {
     requestAnimationFrame(() => {
       if (this.isPdfMode) {
         if (this.ruler && this.ruler.enabled) {
+          this.ruler.forceReleaseNavigationLocks();
+          this.ruler.updateStyles();
           this.ruler.refreshLines();
           this.ruler.applyPosition();
         }
@@ -4702,6 +4721,8 @@ export class LuminaApp {
       this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
       this.renderScrubberTicks();
       if (this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks();
+        this.ruler.updateStyles();
         this.ruler.refreshLines();
         this.ruler.applyPosition();
       }
