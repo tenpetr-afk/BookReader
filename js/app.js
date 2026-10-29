@@ -2679,6 +2679,7 @@ export class LuminaApp {
     document.body.classList.add("in-reader-view");
     this.ruler.toggle();
     this.settings.ruler.enabled = this.ruler.enabled;
+    storage.saveSettings(this.settings);
     this.updateRulerToggleButtonUI();
     this.showToast(this.ruler.enabled ? "Pravítko zapnuto" : "Pravítko vypnuto", "info");
   }
@@ -3359,6 +3360,7 @@ export class LuminaApp {
     if (books && Array.isArray(books)) {
       books.forEach(b => storage.normalizeBookProgress(b));
     }
+    await this.refreshStatsUI();
     return this.renderBookGrid(books);
   }
 
@@ -3578,24 +3580,29 @@ export class LuminaApp {
       await this.renderLibrary();
     } else if (res?.reason === "offline") {
       this.showToast("Zařízení je offline. Knihovna funguje plně lokálně.", "warning");
+      await this.refreshStatsUI();
     } else if (res?.reason === "already_syncing") {
       this.showToast("Synchronizace již probíhá...", "info");
     } else {
       this.showToast("Synchronizace se nezdařila. Zkontrolujte připojení k internetu.", "error");
+      await this.refreshStatsUI();
     }
   }
 
   async syncWithCloud(interactive = false) {
     try {
       const res = await supabaseSync.syncAll({ silent: !interactive });
-      if (res?.success && (res.stats?.downloaded > 0 || res.stats?.updatedFromCloud > 0)) {
-        await this.renderLibrary();
-        if (this.currentBook) {
-          const refreshed = await storage.getBook(this.currentBook.id);
-          if (refreshed && (refreshed.lastReadAt || 0) > (this.currentBook.lastReadAt || 0)) {
-            this.currentBook = refreshed;
+      if (res?.success) {
+        if (res.stats?.downloaded > 0 || res.stats?.updatedFromCloud > 0) {
+          await this.renderLibrary();
+          if (this.currentBook) {
+            const refreshed = await storage.getBook(this.currentBook.id);
+            if (refreshed && (refreshed.lastReadAt || 0) > (this.currentBook.lastReadAt || 0)) {
+              this.currentBook = refreshed;
+            }
           }
         }
+        await this.refreshStatsUI();
       }
       return res;
     } catch (err) {
@@ -3704,6 +3711,14 @@ export class LuminaApp {
           await this.pdfLoader.goToPage(targetPage);
         }
 
+        if (this.ruler && this.ruler.enabled) {
+          this.ruler.forceReleaseNavigationLocks();
+          this.ruler.refreshLines();
+          this.ruler.resetPositionForPage(1);
+          this.ruler.updateStyles();
+          this.ruler.applyPosition();
+        }
+
         await this.renderPdfToc();
         this.updatePageUI();
         tracker.startSession(bookId, book.title, 0, (book.totalWords || (this.pdfLoader.numPages * 250) || 1), 0);
@@ -3758,6 +3773,13 @@ export class LuminaApp {
         ? book.currentPageIndex
         : (book.pageRatio !== undefined ? { ratio: book.pageRatio } : 0);
       await this.loadCurrentChapter(targetPage);
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks();
+        this.ruler.refreshLines();
+        this.ruler.resetPositionForPage(1);
+        this.ruler.updateStyles();
+        this.ruler.applyPosition();
+      }
     } catch (err) {
       console.error("Chyba při otevírání knihy:", err);
       this.showToast(`Knihu se nepodařilo otevřít: ${err.message}`, "error");
@@ -4411,6 +4433,7 @@ export class LuminaApp {
       this.updatePageUI();
 
       if (this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks();
         this.ruler.refreshLines();
         if (this.ruler.wordTracking) this.ruler.refreshWords();
         if (this.ruler.followMode === "keyboard" && this.ruler.stationaryScreenY === null) {
@@ -4692,6 +4715,8 @@ export class LuminaApp {
     requestAnimationFrame(() => {
       if (this.isPdfMode) {
         if (this.ruler && this.ruler.enabled) {
+          this.ruler.forceReleaseNavigationLocks();
+          this.ruler.updateStyles();
           this.ruler.refreshLines();
           this.ruler.applyPosition();
         }
@@ -4702,6 +4727,8 @@ export class LuminaApp {
       this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
       this.renderScrubberTicks();
       if (this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks();
+        this.ruler.updateStyles();
         this.ruler.refreshLines();
         this.ruler.applyPosition();
       }
@@ -5710,6 +5737,10 @@ export class LuminaApp {
       await this.renderLibrary();
       this._libraryNeedsRefresh = false;
     }
+    if (this._statsNeedRefresh) {
+      await this.refreshStatsUI();
+      this._statsNeedRefresh = false;
+    }
   }
 
   showReaderView() {
@@ -6359,6 +6390,15 @@ export class LuminaApp {
 
       const bookTitle = s.bookTitle || s.book_title || "Elektronická kniha";
 
+      const deleteBtnHtml = !s.isLive ? `
+          <button type="button" class="btn-delete-session" title="Smazat čtecí relaci" data-session-id="${sid}" aria-label="Smazat čtecí relaci">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              <line x1="10" y1="11" x2="10" y2="17"></line>
+              <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+          </button>` : "";
+
       item.innerHTML = `
         <div class="session-item-left">
           <div class="session-item-date">${dateFormatted}</div>
@@ -6368,12 +6408,53 @@ export class LuminaApp {
           <span class="session-badge-tag ${s.isLive ? "tag-live" : ""}">${durationStr}</span>
           <span class="session-badge-tag">${wordsStr}</span>
           <span class="session-badge-tag" style="color: var(--color-primary);">${speedStr}</span>
+          ${deleteBtnHtml}
         </div>
       `;
 
       item.addEventListener("click", () => {
         this.selectSession(sid);
       });
+
+      if (!s.isLive) {
+        const deleteBtn = item.querySelector(".btn-delete-session");
+        if (deleteBtn) {
+          deleteBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            if (!window.confirm("Opravdu si přejete smazat tuto čtecí relaci? Statistiky budou automaticky přepočítány.")) return;
+            const targetId = deleteBtn.getAttribute("data-session-id") || sid || s.sessionId || s.id;
+
+            try {
+              await storage.deleteReadingSession(targetId);
+            } catch (err) {
+              console.warn("[app] Chyba při mazání relace z úložiště:", err);
+            }
+
+            if (supabaseSync && typeof supabaseSync.deleteReadingSession === "function") {
+              try {
+                await supabaseSync.deleteReadingSession(targetId);
+              } catch (cloudErr) {
+                console.warn("[app] Chyba při mazání relace ze Supabase:", cloudErr);
+              }
+            }
+
+            if (this._selectedSessionId === targetId || String(this._selectedSessionId) === String(targetId)) {
+              this._selectedSessionId = null;
+            }
+
+            if (Array.isArray(this._availableSessions)) {
+              this._availableSessions = this._availableSessions.filter(sess => {
+                const sId = sess.sessionId || sess.id;
+                return sId !== targetId && String(sId) !== String(targetId);
+              });
+            }
+
+            await this.refreshStatsUI();
+            this.showToast("Čtecí relace byla smazána a statistiky přepočteny.", "success");
+          });
+        }
+      }
 
       this.dom.sessionHistoryList.appendChild(item);
     });

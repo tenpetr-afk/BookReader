@@ -467,8 +467,9 @@ export class StorageManager {
     }
 
     const db = await this.getDB();
-    const timestamp = sessionData.timestamp || (sessionData.startTime ? new Date(sessionData.startTime).getTime() : Date.now());
-    const startTime = sessionData.startTime || new Date(timestamp - (durationSeconds * 1000)).toISOString();
+    const startIso = sessionData.startTime || sessionData.start_time || null;
+    const timestamp = sessionData.timestamp || (startIso ? new Date(startIso).getTime() : Date.now());
+    const startTime = startIso || new Date(timestamp - (durationSeconds * 1000)).toISOString();
     const endTime = sessionData.endTime || new Date(timestamp).toISOString();
     let wordsRead = Math.max(0, Math.round(sessionData.words_read ?? sessionData.wordsRead ?? 0));
 
@@ -549,54 +550,91 @@ export class StorageManager {
   }
 
   /**
-   * Smaže čtecí relaci z IndexedDB i localStorage
+   * Smaže čtecí relaci z IndexedDB i localStorage a přepočítá kumulativní statistiky
+   * @param {string|number} sessionId
+   * @param {boolean} [skipRecalculate=false]
+   * @returns {Promise<{ success: boolean, error?: any }>}
    */
-  async deleteReadingSession(sessionId) {
-    if (!sessionId) return;
+  async deleteReadingSession(sessionId, skipRecalculate = false) {
+    if (!sessionId) return { success: false, error: "Missing sessionId" };
+    const targetIdStr = String(sessionId).trim();
     const db = await this.getDB();
-    return new Promise((resolve) => {
-      const stores = [];
-      if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
-      if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
 
-      if (stores.length === 0) {
-        this._removeSessionFromLocalStorage(sessionId);
-        return resolve();
-      }
+    const storeNames = [];
+    if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
+    if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
 
-      const tx = db.transaction(stores, "readwrite");
-      if (db.objectStoreNames.contains("reading_sessions")) {
-        tx.objectStore("reading_sessions").delete(sessionId);
-      }
-      if (db.objectStoreNames.contains("sessions")) {
-        const sStore = tx.objectStore("sessions");
-        const req = sStore.getAll();
-        req.onsuccess = () => {
-          for (const row of (req.result || [])) {
-            if (row.sessionId === sessionId || row.id === sessionId) {
-              sStore.delete(row.id);
-            }
+    if (storeNames.length > 0) {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(storeNames, "readwrite");
+
+        for (const sName of storeNames) {
+          const store = tx.objectStore(sName);
+
+          // 1. Direct key delete attempts
+          try { store.delete(sessionId); } catch (_) {}
+          try { store.delete(targetIdStr); } catch (_) {}
+          if (!isNaN(Number(sessionId))) {
+            try { store.delete(Number(sessionId)); } catch (_) {}
           }
-        };
-      }
 
-      tx.oncomplete = () => {
-        this._removeSessionFromLocalStorage(sessionId);
-        resolve();
-      };
-      tx.onerror = () => {
-        this._removeSessionFromLocalStorage(sessionId);
-        resolve();
-      };
-    });
+          // 2. Comprehensive cursor scan matching id, sessionId, or cursor keys
+          const cursorReq = store.openCursor();
+          cursorReq.onsuccess = (e) => {
+            const cursor = e.target.result;
+            if (cursor) {
+              const val = cursor.value || {};
+              const matches = (
+                val.id === sessionId ||
+                val.sessionId === sessionId ||
+                String(val.id) === targetIdStr ||
+                String(val.sessionId) === targetIdStr ||
+                String(cursor.key) === targetIdStr ||
+                String(cursor.primaryKey) === targetIdStr
+              );
+              if (matches) {
+                try { cursor.delete(); } catch (_) {}
+              }
+              cursor.continue();
+            }
+          };
+          cursorReq.onerror = () => reject(cursorReq.error);
+        }
+
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+    }
+
+    this._removeSessionFromLocalStorage(sessionId);
+
+    // 3. Recalculate global cumulative stats, words, time, and streak
+    if (!skipRecalculate && typeof this.recalculateAndNormalizeStats === "function") {
+      try {
+        await this.recalculateAndNormalizeStats();
+      } catch (recalcErr) {
+        console.warn("[storage] Error during stats recalculation:", recalcErr);
+      }
+    }
+
+    return { success: true };
   }
 
   _removeSessionFromLocalStorage(sessionId) {
     try {
+      const targetIdStr = String(sessionId).trim();
       const raw = localStorage.getItem("lumina_reading_sessions");
       if (raw) {
         const list = JSON.parse(raw);
-        const filtered = list.filter(s => s.sessionId !== sessionId && s.id !== sessionId);
+        const filtered = list.filter(s => {
+          const sId = String(s.sessionId ?? "").trim();
+          const id = String(s.id ?? "").trim();
+          return s.sessionId !== sessionId &&
+                 s.id !== sessionId &&
+                 sId !== targetIdStr &&
+                 id !== targetIdStr;
+        });
         localStorage.setItem("lumina_reading_sessions", JSON.stringify(filtered));
       }
     } catch (_) {}
@@ -1020,7 +1058,7 @@ export class StorageManager {
       const durationSec = Math.max(0, Math.round(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0));
       // Úplné odstranění relací nesplňujících minimální práh 5 minut (300 sekund)
       if (durationSec < 300) {
-        await this.deleteReadingSession(session.sessionId || session.id);
+        await this.deleteReadingSession(session.sessionId || session.id, true);
         normalizedCount++;
         continue;
       }
@@ -1031,7 +1069,7 @@ export class StorageManager {
       const rawSamples = Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
         ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
         : [];
-      const fallbackTs = session.timestamp || (session.startTime ? new Date(session.startTime).getTime() : Date.now());
+      const fallbackTs = session.timestamp || ((session.startTime || session.start_time) ? new Date(session.startTime || session.start_time).getTime() : Date.now());
       let cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSec, words, avgWpm, fallbackTs);
 
       // Pokud po odstranění falešných 220 WPM bodů nezůstaly žádné vzorky, vygenerujeme čisté 1-minutové body odpovídající relaci
@@ -1067,7 +1105,7 @@ export class StorageManager {
       const sampleSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
       const peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds, avgWpm) : avgWpm;
 
-      const normalizedDate = this.getLocalDateString(session.date || session.startTime || session.timestamp);
+      const normalizedDate = this.getLocalDateString(session.date || session.startTime || session.start_time || session.timestamp);
       const prevAvg = session.avg_wpm ?? session.avgWpm ?? session.wpm;
       const prevPeak = session.peak_wpm ?? session.peakWpm;
 
