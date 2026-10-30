@@ -400,6 +400,14 @@ export class ReadingRuler {
     this.navigatingPageLockoutEndTime = 0;
     this.dragCooldownEndTime = 0;
 
+    if (this.rulerEl) {
+      this.rulerEl.classList.remove("is-page-transitioning");
+      if (this.enabled) {
+        this.rulerEl.style.opacity = "1";
+        this.rulerEl.style.visibility = "visible";
+      }
+    }
+
     const stage = this.getStageElement();
     if (stage) stage.classList.remove("is-turning-page");
     document.body.classList.remove("is-turning-page");
@@ -818,6 +826,15 @@ export class ReadingRuler {
    */
   isPointerInStage(clientX, clientY) {
     if (clientX == null || clientY == null) return false;
+    if (this.snapToLines && this.cachedLines && this.cachedLines.length > 0 && this._cachedViewportRect) {
+      const rect = this._cachedViewportRect;
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      );
+    }
     const stage = document.getElementById("paged-viewport") || this.container || document.getElementById("paged-stage");
     if (!stage) return false;
     const rect = stage.getBoundingClientRect();
@@ -1317,8 +1334,9 @@ export class ReadingRuler {
    * Plynulá aktualizace pozice pravítka synchronizovaná s obnovovací frekvencí displeje (120Hz ProMotion)
    */
   schedulePointerUpdate(clientX, clientY, pointerType = "mouse") {
-    const isDocTurning = !!document.querySelector(".is-chapter-loading, .is-turning-page") ||
-      document.body.classList.contains("is-turning-page") ||
+    const isDocTurning = document.body.classList.contains("is-turning-page") ||
+      document.body.classList.contains("is-chapter-loading") ||
+      !!(this.app?.isNavigating) ||
       (Date.now() < this.navigatingPageLockoutEndTime);
     if (!isDocTurning && (pointerType === "mouse" || this.followMode === "mouse")) {
       this.isLineLocked = false;
@@ -1341,8 +1359,9 @@ export class ReadingRuler {
         this.rafPointerPending = false;
         this.pointerRafId = null;
         if (this.enabled) {
-          const turning = !!document.querySelector(".is-chapter-loading, .is-turning-page") ||
-            document.body.classList.contains("is-turning-page") ||
+          const turning = document.body.classList.contains("is-turning-page") ||
+            document.body.classList.contains("is-chapter-loading") ||
+            !!(this.app?.isNavigating) ||
             (Date.now() < this.navigatingPageLockoutEndTime);
           if (!turning && (this.pendingPointerType === "mouse" || this.followMode === "mouse")) {
             this.isLineLocked = false;
@@ -1670,8 +1689,9 @@ export class ReadingRuler {
       }
 
       if (e.pointerType === "mouse" || this.followMode === "mouse") {
-        const isDocTurning = !!document.querySelector(".is-chapter-loading, .is-turning-page") ||
-          document.body.classList.contains("is-turning-page") ||
+        const isDocTurning = document.body.classList.contains("is-turning-page") ||
+          document.body.classList.contains("is-chapter-loading") ||
+          !!(this.app?.isNavigating) ||
           (Date.now() < this.navigatingPageLockoutEndTime);
         if (!isDocTurning) {
           this.isLineLocked = false;
@@ -1775,8 +1795,9 @@ export class ReadingRuler {
       }
 
       if (e.pointerType === "mouse" || this.followMode === "mouse") {
-        const isDocTurning = !!document.querySelector(".is-chapter-loading, .is-turning-page") ||
-          document.body.classList.contains("is-turning-page") ||
+        const isDocTurning = document.body.classList.contains("is-turning-page") ||
+          document.body.classList.contains("is-chapter-loading") ||
+          !!(this.app?.isNavigating) ||
           (Date.now() < this.navigatingPageLockoutEndTime);
         if (!isDocTurning) {
           this.isLineLocked = false;
@@ -2046,8 +2067,9 @@ export class ReadingRuler {
 
     const onTouchMove = (e) => {
       if (e.pointerType === "mouse" || this.followMode === "mouse") {
-        const isDocTurning = !!document.querySelector(".is-chapter-loading, .is-turning-page") ||
-          document.body.classList.contains("is-turning-page") ||
+        const isDocTurning = document.body.classList.contains("is-turning-page") ||
+          document.body.classList.contains("is-chapter-loading") ||
+          !!(this.app?.isNavigating) ||
           (Date.now() < this.navigatingPageLockoutEndTime);
         if (!isDocTurning) {
           this.isLineLocked = false;
@@ -2181,27 +2203,29 @@ export class ReadingRuler {
       this.dragCooldownEndTime = Date.now() + 350;
     };
 
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
-    window.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    // 2. TOUCH & MOUSE EVENTS (WebKit Safari fallback pouze pro prohlížeče bez podpory PointerEvent)
+    if (!window.PointerEvent) {
+      window.addEventListener("touchstart", onTouchStart, { passive: true });
+      window.addEventListener("touchmove", onTouchMove, { passive: true });
+      window.addEventListener("touchend", onTouchEnd, { passive: true });
+      window.addEventListener("touchcancel", onTouchCancel, { passive: true });
 
-    // 3. MOUSEMOVE fallback (pro prohlížeče bez PointerEvents)
-    window.addEventListener("mousemove", (e) => {
-      if (window.PointerEvent) return;
-      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isDraggingRuler || this.isPenTouching) return;
-      if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
-        this._relativeTrackingActive = false;
-        this._verticalScrollAnchorPending = false;
-        this._scrollAnchorPhysicalY = null;
-        this._scrollAnchorVirtualY = null;
-        return;
-      }
-      if (this.followMode === "mouse") {
-        this.activePointerType = "mouse";
-        this.schedulePointerUpdate(e.clientX, e.clientY, "mouse");
-      }
-    }, { passive: true });
+      // 3. MOUSEMOVE fallback (pro prohlížeče bez PointerEvents)
+      window.addEventListener("mousemove", (e) => {
+        if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isDraggingRuler || this.isPenTouching) return;
+        if (this.isUiControl(e.target) || !this.isPointerInStage(e.clientX, e.clientY)) {
+          this._relativeTrackingActive = false;
+          this._verticalScrollAnchorPending = false;
+          this._scrollAnchorPhysicalY = null;
+          this._scrollAnchorVirtualY = null;
+          return;
+        }
+        if (this.followMode === "mouse") {
+          this.activePointerType = "mouse";
+          this.schedulePointerUpdate(e.clientX, e.clientY, "mouse");
+        }
+      }, { passive: true });
+    }
 
     // Potlačení kontextového menu při podržení
     window.addEventListener("contextmenu", (e) => {
@@ -2526,6 +2550,38 @@ export class ReadingRuler {
     }
   }
 
+  _getCachedSpreadInfoForLine(currentLine = null) {
+    const base = this._cachedSpreadInfo;
+    if (!base) return this.getActiveSpreadInfo(currentLine);
+
+    const line = currentLine || (this.activeLineIndex >= 0 && this.cachedLines ? this.cachedLines[this.activeLineIndex] : null);
+    let isLeftActive = true;
+    if (line && line.columnIndex === 1) {
+      isLeftActive = false;
+    } else if (line && line.columnIndex === 0) {
+      isLeftActive = true;
+    } else {
+      const midGap = base.midGap;
+      const refX = Number.isFinite(line?.textLeft)
+        ? line.textLeft
+        : (Number.isFinite(line?.left)
+          ? line.left
+          : (this.lastPointerX ?? (base.leftRect.left + base.leftRect.width / 2)));
+      isLeftActive = refX < midGap;
+    }
+
+    return {
+      ...base,
+      isLeftActive,
+      activeSlot: isLeftActive ? base.leftSlot : base.rightSlot,
+      inactiveSlot: isLeftActive ? base.rightSlot : base.leftSlot,
+      activeCanvas: isLeftActive ? base.leftCanvas : base.rightCanvas,
+      inactiveCanvas: isLeftActive ? base.rightCanvas : base.leftCanvas,
+      activeRect: isLeftActive ? base.leftRect : base.rightRect,
+      inactiveRect: isLeftActive ? base.rightRect : base.leftRect
+    };
+  }
+
   /**
    * Resynchronizuje a přichytí (magnetický snap) pravítko k nejbližšímu řádku, jakmile posuv ustane.
    */
@@ -2537,10 +2593,15 @@ export class ReadingRuler {
     const vScrollTop = viewport ? viewport.scrollTop : (window.scrollY || 0);
     const vHeight = viewport ? viewport.clientHeight : window.innerHeight;
 
-    if (!this.cachedLines || this.cachedLines.length === 0) {
+    if (!this.cachedLines || this.cachedLines.length === 0 || Math.abs(vScrollTop - (this._cachedScrollTop ?? -9999)) > 20) {
       this.refreshLines();
-      this.applyPosition();
-      return;
+      if (this.wordTracking) {
+        this.refreshWords();
+      }
+      if (!this.cachedLines || this.cachedLines.length === 0) {
+        this.applyPosition();
+        return;
+      }
     }
 
     if (this.followMode === "mouse") {
@@ -2746,8 +2807,11 @@ export class ReadingRuler {
    */
   detectLines() {
     this.cachedLines = [];
+    if (!this.enabled) {
+      return [];
+    }
     if (this.isImageOnlyPdf) {
-      return;
+      return [];
     }
     const range = document.createRange();
     try {
@@ -2769,6 +2833,17 @@ export class ReadingRuler {
       const isTwoColEarly = !isVertical && this.checkTwoColumnLayout(content, stageRect, null);
       const viewport = isVertical ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
       const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
+      const viewW = window.innerWidth;
+      const viewH = window.innerHeight;
+
+      const vpEl = viewport || document.getElementById("paged-viewport");
+      this._cachedStageRect = stageRect;
+      this._cachedViewportEl = vpEl;
+      this._cachedViewportRect = vpEl ? vpEl.getBoundingClientRect() : stageRect;
+      this._cachedScrollTop = vScrollTop;
+      this._cachedViewportWidth = viewW;
+      this._cachedViewportHeight = viewport ? viewport.clientHeight : viewH;
+      this._cachedCanvasRect = null;
 
       const rawLines = [];
 
@@ -2789,6 +2864,9 @@ export class ReadingRuler {
         const textLayerRect = tl.getBoundingClientRect();
 
         if (canvasRect.height > 10 && textLayerRect.height > 10) {
+          if (!this._cachedCanvasRect) {
+            this._cachedCanvasRect = canvasRect;
+          }
           const scaleY = canvasRect.height / textLayerRect.height;
           const scaleX = (canvasRect.width > 10 && textLayerRect.width > 10) ? (canvasRect.width / textLayerRect.width) : 1;
           const tf = {
@@ -2806,16 +2884,175 @@ export class ReadingRuler {
 
       // 1. Extract rects ONLY from visible TEXT_NODEs via TreeWalker
       const styleCache = new Map();
-      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+      const blockRectCache = new Map();
+      const parentRectCache = new Map();
+      const offscreenBlocks = new Set();
+      const hasTextLayer = this.isPdfMode || !!content.querySelector('.textLayer');
+      const maxColSpan = (!isVertical && hasValidStageBounds)
+        ? Math.max(120, (isTwoColEarly ? stageRect.width * 0.55 : stageRect.width) - 4)
+        : Math.max(120, viewW);
+      let colGapEarly = 0;
+      if (isTwoColEarly) {
+        try {
+          colGapEarly = parseFloat(getComputedStyle(content).columnGap) || 0;
+        } catch (e) {}
+        if (!colGapEarly) colGapEarly = viewW * 0.05;
+      }
+      const col0RightEarly = isTwoColEarly ? (stageCenterX - colGapEarly / 2) : stageRight;
+
+      const pushLineRect = (r, parentEl, blockEl, fontSize, isPdfEl, pdfTf, pageSlot) => {
+        let rTop = r.top;
+        let rBottom = r.bottom;
+        let rHeight = r.height;
+        let lineLeft = r.left;
+        let lineRight = r.right;
+
+        if (pdfTf) {
+          const relTop = r.top - pdfTf.textLayerRect.top;
+          const relBottom = r.bottom - pdfTf.textLayerRect.top;
+          rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+          rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+          rHeight = rBottom - rTop;
+
+          const relLeft = lineLeft - pdfTf.textLayerRect.left;
+          const relRight = lineRight - pdfTf.textLayerRect.left;
+          lineLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+          lineRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+        }
+
+        // Tighten stage boundary clipping in horizontal/paged mode
+        if (!isVertical && hasValidStageBounds) {
+          if (!(lineRight > stageLeft + 2 && lineLeft < stageRight - 2 && rBottom > stageTop && rTop < stageBottom)) {
+            return null;
+          }
+          const rMidX = (lineLeft + lineRight) / 2;
+          if (rMidX <= stageLeft + 2 || rMidX >= stageRight - 2) {
+            return null;
+          }
+        }
+
+        const inStage = !hasValidStageBounds || isVertical || (
+          lineRight > stageLeft + 2 &&
+          lineLeft < stageRight - 2 &&
+          rBottom > stageTop &&
+          rTop < stageBottom
+        );
+
+        if (inStage && rHeight >= 6 && (lineRight - lineLeft) >= 4) {
+          const lineObj = {
+            el: parentEl,
+            element: parentEl,
+            blockElement: blockEl,
+            pageSlot,
+            canvasRect: pdfTf ? pdfTf.canvasRect : null,
+            fontSize,
+            top: rTop + vScrollTop,
+            bottom: rBottom + vScrollTop,
+            left: lineLeft,
+            right: lineRight,
+            height: rHeight,
+            centerY: rTop + rHeight / 2 + vScrollTop,
+            hasText: true,
+            isPdfLine: !!isPdfEl
+          };
+          rawLines.push(lineObj);
+          return lineObj;
+        }
+        return null;
+      };
+
+      let lastBionicBlock = null;
+      let lastBionicOffsetTop = null;
+      let lastLineObj = null;
+
+      const BLOCK_TAGS = new Set([
+        "P", "LI", "BLOCKQUOTE", "H1", "H2", "H3", "H4", "H5", "H6",
+        "DIV", "SECTION", "ARTICLE", "HEADER", "FOOTER", "ASIDE", "NAV",
+        "TABLE", "TR", "TD", "TH", "PRE", "DD", "DT"
+      ]);
+
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            if (node === content) {
+              return NodeFilter.FILTER_SKIP;
+            }
+            const tag = node.tagName;
+            if (
+              tag === "SCRIPT" || tag === "STYLE" || tag === "SVG" || tag === "PICTURE" ||
+              tag === "BUTTON" ||
+              node.classList.contains("ruler-floating-controls") ||
+              node.classList.contains("ruler-quick-popover") ||
+              node.classList.contains("toast-container")
+            ) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            if (tag === "FIGURE" || node.classList.contains("chapter-illustration")) {
+              if (!node.closest("figcaption")) return NodeFilter.FILTER_REJECT;
+            }
+
+            // Ořezání celých blokových elementů (odstavců) mimo viditelný viewport ještě před sestoupením do vnořených uzlů
+            if (BLOCK_TAGS.has(tag)) {
+              let rect = blockRectCache.get(node);
+              if (!rect) {
+                rect = node.getBoundingClientRect();
+                blockRectCache.set(node, rect);
+              }
+
+              if (!isVertical && hasValidStageBounds) {
+                if (
+                  rect.right < stageLeft - 30 ||
+                  rect.left > stageRight + 30 ||
+                  rect.bottom < stageTop - 30 ||
+                  rect.top > stageBottom + 30
+                ) {
+                  offscreenBlocks.add(node);
+                  return NodeFilter.FILTER_REJECT;
+                }
+              } else if (isVertical) {
+                if (
+                  rect.bottom < -30 ||
+                  rect.top > viewH + 30 ||
+                  rect.right < -30 ||
+                  rect.left > viewW + 30
+                ) {
+                  offscreenBlocks.add(node);
+                  return NodeFilter.FILTER_REJECT;
+                }
+              }
+
+              let compStyle = styleCache.get(node);
+              if (!compStyle) {
+                try {
+                  compStyle = window.getComputedStyle(node);
+                  styleCache.set(node, compStyle);
+                } catch (e) {
+                  offscreenBlocks.add(node);
+                  return NodeFilter.FILTER_REJECT;
+                }
+              }
+              if (compStyle.display === "none" || compStyle.visibility === "hidden" || parseFloat(compStyle.opacity) === 0) {
+                offscreenBlocks.add(node);
+                return NodeFilter.FILTER_REJECT;
+              }
+
+              return NodeFilter.FILTER_SKIP;
+            }
+
+            return NodeFilter.FILTER_SKIP;
+          }
+
+          // Zpracování TEXT_NODE
           const parent = node.parentElement;
           if (!parent) return NodeFilter.FILTER_REJECT;
-          if (parent.closest('script, style, svg, picture')) return NodeFilter.FILTER_REJECT;
-          if (parent.closest('figure, .chapter-illustration') && !parent.closest('figcaption')) return NodeFilter.FILTER_REJECT;
-          if (parent.closest('.ruler-floating-controls, .ruler-quick-popover, .toast-container, button')) return NodeFilter.FILTER_REJECT;
 
-          const rawContentText = (node.textContent || "").replace(/[\s\u00A0\uFEFF]/g, "");
-          if (!rawContentText || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(rawContentText)) return NodeFilter.FILTER_REJECT;
+          const text = node.textContent;
+          if (!text || text.length === 0) return NodeFilter.FILTER_REJECT;
+
+          const rawContentText = text.replace(/[\s\u00A0\uFEFF]/g, "");
+          if (!rawContentText || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(rawContentText)) {
+            return NodeFilter.FILTER_REJECT;
+          }
 
           return NodeFilter.FILTER_ACCEPT;
         }
@@ -2826,28 +3063,159 @@ export class ReadingRuler {
         const parent = textNode.parentElement;
         if (!parent) continue;
 
-        let compStyle = styleCache.get(parent);
+        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre, dd, dt') || parent;
+        if (offscreenBlocks.has(blockElement)) {
+          continue;
+        }
+
+        let blockRect = blockRectCache.get(blockElement);
+        if (!blockRect) {
+          blockRect = blockElement.getBoundingClientRect();
+          blockRectCache.set(blockElement, blockRect);
+        }
+
+        let compStyle = styleCache.get(blockElement);
         if (!compStyle) {
           try {
-            compStyle = window.getComputedStyle(parent);
-            styleCache.set(parent, compStyle);
+            compStyle = window.getComputedStyle(blockElement);
+            styleCache.set(blockElement, compStyle);
           } catch (e) {
             continue;
           }
         }
 
-        if (compStyle.display === 'none' || compStyle.visibility === 'hidden' || parseFloat(compStyle.opacity) === 0) {
-          continue;
+        const isBionicFixation = parent.tagName === 'B' && (
+          parent.classList.contains('bionic-fixation') || parent.classList.contains('bionic-bold')
+        );
+
+        // Při aktivním bionickém čtení má každé slovo prefix <b class="bionic-fixation"> a za ním textový uzel
+        // na stejném řádku. Přeskočíme sufixový textový uzel i interpunkční uzly před dalším slovem.
+        if (!isBionicFixation) {
+          const prevSib = textNode.previousSibling;
+          if (
+            prevSib &&
+            prevSib.nodeType === Node.ELEMENT_NODE &&
+            prevSib.tagName === 'B' &&
+            (prevSib.classList.contains('bionic-fixation') || prevSib.classList.contains('bionic-bold'))
+          ) {
+            continue;
+          }
+          const nextSib = textNode.nextSibling;
+          if (
+            nextSib &&
+            nextSib.nodeType === Node.ELEMENT_NODE &&
+            nextSib.tagName === 'B' &&
+            (nextSib.classList.contains('bionic-fixation') || nextSib.classList.contains('bionic-bold')) &&
+            !/[\p{L}\p{N}]/u.test(textNode.textContent || "")
+          ) {
+            continue;
+          }
         }
 
-        const rawFontSize = parseFloat(compStyle.fontSize) || 16;
-        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div') || parent;
-
-        const isPdfEl = this.isPdfMode || !!parent.closest('.textLayer');
+        const rawFontSize = parseFloat(parent.style?.fontSize) || parseFloat(compStyle.fontSize) || 16;
+        const isPdfEl = hasTextLayer && (this.isPdfMode || !!parent.closest('.textLayer'));
         const textLayer = isPdfEl ? parent.closest('.textLayer') : null;
         const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
         const pageSlot = isPdfEl ? (parent.closest('.pdf-page-slot, .pdf-page-container') || textLayer) : null;
         const fontSize = Math.max(6, Math.round(pdfTf ? (rawFontSize * pdfTf.scaleY) : rawFontSize));
+
+        // Rychlý skip podle offsetTop pro Bionic reading:
+        // V rámci stejného blockElement sdílejí po sobě jdoucí elementy <b class="bionic-fixation">
+        // na stejném vizuálním řádku stejný offsetTop (s tolerancí <= 2px).
+        // Měříme getBoundingClientRect() pouze jednou na začátku každého unikátního řádku a znovupoužijeme
+        // horizontální rozsah sloupce.
+        if (isBionicFixation) {
+          const curBionicOffsetTop = parent.offsetTop;
+          if (
+            blockElement === lastBionicBlock &&
+            lastBionicOffsetTop !== null &&
+            Math.abs(curBionicOffsetTop - lastBionicOffsetTop) <= 2
+          ) {
+            continue;
+          }
+
+          let parentRect = parentRectCache.get(parent);
+          if (!parentRect) {
+            parentRect = parent.getBoundingClientRect();
+            parentRectCache.set(parent, parentRect);
+          }
+
+          if (parentRect && parentRect.width > 0 && parentRect.height > 0) {
+            lastBionicBlock = blockElement;
+            lastBionicOffsetTop = curBionicOffsetTop;
+
+            let colLeftBound = stageLeft;
+            let colRightBound = stageRight;
+            if (isVertical) {
+              colLeftBound = Math.max(0, blockRect.left);
+              colRightBound = Math.min(viewW, blockRect.right);
+            } else if (isTwoColEarly) {
+              if (parentRect.left < stageCenterX) {
+                colLeftBound = Math.max(stageLeft, blockRect.left);
+                colRightBound = Math.min(col0RightEarly, blockRect.right);
+              } else {
+                colLeftBound = Math.max(stageCenterX + colGapEarly / 2, blockRect.left);
+                colRightBound = Math.min(stageRight, blockRect.right);
+              }
+            } else {
+              colLeftBound = Math.max(stageLeft, blockRect.left);
+              colRightBound = Math.min(stageRight, blockRect.right);
+            }
+
+            const lineRect = {
+              top: parentRect.top,
+              bottom: parentRect.bottom,
+              height: parentRect.height,
+              left: colLeftBound,
+              right: colRightBound
+            };
+            lastLineObj = pushLineRect(lineRect, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
+            continue;
+          }
+        } else {
+          if (blockElement !== lastBionicBlock) {
+            lastBionicBlock = null;
+            lastBionicOffsetTop = null;
+            lastLineObj = null;
+          }
+        }
+
+        let parentRect = null;
+        if (parent === blockElement) {
+          parentRect = blockRect;
+        } else {
+          parentRect = parentRectCache.get(parent);
+          if (!parentRect) {
+            parentRect = parent.getBoundingClientRect();
+            parentRectCache.set(parent, parentRect);
+          }
+
+          if (!isVertical && hasValidStageBounds) {
+            if (
+              parentRect.right < stageLeft - 20 ||
+              parentRect.left > stageRight + 20 ||
+              parentRect.bottom < stageTop - 20 ||
+              parentRect.top > stageBottom + 20
+            ) {
+              if (parentRect.left > stageRight + 20) {
+                offscreenBlocks.add(blockElement);
+              }
+              continue;
+            }
+          } else if (isVertical) {
+            if (
+              parentRect.right < -20 ||
+              parentRect.left > viewW + 20 ||
+              parentRect.bottom < -20 ||
+              parentRect.top > viewH + 20
+            ) {
+              if (parentRect.top > viewH + 20) {
+                offscreenBlocks.add(blockElement);
+              }
+              continue;
+            }
+          }
+        }
 
         try {
           range.selectNodeContents(textNode);
@@ -2855,61 +3223,7 @@ export class ReadingRuler {
           if (!rects || rects.length === 0) continue;
 
           for (let i = 0; i < rects.length; i++) {
-            const r = rects[i];
-            let rTop = r.top;
-            let rBottom = r.bottom;
-            let rHeight = r.height;
-            let lineLeft = r.left;
-            let lineRight = r.right;
-
-            if (pdfTf) {
-              const relTop = r.top - pdfTf.textLayerRect.top;
-              const relBottom = r.bottom - pdfTf.textLayerRect.top;
-              rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
-              rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
-              rHeight = rBottom - rTop;
-
-              const relLeft = lineLeft - pdfTf.textLayerRect.left;
-              const relRight = lineRight - pdfTf.textLayerRect.left;
-              lineLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
-              lineRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
-            }
-
-            // Tighten stage boundary clipping in horizontal/paged mode
-            if (!isVertical && hasValidStageBounds) {
-              if (!(lineRight > stageLeft + 2 && lineLeft < stageRight - 2 && rBottom > stageTop && rTop < stageBottom)) {
-                continue;
-              }
-              const rMidX = (lineLeft + lineRight) / 2;
-              if (rMidX <= stageLeft + 2 || rMidX >= stageRight - 2) {
-                continue;
-              }
-            }
-
-            const inStage = !hasValidStageBounds || isVertical || (
-              lineRight > stageLeft + 2 &&
-              lineLeft < stageRight - 2 &&
-              rBottom > stageTop &&
-              rTop < stageBottom
-            );
-
-            if (inStage && rHeight >= 6 && (lineRight - lineLeft) >= 4) {
-              rawLines.push({
-                el: parent,
-                element: parent,
-                blockElement,
-                pageSlot,
-                fontSize,
-                top: rTop + vScrollTop,
-                bottom: rBottom + vScrollTop,
-                left: lineLeft,
-                right: lineRight,
-                height: rHeight,
-                centerY: rTop + rHeight / 2 + vScrollTop,
-                hasText: true,
-                isPdfLine: !!isPdfEl
-              });
-            }
+            pushLineRect(rects[i], parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
           }
         } catch (e) {}
       }
@@ -3014,6 +3328,8 @@ export class ReadingRuler {
 
       const isSpread = !isVertical && this.isSpreadActive();
       const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
+      this._cachedIsSpread = isSpread;
+      this._cachedSpreadInfo = spreadInfo;
 
       // Přiřazení indexu sloupce každému nalezenému řádku
       for (let i = 0; i < rawLines.length; i++) {
@@ -3087,6 +3403,7 @@ export class ReadingRuler {
               prev.element = prev.element || r.element || r.el;
               prev.blockElement = prev.blockElement || r.blockElement;
               prev.pageSlot = prev.pageSlot || r.pageSlot;
+              prev.canvasRect = prev.canvasRect || r.canvasRect;
             } else {
               colClustered.push({
                 ...r,
@@ -3279,7 +3596,8 @@ export class ReadingRuler {
           const tcLeft = textContainerRect ? Math.round(textContainerRect.left) : Math.round(stageRect.left);
           const tcRight = textContainerRect ? Math.round(textContainerRect.right) : Math.round(stageRect.right);
           const textMinL = minLeft0 < Infinity ? Math.round(minLeft0 - horizontalPadding) : tcLeft;
-          const textMaxR = maxRight0 > -Infinity ? Math.round(maxRight0 + horizontalPadding) : tcRight;
+          const rawMaxR = (!this.isPdfMode && this.app?.settings?.fastReading) ? tcRight : maxRight0;
+          const textMaxR = rawMaxR > -Infinity ? Math.round(rawMaxR + horizontalPadding) : tcRight;
           c0Left = Math.max(tcLeft, textMinL);
           c0Right = Math.min(tcRight, textMaxR);
           if (c0Right <= c0Left) {
@@ -3322,7 +3640,9 @@ export class ReadingRuler {
           // Single-column mode: enforce colLeft and colWidth to align with the actual text column
           // Never extend or bleed to viewport x = 0 or window.innerWidth
           const minLineLeft = minLeft0 < Infinity ? minLeft0 : stageRect.left;
-          const maxLineRight = maxRight0 > -Infinity ? maxRight0 : stageRect.right;
+          const maxLineRight = (!this.isPdfMode && this.app?.settings?.fastReading)
+            ? stageRect.right
+            : (maxRight0 > -Infinity ? maxRight0 : stageRect.right);
           const hPadding = 10; // px
           c0Left = Math.max(Math.round(stageRect.left), Math.round(minLineLeft - hPadding));
           c0Right = Math.min(Math.round(stageRect.right), Math.round(maxLineRight + hPadding));
@@ -3392,6 +3712,7 @@ export class ReadingRuler {
           const canvas = document.querySelector("#reader-content canvas");
           const cRect = canvas ? canvas.getBoundingClientRect() : null;
           if (cRect && cRect.height > 50) {
+            this._cachedCanvasRect = cRect;
             this.readingTop = Math.round(cRect.top);
             this.readingBottom = Math.round(cRect.bottom);
           } else {
@@ -3729,6 +4050,10 @@ export class ReadingRuler {
    * Zmapuje přesné obdélníky všech viditelných slov na aktuální stránce.
    */
   refreshWords() {
+    if (!this.enabled || !this.wordTracking) {
+      this.cachedWords = [];
+      return [];
+    }
     this.cachedWords = [];
     if (this.isImageOnlyPdf) {
       return [];
@@ -3750,6 +4075,7 @@ export class ReadingRuler {
       const viewport = isVertical ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
       const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
       const hasValidStageBounds = stageRect.width > 50 && stageRect.height > 50;
+      const hasTextLayer = this.isPdfMode || !!content.querySelector('.textLayer');
 
       // PDF coordinate normalization map against underlying <canvas>
       const pdfTransformMap = new Map();
@@ -3789,29 +4115,506 @@ export class ReadingRuler {
       const range = document.createRange();
       // Podpora všech unicode mezer, nezlomitelných mezer i neviditelných dělicích znaků
       const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g;
+      const leadingNonSpaceRegex = /^[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/;
+      const trailingNonSpaceRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+$/;
       const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
 
       const visitedBionicSpans = new Set();
+      const consumedTextOffsets = new Map();
+      const blockRectCache = new Map();
+      const parentRectCache = new Map();
+      const offscreenBlocks = new Set();
+      const viewW = window.innerWidth;
+      const viewH = window.innerHeight;
+      const maxColSpan = (!isVertical && hasValidStageBounds)
+        ? Math.max(120, (this.isTwoCol ? stageRect.width * 0.55 : stageRect.width) - 4)
+        : Math.max(120, viewW);
+
+      let lastBionicBlock = null;
+      let lastBionicOffsetParent = null;
+      let lastBionicOffsetTop = null;
+      let lastBionicOffsetLeft = -Infinity;
+      let lastBionicLineFirstOffsetLeft = -Infinity;
+      let lastBionicColFirstOffsetLeft = -Infinity;
+      let lastBionicLineStatus = 0; // 1 = onscreen, -1 = offscreen-before, 2 = offscreen-after
+      let offscreenStrideCount = 0;
+
+      const consumeBionicWordSiblings = (bEl) => {
+        visitedBionicSpans.add(bEl);
+        let cur = bEl.nextSibling;
+        while (cur) {
+          if (cur.nodeType === Node.TEXT_NODE) {
+            const t = cur.textContent || "";
+            const m = leadingNonSpaceRegex.exec(t);
+            if (m && m[0].length > 0) {
+              consumedTextOffsets.set(cur, m[0].length);
+              if (
+                m[0].length === t.length &&
+                cur.nextSibling &&
+                cur.nextSibling.nodeType === Node.ELEMENT_NODE &&
+                cur.nextSibling.tagName === 'B' &&
+                (cur.nextSibling.classList.contains('bionic-fixation') || cur.nextSibling.classList.contains('bionic-bold'))
+              ) {
+                cur = cur.nextSibling;
+                continue;
+              }
+            }
+            break;
+          } else if (
+            cur.nodeType === Node.ELEMENT_NODE &&
+            cur.tagName === 'B' &&
+            (cur.classList.contains('bionic-fixation') || cur.classList.contains('bionic-bold'))
+          ) {
+            visitedBionicSpans.add(cur);
+            cur = cur.nextSibling;
+          } else {
+            break;
+          }
+        }
+      };
+
+      const pushRangeRectsToWords = (cleanToken, pdfTf) => {
+        const clientRects = range.getClientRects();
+        if (!clientRects || clientRects.length === 0) return 0;
+
+        // Fast path for single-line words (1 or 2 inline boxes on the same line) without temporary array allocations
+        if (!pdfTf && (clientRects.length === 1 || clientRects.length === 2)) {
+          const r0 = clientRects[0];
+          const r1 = clientRects.length === 2 ? clientRects[1] : null;
+          if (!r1 || Math.abs(r0.top - r1.top) <= 6) {
+            const rLeft = r1 ? Math.min(r0.left, r1.left) : r0.left;
+            const rRight = r1 ? Math.max(r0.right, r1.right) : r0.right;
+            const rTop = r1 ? Math.min(r0.top, r1.top) : r0.top;
+            const rBottom = r1 ? Math.max(r0.bottom, r1.bottom) : r0.bottom;
+            const rWidth = rRight - rLeft;
+            const rHeight = rBottom - rTop;
+
+            if (!isVertical && hasValidStageBounds && rLeft > stageRight + 20) {
+              return 2; // Offscreen to the right
+            }
+            if (isVertical && rTop > viewH + 20) {
+              return 2; // Offscreen below
+            }
+            if (
+              rWidth > 0.5 &&
+              rHeight > 2 &&
+              rRight > stageLeft + 2 &&
+              rLeft < stageRight - 2 &&
+              (isVertical || (rBottom > stageTop && rTop < stageBottom))
+            ) {
+              if (!isVertical && hasValidStageBounds) {
+                const midX = (rLeft + rRight) / 2;
+                if (midX <= stageLeft + 2 || midX >= stageRight - 2) return -1;
+              }
+              words.push({
+                text: cleanToken,
+                left: rLeft,
+                right: rRight,
+                top: rTop + vScrollTop,
+                bottom: rBottom + vScrollTop,
+                width: rWidth,
+                height: rHeight,
+                centerX: rLeft + rWidth / 2,
+                centerY: rTop + rHeight / 2 + vScrollTop
+              });
+              return 1;
+            }
+            return -1;
+          }
+        }
+
+        const subRects = [];
+        for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
+          const rect = clientRects[rIdx];
+          let rTop = rect.top;
+          let rBottom = rect.bottom;
+          let rHeight = rect.height;
+          let rLeft = rect.left;
+          let rRight = rect.right;
+
+          if (pdfTf) {
+            const relTop = rect.top - pdfTf.textLayerRect.top;
+            const relBottom = rect.bottom - pdfTf.textLayerRect.top;
+            rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+            rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+            rHeight = rBottom - rTop;
+
+            const relLeft = rect.left - pdfTf.textLayerRect.left;
+            const relRight = rect.right - pdfTf.textLayerRect.left;
+            rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+            rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
+          }
+
+          const rWidth = rRight - rLeft;
+          if (
+            rWidth > 0.5 &&
+            rHeight > 2 &&
+            rRight > stageLeft + 2 &&
+            rLeft < stageRight - 2 &&
+            (isVertical || (rBottom > stageTop && rTop < stageBottom))
+          ) {
+            if (!isVertical && hasValidStageBounds) {
+              const midX = (rLeft + rRight) / 2;
+              if (midX <= stageLeft + 2 || midX >= stageRight - 2) continue;
+            }
+            subRects.push({
+              left: rLeft,
+              top: rTop,
+              right: rRight,
+              bottom: rBottom,
+              width: rWidth,
+              height: rHeight
+            });
+          }
+        }
+
+        if (subRects.length === 0) return -1;
+
+        if (subRects.length > 1) {
+          subRects.sort((a, b) => (a.top - b.top) || (a.left - b.left));
+        }
+
+        const lineMergedRects = [];
+        for (let sIdx = 0; sIdx < subRects.length; sIdx++) {
+          const r = subRects[sIdx];
+          if (lineMergedRects.length === 0) {
+            lineMergedRects.push({
+              left: r.left,
+              top: r.top,
+              right: r.right,
+              bottom: r.bottom,
+              width: r.width,
+              height: r.height
+            });
+          } else {
+            const prevR = lineMergedRects[lineMergedRects.length - 1];
+            const prevCenterY = (prevR.top + prevR.bottom) / 2;
+            const rCenterY = (r.top + r.bottom) / 2;
+            if (Math.abs(rCenterY - prevCenterY) <= 8 || Math.abs(r.top - prevR.top) <= 6) {
+              prevR.left = Math.min(prevR.left, r.left);
+              prevR.top = Math.min(prevR.top, r.top);
+              prevR.right = Math.max(prevR.right, r.right);
+              prevR.bottom = Math.max(prevR.bottom, r.bottom);
+              prevR.width = prevR.right - prevR.left;
+              prevR.height = prevR.bottom - prevR.top;
+            } else {
+              lineMergedRects.push({
+                left: r.left,
+                top: r.top,
+                right: r.right,
+                bottom: r.bottom,
+                width: r.width,
+                height: r.height
+              });
+            }
+          }
+        }
+
+        for (let sIdx = 0; sIdx < lineMergedRects.length; sIdx++) {
+          const r = lineMergedRects[sIdx];
+          words.push({
+            text: cleanToken,
+            left: r.left,
+            right: r.right,
+            top: r.top + vScrollTop,
+            bottom: r.bottom + vScrollTop,
+            width: r.width,
+            height: r.height,
+            centerX: r.left + r.width / 2,
+            centerY: r.top + r.height / 2 + vScrollTop
+          });
+        }
+        return 1;
+      };
+
       while ((node = walker.nextNode())) {
-        const isPdfEl = this.isPdfMode || !!node.parentElement?.closest('.textLayer');
-        const textLayer = isPdfEl ? node.parentElement?.closest('.textLayer') : null;
-        const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
+        const parent = node.parentElement;
+        if (!parent) continue;
+        const parentTag = parent.tagName;
+        if (parentTag === 'SCRIPT' || parentTag === 'STYLE') continue;
+        if (parent.closest('svg, audio, video')) continue;
 
-        if (node.parentElement) {
-          const parentTag = node.parentElement.tagName;
-          if (parentTag === 'SCRIPT' || parentTag === 'STYLE') continue;
-          if (node.parentElement.closest('svg, audio, video')) continue;
+        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre') || parent;
+        if (offscreenBlocks.has(blockElement)) continue;
 
-          // Rychlý layout filtr: v horizontálním režimu přeskočíme textové uzly zcela mimo viditelnou část stage
-          if (!isPdfEl && !isVertical && hasValidStageBounds) {
-            const pRect = node.parentElement.getBoundingClientRect();
-            if (pRect.right < stageLeft - 20 || pRect.left > stageRight + 20) {
+        let bRect = blockRectCache.get(blockElement);
+        if (!bRect) {
+          bRect = blockElement.getBoundingClientRect();
+          blockRectCache.set(blockElement, bRect);
+
+          // Fast block-level filter: skip entire offscreen paragraphs before measuring inline <b> elements
+          if (!isVertical && hasValidStageBounds) {
+            if (
+              bRect.right < stageLeft - 20 ||
+              bRect.left > stageRight + 20 ||
+              bRect.bottom < stageTop - 20 ||
+              bRect.top > stageBottom + 20
+            ) {
+              offscreenBlocks.add(blockElement);
+              continue;
+            }
+          } else if (isVertical) {
+            if (
+              bRect.right < -20 ||
+              bRect.left > viewW + 20 ||
+              bRect.bottom < -20 ||
+              bRect.top > viewH + 20
+            ) {
+              offscreenBlocks.add(blockElement);
               continue;
             }
           }
         }
 
-        const bionicSpan = node.parentElement ? node.parentElement.closest('.bionic-word') : null;
+        const isBlockWhollyVisible = (!isVertical && hasValidStageBounds)
+          ? (bRect.left >= stageLeft - 5 && bRect.right <= stageRight + 5 && bRect.top >= stageTop - 5 && bRect.bottom <= stageBottom + 5)
+          : (isVertical ? (bRect.left >= -5 && bRect.right <= viewW + 5 && bRect.top >= -5 && bRect.bottom <= viewH + 5) : true);
+
+        const isPdfEl = hasTextLayer && (this.isPdfMode || !!parent.closest('.textLayer'));
+        const textLayer = isPdfEl ? parent.closest('.textLayer') : null;
+        const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
+
+        // Streamlined Bionic fixation (<b class="bionic-fixation">Bo</b>ld) without wrapper spans:
+        // Combine the <b class="bionic-fixation"> node and its immediately following unbolded suffix text
+        // into a single Range so each word is measured once.
+        const isBionicFixationEl = parentTag === 'B' && (
+          parent.classList.contains('bionic-fixation') || parent.classList.contains('bionic-bold')
+        );
+        if (isBionicFixationEl && !parent.closest('.bionic-word')) {
+          if (visitedBionicSpans.has(parent)) continue;
+
+          // If the block straddles columns/pages in horizontal mode (or viewport in vertical mode),
+          // pre-filter using parent.offsetTop / offsetLeft and stride sampling so offscreen columns
+          // are skipped without calling getBoundingClientRect() or range.getClientRects() on every word.
+          if (!isBlockWhollyVisible) {
+            const curOffsetTop = parent.offsetTop;
+            const curOffsetLeft = parent.offsetLeft;
+            const curOffsetParent = parent.offsetParent;
+
+            if (
+              blockElement === lastBionicBlock &&
+              curOffsetParent === lastBionicOffsetParent &&
+              lastBionicOffsetTop !== null &&
+              Math.abs(curOffsetTop - lastBionicOffsetTop) <= 2 &&
+              curOffsetLeft >= lastBionicOffsetLeft - 4 &&
+              (curOffsetLeft - lastBionicLineFirstOffsetLeft) < maxColSpan
+            ) {
+              lastBionicOffsetLeft = curOffsetLeft;
+              if (lastBionicLineStatus !== 1) {
+                consumeBionicWordSiblings(parent);
+                continue;
+              }
+            } else if (
+              !isVertical &&
+              hasValidStageBounds &&
+              blockElement === lastBionicBlock &&
+              curOffsetParent === lastBionicOffsetParent &&
+              lastBionicLineStatus === -1 &&
+              curOffsetTop > lastBionicOffsetTop &&
+              Math.abs(curOffsetLeft - lastBionicColFirstOffsetLeft) < 60 &&
+              offscreenStrideCount < 15
+            ) {
+              lastBionicOffsetTop = curOffsetTop;
+              lastBionicOffsetLeft = curOffsetLeft;
+              lastBionicLineFirstOffsetLeft = curOffsetLeft;
+              offscreenStrideCount++;
+              consumeBionicWordSiblings(parent);
+              continue;
+            } else {
+              offscreenStrideCount = 0;
+              lastBionicBlock = blockElement;
+              lastBionicOffsetParent = curOffsetParent;
+              lastBionicOffsetTop = curOffsetTop;
+              lastBionicOffsetLeft = curOffsetLeft;
+              lastBionicLineFirstOffsetLeft = curOffsetLeft;
+
+              let pRect = parentRectCache.get(parent);
+              if (!pRect) {
+                pRect = parent.getBoundingClientRect();
+                parentRectCache.set(parent, pRect);
+              }
+
+              if (!isVertical && hasValidStageBounds) {
+                if (pRect.left > stageRight + 20) {
+                  lastBionicLineStatus = 2;
+                  offscreenBlocks.add(blockElement);
+                  consumeBionicWordSiblings(parent);
+                  continue;
+                }
+                if (
+                  pRect.right < stageLeft - 20 ||
+                  pRect.bottom < stageTop - 20 ||
+                  pRect.top > stageBottom + 20
+                ) {
+                  lastBionicLineStatus = -1;
+                  lastBionicColFirstOffsetLeft = pRect.right < stageLeft - 60 ? curOffsetLeft : -Infinity;
+                  consumeBionicWordSiblings(parent);
+                  continue;
+                }
+                lastBionicLineStatus = 1;
+              } else if (isVertical) {
+                if (pRect.top > viewH + 20) {
+                  lastBionicLineStatus = 2;
+                  offscreenBlocks.add(blockElement);
+                  consumeBionicWordSiblings(parent);
+                  continue;
+                }
+                if (
+                  pRect.bottom < -20 ||
+                  pRect.right < -20 ||
+                  pRect.left > viewW + 20
+                ) {
+                  lastBionicLineStatus = -1;
+                  consumeBionicWordSiblings(parent);
+                  continue;
+                }
+                lastBionicLineStatus = 1;
+              } else {
+                lastBionicLineStatus = 1;
+              }
+            }
+
+            // Even on a partially visible line, skip creating DOM Range objects if this specific word is outside stageLeft..stageRight
+            if (!isVertical && hasValidStageBounds) {
+              let wordParentRect = parentRectCache.get(parent);
+              if (!wordParentRect) {
+                wordParentRect = parent.getBoundingClientRect();
+                parentRectCache.set(parent, wordParentRect);
+              }
+              if (wordParentRect.right < stageLeft + 2 || wordParentRect.left > stageRight - 2) {
+                consumeBionicWordSiblings(parent);
+                continue;
+              }
+            }
+          }
+
+          visitedBionicSpans.add(parent);
+
+          let rawToken = parent.textContent || "";
+          let startNode = node;
+          let startOffset = 0;
+
+          // Include any leading non-whitespace punctuation immediately preceding <b class="bionic-fixation">
+          const prevSib = parent.previousSibling;
+          if (prevSib && prevSib.nodeType === Node.TEXT_NODE) {
+            const prevText = prevSib.textContent || "";
+            const prevConsumed = consumedTextOffsets.get(prevSib) || 0;
+            if (prevConsumed < prevText.length) {
+              const unconsumedPrev = prevText.slice(prevConsumed);
+              const leadMatch = trailingNonSpaceRegex.exec(unconsumedPrev);
+              if (leadMatch && leadMatch[0].length > 0) {
+                rawToken = leadMatch[0] + rawToken;
+                startNode = prevSib;
+                startOffset = prevText.length - leadMatch[0].length;
+              }
+            }
+          }
+
+          let endNode = node;
+          let endOffset = (node.textContent || "").length;
+          const nextSib = parent.nextSibling;
+
+          if (nextSib && nextSib.nodeType === Node.TEXT_NODE) {
+            const t = nextSib.textContent || "";
+            const m = leadingNonSpaceRegex.exec(t);
+            if (m && m[0].length > 0) {
+              const suffixLen = m[0].length;
+              rawToken += m[0];
+              endNode = nextSib;
+              endOffset = suffixLen;
+              consumedTextOffsets.set(nextSib, suffixLen);
+
+              if (
+                suffixLen === t.length &&
+                nextSib.nextSibling &&
+                nextSib.nextSibling.nodeType === Node.ELEMENT_NODE &&
+                nextSib.nextSibling.tagName === 'B' &&
+                (nextSib.nextSibling.classList.contains('bionic-fixation') || nextSib.nextSibling.classList.contains('bionic-bold'))
+              ) {
+                let cursor = nextSib.nextSibling;
+                while (cursor) {
+                  if (cursor.nodeType === Node.TEXT_NODE) {
+                    const ct = cursor.textContent || "";
+                    const cm = leadingNonSpaceRegex.exec(ct);
+                    if (cm && cm[0].length > 0) {
+                      rawToken += cm[0];
+                      endNode = cursor;
+                      endOffset = cm[0].length;
+                      consumedTextOffsets.set(cursor, cm[0].length);
+                      if (
+                        cm[0].length === ct.length &&
+                        cursor.nextSibling &&
+                        cursor.nextSibling.nodeType === Node.ELEMENT_NODE &&
+                        cursor.nextSibling.tagName === 'B' &&
+                        (cursor.nextSibling.classList.contains('bionic-fixation') || cursor.nextSibling.classList.contains('bionic-bold'))
+                      ) {
+                        cursor = cursor.nextSibling;
+                        continue;
+                      }
+                    }
+                    break;
+                  } else if (
+                    cursor.nodeType === Node.ELEMENT_NODE &&
+                    cursor.tagName === 'B' &&
+                    (cursor.classList.contains('bionic-fixation') || cursor.classList.contains('bionic-bold'))
+                  ) {
+                    visitedBionicSpans.add(cursor);
+                    const bText = cursor.textContent || "";
+                    rawToken += bText;
+                    endNode = cursor.firstChild || cursor;
+                    endOffset = cursor.firstChild ? bText.length : null;
+                    cursor = cursor.nextSibling;
+                  } else {
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+          const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
+          if (!cleanToken) continue;
+
+          try {
+            range.setStart(startNode, startOffset);
+            if (endOffset !== null) {
+              range.setEnd(endNode, endOffset);
+            } else {
+              range.setEndAfter(endNode);
+            }
+            pushRangeRectsToWords(cleanToken, pdfTf);
+          } catch (e) {}
+          continue;
+        }
+
+        if (!isBlockWhollyVisible && parent !== blockElement) {
+          let pRect = parentRectCache.get(parent);
+          if (!pRect) {
+            pRect = parent.getBoundingClientRect();
+            parentRectCache.set(parent, pRect);
+          }
+          if (!isVertical && hasValidStageBounds) {
+            if (
+              pRect.right < stageLeft - 20 ||
+              pRect.left > stageRight + 20 ||
+              pRect.bottom < stageTop - 20 ||
+              pRect.top > stageBottom + 20
+            ) {
+              continue;
+            }
+          } else if (isVertical) {
+            if (
+              pRect.right < -20 ||
+              pRect.left > viewW + 20 ||
+              pRect.bottom < -20 ||
+              pRect.top > viewH + 20
+            ) {
+              continue;
+            }
+          }
+        }
+
+        const bionicSpan = parent.closest('.bionic-word');
         if (bionicSpan) {
           if (visitedBionicSpans.has(bionicSpan)) continue;
           visitedBionicSpans.add(bionicSpan);
@@ -3822,110 +4625,7 @@ export class ReadingRuler {
 
           try {
             range.selectNodeContents(bionicSpan);
-            const clientRects = range.getClientRects();
-            if (!clientRects || clientRects.length === 0) continue;
-
-            const subRects = [];
-            for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
-              const rect = clientRects[rIdx];
-              let rTop = rect.top;
-              let rBottom = rect.bottom;
-              let rHeight = rect.height;
-              let rLeft = rect.left;
-              let rRight = rect.right;
-
-              if (pdfTf) {
-                const relTop = rect.top - pdfTf.textLayerRect.top;
-                const relBottom = rect.bottom - pdfTf.textLayerRect.top;
-                rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
-                rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
-                rHeight = rBottom - rTop;
-
-                const relLeft = rect.left - pdfTf.textLayerRect.left;
-                const relRight = rect.right - pdfTf.textLayerRect.left;
-                rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
-                rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
-              }
-
-              const rWidth = rRight - rLeft;
-              if (
-                rWidth > 0.5 &&
-                rHeight > 2 &&
-                rRight > stageLeft + 2 &&
-                rLeft < stageRight - 2 &&
-                (isVertical || (rBottom > stageTop && rTop < stageBottom))
-              ) {
-                if (!isVertical && hasValidStageBounds) {
-                  const midX = (rLeft + rRight) / 2;
-                  if (midX <= stageLeft + 2 || midX >= stageRight - 2) continue;
-                }
-                subRects.push({
-                  left: rLeft,
-                  top: rTop,
-                  right: rRight,
-                  bottom: rBottom,
-                  width: rWidth,
-                  height: rHeight
-                });
-              }
-            }
-
-            if (subRects.length === 0) continue;
-
-            if (subRects.length > 1) {
-              subRects.sort((a, b) => (a.top - b.top) || (a.left - b.left));
-            }
-
-            const lineMergedRects = [];
-            for (let sIdx = 0; sIdx < subRects.length; sIdx++) {
-              const r = subRects[sIdx];
-              if (lineMergedRects.length === 0) {
-                lineMergedRects.push({
-                  left: r.left,
-                  top: r.top,
-                  right: r.right,
-                  bottom: r.bottom,
-                  width: r.width,
-                  height: r.height
-                });
-              } else {
-                const prevR = lineMergedRects[lineMergedRects.length - 1];
-                const prevCenterY = (prevR.top + prevR.bottom) / 2;
-                const rCenterY = (r.top + r.bottom) / 2;
-                if (Math.abs(rCenterY - prevCenterY) <= 8 || Math.abs(r.top - prevR.top) <= 6) {
-                  prevR.left = Math.min(prevR.left, r.left);
-                  prevR.top = Math.min(prevR.top, r.top);
-                  prevR.right = Math.max(prevR.right, r.right);
-                  prevR.bottom = Math.max(prevR.bottom, r.bottom);
-                  prevR.width = prevR.right - prevR.left;
-                  prevR.height = prevR.bottom - prevR.top;
-                } else {
-                  lineMergedRects.push({
-                    left: r.left,
-                    top: r.top,
-                    right: r.right,
-                    bottom: r.bottom,
-                    width: r.width,
-                    height: r.height
-                  });
-                }
-              }
-            }
-
-            for (let sIdx = 0; sIdx < lineMergedRects.length; sIdx++) {
-              const r = lineMergedRects[sIdx];
-              words.push({
-                text: cleanToken,
-                left: r.left,
-                right: r.right,
-                top: r.top + vScrollTop,
-                bottom: r.bottom + vScrollTop,
-                width: r.width,
-                height: r.height,
-                centerX: r.left + r.width / 2,
-                centerY: r.top + r.height / 2 + vScrollTop
-              });
-            }
+            pushRangeRectsToWords(cleanToken, pdfTf);
           } catch (e) {
             // Ignore range errors
           }
@@ -3935,124 +4635,38 @@ export class ReadingRuler {
         const text = node.textContent;
         if (!text || !text.trim()) continue;
 
+        const consumedStart = consumedTextOffsets.get(node) || 0;
+        if (consumedStart >= text.length) continue;
+
+        const nextSibIsBionic = !!(
+          node.nextSibling &&
+          node.nextSibling.nodeType === Node.ELEMENT_NODE &&
+          node.nextSibling.tagName === 'B' &&
+          (node.nextSibling.classList.contains('bionic-fixation') || node.nextSibling.classList.contains('bionic-bold'))
+        );
+
         let match;
-        wordRegex.lastIndex = 0;
+        wordRegex.lastIndex = consumedStart;
         while ((match = wordRegex.exec(text)) !== null) {
           const rawToken = match[0];
+          const start = match.index;
+          const end = start + rawToken.length;
+
+          // If this token is leading punctuation attached directly to a following <b class="bionic-fixation">,
+          // let the <b class="bionic-fixation"> branch merge and measure it in a single Range.
+          if (nextSibIsBionic && end === text.length) {
+            continue;
+          }
+
           const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
           if (!cleanToken) continue;
 
-          const start = match.index;
-          const end = start + rawToken.length;
           try {
             range.setStart(node, start);
             range.setEnd(node, end);
-            const clientRects = range.getClientRects();
-            if (!clientRects || clientRects.length === 0) continue;
-
-            // Extrahujeme všechny validní bounding boxy viditelné na aktuální stránce/sloupci
-            const subRects = [];
-            for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
-              const rect = clientRects[rIdx];
-              let rTop = rect.top;
-              let rBottom = rect.bottom;
-              let rHeight = rect.height;
-              let rLeft = rect.left;
-              let rRight = rect.right;
-
-              if (pdfTf) {
-                const relTop = rect.top - pdfTf.textLayerRect.top;
-                const relBottom = rect.bottom - pdfTf.textLayerRect.top;
-                rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
-                rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
-                rHeight = rBottom - rTop;
-
-                const relLeft = rect.left - pdfTf.textLayerRect.left;
-                const relRight = rect.right - pdfTf.textLayerRect.left;
-                rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
-                rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
-              }
-
-              const rWidth = rRight - rLeft;
-              if (
-                rWidth > 0.5 &&
-                rHeight > 2 &&
-                rRight > stageLeft + 2 &&
-                rLeft < stageRight - 2 &&
-                (isVertical || (rBottom > stageTop && rTop < stageBottom))
-              ) {
-                if (!isVertical && hasValidStageBounds) {
-                  const midX = (rLeft + rRight) / 2;
-                  if (midX <= stageLeft + 2 || midX >= stageRight - 2) continue;
-                }
-                subRects.push({
-                  left: rLeft,
-                  top: rTop,
-                  right: rRight,
-                  bottom: rBottom,
-                  width: rWidth,
-                  height: rHeight
-                });
-              }
-            }
-
-            if (subRects.length === 0) continue;
-
-            // Pouze v rámci jednoho rozděleného slova seřadíme jeho části shora dolů (řádek 1 před řádkem 2)
-            if (subRects.length > 1) {
-              subRects.sort((a, b) => (a.top - b.top) || (a.left - b.left));
-            }
-
-            // Sloučíme fragmenty na stejném řádku (např. slovo a připojený spojovník / hyphen)
-            const lineMergedRects = [];
-            for (let sIdx = 0; sIdx < subRects.length; sIdx++) {
-              const r = subRects[sIdx];
-              if (lineMergedRects.length === 0) {
-                lineMergedRects.push({
-                  left: r.left,
-                  top: r.top,
-                  right: r.right,
-                  bottom: r.bottom,
-                  width: r.width,
-                  height: r.height
-                });
-              } else {
-                const prevR = lineMergedRects[lineMergedRects.length - 1];
-                const prevCenterY = (prevR.top + prevR.bottom) / 2;
-                const rCenterY = (r.top + r.bottom) / 2;
-                if (Math.abs(rCenterY - prevCenterY) <= 8 || Math.abs(r.top - prevR.top) <= 6) {
-                  prevR.left = Math.min(prevR.left, r.left);
-                  prevR.top = Math.min(prevR.top, r.top);
-                  prevR.right = Math.max(prevR.right, r.right);
-                  prevR.bottom = Math.max(prevR.bottom, r.bottom);
-                  prevR.width = prevR.right - prevR.left;
-                  prevR.height = prevR.bottom - prevR.top;
-                } else {
-                  lineMergedRects.push({
-                    left: r.left,
-                    top: r.top,
-                    right: r.right,
-                    bottom: r.bottom,
-                    width: r.width,
-                    height: r.height
-                  });
-                }
-              }
-            }
-
-            for (let sIdx = 0; sIdx < lineMergedRects.length; sIdx++) {
-              const r = lineMergedRects[sIdx];
-              words.push({
-                text: cleanToken,
-                left: r.left,
-                right: r.right,
-                top: r.top + vScrollTop,
-                bottom: r.bottom + vScrollTop,
-                width: r.width,
-                height: r.height,
-                centerX: r.left + r.width / 2,
-                centerY: r.top + r.height / 2 + vScrollTop
-              });
+            const pushStatus = pushRangeRectsToWords(cleanToken, pdfTf);
+            if (pushStatus === 2 && !this.isTwoCol) {
+              break;
             }
           } catch (e) {}
         }
@@ -4407,8 +5021,9 @@ export class ReadingRuler {
       }
 
       // Horizontální hranice kontejneru / sloupce
-      const stageEl = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
-      const sRect = stageEl ? stageEl.getBoundingClientRect() : null;
+      const sRect = (this.snapToLines && this.cachedLines && this.cachedLines.length > 0 && this._cachedStageRect)
+        ? this._cachedStageRect
+        : (this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.();
       const stageL = (sRect && sRect.width > 50) ? Math.round(sRect.left) : (this.stageLeft ?? 0);
       const stageR = (sRect && sRect.width > 50) ? Math.round(sRect.right) : ((this.stageLeft ?? 0) + (this.stageWidth ?? window.innerWidth));
 
@@ -4749,8 +5364,9 @@ export class ReadingRuler {
    */
   getHysteresisLineIndex(curY, isPen = false, activeColumn = null) {
     if (!isPen || this.followMode === "mouse") {
-      const isDocTurning = !!document.querySelector(".is-chapter-loading, .is-turning-page") ||
-        document.body.classList.contains("is-turning-page") ||
+      const isDocTurning = document.body.classList.contains("is-turning-page") ||
+        document.body.classList.contains("is-chapter-loading") ||
+        !!(this.app?.isNavigating) ||
         (Date.now() < this.navigatingPageLockoutEndTime);
       if (!isDocTurning) {
         this.isNavigating = false;
@@ -4768,7 +5384,7 @@ export class ReadingRuler {
     if (!this.cachedLines || this.cachedLines.length === 0) return -1;
 
     const isVertical = this.isVerticalMode();
-    const viewport = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
+    const viewport = isVertical ? (this._cachedViewportEl || document.getElementById("paged-viewport")) : null;
     if (isVertical && viewport) {
       curY += viewport.scrollTop;
     }
@@ -4789,19 +5405,31 @@ export class ReadingRuler {
     const lastItem = pool[pool.length - 1];
 
     if (this.isPdfMode) {
-      const lineEl = firstItem?.line?.element || firstItem?.line?.el;
-      let pageSlot = lineEl ? lineEl.closest(".pdf-page-container, .pdf-page-slot") : null;
-      const isSpread = !isVertical && this.isSpreadActive();
-      const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
-      if (!pageSlot && isSpread && spreadInfo) {
-        pageSlot = activeColumn === 1 ? spreadInfo.rightSlot : spreadInfo.leftSlot;
+      let cRect = firstItem?.line?.canvasRect || null;
+      if (!cRect && this._cachedSpreadInfo) {
+        cRect = activeColumn === 1 ? this._cachedSpreadInfo.rightRect : this._cachedSpreadInfo.leftRect;
       }
-      if (!pageSlot) {
-        pageSlot = document.querySelector("#reader-content .pdf-page-container, #reader-content .pdf-page-slot");
+      if (!cRect) {
+        cRect = this._cachedCanvasRect;
       }
-      const canvas = pageSlot ? pageSlot.querySelector("canvas") : document.querySelector("#reader-content canvas");
-      if (canvas) {
-        const cRect = canvas.getBoundingClientRect();
+      if (!cRect && (!this.snapToLines || this.cachedLines.length === 0)) {
+        const lineEl = firstItem?.line?.element || firstItem?.line?.el;
+        let pageSlot = lineEl ? lineEl.closest(".pdf-page-container, .pdf-page-slot") : null;
+        const isSpread = !isVertical && this.isSpreadActive();
+        const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
+        if (!pageSlot && isSpread && spreadInfo) {
+          pageSlot = activeColumn === 1 ? spreadInfo.rightSlot : spreadInfo.leftSlot;
+        }
+        if (!pageSlot) {
+          pageSlot = document.querySelector("#reader-content .pdf-page-container, #reader-content .pdf-page-slot");
+        }
+        const canvas = pageSlot ? pageSlot.querySelector("canvas") : document.querySelector("#reader-content canvas");
+        if (canvas) {
+          cRect = canvas.getBoundingClientRect();
+          this._cachedCanvasRect = cRect;
+        }
+      }
+      if (cRect) {
         const vTop = (isVertical && viewport) ? viewport.scrollTop : 0;
         const canvasTop = cRect.top + vTop;
         const canvasBottom = cRect.bottom + vTop;
@@ -4916,8 +5544,9 @@ export class ReadingRuler {
    * Zpracuje pohyb ukazatele (myši nebo prstu)
    */
   handlePointerMove(clientX, clientY, pointerType = null) {
-    const isDocTurning = !!document.querySelector(".is-chapter-loading, .is-turning-page") ||
-      document.body.classList.contains("is-turning-page") ||
+    const isDocTurning = document.body.classList.contains("is-turning-page") ||
+      document.body.classList.contains("is-chapter-loading") ||
+      !!(this.app?.isNavigating) ||
       (Date.now() < this.navigatingPageLockoutEndTime);
     if (!isDocTurning && (pointerType === "mouse" || this.followMode === "mouse" || pointerType === null)) {
       this.isLineLocked = false;
@@ -5095,12 +5724,15 @@ export class ReadingRuler {
       this.refreshLines();
     }
 
-    const stage = document.getElementById("paged-stage") || this.container || document.body;
-    const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, width: window.innerWidth };
+    const useFastCachedGeom = this.snapToLines && this.cachedLines.length > 0;
+    const stageRect = (useFastCachedGeom && this._cachedStageRect)
+      ? this._cachedStageRect
+      : ((document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.() || { left: 0, width: window.innerWidth });
     const stageCenterX = stageRect.left + stageRect.width / 2;
-    const isSpread = !this.isVerticalMode() && this.isSpreadActive();
-    const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
-    const isTwoCol = !this.isVerticalMode() && (!!this.isTwoCol || isSpread);
+    const isVerticalNow = this.isVerticalMode();
+    const isSpread = !isVerticalNow && (useFastCachedGeom ? !!this._cachedIsSpread : this.isSpreadActive());
+    const spreadInfo = isSpread ? (useFastCachedGeom ? this._cachedSpreadInfo : this.getActiveSpreadInfo(null)) : null;
+    const isTwoCol = !isVerticalNow && (!!this.isTwoCol || isSpread);
     const splitX = (isSpread && spreadInfo) ? spreadInfo.midGap : ((isTwoCol && this.gapMiddle) ? this.gapMiddle : stageCenterX);
     const activeColumn = isTwoCol ? ((curX >= splitX) ? 1 : 0) : 0;
 
@@ -5678,43 +6310,28 @@ export class ReadingRuler {
    * - direction >= 0 (vpřed / nová kapitola): přichytí na první řádek / první slovo (index 0)
    * - direction < 0 (vzad / konec kapitoly): přichytí na poslední řádek / poslední slovo
    */
-  resetPositionForPage(direction = 1, immediate = true) {
+  resetPositionForPage(direction = 1, isPageChanged = true) {
     this.clearPageTransitionTimersAndRAFs();
     this._maxLineIndexOnPage = -1;
     this._maxWordIndexOnPage = -1;
 
-    const stage = this.getStageElement();
-    if (stage) stage.classList.add("is-turning-page");
-    document.body.classList.add("is-turning-page");
-    const content = document.getElementById("reader-content");
-    if (content) content.classList.add("is-turning-page");
+    // Clear the transition lock:
+    this.isPageTransitioning = false;
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
+    this.isLineLocked = false;
+    this.suppressLineAdvancement = false;
+    this.navigatingPageLockoutEndTime = 0;
 
-    this.hideForPageTransition();
+    const stage = this.getStageElement();
+    const content = document.getElementById("reader-content");
+
     this.disableWordTransition();
     this.setNoTransition(true);
     this.previousActiveLineIndex = -1;
     if (this.rulerEl) {
       this.rulerEl.style.transition = "none";
     }
-
-    this.isLineLocked = true;
-    this.isNavigating = true;
-    this.isNavigatingPage = true;
-    this.navigatingPageLockoutEndTime = Date.now() + 250;
-    this.navigatingPageTimer = setTimeout(() => {
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.navigatingPageLockoutEndTime = 0;
-      this.navigatingPageTimer = null;
-    }, 250);
-
-    this._navSafetyTimer = setTimeout(() => {
-      if (this.isNavigating || this.isLineLocked || this.suppressLineAdvancement) {
-        console.warn('Navigation lock timed out in resetPositionForPage. Forcing release.');
-        this.clearPageTransitionTimersAndRAFs();
-        this.forceReleaseNavigationLocks();
-      }
-    }, 300); // 300ms maximum lock lifetime
 
     const isBackward = direction < 0;
 
@@ -5724,6 +6341,13 @@ export class ReadingRuler {
         this.forceReleaseNavigationLocks();
         return;
       }
+
+      this.isPageTransitioning = false;
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.isLineLocked = false;
+      this.suppressLineAdvancement = false;
+      this.navigatingPageLockoutEndTime = 0;
 
       try {
         if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
@@ -5743,8 +6367,17 @@ export class ReadingRuler {
             this.currentY = this.targetY;
             this.isPageTransitioning = false;
             if (this.rulerEl) {
-              this.rulerEl.classList.remove("is-page-transitioning");
+              this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
+              this.rulerEl.classList.add("is-visible");
+              this.rulerEl.style.removeProperty("transition");
+              this.rulerEl.style.display = "block";
+              this.rulerEl.style.opacity = "1";
+              this.rulerEl.style.visibility = "visible";
             }
+            if (this.maskTopEl) this.maskTopEl.style.display = "";
+            if (this.maskBottomEl) this.maskBottomEl.style.display = "";
+            if (this.maskLeftEl) this.maskLeftEl.style.display = "";
+            if (this.maskRightEl) this.maskRightEl.style.display = "";
             this.applyPosition();
             return;
           }
@@ -5766,132 +6399,73 @@ export class ReadingRuler {
           this.currentY = this.targetY;
           this.isPageTransitioning = false;
           if (this.rulerEl) {
-            this.rulerEl.classList.remove("is-page-transitioning");
+            this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
+            this.rulerEl.classList.add("is-visible");
+            this.rulerEl.style.removeProperty("transition");
+            this.rulerEl.style.display = "block";
+            this.rulerEl.style.opacity = "1";
+            this.rulerEl.style.visibility = "visible";
           }
+          if (this.maskTopEl) this.maskTopEl.style.display = "";
+          if (this.maskBottomEl) this.maskBottomEl.style.display = "";
+          if (this.maskLeftEl) this.maskLeftEl.style.display = "";
+          if (this.maskRightEl) this.maskRightEl.style.display = "";
           this.applyPosition();
           return;
         }
 
+        // Refresh lines and words for the active page:
         this.refreshLines();
         if (this.wordTracking) {
           this.refreshWords();
         }
 
-        // Fallback ochrana: Pokud na stránce není detekován žádný řádek, pravítko zůstane skryté (v PDF režimu se použije plynulá clona)
-        if (this.cachedLines.length === 0) {
-          if (this.isPdfMode) {
-            const isVertical = this.isVerticalMode();
-            const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
-
-            if (isVertical && vp) {
-              this.height = this.pdfRulerHeight || 32;
-              const targetContainer = document.querySelector(`.pdf-page-container[data-page-number="${this.app?.pdfLoader?.currentPage || 1}"]`);
-              if (targetContainer) {
-                const cRect = targetContainer.getBoundingClientRect();
-                const offsetTop = targetContainer.offsetTop || (cRect.top + vp.scrollTop);
-                this.targetY = isBackward ? Math.round(offsetTop + cRect.height - this.height) : Math.round(offsetTop + 20);
-              } else {
-                this.targetY = isBackward ? Math.round(vp.scrollTop + vp.clientHeight - 80) : Math.round(vp.scrollTop + 80);
-              }
-              this.currentY = this.targetY;
-              this.isPageTransitioning = false;
-              if (this.rulerEl) {
-                this.rulerEl.classList.remove("is-page-transitioning");
-              }
-              this.applyPosition();
-              return;
-            }
-
-            this.height = this.pdfRulerHeight || 32;
-            const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
-            const stageRect = stage ? stage.getBoundingClientRect() : { top: 60, bottom: window.innerHeight - 60 };
-            const canvas = document.querySelector("#reader-content canvas");
-            let topBound = stageRect.top;
-            let bottomBound = stageRect.bottom;
-            if (canvas) {
-              const cRect = canvas.getBoundingClientRect();
-              if (cRect.height > 50) {
-                topBound = cRect.top;
-                bottomBound = cRect.bottom;
-              }
-            }
-            this.targetY = isBackward ? Math.round(bottomBound - this.height) : Math.round(topBound);
-            this.currentY = this.targetY;
-            this.isPageTransitioning = false;
-            if (this.rulerEl) {
-              this.rulerEl.classList.remove("is-page-transitioning");
-            }
-            this.applyPosition();
-            return;
-          }
-          this.isPageTransitioning = false;
-          if (this.rulerEl) {
-            this.rulerEl.style.display = "none";
-            this.rulerEl.style.opacity = "0";
-            this.rulerEl.style.visibility = "hidden";
-            this.rulerEl.classList.remove("is-visible");
-            this.rulerEl.classList.add("is-hidden");
-          }
-          this.clearFocusTextMask();
-          return;
-        }
-
         if (this.wordTracking) {
-          if (this.cachedWords.length > 0) {
-            const targetWordIdx = isBackward ? this.cachedWords.length - 1 : 0;
+          if (this.cachedWords && this.cachedWords.length > 0) {
+            const targetWordIdx = direction >= 0 ? 0 : this.cachedWords.length - 1;
             this.activeWordIndex = targetWordIdx;
-            const targetWord = this.cachedWords[targetWordIdx];
+            this.setWordWindow(this.activeWordIndex);
 
+            const targetWord = this.cachedWords[targetWordIdx];
             if (targetWord && targetWord.lineIndex != null) {
               this.activeLineIndex = targetWord.lineIndex;
             } else {
-              this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
+              this.activeLineIndex = direction >= 0 ? 0 : (this.cachedLines?.length ? this.cachedLines.length - 1 : 0);
             }
 
             const isVertical = this.isVerticalMode();
             const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
             const vScrollTop = vp ? vp.scrollTop : 0;
-            this.lastPointerX = targetWord.centerX;
-            this.lastPointerY = isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY;
-            this.lastValidPointerX = this.lastPointerX;
-            this.lastValidPointerY = this.lastPointerY;
+            if (targetWord) {
+              this.lastPointerX = targetWord.centerX;
+              this.lastPointerY = isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY;
+              this.lastValidPointerX = this.lastPointerX;
+              this.lastValidPointerY = this.lastPointerY;
+            }
 
-            this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
-            this.maskTopEl.classList.add("is-snapped");
-            this.maskBottomEl.classList.add("is-snapped");
-            this.maskLeftEl.classList.add("is-snapped");
-            this.maskRightEl.classList.add("is-snapped");
-
-            // Atomické usazení: nejprve aplikujeme přesné souřadnice skrytému elementu
-            this.applyPosition();
-            void this.rulerEl.offsetWidth; // Vynutí layout pro eliminaci skoku
-
-            // Až po usazení na skutečný řádek vrátíme viditelnost
-            this.isPageTransitioning = false;
-            this.rulerEl.classList.remove("is-page-transitioning");
-            this.applyPosition();
+            if (this.rulerEl) this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
+            if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
+            if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
+            if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
+            if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
           } else {
-            this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
-            this.rulerEl.classList.remove("word-tracking-mode");
-            const geom = this.computeLineGeometry(this.activeLineIndex);
+            // Fallback to line mode bounds on line 0 so the ruler never hides completely
+            this.activeLineIndex = 0;
+            const geom = this.computeLineGeometry(0);
             if (geom) {
               this.height = geom.height;
               this.targetY = geom.targetY;
-              this.currentY = this.targetY;
+              this.currentY = geom.targetY;
             }
-            this.applyPosition();
-            void this.rulerEl.offsetWidth;
-
-            this.isPageTransitioning = false;
-            this.rulerEl.classList.remove("is-page-transitioning");
-            this.applyPosition();
           }
         } else {
-          const targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
+          const targetLineIdx = (this.cachedLines && this.cachedLines.length > 0)
+            ? (direction < 0 ? this.cachedLines.length - 1 : 0)
+            : 0;
           this.activeLineIndex = targetLineIdx;
 
-          if (this.cachedWords.length > 0) {
-            if (isBackward) {
+          if (this.cachedWords && this.cachedWords.length > 0) {
+            if (direction < 0) {
               let lastWordIdx = this.cachedWords.length - 1;
               for (let i = this.cachedWords.length - 1; i >= 0; i--) {
                 if (this.cachedWords[i].lineIndex === targetLineIdx) {
@@ -5907,38 +6481,49 @@ export class ReadingRuler {
             this.activeWordIndex = 0;
           }
 
-          this.rulerEl.classList.remove("word-tracking-mode");
+          if (this.rulerEl) this.rulerEl.classList.remove("word-tracking-mode");
           const geom = this.computeLineGeometry(targetLineIdx);
           if (geom) {
             this.height = geom.height;
             this.targetY = geom.targetY;
-            this.currentY = this.targetY;
+            this.currentY = geom.targetY;
           }
 
           const isVertical = this.isVerticalMode();
           const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
           const vScrollTop = vp ? vp.scrollTop : 0;
-          const line = this.cachedLines[targetLineIdx];
-          this.lastPointerX = line.left != null ? line.left : 100;
-          this.lastPointerY = isVertical ? Math.round(line.centerY - vScrollTop) : line.centerY;
+          const line = this.cachedLines && this.cachedLines[targetLineIdx];
+          this.lastPointerX = line && line.left != null ? line.left : 100;
+          this.lastPointerY = line ? (isVertical ? Math.round(line.centerY - vScrollTop) : line.centerY) : 150;
           this.lastValidPointerX = this.lastPointerX;
           this.lastValidPointerY = this.lastPointerY;
 
-          this.rulerEl.classList.add("is-snapped");
-          this.maskTopEl.classList.add("is-snapped");
-          this.maskBottomEl.classList.add("is-snapped");
-          this.maskLeftEl.classList.add("is-snapped");
-          this.maskRightEl.classList.add("is-snapped");
-
-          // Atomické usazení: nejprve aplikujeme přesné souřadnice skrytému elementu
-          this.applyPosition();
-          void this.rulerEl.offsetWidth; // Vynutí layout před zobrazením
-
-          // Až po usazení na skutečný řádek vrátíme viditelnost
-          this.isPageTransitioning = false;
-          this.rulerEl.classList.remove("is-page-transitioning");
-          this.applyPosition();
+          if (this.rulerEl) this.rulerEl.classList.add("is-snapped");
+          if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
+          if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
+          if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
+          if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
         }
+
+        // Explicitly UNHIDE and reveal the ruler DOM elements:
+        if (this.rulerEl) {
+          this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
+          this.rulerEl.classList.add("is-visible");
+          this.rulerEl.style.removeProperty("transition");
+          this.rulerEl.style.display = "block";
+          this.rulerEl.style.opacity = "1";
+          this.rulerEl.style.visibility = "visible";
+          if (this.wordTracking) {
+            this.rulerEl.classList.add("word-tracking-mode");
+          }
+        }
+        if (this.maskTopEl) this.maskTopEl.style.display = "";
+        if (this.maskBottomEl) this.maskBottomEl.style.display = "";
+        if (this.maskLeftEl) this.maskLeftEl.style.display = "";
+        if (this.maskRightEl) this.maskRightEl.style.display = "";
+
+        // Immediately execute this.applyPosition(); so the ruler sits perfectly on the first word of the new page.
+        this.applyPosition();
       } catch (err) {
         console.error("[ReadingRuler] Error in resetPositionForPage:", err);
       } finally {
@@ -5954,14 +6539,7 @@ export class ReadingRuler {
       });
     };
 
-    if (immediate) {
-      performReset();
-    } else {
-      this.pageChangeRafId = requestAnimationFrame(() => {
-        this.pageChangeRafId = null;
-        performReset();
-      });
-    }
+    performReset();
   }
 
   getReaderContainer() {
@@ -7141,7 +7719,8 @@ export class ReadingRuler {
     }
 
     const isVertical = this.isVerticalMode();
-    const viewport = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
+    const useFastCachedGeom = this.snapToLines && this.cachedLines && this.cachedLines.length > 0;
+    const viewport = isVertical ? (this._cachedViewportEl || document.getElementById("paged-viewport")) : null;
     const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
 
     let y = Number.isFinite(this.currentY) ? Math.round(this.currentY) : 150;
@@ -7312,18 +7891,18 @@ export class ReadingRuler {
           colLeft = geom.left;
           colWidth = geom.width;
         }
-      } else if (isVertical && document.querySelector("#reader-content .pdf-page-container, #reader-content .pdf-page-slot")) {
+      } else if (isVertical && (this.isPdfMode || currentLine?.isPdfLine)) {
         const pageCol = this.getPageTextColumnBounds(currentLine);
         if (pageCol && pageCol.width > 50) {
           colLeft = pageCol.left;
           colWidth = pageCol.width;
         }
-      } else if (this.isSpreadActive()) {
-        const spreadInfo = this.getActiveSpreadInfo(currentLine);
+      } else if (useFastCachedGeom ? !!this._cachedIsSpread : this.isSpreadActive()) {
+        const spreadInfo = useFastCachedGeom ? this._getCachedSpreadInfoForLine(currentLine) : this.getActiveSpreadInfo(currentLine);
         if (spreadInfo) {
           const cRect = spreadInfo.activeRect;
           const padding = 12;
-          const pageCol = this.getPageTextColumnBounds(currentLine);
+          const pageCol = useFastCachedGeom ? null : this.getPageTextColumnBounds(currentLine);
           if (pageCol && pageCol.width > 50) {
             colLeft = Math.max(Math.round(cRect.left), Math.round(pageCol.left));
             colWidth = Math.min(Math.round(pageCol.width), Math.round(cRect.right - colLeft));
@@ -7358,9 +7937,9 @@ export class ReadingRuler {
             colLeft = this.column0Left ?? this.textBlockLeft;
             colWidth = this.column0Width ?? this.textBlockWidth;
             if (colLeft == null || colWidth == null || colWidth < 80) {
-              // Fallback: measure the stage live to avoid stale/zero stageLeft cache
-              const stageEl = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
-              const sRect = stageEl ? stageEl.getBoundingClientRect() : null;
+              const sRect = (useFastCachedGeom && this._cachedStageRect)
+                ? this._cachedStageRect
+                : (this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.();
               const sLeft = sRect && sRect.width > 50 ? Math.round(sRect.left) : (this.stageLeft ?? 20);
               const sWidth = sRect && sRect.width > 50 ? Math.round(sRect.width) : (this.stageWidth ?? (window.innerWidth - 40));
               colLeft = sLeft;
@@ -7371,8 +7950,9 @@ export class ReadingRuler {
 
         // Bezpečnostní limit: na jednosloupcových stránkách nesmí pravítko nikdy přetéct vlevo mimo stageRect.left ani vpravo mimo stageRect.right
         if (!isTwoCol) {
-          const stageEl = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
-          const sRect = stageEl ? stageEl.getBoundingClientRect() : null;
+          const sRect = (useFastCachedGeom && this._cachedStageRect)
+            ? this._cachedStageRect
+            : (this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.();
           if (sRect && sRect.width > 50) {
             const stageLeftBound = Math.round(sRect.left);
             const stageRightBound = Math.round(sRect.right);
@@ -7686,8 +8266,8 @@ export class ReadingRuler {
       }
 
       const lineEl = currentLine ? (currentLine.element || currentLine.el) : null;
-      const isSpread = !isVertical && this.isSpreadActive();
-      const spreadInfo = isSpread ? this.getActiveSpreadInfo(currentLine) : null;
+      const isSpread = !isVertical && (useFastCachedGeom ? !!this._cachedIsSpread : this.isSpreadActive());
+      const spreadInfo = isSpread ? (useFastCachedGeom ? this._getCachedSpreadInfoForLine(currentLine) : this.getActiveSpreadInfo(currentLine)) : null;
 
       let coverLeft = 0;
       let coverWidth = window.innerWidth;
@@ -7732,47 +8312,61 @@ export class ReadingRuler {
         coverHeight = Math.max(0, window.innerHeight - roundScreenY);
       } else {
         // Zkontrolujeme, zda se jedná o PDF stránku (kontejner/canvas)
-        const pdfContainers = document.querySelectorAll("#reader-content .pdf-page-container, #reader-content .pdf-page-slot");
-        let pdfPage = lineEl ? lineEl.closest(".pdf-page-container, .pdf-page-slot") : null;
-        if (!pdfPage && pdfContainers.length > 0) {
-          if (pdfContainers.length === 1) {
-            pdfPage = pdfContainers[0];
-          } else {
-            let minDist = Infinity;
-            for (const c of pdfContainers) {
-              const r = c.getBoundingClientRect();
-              if (r.bottom >= 0 && r.top <= window.innerHeight) {
-                const dist = Math.abs((r.top + r.bottom) / 2 - roundScreenY);
-                if (dist < minDist) {
-                  minDist = dist;
-                  pdfPage = c;
-                }
-              }
-            }
-            if (!pdfPage) pdfPage = pdfContainers[0];
-          }
-        }
-
-        if (pdfPage) {
+        const cachedPdfRect = currentLine?.canvasRect || (this.isPdfMode ? this._cachedCanvasRect : null);
+        if (useFastCachedGeom && cachedPdfRect && cachedPdfRect.width > 50) {
           if (this.maskInactiveSpreadEl) {
             this.maskInactiveSpreadEl.style.display = "none";
             this.maskInactiveSpreadEl.classList.remove("is-visible");
             this.maskInactiveSpreadEl.classList.add("is-hidden");
           }
-          const canvas = pdfPage.querySelector("canvas") || pdfPage;
-          let cRect = canvas.getBoundingClientRect();
-          if (cRect.width < 50 && pdfPage !== canvas) {
-            cRect = pdfPage.getBoundingClientRect();
+          coverLeft = Math.round(cachedPdfRect.left);
+          coverWidth = Math.round(cachedPdfRect.width);
+          coverHeight = Math.max(0, Math.round(cachedPdfRect.bottom - roundScreenY));
+        } else if (this.isPdfMode || currentLine?.isPdfLine) {
+          const pdfContainers = document.querySelectorAll("#reader-content .pdf-page-container, #reader-content .pdf-page-slot");
+          let pdfPage = lineEl ? lineEl.closest(".pdf-page-container, .pdf-page-slot") : null;
+          if (!pdfPage && pdfContainers.length > 0) {
+            if (pdfContainers.length === 1) {
+              pdfPage = pdfContainers[0];
+            } else {
+              let minDist = Infinity;
+              for (const c of pdfContainers) {
+                const r = c.getBoundingClientRect();
+                if (r.bottom >= 0 && r.top <= window.innerHeight) {
+                  const dist = Math.abs((r.top + r.bottom) / 2 - roundScreenY);
+                  if (dist < minDist) {
+                    minDist = dist;
+                    pdfPage = c;
+                  }
+                }
+              }
+              if (!pdfPage) pdfPage = pdfContainers[0];
+            }
           }
-          if (cRect.width > 50) {
-            coverLeft = Math.round(cRect.left);
-            coverWidth = Math.round(cRect.width);
-            coverHeight = Math.max(0, Math.round(cRect.bottom - roundScreenY));
+
+          if (pdfPage) {
+            if (this.maskInactiveSpreadEl) {
+              this.maskInactiveSpreadEl.style.display = "none";
+              this.maskInactiveSpreadEl.classList.remove("is-visible");
+              this.maskInactiveSpreadEl.classList.add("is-hidden");
+            }
+            const canvas = pdfPage.querySelector("canvas") || pdfPage;
+            let cRect = canvas.getBoundingClientRect();
+            if (cRect.width < 50 && pdfPage !== canvas) {
+              cRect = pdfPage.getBoundingClientRect();
+            }
+            if (cRect.width > 50) {
+              this._cachedCanvasRect = cRect;
+              coverLeft = Math.round(cRect.left);
+              coverWidth = Math.round(cRect.width);
+              coverHeight = Math.max(0, Math.round(cRect.bottom - roundScreenY));
+            }
           }
         } else {
           // EPUB / obecný režim
-          const stageEl = stage || this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
-          const sRect = stageEl ? stageEl.getBoundingClientRect() : null;
+          const sRect = (useFastCachedGeom && this._cachedStageRect)
+            ? this._cachedStageRect
+            : (stage || this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.();
           const isTwoCol = !isVertical && this.isTwoCol;
 
           if (isTwoCol && sRect && sRect.width > 50) {
@@ -7852,14 +8446,14 @@ export class ReadingRuler {
           rulerLeft = Math.round(geom.left);
           rulerWidth = Math.round(geom.width);
         }
-      } else if (isVertical && (this.isPdfMode || document.querySelector("#reader-content .pdf-page-container, #reader-content .pdf-page-slot"))) {
+      } else if (isVertical && (this.isPdfMode || currentLine?.isPdfLine)) {
         const pageCol = this.getPageTextColumnBounds(currentLine);
         rulerLeft = Math.round(pageCol.left);
         rulerWidth = Math.round(pageCol.width);
       } else if (spreadInfo) {
         const cRect = spreadInfo.activeRect;
         const padding = 12;
-        const pageCol = this.getPageTextColumnBounds(currentLine);
+        const pageCol = useFastCachedGeom ? null : this.getPageTextColumnBounds(currentLine);
         if (pageCol && pageCol.width > 50) {
           rulerLeft = Math.max(Math.round(cRect.left), Math.round(pageCol.left));
           rulerWidth = Math.min(Math.round(pageCol.width), Math.round(cRect.right - rulerLeft));
@@ -8646,6 +9240,7 @@ export class ReadingRuler {
         this.rulerEl.classList.add("word-tracking-mode");
       }
     } else {
+      this.cachedWords = [];
       this.previewWidth = 0;
       this.totalWidth = 0;
       if (this.rulerEl) {
@@ -8750,27 +9345,12 @@ export class ReadingRuler {
    * Vyvolá se při přechodu na jinou stránku nebo kapitolu.
    * Okamžitě a synchronně usadí pravítko na cílový řádek bez jakéhokoliv časovače či prodlevy.
    */
-  onPageChange(direction = 0, isPageChanged = true, immediate = true) {
+  onPageChange(direction = 0, isPageChanged = true, immediateRuler = true) {
     if (!this.enabled) {
       this.forceReleaseNavigationLocks();
       return;
     }
     this.clearPageTransitionTimersAndRAFs();
-    this.isLineLocked = true;
-    this.isNavigatingPage = true;
-    this.navigatingPageLockoutEndTime = Date.now() + 300;
-
-    const stage = this.getStageElement();
-    if (stage) stage.classList.add("is-turning-page");
-    document.body.classList.add("is-turning-page");
-    const content = document.getElementById("reader-content");
-    if (content) content.classList.add("is-turning-page");
-
-    clearTimeout(this._navSafetyTimer);
-    this._navSafetyTimer = setTimeout(() => {
-      this.forceReleaseNavigationLocks();
-    }, 300); // 300ms maximum lock lifetime
-
     this.disableWordTransition();
     if (this.wordTransitionTimer) {
       clearTimeout(this.wordTransitionTimer);
@@ -8783,23 +9363,71 @@ export class ReadingRuler {
       clearTimeout(this.pageChangeTimer);
       this.pageChangeTimer = null;
     }
+    const content = document.getElementById("reader-content");
     if (content && this._onTransitionEnd) {
       content.removeEventListener("transitionend", this._onTransitionEnd);
       this._onTransitionEnd = null;
     }
-
-    this.hideForPageTransition();
 
     this.penHistory = [];
     this.touchHistory = [];
     this._maxLineIndexOnPage = -1;
     this._maxWordIndexOnPage = -1;
 
-    // Okamžité synchronní usazení pravítka na nové stránce podle směru listování
-    // Pro švihnutí stylusu vždy resynchronizovat na horní řádek příchozí stránky
+    // Clear the transition lock:
+    this.isPageTransitioning = false;
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
+
+    // Refresh lines and words for the active page:
+    this.refreshLines();
+    if (this.wordTracking) {
+      this.refreshWords();
+    }
+
     const targetDirection = this.flickResyncTopLine ? 1 : direction;
     this.flickResyncTopLine = false;
-    this.resetPositionForPage(targetDirection, immediate);
+
+    if (this.wordTracking) {
+      if (this.cachedWords && this.cachedWords.length > 0) {
+        this.activeWordIndex = (targetDirection >= 0 ? 0 : this.cachedWords.length - 1);
+        this.setWordWindow(this.activeWordIndex);
+        if (this.cachedWords[this.activeWordIndex] && this.cachedWords[this.activeWordIndex].lineIndex != null) {
+          this.activeLineIndex = this.cachedWords[this.activeWordIndex].lineIndex;
+        }
+      } else {
+        this.activeLineIndex = 0;
+        const geom = this.computeLineGeometry(0);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+          this.currentY = geom.targetY;
+        }
+      }
+    }
+
+    // Explicitly UNHIDE and reveal the ruler DOM elements:
+    if (this.rulerEl) {
+      this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
+      this.rulerEl.classList.add("is-visible");
+      this.rulerEl.style.removeProperty("transition");
+      this.rulerEl.style.display = "block";
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
+      if (this.wordTracking) {
+        this.rulerEl.classList.add("word-tracking-mode");
+      }
+    }
+    if (this.maskTopEl) this.maskTopEl.style.display = "";
+    if (this.maskBottomEl) this.maskBottomEl.style.display = "";
+    if (this.maskLeftEl) this.maskLeftEl.style.display = "";
+    if (this.maskRightEl) this.maskRightEl.style.display = "";
+
+    // Immediately execute this.applyPosition(); so the ruler sits perfectly on the first word of the new page.
+    this.applyPosition();
+
+    // Synchronize full position reset and geometry calculations
+    this.resetPositionForPage(targetDirection, isPageChanged);
   }
 
   destroy() {
