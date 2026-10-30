@@ -6245,8 +6245,11 @@ export class LuminaApp {
 
   async initSessionAnalytics() {
     const rawSessions = await storage.getAllReadingSessions();
-    // Filtrujeme striktně pouze relace s délkou alespoň 5 minut (>= 300 sekund)
+    const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
+    // Filtrujeme striktně pouze relace s délkou alespoň 5 minut (>= 300 sekund) a nesmazané relace
     const savedSessions = (rawSessions || []).filter(s => {
+      const sid = String(s.sessionId ?? s.id ?? "").trim();
+      if (sid && deletedSet.has(sid)) return false;
       const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
       return dur >= 300;
     });
@@ -6395,7 +6398,10 @@ export class LuminaApp {
             e.stopPropagation();
             e.preventDefault();
             if (!window.confirm("Opravdu si přejete smazat tuto čtecí relaci? Statistiky budou automaticky přepočítány.")) return;
-            const targetId = deleteBtn.getAttribute("data-session-id") || sid || s.sessionId || s.id;
+            const targetId = String(deleteBtn.getAttribute("data-session-id") || sid || s.sessionId || s.id || "").trim();
+            if (!targetId) return;
+
+            deleteBtn.disabled = true;
 
             try {
               await storage.deleteReadingSession(targetId);
