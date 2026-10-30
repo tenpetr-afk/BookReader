@@ -1634,11 +1634,8 @@ export class LuminaApp {
       // Stejný handler pro touchstart (iPad – pointerdown může být passive v některých kontextech)
       document.addEventListener("touchstart", (e) => {
         if (!this.dom.rulerQuickPopover || this.dom.rulerQuickPopover.classList.contains("is-hidden")) return;
-        const touch = e.touches[0];
-        if (!touch) return;
-        const target = document.elementFromPoint(touch.clientX, touch.clientY);
-        const insidePopover = this.dom.rulerQuickPopover.contains(target);
-        const insideBtn = this.dom.btnRulerQuickMenu && this.dom.btnRulerQuickMenu.contains(target);
+        const insidePopover = this.dom.rulerQuickPopover.contains(e.target);
+        const insideBtn = this.dom.btnRulerQuickMenu && this.dom.btnRulerQuickMenu.contains(e.target);
         if (insidePopover || insideBtn) return;
         e.preventDefault();
         e.stopPropagation();
@@ -1745,13 +1742,46 @@ export class LuminaApp {
     document.addEventListener("click", _handleOutsideTap);
     document.addEventListener("touchend", _handleOutsideTap, { passive: true });
 
+    const bindRulerSettingAction = (el, action) => {
+      if (!el) return;
+      let lastTrigger = 0;
+      const trigger = (e) => {
+        const now = Date.now();
+        if (now - lastTrigger < 250) {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          return;
+        }
+        lastTrigger = now;
+        action(e);
+      };
+
+      el.addEventListener("pointerup", (e) => {
+        if (e.pointerType === "pen" || e.pointerType === "touch") {
+          const rect = el.getBoundingClientRect();
+          if (
+            e.clientX >= rect.left - 10 &&
+            e.clientX <= rect.right + 10 &&
+            e.clientY >= rect.top - 10 &&
+            e.clientY <= rect.bottom + 10
+          ) {
+            trigger(e);
+          }
+        }
+      });
+
+      el.addEventListener("click", (e) => {
+        trigger(e);
+      });
+    };
+
     const popoverSnapToggle = this.dom.popoverRulerSnapToggle || document.getElementById("popover-ruler-snap") || document.getElementById("popover-ruler-snap-toggle");
     if (popoverSnapToggle) {
       const handlePopoverSnap = (e) => {
         if (this.isPdfMode && this.isImageOnlyPdf) return;
         if (e) {
           e.stopPropagation();
-          if (e.type === "click" && e.target && e.target.tagName !== "INPUT") {
+          if (e.target && e.target.tagName !== "INPUT" && e.cancelable) {
             e.preventDefault();
           }
         }
@@ -1766,24 +1796,24 @@ export class LuminaApp {
         this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       };
-      popoverSnapToggle.addEventListener("click", handlePopoverSnap);
+      bindRulerSettingAction(popoverSnapToggle, handlePopoverSnap);
       if (popoverSnapToggle.tagName === "INPUT") {
         popoverSnapToggle.addEventListener("change", handlePopoverSnap);
       }
     }
 
     if (this.dom.popoverModeLine) {
-      this.dom.popoverModeLine.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      bindRulerSettingAction(this.dom.popoverModeLine, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
         this.setWordTracking(false);
       });
     }
 
     if (this.dom.popoverModeWord) {
-      this.dom.popoverModeWord.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      bindRulerSettingAction(this.dom.popoverModeWord, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
         if (this.isPdfMode && this.isImageOnlyPdf) return;
         this.setWordTracking(true);
       });
@@ -1791,9 +1821,9 @@ export class LuminaApp {
 
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
       if (btn !== this.dom.popoverModeLine && btn !== this.dom.popoverModeWord) {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
           if (this.isPdfMode && this.isImageOnlyPdf) return;
           const isWord = btn.dataset.rulerModeType === "word";
           this.setWordTracking(isWord);
@@ -1803,10 +1833,10 @@ export class LuminaApp {
 
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetBtn = e.target.closest('[data-ruler-style]') || btn;
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-style]') || btn) : btn;
           const newMode = targetBtn ? targetBtn.dataset.rulerStyle : null;
           if (!newMode) return;
           if (!this.settings.ruler) this.settings.ruler = {};
@@ -1821,10 +1851,10 @@ export class LuminaApp {
 
     if (this.dom.popoverColorButtons) {
       this.dom.popoverColorButtons.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetBtn = e.target.closest('[data-ruler-color]') || btn;
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-color]') || btn) : btn;
           const newColor = targetBtn ? targetBtn.dataset.rulerColor : null;
           if (!newColor) return;
           if (!this.settings.ruler) this.settings.ruler = {};
@@ -2154,14 +2184,16 @@ export class LuminaApp {
         this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       };
-      drawerSnapToggle.addEventListener("click", handleDrawerSnap);
+      bindRulerSettingAction(drawerSnapToggle, handleDrawerSnap);
       if (drawerSnapToggle.tagName === "INPUT") {
         drawerSnapToggle.addEventListener("change", handleDrawerSnap);
       }
     }
 
     if (this.dom.rulerWordTrackingSetting) {
-      this.dom.rulerWordTrackingSetting.addEventListener("click", () => {
+      bindRulerSettingAction(this.dom.rulerWordTrackingSetting, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
         const nextVal = !(this.settings.ruler.wordTracking ?? false);
         this.setWordTracking(nextVal);
       });
@@ -2180,10 +2212,10 @@ export class LuminaApp {
     }
 
     this.dom.rulerModeSelects.forEach(btn => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const targetBtn = e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn;
+      bindRulerSettingAction(btn, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
+        const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn) : btn;
         const newMode = targetBtn ? (targetBtn.dataset.rulerMode || targetBtn.dataset.rulerStyle) : null;
         if (!newMode) return;
         if (!this.settings.ruler) this.settings.ruler = {};
@@ -2197,10 +2229,10 @@ export class LuminaApp {
 
     if (this.dom.rulerColorSelects) {
       this.dom.rulerColorSelects.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetBtn = e.target.closest('[data-ruler-color]') || btn;
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-color]') || btn) : btn;
           const newColor = targetBtn ? targetBtn.dataset.rulerColor : null;
           if (!newColor) return;
           if (!this.settings.ruler) this.settings.ruler = {};
@@ -2249,8 +2281,8 @@ export class LuminaApp {
 
     if (this.dom.rulerFollowButtons) {
       this.dom.rulerFollowButtons.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
+        bindRulerSettingAction(btn, (e) => {
+          if (e) e.stopPropagation();
           const val = btn.dataset.rulerFollow;
           if (!val) return;
           if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") return;
@@ -4564,15 +4596,7 @@ export class LuminaApp {
         navDirection = finalPageIndex > 0 ? 1 : 0;
       }
 
-      // Phase 3 (Immediate Ruler Re-Indexing & Masking): Synchronní usazení a zamaskování
-      this.goToPage(finalPageIndex, navDirection, true, { isInitialLoad: true });
-
-      // Pojistka synchronního refreshnutí a zamaskování pravítka pro cílovou stránku
-      if (this.ruler && this.ruler.enabled) {
-        this.ruler.resetPositionForPage(navDirection, true);
-      }
-
-      // Phase 4 (Reveal): Obnovení viditelnosti po ukotvení a zamaskování cílové strany
+      // Reveal: Nejprve odeber třídu is-chapter-loading a nastav opacity = "1" na stage i readerContent
       if (stage) {
         stage.classList.remove("is-chapter-loading");
         void stage.offsetWidth;
@@ -4580,7 +4604,7 @@ export class LuminaApp {
       }
       if (this.dom.readerContent) {
         this.dom.readerContent.classList.remove("is-chapter-loading");
-        void this.dom.readerContent.offsetWidth; // Vynutíme uplatnění cílové transformace před odhalením
+        void this.dom.readerContent.offsetWidth;
         this.dom.readerContent.style.opacity = "1";
       }
       requestAnimationFrame(() => {
@@ -4591,6 +4615,13 @@ export class LuminaApp {
           this.dom.readerContent.style.transition = "";
         }
       });
+
+      this.goToPage(finalPageIndex, navDirection, true, { isInitialLoad: true, skipRulerUpdate: true });
+
+      // Pojistka synchronního refreshnutí a zamaskování pravítka pro cílovou stránku
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.resetPositionForPage(navDirection, true);
+      }
     } catch (e) {
       if (stage) {
         stage.classList.remove("is-chapter-loading");
@@ -5028,18 +5059,20 @@ export class LuminaApp {
           cancelAnimationFrame(this._rulerPageChangeRafId);
           this._rulerPageChangeRafId = null;
         }
-        this._rulerPageChangeRafId = requestAnimationFrame(() => {
+        if (!options?.skipRulerUpdate) {
           this._rulerPageChangeRafId = requestAnimationFrame(() => {
-            this._rulerPageChangeRafId = null;
-            try {
-              if (this.ruler && this.ruler.enabled) {
-                this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
+            this._rulerPageChangeRafId = requestAnimationFrame(() => {
+              this._rulerPageChangeRafId = null;
+              try {
+                if (this.ruler && this.ruler.enabled) {
+                  this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
+                }
+              } catch (rulerErr) {
+                console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
               }
-            } catch (rulerErr) {
-              console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
-            }
+            });
           });
-        });
+        }
       }
 
       requestAnimationFrame(() => {
@@ -5760,7 +5793,8 @@ export class LuminaApp {
       rulerContainer.style.display = showRuler ? "flex" : "none";
       rulerContainer.classList.toggle("is-hidden", !showRuler);
     }
-    if (showRuler && this.settings.ruler.enabled) {
+    const hasReaderContent = !!(this.dom.readerContent && this.dom.readerContent.innerHTML.trim());
+    if (showRuler && this.settings.ruler.enabled && hasReaderContent) {
       this.ruler.setEnabled(true);
     } else {
       this.ruler.setEnabled(false);

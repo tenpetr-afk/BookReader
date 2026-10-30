@@ -1962,10 +1962,13 @@ body.ruler-cursor-hidden .ruler-quick-popover * {
 
 /* Zamezení nechtěného označování textu při tažení tužkou přes čtecí plochu se zapnutým pravítkem */
 body.ruler-active .reader-content,
+body.ruler-active .reader-content *,
+body.ruler-active .paged-content,
+body.ruler-active .paged-content *,
 body.ruler-active .paged-viewport {
-  -webkit-user-select: none;
-  user-select: none;
-  touch-action: none;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
 }
 
 /* Kruhový indikátor podržení byl trvale odstraněn */
