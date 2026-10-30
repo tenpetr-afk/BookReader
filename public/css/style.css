@@ -1835,7 +1835,7 @@ body.settings-sheet-open .drawer-backdrop {
 .session-item-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0.5rem;
   flex-shrink: 0;
 }
 
@@ -1854,31 +1854,6 @@ body.settings-sheet-open .drawer-backdrop {
   color: #10b981;
   border-color: rgba(16, 185, 129, 0.35);
   animation: pulseLive 2s infinite ease-in-out;
-}
-
-.btn-delete-session {
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm, 6px);
-  color: var(--text-muted, #94a3b8);
-  padding: 0;
-  margin-left: 4px;
-  transition: all 0.15s ease;
-}
-
-.btn-delete-session:hover {
-  background: rgba(239, 68, 68, 0.12);
-  color: #ef4444;
-}
-
-.btn-delete-session svg {
-  pointer-events: none;
 }
 
 @keyframes pulseLive {

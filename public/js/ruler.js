@@ -46,7 +46,6 @@ export class ReadingRuler {
     this.height = 36; // aktuální efektivní výška
     this.uniformLineHeight = null; // Jednotná výška pravítka podle intra-paragraph pitch
     this.lineHeightByFontSize = new Map(); // Mapa výšek pravítka podle velikosti písma
-    this.glyphHeightByFontSize = new Map(); // Mapa mediánových výšek glyfů podle velikosti písma
     this.autoHeight = true; // Automatická výška podle velikosti řádku
     this.snapToLines = true; // Magnetická přilnavost k řádkům
     this.wordTracking = false; // Sledování jednotlivých slov
@@ -78,13 +77,6 @@ export class ReadingRuler {
     this.activeLineIndex = -1;
     this.previousActiveLineIndex = -1;
     this.activeWordIndex = -1;
-    this._lastActiveLineIndex = -1;
-    this._lastActiveColumn = null;
-    this._focusMaskDirty = false;
-    this._lastEmptyWordsDetectTime = 0;
-    this._forceRefreshWords = false;
-    this._lastAppliedWordWidth = null;
-    this._lastWordSolidRatio = null;
     this.onProgress = null; // Callback: (type: "line" | "word", count: number)
     this._maxLineIndexOnPage = -1;
     this._maxWordIndexOnPage = -1;
@@ -225,10 +217,10 @@ export class ReadingRuler {
     // Vizuální seřazení zleva doprava
     spreadSlots.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
 
-    let leftSlot = spreadSlots[0];
-    let rightSlot = spreadSlots[1];
-    let leftCanvas = leftSlot.querySelector("canvas") || leftSlot;
-    let rightCanvas = rightSlot.querySelector("canvas") || rightSlot;
+    const leftSlot = spreadSlots[0];
+    const rightSlot = spreadSlots[1];
+    const leftCanvas = leftSlot.querySelector("canvas") || leftSlot;
+    const rightCanvas = rightSlot.querySelector("canvas") || rightSlot;
 
     let leftRect = leftCanvas.getBoundingClientRect();
     let rightRect = rightCanvas.getBoundingClientRect();
@@ -408,14 +400,6 @@ export class ReadingRuler {
     this.navigatingPageLockoutEndTime = 0;
     this.dragCooldownEndTime = 0;
 
-    if (this.rulerEl) {
-      this.rulerEl.classList.remove("is-page-transitioning");
-      if (this.enabled) {
-        this.rulerEl.style.opacity = "1";
-        this.rulerEl.style.visibility = "visible";
-      }
-    }
-
     const stage = this.getStageElement();
     if (stage) stage.classList.remove("is-turning-page");
     document.body.classList.remove("is-turning-page");
@@ -439,15 +423,11 @@ export class ReadingRuler {
       this.suppressLineAdvancement = false;
       this.isLineLocked = false;
       this.suppressTimer = null;
-      this.forceReleaseNavigationLocks();
-      if (this.enabled) {
-        this.applyPosition();
-      }
     }, duration);
 
     if (this._navSafetyTimer) clearTimeout(this._navSafetyTimer);
     this._navSafetyTimer = setTimeout(() => {
-      if (this.isNavigating || this.isLineLocked || this.suppressLineAdvancement || this.isPageTransitioning) {
+      if (this.isNavigating || this.isLineLocked || this.suppressLineAdvancement) {
         console.warn('Navigation lock timed out. Forcing release.');
         this.clearPageTransitionTimersAndRAFs();
         this.forceReleaseNavigationLocks();
@@ -635,13 +615,12 @@ export class ReadingRuler {
   }
 
   setPdfAutoHeight(enabled) {
-    this._lastComputedLineGeom = null;
     if (this.isImageOnlyPdf) {
       this.pdfAutoHeight = false;
       this.isPdfHeightFromSlider = true;
       this.height = this.pdfRulerHeight || 32;
       this.uniformLineHeight = this.height;
-      this.refreshVisualState();
+      if (this.enabled) this.applyPosition();
       return;
     }
     this.pdfAutoHeight = !!enabled;
@@ -673,7 +652,9 @@ export class ReadingRuler {
         }
       }
     }
-    this.refreshVisualState();
+    if (this.enabled) {
+      this.applyPosition();
+    }
   }
 
   getPdfAutoHeight() {
@@ -682,7 +663,6 @@ export class ReadingRuler {
   }
 
   setPdfRulerHeight(height, isUserSlider = false) {
-    this._lastComputedLineGeom = null;
     const h = Math.max(16, Math.min(120, Math.round(Number(height) || 32)));
     this.pdfRulerHeight = h;
     if (isUserSlider) {
@@ -700,8 +680,10 @@ export class ReadingRuler {
           this.targetY = geom.targetY;
         }
       }
+      if (this.enabled) {
+        this.applyPosition();
+      }
     }
-    this.refreshVisualState();
   }
 
   getPdfRulerHeight() {
@@ -744,14 +726,12 @@ export class ReadingRuler {
   }
 
   disableWordTransition() {
-    const wasTransitioning = this.isWordTransitioning || this.horizontalWordTransition;
     this.horizontalWordTransition = false;
     if (this.wordTransitionTimer) {
       clearTimeout(this.wordTransitionTimer);
       this.wordTransitionTimer = null;
     }
     this.isWordTransitioning = false;
-    if (!wasTransitioning) return;
     if (this.rulerEl) {
       this.rulerEl.classList.remove("word-transition-active");
       this.rulerEl.classList.add("word-transition-snap");
@@ -838,13 +818,18 @@ export class ReadingRuler {
    */
   isPointerInStage(clientX, clientY) {
     if (clientX == null || clientY == null) return false;
-    let rect = this._cachedViewportRect;
-    if (!rect || rect.width <= 50 || rect.height <= 50) {
-      const stage = document.getElementById("paged-viewport") || this.container || document.getElementById("paged-stage");
-      if (!stage) return false;
-      rect = stage.getBoundingClientRect();
-      this._cachedViewportRect = rect;
+    if (this.snapToLines && this.cachedLines && this.cachedLines.length > 0 && this._cachedViewportRect) {
+      const rect = this._cachedViewportRect;
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      );
     }
+    const stage = document.getElementById("paged-viewport") || this.container || document.getElementById("paged-stage");
+    if (!stage) return false;
+    const rect = stage.getBoundingClientRect();
     return (
       clientX >= rect.left &&
       clientX <= rect.right &&
@@ -1470,7 +1455,7 @@ export class ReadingRuler {
   initDefaultStationaryAnchor() {
     if (!this.enabled || !this.isVerticalMode() || this.followMode !== "keyboard") return;
     if (this.cachedLines.length === 0) {
-      this.detectLines();
+      this.refreshLines();
     }
     if (this.cachedLines.length === 0) return;
 
@@ -1564,7 +1549,7 @@ export class ReadingRuler {
     const docY = vScrollTop + clientY;
 
     if (this.cachedLines.length === 0) {
-      this.detectLines();
+      this.refreshLines();
     }
     if (this.wordTracking && this.cachedWords.length === 0) {
       this.refreshWords();
@@ -1675,11 +1660,6 @@ export class ReadingRuler {
   attachEvents() {
     // 1. POINTER EVENTS: Sjednocené sledování pro prst, Apple Pencil i myš
     const onPointerDown = (e) => {
-      if (this.isUiControl(e.target)) {
-        this.isPenTouching = false;
-        return;
-      }
-
       if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
         this.isPenTouching = true;
@@ -1738,7 +1718,7 @@ export class ReadingRuler {
         this.activePointerId = e.pointerId;
         this.activePointerType = e.pointerType;
         this.isPenTouching = (e.pointerType === "pen");
-        this.isDraggingRuler = this.followMode !== "mouse" || e.pointerType === "touch";
+        this.isDraggingRuler = true;
         this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
         return;
       }
@@ -1747,7 +1727,10 @@ export class ReadingRuler {
         if (e.pointerType === "touch") return;
         this.activePointerId = e.pointerId;
         this.activePointerType = e.pointerType;
-        this.isDraggingRuler = false;
+        this._relativeTrackingActive = false;
+        this._verticalScrollAnchorPending = false;
+        this._scrollAnchorPhysicalY = null;
+        this._scrollAnchorVirtualY = null;
         this.handlePointerMove(e.clientX, e.clientY, e.pointerType);
         return;
       }
@@ -1761,11 +1744,6 @@ export class ReadingRuler {
     };
 
     const onPointerMove = (e) => {
-      if (this.isUiControl(e.target)) {
-        this.isPenTouching = false;
-        return;
-      }
-
       if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
         this.savePenDetails(e);
@@ -1844,7 +1822,7 @@ export class ReadingRuler {
       // Plynulé sledování v reálném čase v režimu sledování myši ("mouse") pro myš i Apple Pencil
       if (this.followMode === "mouse") {
         if (e.pointerType === "touch") return;
-        if (e.pointerType === "mouse" || e.pointerType === "pen") {
+        if ((e.pointerType === "mouse" || e.pointerType === "pen") && !this.isDraggingRuler) {
           if (!this.isUiControl(e.target) && this.isPointerInStage(e.clientX, e.clientY)) {
             this.activePointerType = e.pointerType;
             this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
@@ -1860,11 +1838,6 @@ export class ReadingRuler {
     };
 
     const onPointerUp = (e) => {
-      if (this.isUiControl(e.target)) {
-        this.isPenTouching = false;
-        return;
-      }
-      this.isPenTouching = false;
       if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
         this.isDraggingRuler = false;
         this.isPenTouching = false;
@@ -2004,7 +1977,6 @@ export class ReadingRuler {
     };
 
     const onPointerCancel = () => {
-      this.isPenTouching = false;
       this.penHistory = [];
       this.penStrokeStartTime = 0;
       this.flickHandledInStroke = false;
@@ -2247,20 +2219,6 @@ export class ReadingRuler {
       }, { passive: true });
     }
 
-    // Aktivní touchmove listener pro Apple Pencil na iPadOS Safari
-    window.addEventListener("touchmove", (e) => {
-      if (!this.enabled || this.followMode !== "mouse") return;
-      if (this.isUiControl(e.target)) return;
-      const touches = e.touches ? Array.from(e.touches) : [];
-      const stylusTouch = touches.find(t => t.touchType === "stylus") || ((Date.now() - this.lastPenTime < 500) ? touches[0] : null);
-      if (stylusTouch && this.isPointerInStage(stylusTouch.clientX, stylusTouch.clientY)) {
-        if (e.cancelable) e.preventDefault();
-        this.lastPenTime = Date.now();
-        this.activePointerType = "pen";
-        this.schedulePointerUpdate(stylusTouch.clientX, stylusTouch.clientY, "pen");
-      }
-    }, { passive: false });
-
     // Potlačení kontextového menu při podržení
     window.addEventListener("contextmenu", (e) => {
       if (!this.enabled) return;
@@ -2292,7 +2250,6 @@ export class ReadingRuler {
     // Zachycení kliknutí pro zabránění nežádoucího resetu nebo odskoku pravítka po dokončení podržení či jeho zrušení
     window.addEventListener("click", (e) => {
       if (!this.enabled) return;
-      if (this.isUiControl(e.target)) return;
       // When any drawer/panel is open, do NOT swallow the event — let the backdrop handler close it.
       if (typeof this.isAnyDrawerOpen === "function" && this.isAnyDrawerOpen()) return;
       if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
@@ -2300,6 +2257,7 @@ export class ReadingRuler {
         e.stopImmediatePropagation();
         return;
       }
+      if (this.isUiControl(e.target)) return;
       if (!this.isPointerInStage(e.clientX, e.clientY)) return;
 
       // Pokud klik proběhl krátce po swipu nebo krokování tapem, zamezíme opětovnému spuštění a probublání
@@ -2435,30 +2393,15 @@ export class ReadingRuler {
         this.maskRightEl.style.setProperty("transition", "none", "important");
       }
     } else {
-      if (this.rulerEl) {
-        this.rulerEl.classList.add("is-snapped");
-        if (this.followMode !== "mouse") this.rulerEl.style.removeProperty("transition");
-      }
+      if (this.rulerEl) this.rulerEl.classList.add("is-snapped");
       if (this.wordWaveEl) {
         this.wordWaveEl.classList.add("is-snapped");
         this.wordWaveEl.style.removeProperty("transition");
       }
-      if (this.maskTopEl) {
-        this.maskTopEl.classList.add("is-snapped");
-        if (this.followMode !== "mouse") this.maskTopEl.style.removeProperty("transition");
-      }
-      if (this.maskBottomEl) {
-        this.maskBottomEl.classList.add("is-snapped");
-        if (this.followMode !== "mouse") this.maskBottomEl.style.removeProperty("transition");
-      }
-      if (this.maskLeftEl) {
-        this.maskLeftEl.classList.add("is-snapped");
-        if (this.followMode !== "mouse") this.maskLeftEl.style.removeProperty("transition");
-      }
-      if (this.maskRightEl) {
-        this.maskRightEl.classList.add("is-snapped");
-        if (this.followMode !== "mouse") this.maskRightEl.style.removeProperty("transition");
-      }
+      if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
+      if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
+      if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
+      if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
     }
   }
 
@@ -2491,14 +2434,14 @@ export class ReadingRuler {
       this.maskRightEl.style.transition = "none";
     }
 
-    // Debounce timer (150 ms) pro resynchronizaci / přichycení k nejbližšímu řádku po zastavení posuvu
+    // Debounce timer (~70 ms) pro resynchronizaci / přichycení k nejbližšímu řádku po zastavení posuvu
     if (this._scrollEndTimer) {
       clearTimeout(this._scrollEndTimer);
     }
     this._scrollEndTimer = setTimeout(() => {
       this._scrollEndTimer = null;
       this._onVerticalScrollEnd();
-    }, 150);
+    }, 70);
 
     // RAF throttling pro samotný repaint
     if (!this._scrollRafPending) {
@@ -2694,6 +2637,10 @@ export class ReadingRuler {
       }
 
       this.applyPosition();
+
+      this._verticalScrollAnchorPending = true;
+      this._scrollAnchorVirtualY = this.lastPointerY;
+      this._scrollAnchorPhysicalY = null;
       return;
     }
 
@@ -2850,18 +2797,10 @@ export class ReadingRuler {
    * Bezpečná detekce řádků textu chráněná proti pádu (try-catch) a zacyklení.
    * Využívá standardní dotaz nad kandidátními elementy bez rekurzivního průchodu DOMem.
    */
-  detectLines(force = false) {
-    this._lastComputedLineGeom = null;
-    if (!force && (!this.cachedLines || this.cachedLines.length === 0) && this._lastEmptyDetectTime && (performance.now() - this._lastEmptyDetectTime < 150)) {
-      return [];
-    }
+  detectLines() {
     this.cachedLines = [];
-    this.glyphHeightByFontSize = new Map();
-    if (!this.enabled) {
-      return [];
-    }
     if (this.isImageOnlyPdf) {
-      return [];
+      return;
     }
     const range = document.createRange();
     try {
@@ -2972,7 +2911,7 @@ export class ReadingRuler {
 
         // Tighten stage boundary clipping in horizontal/paged mode
         if (!isVertical && hasValidStageBounds) {
-          if (rBottom <= stageTop + 2 || rTop >= stageBottom - 2 || lineRight <= stageLeft + 2 || lineLeft >= stageRight - 2) {
+          if (!(lineRight > stageLeft + 2 && lineLeft < stageRight - 2 && rBottom > stageTop && rTop < stageBottom)) {
             return null;
           }
           const rMidX = (lineLeft + lineRight) / 2;
@@ -3003,8 +2942,7 @@ export class ReadingRuler {
             height: rHeight,
             centerY: rTop + rHeight / 2 + vScrollTop,
             hasText: true,
-            isPdfLine: !!isPdfEl,
-            wordIndices: []
+            isPdfLine: !!isPdfEl
           };
           rawLines.push(lineObj);
           return lineObj;
@@ -3012,101 +2950,23 @@ export class ReadingRuler {
         return null;
       };
 
-      let lastBionicBlock = null;
-      let lastBionicOffsetParent = null;
-      let lastBionicOffsetTop = null;
-      let lastBionicOffsetLeft = -Infinity;
-      let lastBionicLineFirstOffsetLeft = -Infinity;
+      let lastBlockEl = null;
+      let lastOffsetParent = null;
+      let lastOffsetTop = null;
+      let lastOffsetLeft = -Infinity;
+      let lastLineFirstOffsetLeft = -Infinity;
       let lastLineObj = null;
 
-      const BLOCK_TAGS = new Set([
-        "P", "LI", "BLOCKQUOTE", "H1", "H2", "H3", "H4", "H5", "H6",
-        "DIV", "SECTION", "ARTICLE", "HEADER", "FOOTER", "ASIDE", "NAV",
-        "TABLE", "TR", "TD", "TH", "PRE", "DD", "DT"
-      ]);
-
-      const walker = document.createTreeWalker(content, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            if (node === content) {
-              return NodeFilter.FILTER_SKIP;
-            }
-            const tag = node.tagName;
-            if (
-              tag === "SCRIPT" || tag === "STYLE" || tag === "SVG" || tag === "PICTURE" ||
-              tag === "BUTTON" ||
-              node.classList.contains("ruler-floating-controls") ||
-              node.classList.contains("ruler-quick-popover") ||
-              node.classList.contains("toast-container")
-            ) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            if (tag === "FIGURE" || node.classList.contains("chapter-illustration")) {
-              if (!node.closest("figcaption")) return NodeFilter.FILTER_REJECT;
-            }
-
-            // Ořezání celých blokových elementů (odstavců) mimo viditelný viewport ještě před sestoupením do vnořených uzlů
-            if (BLOCK_TAGS.has(tag)) {
-              let rect = blockRectCache.get(node);
-              if (!rect) {
-                rect = node.getBoundingClientRect();
-                blockRectCache.set(node, rect);
-              }
-
-              if (!isVertical && hasValidStageBounds) {
-                if (
-                  rect.right < stageLeft - 30 ||
-                  rect.left > stageRight + 30 ||
-                  rect.bottom < stageTop - 30 ||
-                  rect.top > stageBottom + 30
-                ) {
-                  offscreenBlocks.add(node);
-                  return NodeFilter.FILTER_REJECT;
-                }
-              } else if (isVertical) {
-                if (
-                  rect.bottom < -30 ||
-                  rect.top > viewH + 30 ||
-                  rect.right < -30 ||
-                  rect.left > viewW + 30
-                ) {
-                  offscreenBlocks.add(node);
-                  return NodeFilter.FILTER_REJECT;
-                }
-              }
-
-              let compStyle = styleCache.get(node);
-              if (!compStyle) {
-                try {
-                  compStyle = window.getComputedStyle(node);
-                  styleCache.set(node, compStyle);
-                } catch (e) {
-                  offscreenBlocks.add(node);
-                  return NodeFilter.FILTER_REJECT;
-                }
-              }
-              if (compStyle.display === "none" || compStyle.visibility === "hidden" || parseFloat(compStyle.opacity) === 0) {
-                offscreenBlocks.add(node);
-                return NodeFilter.FILTER_REJECT;
-              }
-
-              return NodeFilter.FILTER_SKIP;
-            }
-
-            return NodeFilter.FILTER_SKIP;
-          }
-
-          // Zpracování TEXT_NODE
           const parent = node.parentElement;
           if (!parent) return NodeFilter.FILTER_REJECT;
+          if (parent.closest('script, style, svg, picture')) return NodeFilter.FILTER_REJECT;
+          if (parent.closest('figure, .chapter-illustration') && !parent.closest('figcaption')) return NodeFilter.FILTER_REJECT;
+          if (parent.closest('.ruler-floating-controls, .ruler-quick-popover, .toast-container, button')) return NodeFilter.FILTER_REJECT;
 
-          const text = node.textContent;
-          if (!text || text.length === 0) return NodeFilter.FILTER_REJECT;
-
-          const rawContentText = text.replace(/[\s\u00A0\uFEFF]/g, "");
-          if (!rawContentText || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(rawContentText)) {
-            return NodeFilter.FILTER_REJECT;
-          }
+          const rawContentText = (node.textContent || "").replace(/[\s\u00A0\uFEFF]/g, "");
+          if (!rawContentText || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(rawContentText)) return NodeFilter.FILTER_REJECT;
 
           return NodeFilter.FILTER_ACCEPT;
         }
@@ -3117,15 +2977,39 @@ export class ReadingRuler {
         const parent = textNode.parentElement;
         if (!parent) continue;
 
-        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre, dd, dt') || parent;
+        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre') || parent;
         if (offscreenBlocks.has(blockElement)) {
           continue;
         }
 
+        // Pre-filter at the block element level first so Bionic <b> nodes in offscreen paragraphs
+        // never trigger thousands of per-word getBoundingClientRect() calls across the chapter.
         let blockRect = blockRectCache.get(blockElement);
         if (!blockRect) {
           blockRect = blockElement.getBoundingClientRect();
           blockRectCache.set(blockElement, blockRect);
+
+          if (!isVertical && hasValidStageBounds) {
+            if (
+              blockRect.right < stageLeft - 20 ||
+              blockRect.left > stageRight + 20 ||
+              blockRect.bottom < stageTop - 20 ||
+              blockRect.top > stageBottom + 20
+            ) {
+              offscreenBlocks.add(blockElement);
+              continue;
+            }
+          } else if (isVertical) {
+            if (
+              blockRect.right < -20 ||
+              blockRect.left > viewW + 20 ||
+              blockRect.bottom < -20 ||
+              blockRect.top > viewH + 20
+            ) {
+              offscreenBlocks.add(blockElement);
+              continue;
+            }
+          }
         }
 
         let compStyle = styleCache.get(blockElement);
@@ -3134,6 +3018,11 @@ export class ReadingRuler {
             compStyle = window.getComputedStyle(blockElement);
             styleCache.set(blockElement, compStyle);
           } catch (e) {
+            offscreenBlocks.add(blockElement);
+            continue;
+          }
+          if (compStyle.display === 'none' || compStyle.visibility === 'hidden' || parseFloat(compStyle.opacity) === 0) {
+            offscreenBlocks.add(blockElement);
             continue;
           }
         }
@@ -3142,23 +3031,28 @@ export class ReadingRuler {
           parent.classList.contains('bionic-fixation') || parent.classList.contains('bionic-bold')
         );
 
-        const blockHasBionic = (lastBionicBlock === blockElement) || (
-          blockElement.querySelector &&
-          (blockElement.querySelector('.bionic-fixation, .bionic-bold') !== null)
-        );
-
-        // In Bionic blocks, every word has a <b class="bionic-fixation"> prefix;
-        // skip non-bionic suffix/punctuation text nodes so they never push skewed rects.
+        // When Bionic reading is active, each word has a <b class="bionic-fixation"> prefix followed
+        // by an unbolded suffix text node on the exact same line. Skip the suffix text node (and any
+        // pure-punctuation leading text node attached to a following <b class="bionic-fixation">) in
+        // detectLines() to avoid redundant Range.getClientRects() calls per word.
         if (!isBionicFixation) {
-          if (blockElement !== lastBionicBlock) {
-            lastBionicBlock = null;
-            lastBionicOffsetParent = null;
-            lastBionicOffsetTop = null;
-            lastBionicOffsetLeft = -Infinity;
-            lastBionicLineFirstOffsetLeft = -Infinity;
-            lastLineObj = null;
+          const prevSib = textNode.previousSibling;
+          if (
+            prevSib &&
+            prevSib.nodeType === Node.ELEMENT_NODE &&
+            prevSib.tagName === 'B' &&
+            (prevSib.classList.contains('bionic-fixation') || prevSib.classList.contains('bionic-bold'))
+          ) {
+            continue;
           }
-          if (blockHasBionic) {
+          const nextSib = textNode.nextSibling;
+          if (
+            nextSib &&
+            nextSib.nodeType === Node.ELEMENT_NODE &&
+            nextSib.tagName === 'B' &&
+            (nextSib.classList.contains('bionic-fixation') || nextSib.classList.contains('bionic-bold')) &&
+            !/[\p{L}\p{N}]/u.test(textNode.textContent || "")
+          ) {
             continue;
           }
         }
@@ -3170,119 +3064,38 @@ export class ReadingRuler {
         const pageSlot = isPdfEl ? (parent.closest('.pdf-page-slot, .pdf-page-container') || textLayer) : null;
         const fontSize = Math.max(6, Math.round(pdfTf ? (rawFontSize * pdfTf.scaleY) : rawFontSize));
 
+        // Key optimization (offsetTop fast-skip for Bionic reading):
+        // Within the same blockElement and column, consecutive <b class="bionic-fixation"> elements
+        // on the same visual line share the exact same parent.offsetTop (within <= 2px).
+        // Only measure the first <b class="bionic-fixation"> of each visual line (when offsetTop changes)
+        // and use the block's/column's horizontal bounds for line width.
         if (isBionicFixation) {
-          const curBionicOffsetParent = parent.offsetParent;
-          const curBionicOffsetTop = parent.offsetTop;
-          const curBionicOffsetLeft = parent.offsetLeft;
+          const curOffsetTop = parent.offsetTop;
+          const curOffsetLeft = parent.offsetLeft;
+          const curOffsetParent = parent.offsetParent;
 
-          // Only fast-skip if on the same visual line AND in the same column
           if (
-            blockElement === lastBionicBlock &&
-            curBionicOffsetParent === lastBionicOffsetParent &&
-            lastBionicOffsetTop !== null &&
-            Math.abs(curBionicOffsetTop - lastBionicOffsetTop) <= 2 &&
-            curBionicOffsetLeft >= lastBionicOffsetLeft - 4 &&
-            (curBionicOffsetLeft - lastBionicLineFirstOffsetLeft) < maxColSpan
+            blockElement === lastBlockEl &&
+            curOffsetParent === lastOffsetParent &&
+            lastOffsetTop !== null &&
+            Math.abs(curOffsetTop - lastOffsetTop) <= 2 &&
+            curOffsetLeft >= lastOffsetLeft - 4 &&
+            (curOffsetLeft - lastLineFirstOffsetLeft) < maxColSpan
           ) {
-            lastBionicOffsetLeft = curBionicOffsetLeft;
-            // Pokud je slovo blízko pravého okraje sloupce nebo poslední v bloku, zkontroluj případné zalomení přípony:
-            if (parent.nextSibling && parent.nextSibling.nodeType === Node.TEXT_NODE && !parent.nextElementSibling) {
-              // nech propadnout k měření přípony níže
-            } else {
-              continue;
-            }
-          }
-
-          let parentRect = parentRectCache.get(parent);
-          if (!parentRect) {
-            parentRect = parent.getBoundingClientRect();
-            parentRectCache.set(parent, parentRect);
-          }
-
-          if (!parentRect || parentRect.width <= 0 || parentRect.height <= 0) {
+            lastOffsetLeft = curOffsetLeft;
             continue;
           }
 
-          // Strictly reject off-screen Bionic words from previous/next pages or columns
-          if (!isVertical && hasValidStageBounds) {
-            const pMidX = (parentRect.left + parentRect.right) / 2;
-            if (
-              parentRect.right <= stageLeft + 2 ||
-              parentRect.left >= stageRight - 2 ||
-              parentRect.bottom <= stageTop ||
-              parentRect.top >= stageBottom ||
-              pMidX <= stageLeft + 2 ||
-              pMidX >= stageRight - 2
-            ) {
-              continue;
-            }
-          } else if (isVertical) {
-            if (
-              parentRect.bottom < -20 ||
-              parentRect.top > viewH + 20 ||
-              parentRect.right < -20 ||
-              parentRect.left > viewW + 20
-            ) {
-              continue;
-            }
-          }
-
-          lastBionicBlock = blockElement;
-          lastBionicOffsetParent = curBionicOffsetParent;
-          lastBionicOffsetTop = curBionicOffsetTop;
-          lastBionicOffsetLeft = curBionicOffsetLeft;
-          lastBionicLineFirstOffsetLeft = curBionicOffsetLeft;
-
-          let colLeftBound = stageLeft;
-          let colRightBound = stageRight;
-          if (isVertical) {
-            colLeftBound = Math.max(0, blockRect.left);
-            colRightBound = Math.min(viewW, blockRect.right);
-          } else if (isTwoColEarly) {
-            if (parentRect.left < stageCenterX) {
-              colLeftBound = Math.max(stageLeft, blockRect.left);
-              colRightBound = Math.min(col0RightEarly, blockRect.right);
-            } else {
-              colLeftBound = Math.max(stageCenterX + colGapEarly / 2, blockRect.left);
-              colRightBound = Math.min(stageRight, blockRect.right);
-            }
-          } else {
-            colLeftBound = Math.max(stageLeft, blockRect.left);
-            colRightBound = Math.min(stageRight, blockRect.right);
-          }
-
-          const bRects = parent.getClientRects();
-          for (let b = 0; b < bRects.length; b++) {
-            const br = bRects[b];
-            if (br.width >= 3 && br.height >= 6) {
-              pushLineRect({
-                top: br.top,
-                bottom: br.bottom,
-                height: br.height,
-                left: colLeftBound,
-                right: colRightBound
-              }, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
-            }
-          }
-
-          const nextSib = parent.nextSibling;
-          if (nextSib && nextSib.nodeType === Node.TEXT_NODE && (!parent.nextElementSibling || (colRightBound - parentRect.right) < 90)) {
-            range.selectNodeContents(nextSib);
-            const tailRects = range.getClientRects();
-            for (let t = 0; t < tailRects.length; t++) {
-              const tr = tailRects[t];
-              if (tr.width >= 3 && tr.height >= 6 && (bRects.length === 0 || Math.abs(tr.top - bRects[0].top) > 4)) {
-                pushLineRect({
-                  top: tr.top,
-                  bottom: tr.bottom,
-                  height: tr.height,
-                  left: colLeftBound,
-                  right: colRightBound
-                }, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
-              }
-            }
-          }
-          continue;
+          lastBlockEl = blockElement;
+          lastOffsetParent = curOffsetParent;
+          lastOffsetTop = curOffsetTop;
+          lastOffsetLeft = curOffsetLeft;
+          lastLineFirstOffsetLeft = curOffsetLeft;
+          lastLineObj = null;
+        } else {
+          lastBlockEl = null;
+          lastOffsetTop = null;
+          lastLineObj = null;
         }
 
         let parentRect = null;
@@ -3323,21 +3136,33 @@ export class ReadingRuler {
         }
 
         try {
+          if (isBionicFixation && parentRect && parentRect.width > 0 && parentRect.height > 0 && parentRect.height <= fontSize * 2.2) {
+            let colRightBound = stageRight;
+            if (isVertical) {
+              colRightBound = Math.min(viewW, blockRect.right);
+            } else if (isTwoColEarly) {
+              colRightBound = (parentRect.left < stageCenterX)
+                ? Math.min(col0RightEarly, blockRect.right)
+                : Math.min(stageRight, blockRect.right);
+            } else {
+              colRightBound = Math.min(stageRight, blockRect.right);
+            }
+            const lineRect = {
+              top: parentRect.top,
+              bottom: parentRect.bottom,
+              height: parentRect.height,
+              left: parentRect.left,
+              right: Math.max(parentRect.right, colRightBound)
+            };
+            lastLineObj = pushLineRect(lineRect, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
+            continue;
+          }
           range.selectNodeContents(textNode);
           const rects = range.getClientRects();
           if (!rects || rects.length === 0) continue;
 
           for (let i = 0; i < rects.length; i++) {
-            const r = rects[i];
-            if (blockHasBionic && lastLineObj && lastLineObj.blockElement === blockElement) {
-              const rCenterY = r.top + r.height / 2 + vScrollTop;
-              if (Math.abs(rCenterY - lastLineObj.centerY) <= Math.max(4, lastLineObj.height * 0.5)) {
-                // A Bionic line was already recorded for this visual line in this block;
-                // do not merge mixed text node rects with different box metrics
-                continue;
-              }
-            }
-            pushLineRect(r, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
+            pushLineRect(rects[i], parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
           }
         } catch (e) {}
       }
@@ -3501,21 +3326,17 @@ export class ReadingRuler {
               Math.abs(r.centerY - prev.centerY) <= Math.max(4, Math.min(r.height, prev.height) * 0.45)
             );
             if (shouldMerge) {
-              const prevW = Math.max(1, (prev.right ?? 0) - (prev.left ?? 0));
-              const totalW = prevW + fragW;
-              const weightedCenterY = ((prev.centerY * prevW) + (r.centerY * fragW)) / totalW;
               prev.top = Math.min(prev.top, r.top);
               prev.bottom = Math.max(prev.bottom, r.bottom);
               prev.left = Math.min(prev.left ?? r.left, r.left);
               prev.right = Math.max(prev.right ?? r.right, r.right);
               prev.height = prev.bottom - prev.top;
-              if (this.isPdfMode || prev.isPdfLine || r.isPdfLine) {
-                prev.centerY = prev.top + prev.height / 2;
+              prev.centerY = prev.top + prev.height / 2;
+              if (prev.isPdfLine || r.isPdfLine) {
                 prev._fsWeightedSum = (prev._fsWeightedSum || ((prev.fontSize || 16) * Math.max(1, prev.right - prev.left))) + (r.fontSize || 16) * fragW;
                 prev._fsWeightTotal = (prev._fsWeightTotal || Math.max(1, prev.right - prev.left)) + fragW;
                 prev.fontSize = Math.round(prev._fsWeightedSum / prev._fsWeightTotal);
               } else {
-                prev.centerY = weightedCenterY;
                 prev.fontSize = Math.max(prev.fontSize || 0, r.fontSize || 0);
               }
               prev.element = prev.element || r.element || r.el;
@@ -3588,15 +3409,62 @@ export class ReadingRuler {
       }
       this.previousActiveLineIndex = -1;
 
+      // Pokud na stránce není detekován žádný řádek textu, vygenerujeme bezpečný záložní řádek na ploše stage, aby pravítko nezmizelo
       if (this.cachedLines.length === 0) {
         if (this.isPdfMode) {
           if (!this.pdfStandardLineHeight) {
             this.pdfStandardLineHeight = this.pdfRulerHeight || 24;
           }
           this.updatePdfReadingZoneBounds(stageRect, isSpread, spreadInfo);
+          return [];
         }
-        this._lastEmptyDetectTime = performance.now();
-        return [];
+
+        const isDocLoading = !!document.querySelector(".is-chapter-loading, .is-turning-page") ||
+          document.body.classList.contains("is-turning-page") ||
+          document.body.classList.contains("is-chapter-loading") ||
+          this.isPageTransitioning;
+        const contentText = (content ? (content.innerText || content.textContent || "") : "").replace(/[\s\u00A0\uFEFF]/g, "");
+        const hasDocText = contentText.length > 0 && /[\p{L}\p{N}\p{P}\p{S}]/u.test(contentText);
+
+        // Ensure this fallback ONLY triggers when the document is truly empty or loading,
+        // NOT when valid text exists elsewhere or when the user is hovering outside the text bounds.
+        // If lines exist on the page or in document, never inject artificial lines spanning the bottom of the viewport.
+        if (hasDocText && !isDocLoading) {
+          return [];
+        }
+
+        const height = this.manualHeight || 36;
+        const lineTop = Math.round(stageRect.top + 20);
+        const colLeft = Math.round(stageRect.left);
+        const colWidth = Math.max(80, Math.round(stageRect.width));
+        const colRight = colLeft + colWidth;
+        this.cachedLines = [{
+          top: lineTop,
+          bottom: lineTop + height,
+          left: colLeft,
+          right: colRight,
+          height,
+          centerY: lineTop + height / 2,
+          hasText: true,
+          columnIndex: 0,
+          columnLeft: colLeft,
+          columnWidth: colWidth,
+          columnRight: colRight,
+          colBoundaryLeft: colLeft,
+          colBoundaryRight: colRight
+        }];
+        this.column0Left = colLeft;
+        this.column0Width = colWidth;
+        this.column0Right = colRight;
+        this.textBlockLeft = colLeft;
+        this.textBlockWidth = colWidth;
+        this.lastKnownColumnLeft = colLeft;
+        this.activeLineIndex = 0;
+        this.readingLeft = colLeft;
+        this.readingRight = colRight;
+        this.readingTop = Math.round(stageRect.top);
+        this.readingBottom = Math.round(stageRect.bottom);
+        return this.cachedLines;
       }
 
       if (this.cachedLines.length > 0) {
@@ -3884,7 +3752,6 @@ export class ReadingRuler {
           ? glyphHeights[Math.floor(glyphHeights.length / 2)]
           : (fs * 1.15);
         groupMedianGlyphHeights.set(fs, medianGlyphHeight);
-        this.glyphHeightByFontSize.set(fs, medianGlyphHeight);
 
         if (this.isPdfMode) {
           // PDF Mode:
@@ -3937,15 +3804,6 @@ export class ReadingRuler {
           this.lineHeightByFontSize.set(fs, targetHeight);
         } else {
           // EPUB Mode:
-          // Normalize EPUB line top/bottom using medianGlyphHeight so bold prefixes or diacritics on individual lines don't shift line.bottom
-          for (const l of groupLines) {
-            l.rawTop = l.top;
-            l.rawBottom = l.bottom;
-            l.height = medianGlyphHeight;
-            l.top = l.centerY - medianGlyphHeight / 2;
-            l.bottom = l.centerY + medianGlyphHeight / 2;
-          }
-
           // 1. Measure the median intra-paragraph line pitch (next.centerY - cur.centerY for consecutive lines
           //    in the same column and same block element where pitch >= fontSize * 1.05 && pitch <= fontSize * 2.8)
           const intraBlockPitches = [];
@@ -4063,17 +3921,41 @@ export class ReadingRuler {
         }
       }
 
-      if (!this.cachedLines || this.cachedLines.length === 0) {
-        this._lastEmptyDetectTime = performance.now();
-      } else {
-        this._lastEmptyDetectTime = 0;
-      }
       return this.cachedLines;
     } catch (err) {
       console.error("[ReadingRuler] Error in detectLines:", err);
-      this.cachedLines = [];
-      this._lastEmptyDetectTime = performance.now();
-      return [];
+      if (!this.cachedLines || this.cachedLines.length === 0) {
+        const isDocLoading = !!document.querySelector(".is-chapter-loading, .is-turning-page") ||
+          document.body.classList.contains("is-turning-page") ||
+          document.body.classList.contains("is-chapter-loading") ||
+          this.isPageTransitioning;
+        const content = document.querySelector('#reader-content, .page-content, .reader-text, article') || document.body;
+        const contentText = (content ? (content.innerText || content.textContent || "") : "").replace(/[\s\u00A0\uFEFF]/g, "");
+        const hasDocText = contentText.length > 0 && /[\p{L}\p{N}\p{P}\p{S}]/u.test(contentText);
+        if (hasDocText && !isDocLoading) {
+          this.cachedLines = [];
+          return [];
+        }
+        const height = this.manualHeight || 36;
+        this.cachedLines = [{
+          top: 150,
+          bottom: 150 + height,
+          left: 40,
+          right: window.innerWidth - 40,
+          height,
+          centerY: 150 + height / 2,
+          hasText: true,
+          columnIndex: 0,
+          columnLeft: 40,
+          columnWidth: window.innerWidth - 80,
+          columnRight: window.innerWidth - 40
+        }];
+        this.readingLeft = 40;
+        this.readingRight = window.innerWidth - 40;
+        this.readingTop = 150;
+        this.readingBottom = window.innerHeight - 150;
+      }
+      return this.cachedLines;
     } finally {
       try {
         range.detach();
@@ -4082,11 +3964,11 @@ export class ReadingRuler {
   }
 
   refreshLines() {
-    this._lastComputedLineGeom = null;
-    this._lastEmptyDetectTime = 0;
-    this._lastActiveLineIndex = -1;
-    this._lastActiveColumn = null;
-    return this.detectLines(true);
+    this._verticalScrollAnchorPending = false;
+    this._relativeTrackingActive = false;
+    this._scrollAnchorPhysicalY = null;
+    this._scrollAnchorVirtualY = null;
+    return this.detectLines();
   }
 
   refreshLinesDebounced(delay = 150) {
@@ -4107,13 +3989,7 @@ export class ReadingRuler {
    * Zmapuje přesné obdélníky všech viditelných slov na aktuální stránce.
    */
   refreshWords() {
-    if (!this._forceRefreshWords && (!this.cachedWords || this.cachedWords.length === 0) && this._lastEmptyWordsDetectTime && (performance.now() - this._lastEmptyWordsDetectTime < 150)) {
-      return [];
-    }
-    if (!this.enabled || !this.wordTracking) {
-      this.cachedWords = [];
-      return [];
-    }
+    if (!this.wordTracking) return [];
     this.cachedWords = [];
     if (this.isImageOnlyPdf) {
       return [];
@@ -4170,73 +4046,7 @@ export class ReadingRuler {
       };
 
       const words = [];
-      const BLOCK_TAGS = new Set([
-        "P", "LI", "BLOCKQUOTE", "H1", "H2", "H3", "H4", "H5", "H6",
-        "DIV", "SECTION", "ARTICLE", "HEADER", "FOOTER", "ASIDE", "NAV",
-        "TABLE", "TR", "TD", "TH", "PRE", "DD", "DT"
-      ]);
-      const blockRectCache = new Map();
-      const parentRectCache = new Map();
-      const offscreenBlocks = new Set();
-      const viewW = window.innerWidth;
-      const viewH = window.innerHeight;
-
-      const walker = document.createTreeWalker(content, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-        acceptNode(node) {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            if (node === content) {
-              return NodeFilter.FILTER_SKIP;
-            }
-            const tag = node.tagName;
-            if (
-              tag === "SCRIPT" || tag === "STYLE" || tag === "SVG" || tag === "PICTURE" ||
-              tag === "BUTTON" ||
-              node.classList.contains("ruler-floating-controls") ||
-              node.classList.contains("ruler-quick-popover") ||
-              node.classList.contains("toast-container")
-            ) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            if (tag === "FIGURE" || node.classList.contains("chapter-illustration")) {
-              if (!node.closest("figcaption")) return NodeFilter.FILTER_REJECT;
-            }
-
-            // Ořezání celých blokových elementů (odstavců) mimo viditelný viewport ještě před sestoupením do vnořených uzlů
-            if (BLOCK_TAGS.has(tag)) {
-              let rect = blockRectCache.get(node);
-              if (!rect) {
-                rect = node.getBoundingClientRect();
-                blockRectCache.set(node, rect);
-              }
-
-              if (!isVertical && hasValidStageBounds) {
-                if (
-                  rect.right < stageLeft - 30 ||
-                  rect.left > stageRight + 30 ||
-                  rect.bottom < stageTop - 30 ||
-                  rect.top > stageBottom + 30
-                ) {
-                  offscreenBlocks.add(node);
-                  return NodeFilter.FILTER_REJECT;
-                }
-              } else if (isVertical) {
-                if (
-                  rect.bottom < -30 ||
-                  rect.top > viewH + 30 ||
-                  rect.right < -30 ||
-                  rect.left > viewW + 30
-                ) {
-                  offscreenBlocks.add(node);
-                  return NodeFilter.FILTER_REJECT;
-                }
-              }
-              return NodeFilter.FILTER_SKIP;
-            }
-            return NodeFilter.FILTER_SKIP;
-          }
-          return NodeFilter.FILTER_ACCEPT;
-        }
-      });
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
       let node;
       const range = document.createRange();
       // Podpora všech unicode mezer, nezlomitelných mezer i neviditelných dělicích znaků
@@ -4247,6 +4057,11 @@ export class ReadingRuler {
 
       const visitedBionicSpans = new Set();
       const consumedTextOffsets = new Map();
+      const blockRectCache = new Map();
+      const parentRectCache = new Map();
+      const offscreenBlocks = new Set();
+      const viewW = window.innerWidth;
+      const viewH = window.innerHeight;
       const maxColSpan = (!isVertical && hasValidStageBounds)
         ? Math.max(120, (this.isTwoCol ? stageRect.width * 0.55 : stageRect.width) - 4)
         : Math.max(120, viewW);
@@ -4880,29 +4695,11 @@ export class ReadingRuler {
         }
       }
 
-      if (this.cachedLines && this.cachedLines.length > 0) {
-        for (let j = 0; j < this.cachedLines.length; j++) {
-          this.cachedLines[j].wordIndices = [];
-        }
-        for (let i = 0; i < finalWords.length; i++) {
-          const lIdx = finalWords[i].lineIndex;
-          if (lIdx != null && lIdx >= 0 && lIdx < this.cachedLines.length) {
-            this.cachedLines[lIdx].wordIndices.push(i);
-          }
-        }
-      }
-
       this.cachedWords = finalWords;
-      if (!this.cachedWords || this.cachedWords.length === 0) {
-        this._lastEmptyWordsDetectTime = performance.now();
-      } else {
-        this._lastEmptyWordsDetectTime = 0;
-      }
       return this.cachedWords;
     } catch (err) {
       console.error("[ReadingRuler] Error in refreshWords:", err);
       this.cachedWords = [];
-      this._lastEmptyWordsDetectTime = performance.now();
       return [];
     } finally {
       try {
@@ -5085,18 +4882,6 @@ export class ReadingRuler {
   computeLineGeometry(lineIdx) {
     if (!this.cachedLines || this.cachedLines.length === 0) return null;
     const clampedIdx = Math.max(0, Math.min(this.cachedLines.length - 1, lineIdx));
-    const currentAutoHeight = this.isPdfMode ? this.pdfAutoHeight : this.autoHeight;
-    const currentManualHeight = this.isPdfMode ? this.pdfRulerHeight : this.manualHeight;
-    if (
-      this._lastComputedLineGeom &&
-      this._lastComputedLineGeom.index === clampedIdx &&
-      this._lastComputedLineGeom.mode === this.mode &&
-      this._lastComputedLineGeom.autoHeight === currentAutoHeight &&
-      this._lastComputedLineGeom.manualHeight === currentManualHeight &&
-      this._lastComputedLineGeom.linesRef === this.cachedLines
-    ) {
-      return this._lastComputedLineGeom.geom;
-    }
     const line = this.cachedLines[clampedIdx];
 
     // Kontrola sousedních řádků ve stejném sloupci (a na téže PDF straně) pro zamezení přesahu do řádku nahoře i dole
@@ -5159,8 +4944,8 @@ export class ReadingRuler {
         // Strict constant offset from active line bottom across all lines
         let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
         if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          // Clamped only if it would literally overlap the next line's normalized top
-          const maxAllowedY = Math.floor(nextLine.top - 1);
+          // Clamped only so it does not collide with next line's ascenders
+          const maxAllowedY = Math.round(nextLine.top - 3);
           coverTargetY = Math.min(coverTargetY, maxAllowedY);
           if (Number.isFinite(curBottom)) {
             coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
@@ -5209,7 +4994,7 @@ export class ReadingRuler {
         targetWidth = Math.max(20, colBoundaryRight - targetLeft);
       }
 
-      const mediaGeom = {
+      return {
         height,
         targetY,
         left: targetLeft,
@@ -5222,15 +5007,6 @@ export class ReadingRuler {
         columnIndex: line.columnIndex ?? 0,
         isMedia: true
       };
-      this._lastComputedLineGeom = {
-        index: clampedIdx,
-        mode: this.mode,
-        autoHeight: currentAutoHeight,
-        manualHeight: currentManualHeight,
-        linesRef: this.cachedLines,
-        geom: mediaGeom
-      };
-      return mediaGeom;
     }
 
     let height;
@@ -5247,15 +5023,13 @@ export class ReadingRuler {
           }
         }
       }
-      const curBottom = Number.isFinite(line.bottom)
-        ? line.bottom
-        : (line.centerY + (line.height || this.glyphHeightByFontSize?.get(Math.round(line.fontSize || 16)) || this.uniformLineHeight || this.height) / 2);
+      const curBottom = Number.isFinite(line.bottom) ? line.bottom : (line.centerY + (this.uniformLineHeight || this.height) / 2);
 
       // Strict constant offset from active line bottom across all lines (both intra-paragraph and isolated lines)
       let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
       if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-        // Clamped only if it would literally overlap the next line's normalized top
-        const maxAllowedY = Math.floor(nextLine.top - 1);
+        // Clamped only so it does not collide with next line's ascenders
+        const maxAllowedY = Math.round(nextLine.top - 3);
         coverTargetY = Math.min(coverTargetY, maxAllowedY);
         if (Number.isFinite(curBottom)) {
           coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
@@ -5411,7 +5185,7 @@ export class ReadingRuler {
       }
     }
 
-    const geom = {
+    return {
       height,
       targetY,
       left,
@@ -5424,15 +5198,6 @@ export class ReadingRuler {
       columnIndex: line.columnIndex ?? 0,
       isMedia: false
     };
-    this._lastComputedLineGeom = {
-      index: clampedIdx,
-      mode: this.mode,
-      autoHeight: currentAutoHeight,
-      manualHeight: currentManualHeight,
-      linesRef: this.cachedLines,
-      geom
-    };
-    return geom;
   }
 
   updateEffectiveHeight(lineHeight) {
@@ -5550,7 +5315,7 @@ export class ReadingRuler {
       return this.activeLineIndex >= 0 ? this.activeLineIndex : -1;
     }
     if (!this.cachedLines || this.cachedLines.length === 0) {
-      this.detectLines();
+      this.refreshLines();
     }
     if (!this.cachedLines || this.cachedLines.length === 0) return -1;
 
@@ -5601,6 +5366,12 @@ export class ReadingRuler {
         }
       }
       if (cRect) {
+        const vTop = (isVertical && viewport) ? viewport.scrollTop : 0;
+        const canvasTop = cRect.top + vTop;
+        const canvasBottom = cRect.bottom + vTop;
+        if (curY < canvasTop - 15 || curY > canvasBottom + 15) {
+          return -1;
+        }
         if (curY <= firstItem.line.top) {
           return firstItem.index;
         }
@@ -5608,6 +5379,22 @@ export class ReadingRuler {
           return lastItem.index;
         }
       }
+    }
+
+    const firstLineH = (firstItem.line && Number.isFinite(firstItem.line.height) && firstItem.line.height > 0)
+      ? firstItem.line.height
+      : (this.height || 30);
+    const lastLineH = (lastItem.line && Number.isFinite(lastItem.line.height) && lastItem.line.height > 0)
+      ? lastItem.line.height
+      : (this.height || 30);
+
+    const topTolerance = Math.min(35, 1.2 * firstLineH);
+    const bottomTolerance = Math.min(35, 1.2 * lastLineH);
+
+    // Ochrana prázdných ploch: pokud je pointer Y více než 1.2 * lineHeight (nebo > 35px)
+    // pod spodním okrajem posledního řádku nebo nad horním okrajem prvního řádku, vrátit -1 (skrýt pravítko)
+    if (curY < firstItem.line.top - topTolerance || curY > lastItem.line.bottom + bottomTolerance) {
+      return -1;
     }
 
     if (curY <= firstItem.line.top) {
@@ -5654,10 +5441,12 @@ export class ReadingRuler {
     }
 
     const currentLine = pool[activeInPool].line;
-    const prevLine = activeInPool > 0 ? pool[activeInPool - 1].line : null;
     const nextLine = activeInPool < pool.length - 1 ? pool[activeInPool + 1].line : null;
-    const downThreshold = nextLine ? Math.max(currentLine.bottom + 2, (currentLine.bottom + nextLine.top) * 0.5 + 3) : Infinity;
-    const upThreshold = prevLine ? Math.min(currentLine.top - 2, (prevLine.bottom + currentLine.top) * 0.5 - 3) : -Infinity;
+
+    // Hranice pro přeskok dolů na následující řádek: vertikální střed řádku N + 1
+    const downThreshold = nextLine ? (nextLine.top + nextLine.height * 0.5) : Infinity;
+    // Hranice pro návrat nahoru na předchozí řádek: vertikální střed aktuálního řádku N
+    const upThreshold = currentLine.top + currentLine.height * 0.5;
 
     if (curY > downThreshold) {
       let newPoolIdx = activeInPool + 1;
@@ -5711,31 +5500,26 @@ export class ReadingRuler {
       return;
     }
 
-    const effectiveClientY = clientY;
-    const pType = pointerType || this.activePointerType || (Date.now() - this.lastPenTime < 500 ? "pen" : "mouse");
+    let effectiveClientY = clientY;
+    if (this.isVerticalMode() && this.followMode === "mouse" && clientY != null) {
+      if (this._verticalScrollAnchorPending) {
+        this._scrollAnchorPhysicalY = clientY;
+        this._verticalScrollAnchorPending = false;
+        this._relativeTrackingActive = true;
+      }
+      if (this._relativeTrackingActive && this._scrollAnchorPhysicalY !== null && this._scrollAnchorVirtualY !== null) {
+        const deltaY = clientY - this._scrollAnchorPhysicalY;
+        effectiveClientY = Math.round(this._scrollAnchorVirtualY + deltaY);
+      }
+    }
 
     // Displacement / Delta Threshold Sanity Check:
-    // Pokud probíhá aktivní tažení s předchozí platnou souřadnicí (mimo režim sledování myši), zachytíme anomální skok (např. dotyk dlaně).
-    if (
-      this.followMode !== "mouse" &&
-      pType !== "mouse" &&
-      pType !== "pen" &&
-      (!this.isPdfMode || (this.cachedLines && this.cachedLines.length > 0)) &&
-      this.isDraggingRuler &&
-      this.lastValidPointerY !== null &&
-      effectiveClientY != null
-    ) {
+    // Pokud probíhá aktivní tažení s předchozí platnou souřadnicí, zachytíme anomální skok (např. dotyk dlaně nebo teleport).
+    if ((!this.isPdfMode || (this.cachedLines && this.cachedLines.length > 0)) && this.isDraggingRuler && this.lastValidPointerY !== null && effectiveClientY != null) {
       const dy = Math.abs(effectiveClientY - this.lastValidPointerY);
       const dx = clientX != null && this.lastValidPointerX !== null ? Math.abs(clientX - this.lastValidPointerX) : 0;
-      if (clientX != null) {
-        this.lastPointerX = clientX;
-        this.lastValidPointerX = clientX;
-      }
-      if (effectiveClientY != null) {
-        this.lastPointerY = effectiveClientY;
-        this.lastValidPointerY = effectiveClientY;
-      }
       if (dy > 160 || dx > 220) {
+        // Anomální skok v jednom snímku – ignorovat, aby nedošlo k odteleportování pravítka
         return;
       }
     }
@@ -5749,6 +5533,7 @@ export class ReadingRuler {
       this.lastValidPointerY = effectiveClientY;
     }
 
+    const pType = pointerType || this.activePointerType || (Date.now() - this.lastPenTime < 500 ? "pen" : "mouse");
     if (pointerType) {
       this.activePointerType = pointerType;
     }
@@ -5872,7 +5657,7 @@ export class ReadingRuler {
     }
 
     if (this.cachedLines.length === 0) {
-      this.detectLines();
+      this.refreshLines();
     }
 
     const useFastCachedGeom = this.snapToLines && this.cachedLines.length > 0;
@@ -5895,12 +5680,7 @@ export class ReadingRuler {
       if (this.cachedLines && this.cachedLines.length > 0) {
         const targetLineIdx = this.getHysteresisLineIndex(curY, isPen, activeColumn);
         if (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) {
-          if (!this.wordTracking && this.snapToLines && targetLineIdx === this.activeLineIndex && activeColumn === this._lastActiveColumn && this._lastActiveLineIndex === targetLineIdx) {
-            return;
-          }
           this.activeLineIndex = targetLineIdx;
-          this._lastActiveLineIndex = targetLineIdx;
-          this._lastActiveColumn = activeColumn;
           this._checkLineProgress(targetLineIdx);
           const geom = this.computeLineGeometry(targetLineIdx);
           if (geom) {
@@ -5958,56 +5738,28 @@ export class ReadingRuler {
           if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
           if (this.maskRightEl) this.maskRightEl.style.display = "none";
           if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
-          if (this._focusMaskDirty) {
-            this.clearFocusTextMask();
-            this._focusMaskDirty = false;
-          }
+          this.clearFocusTextMask();
           this.setCursorHidden(false);
           return;
         }
         this.activeLineIndex = targetLineIdx;
 
-        const isVertical = this.isVerticalMode();
-        const vp = isVertical ? (this._cachedViewportEl || document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
-        const vScrollTop = (isVertical && vp) ? vp.scrollTop : 0;
-        const wordCurY = isVertical ? (curY + vScrollTop) : curY;
-
         let closestWord = null;
         let closestIdx = -1;
         let minDiff = Infinity;
 
-        const targetLine = (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) ? this.cachedLines[targetLineIdx] : null;
-        const candidateIndices = (targetLine && targetLine.wordIndices && targetLine.wordIndices.length > 0)
-          ? targetLine.wordIndices
-          : null;
-
-        if (candidateIndices) {
-          for (let k = 0; k < candidateIndices.length; k++) {
-            const i = candidateIndices[k];
-            const w = this.cachedWords[i];
-            const dy = wordCurY < w.top ? w.top - wordCurY : wordCurY > w.bottom ? wordCurY - w.bottom : 0;
-            const dx = curX < w.left ? w.left - curX : curX > w.right ? curX - w.right : 0;
-            const dist = dy * 3 + dx;
-            if (dist < minDiff) {
-              minDiff = dist;
-              closestWord = w;
-              closestIdx = i;
-            }
-          }
-        } else {
-          // Přednostně vyhledáme slovo na aktuálním hysterezním řádku
-          for (let i = 0; i < this.cachedWords.length; i++) {
-            const w = this.cachedWords[i];
-            const isLineMatch = (w.lineIndex != null && w.lineIndex === targetLineIdx);
-            const dy = wordCurY < w.top ? w.top - wordCurY : wordCurY > w.bottom ? wordCurY - w.bottom : 0;
-            const dx = curX < w.left ? w.left - curX : curX > w.right ? curX - w.right : 0;
-            const linePenalty = isLineMatch ? 0 : 100;
-            const dist = dy * 3 + dx + linePenalty;
-            if (dist < minDiff) {
-              minDiff = dist;
-              closestWord = w;
-              closestIdx = i;
-            }
+        // Přednostně vyhledáme slovo na aktuálním hysterezním řádku
+        for (let i = 0; i < this.cachedWords.length; i++) {
+          const w = this.cachedWords[i];
+          const isLineMatch = (w.lineIndex != null && w.lineIndex === targetLineIdx);
+          const dy = curY < w.top ? w.top - curY : curY > w.bottom ? curY - w.bottom : 0;
+          const dx = curX < w.left ? w.left - curX : curX > w.right ? curX - w.right : 0;
+          const linePenalty = isLineMatch ? 0 : 100;
+          const dist = dy * 3 + dx + linePenalty;
+          if (dist < minDiff) {
+            minDiff = dist;
+            closestWord = w;
+            closestIdx = i;
           }
         }
 
@@ -6020,27 +5772,20 @@ export class ReadingRuler {
 
         // V režimu sledování myši (mouse-follow) zajistit plynulý spojitý horizontální pohyb bez magnetického přichytávání a bez trhání zpět
         if (this.followMode === "mouse") {
-          const geom = this.computeLineGeometry(this.activeLineIndex);
+          const geom = this.computeLineGeometry(targetLineIdx);
           if (geom) {
             this.height = geom.height;
             this.targetY = geom.targetY;
             this.currentY = this.targetY;
           }
           const padX = 3;
-          const activeLine = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length) ? this.cachedLines[this.activeLineIndex] : null;
+          const activeLine = (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) ? this.cachedLines[targetLineIdx] : null;
           const lineWords = [];
 
-          if (activeLine && activeLine.wordIndices && activeLine.wordIndices.length > 0) {
-            for (let k = 0; k < activeLine.wordIndices.length; k++) {
-              const i = activeLine.wordIndices[k];
+          // Primary pass: collect words by lineIndex
+          for (let i = 0; i < this.cachedWords.length; i++) {
+            if (this.cachedWords[i].lineIndex === targetLineIdx) {
               lineWords.push({ word: this.cachedWords[i], index: i });
-            }
-          } else {
-            // Primary pass: collect words by lineIndex
-            for (let i = 0; i < this.cachedWords.length; i++) {
-              if (this.cachedWords[i].lineIndex === this.activeLineIndex) {
-                lineWords.push({ word: this.cachedWords[i], index: i });
-              }
             }
           }
 
@@ -6170,17 +5915,8 @@ export class ReadingRuler {
 
           const firstWordRatio = Math.min(1, Math.max(0.15, continuousWidth / this.totalWidth));
           this.firstWordRatio = firstWordRatio;
-          const roundedWidth = Math.round(this.totalWidth);
           if (this.rulerEl) {
-            if (this._lastAppliedWordWidth == null || Math.abs(roundedWidth - this._lastAppliedWordWidth) >= 1) {
-              this._lastAppliedWordWidth = roundedWidth;
-              this.rulerEl.style.width = `${roundedWidth}px`;
-            }
-            const currentRatio = firstWordRatio * 100;
-            if (this._lastWordSolidRatio == null || Math.abs(currentRatio - this._lastWordSolidRatio) >= 1) {
-              this._lastWordSolidRatio = currentRatio;
-              this.rulerEl.style.setProperty('--word-solid-ratio', `${currentRatio.toFixed(1)}%`);
-            }
+            this.rulerEl.style.setProperty('--word-solid-ratio', `${(firstWordRatio * 100).toFixed(1)}%`);
           }
         }
 
@@ -6219,50 +5955,25 @@ export class ReadingRuler {
         if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
         if (this.maskRightEl) this.maskRightEl.style.display = "none";
         if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
-        if (this._focusMaskDirty) {
-          this.clearFocusTextMask();
-          this._focusMaskDirty = false;
-        }
+        this.clearFocusTextMask();
         this.setCursorHidden(false);
         return;
       }
-
-      if (!this.wordTracking && this.snapToLines && targetLineIdx === this.activeLineIndex && activeColumn === this._lastActiveColumn && this._lastActiveLineIndex === targetLineIdx) {
-        return;
-      }
       this.activeLineIndex = targetLineIdx;
-      this._lastActiveLineIndex = targetLineIdx;
-      this._lastActiveColumn = activeColumn;
-
       if (!this.wordTracking) {
         this._checkLineProgress(targetLineIdx);
       }
       const closestLine = this.cachedLines[targetLineIdx];
 
-      if (this.wordTracking && this.cachedWords.length > 0) {
+      if (this.cachedWords.length > 0) {
         let closestWordIdx = 0;
         let minWordDiff = Infinity;
-        const candidateIndices = (closestLine && closestLine.wordIndices && closestLine.wordIndices.length > 0)
-          ? closestLine.wordIndices
-          : null;
-        if (candidateIndices) {
-          for (let k = 0; k < candidateIndices.length; k++) {
-            const j = candidateIndices[k];
-            const w = this.cachedWords[j];
-            const wDiff = Math.abs(closestLine.centerY - w.centerY) * 3 + Math.abs(curX - w.centerX);
-            if (wDiff < minWordDiff) {
-              minWordDiff = wDiff;
-              closestWordIdx = j;
-            }
-          }
-        } else {
-          for (let j = 0; j < this.cachedWords.length; j++) {
-            const w = this.cachedWords[j];
-            const wDiff = Math.abs(closestLine.centerY - w.centerY) * 3 + Math.abs(curX - w.centerX);
-            if (wDiff < minWordDiff) {
-              minWordDiff = wDiff;
-              closestWordIdx = j;
-            }
+        for (let j = 0; j < this.cachedWords.length; j++) {
+          const w = this.cachedWords[j];
+          const wDiff = Math.abs(closestLine.centerY - w.centerY) * 3 + Math.abs(curX - w.centerX);
+          if (wDiff < minWordDiff) {
+            minWordDiff = wDiff;
+            closestWordIdx = j;
           }
         }
         this.activeWordIndex = closestWordIdx;
@@ -6535,31 +6246,43 @@ export class ReadingRuler {
    * - direction >= 0 (vpřed / nová kapitola): přichytí na první řádek / první slovo (index 0)
    * - direction < 0 (vzad / konec kapitoly): přichytí na poslední řádek / poslední slovo
    */
-  resetPositionForPage(direction = 1, isPageChanged = true) {
+  resetPositionForPage(direction = 1, immediate = true) {
     this.clearPageTransitionTimersAndRAFs();
     this._maxLineIndexOnPage = -1;
     this._maxWordIndexOnPage = -1;
-    this._lastActiveLineIndex = -1;
-    this._lastActiveColumn = null;
-    this._lastEmptyWordsDetectTime = 0;
-
-    // Clear the transition lock:
-    this.isPageTransitioning = false;
-    this.isNavigating = false;
-    this.isNavigatingPage = false;
-    this.isLineLocked = false;
-    this.suppressLineAdvancement = false;
-    this.navigatingPageLockoutEndTime = 0;
 
     const stage = this.getStageElement();
+    if (stage) stage.classList.add("is-turning-page");
+    document.body.classList.add("is-turning-page");
     const content = document.getElementById("reader-content");
+    if (content) content.classList.add("is-turning-page");
 
+    this.hideForPageTransition();
     this.disableWordTransition();
     this.setNoTransition(true);
     this.previousActiveLineIndex = -1;
     if (this.rulerEl) {
       this.rulerEl.style.transition = "none";
     }
+
+    this.isLineLocked = true;
+    this.isNavigating = true;
+    this.isNavigatingPage = true;
+    this.navigatingPageLockoutEndTime = Date.now() + 250;
+    this.navigatingPageTimer = setTimeout(() => {
+      this.isNavigating = false;
+      this.isNavigatingPage = false;
+      this.navigatingPageLockoutEndTime = 0;
+      this.navigatingPageTimer = null;
+    }, 250);
+
+    this._navSafetyTimer = setTimeout(() => {
+      if (this.isNavigating || this.isLineLocked || this.suppressLineAdvancement) {
+        console.warn('Navigation lock timed out in resetPositionForPage. Forcing release.');
+        this.clearPageTransitionTimersAndRAFs();
+        this.forceReleaseNavigationLocks();
+      }
+    }, 300); // 300ms maximum lock lifetime
 
     const isBackward = direction < 0;
 
@@ -6569,13 +6292,6 @@ export class ReadingRuler {
         this.forceReleaseNavigationLocks();
         return;
       }
-
-      this.isPageTransitioning = false;
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isLineLocked = false;
-      this.suppressLineAdvancement = false;
-      this.navigatingPageLockoutEndTime = 0;
 
       try {
         if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
@@ -6595,17 +6311,8 @@ export class ReadingRuler {
             this.currentY = this.targetY;
             this.isPageTransitioning = false;
             if (this.rulerEl) {
-              this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
-              this.rulerEl.classList.add("is-visible");
-              this.rulerEl.style.removeProperty("transition");
-              this.rulerEl.style.display = "block";
-              this.rulerEl.style.opacity = "1";
-              this.rulerEl.style.visibility = "visible";
+              this.rulerEl.classList.remove("is-page-transitioning");
             }
-            if (this.maskTopEl) this.maskTopEl.style.display = "";
-            if (this.maskBottomEl) this.maskBottomEl.style.display = "";
-            if (this.maskLeftEl) this.maskLeftEl.style.display = "";
-            if (this.maskRightEl) this.maskRightEl.style.display = "";
             this.applyPosition();
             return;
           }
@@ -6627,88 +6334,125 @@ export class ReadingRuler {
           this.currentY = this.targetY;
           this.isPageTransitioning = false;
           if (this.rulerEl) {
-            this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
-            this.rulerEl.classList.add("is-visible");
-            this.rulerEl.style.removeProperty("transition");
-            this.rulerEl.style.display = "block";
-            this.rulerEl.style.opacity = "1";
-            this.rulerEl.style.visibility = "visible";
+            this.rulerEl.classList.remove("is-page-transitioning");
           }
-          if (this.maskTopEl) this.maskTopEl.style.display = "";
-          if (this.maskBottomEl) this.maskBottomEl.style.display = "";
-          if (this.maskLeftEl) this.maskLeftEl.style.display = "";
-          if (this.maskRightEl) this.maskRightEl.style.display = "";
           this.applyPosition();
           return;
         }
 
-        // Refresh lines and words for the active page:
         this.refreshLines();
         if (this.wordTracking) {
           this.refreshWords();
         }
 
-        if (this.wordTracking) {
-          if (this.cachedWords && this.cachedWords.length > 0) {
-            const targetWordIdx = direction >= 0 ? 0 : this.cachedWords.length - 1;
-            this.activeWordIndex = targetWordIdx;
-            this.setWordWindow(this.activeWordIndex);
+        // Fallback ochrana: Pokud na stránce není detekován žádný řádek, pravítko zůstane skryté (v PDF režimu se použije plynulá clona)
+        if (this.cachedLines.length === 0) {
+          if (this.isPdfMode) {
+            const isVertical = this.isVerticalMode();
+            const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
 
+            if (isVertical && vp) {
+              this.height = this.pdfRulerHeight || 32;
+              const targetContainer = document.querySelector(`.pdf-page-container[data-page-number="${this.app?.pdfLoader?.currentPage || 1}"]`);
+              if (targetContainer) {
+                const cRect = targetContainer.getBoundingClientRect();
+                const offsetTop = targetContainer.offsetTop || (cRect.top + vp.scrollTop);
+                this.targetY = isBackward ? Math.round(offsetTop + cRect.height - this.height) : Math.round(offsetTop + 20);
+              } else {
+                this.targetY = isBackward ? Math.round(vp.scrollTop + vp.clientHeight - 80) : Math.round(vp.scrollTop + 80);
+              }
+              this.currentY = this.targetY;
+              this.isPageTransitioning = false;
+              if (this.rulerEl) {
+                this.rulerEl.classList.remove("is-page-transitioning");
+              }
+              this.applyPosition();
+              return;
+            }
+
+            this.height = this.pdfRulerHeight || 32;
+            const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+            const stageRect = stage ? stage.getBoundingClientRect() : { top: 60, bottom: window.innerHeight - 60 };
+            const canvas = document.querySelector("#reader-content canvas");
+            let topBound = stageRect.top;
+            let bottomBound = stageRect.bottom;
+            if (canvas) {
+              const cRect = canvas.getBoundingClientRect();
+              if (cRect.height > 50) {
+                topBound = cRect.top;
+                bottomBound = cRect.bottom;
+              }
+            }
+            this.targetY = isBackward ? Math.round(bottomBound - this.height) : Math.round(topBound);
+            this.currentY = this.targetY;
+            this.isPageTransitioning = false;
+            if (this.rulerEl) {
+              this.rulerEl.classList.remove("is-page-transitioning");
+            }
+            this.applyPosition();
+            return;
+          }
+          this.isPageTransitioning = false;
+          if (this.rulerEl) {
+            this.rulerEl.style.display = "none";
+            this.rulerEl.style.opacity = "0";
+            this.rulerEl.style.visibility = "hidden";
+            this.rulerEl.classList.remove("is-visible");
+            this.rulerEl.classList.add("is-hidden");
+          }
+          this.clearFocusTextMask();
+          return;
+        }
+
+        if (this.wordTracking) {
+          if (this.cachedWords.length > 0) {
+            const targetWordIdx = isBackward ? this.cachedWords.length - 1 : 0;
+            this.activeWordIndex = targetWordIdx;
             const targetWord = this.cachedWords[targetWordIdx];
+
             if (targetWord && targetWord.lineIndex != null) {
               this.activeLineIndex = targetWord.lineIndex;
             } else {
-              this.activeLineIndex = direction >= 0 ? 0 : (this.cachedLines?.length ? this.cachedLines.length - 1 : 0);
+              this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
             }
 
             const isVertical = this.isVerticalMode();
             const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
             const vScrollTop = vp ? vp.scrollTop : 0;
-            if (targetWord) {
-              this.lastPointerX = targetWord.centerX;
-              this.lastPointerY = isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY;
-              this.lastValidPointerX = this.lastPointerX;
-              this.lastValidPointerY = this.lastPointerY;
-            }
+            this.lastPointerX = targetWord.centerX;
+            this.lastPointerY = isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY;
+            this.lastValidPointerX = this.lastPointerX;
+            this.lastValidPointerY = this.lastPointerY;
 
-            const shouldSnapClass = this.followMode !== "mouse" && !this.isVerticalMode();
-            if (this.rulerEl) {
-              this.rulerEl.classList.add("word-tracking-mode");
-              if (shouldSnapClass) {
-                this.rulerEl.classList.add("is-snapped");
-              } else {
-                this.rulerEl.classList.remove("is-snapped");
-              }
-            }
-            if (shouldSnapClass) {
-              if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
-              if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
-              if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
-              if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
-            } else {
-              if (this.maskTopEl) this.maskTopEl.classList.remove("is-snapped");
-              if (this.maskBottomEl) this.maskBottomEl.classList.remove("is-snapped");
-              if (this.maskLeftEl) this.maskLeftEl.classList.remove("is-snapped");
-              if (this.maskRightEl) this.maskRightEl.classList.remove("is-snapped");
-            }
+            this.rulerEl.classList.add("word-tracking-mode", "is-snapped");
+            this.maskTopEl.classList.add("is-snapped");
+            this.maskBottomEl.classList.add("is-snapped");
+            this.maskLeftEl.classList.add("is-snapped");
+            this.maskRightEl.classList.add("is-snapped");
+
+            // Usazení na cílový řádek bez dvojího synchronního reflow
+            this.isPageTransitioning = false;
+            this.rulerEl.classList.remove("is-page-transitioning");
+            this.applyPosition();
           } else {
-            // Fallback to line mode bounds on line 0 so the ruler never hides completely
-            this.activeLineIndex = 0;
-            const geom = this.computeLineGeometry(0);
+            this.activeLineIndex = isBackward ? this.cachedLines.length - 1 : 0;
+            this.rulerEl.classList.remove("word-tracking-mode");
+            const geom = this.computeLineGeometry(this.activeLineIndex);
             if (geom) {
               this.height = geom.height;
               this.targetY = geom.targetY;
-              this.currentY = geom.targetY;
+              this.currentY = this.targetY;
             }
+            this.isPageTransitioning = false;
+            this.rulerEl.classList.remove("is-page-transitioning");
+            this.applyPosition();
           }
         } else {
-          const targetLineIdx = (this.cachedLines && this.cachedLines.length > 0)
-            ? (direction < 0 ? this.cachedLines.length - 1 : 0)
-            : 0;
+          const targetLineIdx = isBackward ? this.cachedLines.length - 1 : 0;
           this.activeLineIndex = targetLineIdx;
 
-          if (this.cachedWords && this.cachedWords.length > 0) {
-            if (direction < 0) {
+          if (this.cachedWords.length > 0) {
+            if (isBackward) {
               let lastWordIdx = this.cachedWords.length - 1;
               for (let i = this.cachedWords.length - 1; i >= 0; i--) {
                 if (this.cachedWords[i].lineIndex === targetLineIdx) {
@@ -6724,58 +6468,34 @@ export class ReadingRuler {
             this.activeWordIndex = 0;
           }
 
-          if (this.rulerEl) this.rulerEl.classList.remove("word-tracking-mode");
+          this.rulerEl.classList.remove("word-tracking-mode");
           const geom = this.computeLineGeometry(targetLineIdx);
           if (geom) {
             this.height = geom.height;
             this.targetY = geom.targetY;
-            this.currentY = geom.targetY;
+            this.currentY = this.targetY;
           }
 
           const isVertical = this.isVerticalMode();
           const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
           const vScrollTop = vp ? vp.scrollTop : 0;
-          const line = this.cachedLines && this.cachedLines[targetLineIdx];
-          this.lastPointerX = line && line.left != null ? line.left : 100;
-          this.lastPointerY = line ? (isVertical ? Math.round(line.centerY - vScrollTop) : line.centerY) : 150;
+          const line = this.cachedLines[targetLineIdx];
+          this.lastPointerX = line.left != null ? line.left : 100;
+          this.lastPointerY = isVertical ? Math.round(line.centerY - vScrollTop) : line.centerY;
           this.lastValidPointerX = this.lastPointerX;
           this.lastValidPointerY = this.lastPointerY;
 
-          const shouldSnapClass = this.followMode !== "mouse" && !this.isVerticalMode();
-          if (shouldSnapClass) {
-            if (this.rulerEl) this.rulerEl.classList.add("is-snapped");
-            if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
-            if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
-            if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
-            if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
-          } else {
-            if (this.rulerEl) this.rulerEl.classList.remove("is-snapped");
-            if (this.maskTopEl) this.maskTopEl.classList.remove("is-snapped");
-            if (this.maskBottomEl) this.maskBottomEl.classList.remove("is-snapped");
-            if (this.maskLeftEl) this.maskLeftEl.classList.remove("is-snapped");
-            if (this.maskRightEl) this.maskRightEl.classList.remove("is-snapped");
-          }
-        }
+          this.rulerEl.classList.add("is-snapped");
+          this.maskTopEl.classList.add("is-snapped");
+          this.maskBottomEl.classList.add("is-snapped");
+          this.maskLeftEl.classList.add("is-snapped");
+          this.maskRightEl.classList.add("is-snapped");
 
-        // Explicitly UNHIDE and reveal the ruler DOM elements:
-        if (this.rulerEl) {
-          this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
-          this.rulerEl.classList.add("is-visible");
-          this.rulerEl.style.removeProperty("transition");
-          this.rulerEl.style.display = "block";
-          this.rulerEl.style.opacity = "1";
-          this.rulerEl.style.visibility = "visible";
-          if (this.wordTracking) {
-            this.rulerEl.classList.add("word-tracking-mode");
-          }
+          // Usazení na cílový řádek bez dvojího synchronního reflow
+          this.isPageTransitioning = false;
+          this.rulerEl.classList.remove("is-page-transitioning");
+          this.applyPosition();
         }
-        if (this.maskTopEl) this.maskTopEl.style.display = "";
-        if (this.maskBottomEl) this.maskBottomEl.style.display = "";
-        if (this.maskLeftEl) this.maskLeftEl.style.display = "";
-        if (this.maskRightEl) this.maskRightEl.style.display = "";
-
-        // Immediately execute this.applyPosition(); so the ruler sits perfectly on the first word of the new page.
-        this.applyPosition();
       } catch (err) {
         console.error("[ReadingRuler] Error in resetPositionForPage:", err);
       } finally {
@@ -6787,13 +6507,18 @@ export class ReadingRuler {
         if (stage) stage.classList.remove("is-turning-page");
         document.body.classList.remove("is-turning-page");
         if (content) content.classList.remove("is-turning-page");
-        if (this.followMode !== "mouse" && !this.isVerticalMode()) {
-          this.setNoTransition(false);
-        }
+        this.setNoTransition(false);
       });
     };
 
-    performReset();
+    if (immediate) {
+      performReset();
+    } else {
+      this.pageChangeRafId = requestAnimationFrame(() => {
+        this.pageChangeRafId = null;
+        performReset();
+      });
+    }
   }
 
   getReaderContainer() {
@@ -7321,7 +7046,6 @@ export class ReadingRuler {
   }
 
   clearFocusTextMask(stage) {
-    this._focusMaskDirty = false;
     const targets = new Set();
     const targetStage = stage || this.getStageElement();
     if (targetStage) targets.add(targetStage);
@@ -8066,7 +7790,7 @@ export class ReadingRuler {
       }
     }
 
-    if (this.followMode === "mouse" || this.isVerticalMode()) {
+    if (this.isVerticalMode()) {
       if (this.rulerEl) {
         this.rulerEl.classList.remove("is-snapped");
         this.rulerEl.style.setProperty("transition", "none", "important");
@@ -8086,10 +7810,6 @@ export class ReadingRuler {
       if (this.maskRightEl) {
         this.maskRightEl.classList.remove("is-snapped");
         this.maskRightEl.style.setProperty("transition", "none", "important");
-      }
-      if (this.wordWaveEl) {
-        this.wordWaveEl.classList.remove("is-snapped");
-        this.wordWaveEl.style.setProperty("transition", "none", "important");
       }
     } else if (this.mode === "focus" || !this.wordTracking) {
       if (this.rulerEl) this.rulerEl.style.transition = "none";
@@ -8111,10 +7831,7 @@ export class ReadingRuler {
       this.rulerEl.style.top = "0px";
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "auto";
-      if (this._lastAppliedWordWidth == null || Math.abs(w - this._lastAppliedWordWidth) >= 1) {
-        this._lastAppliedWordWidth = w;
-        this.rulerEl.style.width = `${w}px`;
-      }
+      this.rulerEl.style.width = `${w}px`;
       this.rulerEl.style.maxWidth = "100%";
       this.rulerEl.style.transform = `translate3d(${x}px, ${screenY}px, 0)`;
 
@@ -8323,7 +8040,6 @@ export class ReadingRuler {
 
     const stage = this.getStageElement();
     if (this.mode === "focus" && this.enabled) {
-      this._focusMaskDirty = true;
       if (!isCurrentMedia) {
         this.rulerEl.style.border = "none";
         this.rulerEl.style.outline = "none";
@@ -8439,7 +8155,6 @@ export class ReadingRuler {
       }
       if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
     } else if (this.mode === "bottom-cover" && this.enabled) {
-      this._focusMaskDirty = true;
       if (this.cachedLines.length === 0 || this.isPageTransitioning || !currentLine) {
         if (this.maskBottomEl) {
           this.maskBottomEl.style.display = "none";
@@ -8479,11 +8194,11 @@ export class ReadingRuler {
       } else {
         const curBottom = Number.isFinite(currentLine.bottom)
           ? currentLine.bottom
-          : (currentLine.centerY + (currentLine.height || this.glyphHeightByFontSize?.get(Math.round(currentLine.fontSize || 16)) || h) / 2);
+          : (currentLine.centerY + (currentLine.height || h) / 2);
 
         let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
         if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          const maxAllowedY = Math.floor(nextLine.top - 1);
+          const maxAllowedY = Math.round(nextLine.top - 3);
           coverTargetY = Math.min(coverTargetY, maxAllowedY);
           if (Number.isFinite(curBottom)) {
             coverTargetY = Math.max(Math.round(curBottom), coverTargetY);
@@ -8772,10 +8487,10 @@ export class ReadingRuler {
           this.maskBottomEl.style.height = `${Math.max(window.innerHeight * 2, 2000)}px`;
           this.maskBottomEl.style.transform = `translate3d(0, ${roundScreenY}px, 0)`;
         } else {
-          this.maskBottomEl.style.top = "0px";
-          this.maskBottomEl.style.left = "0px";
+          this.maskBottomEl.style.top = `${roundScreenY}px`;
+          this.maskBottomEl.style.left = `${coverLeft}px`;
           this.maskBottomEl.style.right = "auto";
-          this.maskBottomEl.style.transform = `translate3d(${coverLeft}px, ${roundScreenY}px, 0)`;
+          this.maskBottomEl.style.transform = "none";
           this.maskBottomEl.style.width = `${coverWidth}px`;
           this.maskBottomEl.style.maxWidth = `${coverWidth}px`;
           this.maskBottomEl.style.height = `${coverHeight}px`;
@@ -8793,20 +8508,17 @@ export class ReadingRuler {
         this.rulerEl.style.transform = `translate3d(${rulerLeft}px, ${roundScreenY}px, 0)`;
         this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
       } else {
-        this.rulerEl.style.top = "0px";
-        this.rulerEl.style.left = "0px";
+        this.rulerEl.style.top = `${roundScreenY}px`;
+        this.rulerEl.style.left = `${rulerLeft}px`;
         this.rulerEl.style.right = "auto";
-        this.rulerEl.style.transform = `translate3d(${rulerLeft}px, ${roundScreenY}px, 0)`;
+        this.rulerEl.style.transform = "none";
         this.rulerEl.style.width = `${rulerWidth}px`;
         this.rulerEl.style.maxWidth = `${rulerWidth}px`;
         this.rulerEl.style.height = "2px";
         this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
       }
     } else {
-      if (this._focusMaskDirty) {
-        this.clearFocusTextMask(stage);
-        this._focusMaskDirty = false;
-      }
+      this.clearFocusTextMask(stage);
     }
 
     if (isCurrentMedia) {
@@ -8826,6 +8538,12 @@ export class ReadingRuler {
         parentFig.classList.remove("active-focus", "ruler-focused-image");
       }
       this._lastFocusedMediaEl = null;
+    }
+
+    if (!this.isPageTransitioning && this.enabled && this.followMode === "mouse" && this.activePointerType === "mouse") {
+      if (this.lastPointerX != null && this.lastPointerY != null) {
+        this.updateCursorVisibility(this.lastPointerX, this.lastPointerY, "mouse");
+      }
     }
   }
 
@@ -9185,49 +8903,6 @@ export class ReadingRuler {
     }
   }
 
-  refreshVisualState() {
-    if (!this.rulerEl) return;
-    this.rulerEl.style.contain = this.mode === "bottom-cover" ? "none" : "paint";
-    if (!this.enabled) {
-      this.updateStyles();
-      this.applyPosition();
-      return;
-    }
-    this.isPageTransitioning = false;
-    this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
-    this.rulerEl.classList.add("is-visible");
-    this.rulerEl.style.display = "block";
-    this.rulerEl.style.opacity = "1";
-    this.rulerEl.style.visibility = "visible";
-
-    if (!this.isImageOnlyPdf && (!this.cachedLines || this.cachedLines.length === 0)) {
-      this.detectLines();
-    }
-    if (this.wordTracking && !this.isImageOnlyPdf && (!this.cachedWords || this.cachedWords.length === 0)) {
-      this.refreshWords();
-    }
-    if (this.cachedLines && this.cachedLines.length > 0) {
-      if (this.activeLineIndex < 0 || this.activeLineIndex >= this.cachedLines.length) {
-        this.activeLineIndex = 0;
-      }
-      const geom = this.computeLineGeometry(this.activeLineIndex);
-      if (geom) {
-        this.height = geom.height;
-        this.targetY = geom.targetY;
-        this.currentY = geom.targetY;
-      }
-    }
-    if (this.wordTracking && this.cachedWords && this.cachedWords.length > 0) {
-      if (this.activeWordIndex < 0 || this.activeWordIndex >= this.cachedWords.length) {
-        const lineWordIdx = this.cachedWords.findIndex(w => w.lineIndex === this.activeLineIndex);
-        this.activeWordIndex = lineWordIdx >= 0 ? lineWordIdx : 0;
-      }
-      this.setWordWindow(this.activeWordIndex);
-    }
-    this.updateStyles();
-    this.applyPosition();
-  }
-
   setMode(mode) {
     if (["highlight", "focus", "underline", "bottom-cover"].includes(mode)) {
       const prevMode = this.mode;
@@ -9235,14 +8910,9 @@ export class ReadingRuler {
         if (prevMode === "focus" || prevMode === "bottom-cover") {
           this.mode = mode;
           this.clearFocusTextMask();
-          this._focusMaskDirty = false;
         }
       }
       this.mode = mode;
-      if (mode === "focus" || mode === "bottom-cover") {
-        this._focusMaskDirty = true;
-      }
-      this._lastComputedLineGeom = null;
       if (this.mode === "bottom-cover" && this.maskBottomEl) {
         const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.75;
         this.maskBottomEl.style.setProperty("display", "block", "important");
@@ -9269,9 +8939,10 @@ export class ReadingRuler {
         this.setWordWindow(this.activeWordIndex);
       }
       this.updateEffectiveHeight();
+      this.updateStyles();
       this.updateBodyClasses();
+      this.applyPosition();
       this.updateRulerSettingsVisibility(this.mode, this.isPdfMode);
-      this.refreshVisualState();
     }
   }
 
@@ -9388,11 +9059,11 @@ export class ReadingRuler {
       }
     }
 
-    this.refreshVisualState();
+    this.updateStyles();
+    this.applyPosition();
   }
 
   setHeight(px) {
-    this._lastComputedLineGeom = null;
     if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
       this.setPdfRulerHeight(px);
       return;
@@ -9413,12 +9084,11 @@ export class ReadingRuler {
           this.currentY = this.targetY;
         }
       }
+      this.applyPosition();
     }
-    this.refreshVisualState();
   }
 
   setAutoHeight(enabled) {
-    this._lastComputedLineGeom = null;
     if (this.isImageOnlyPdf) {
       this.setPdfAutoHeight(false);
       return;
@@ -9439,7 +9109,7 @@ export class ReadingRuler {
     } else {
       this.updateEffectiveHeight();
     }
-    this.refreshVisualState();
+    this.applyPosition();
   }
 
   setSnapToLines(enabled) {
@@ -9450,7 +9120,7 @@ export class ReadingRuler {
       if (this.maskBottomEl) this.maskBottomEl.classList.remove("is-snapped");
       if (this.maskLeftEl) this.maskLeftEl.classList.remove("is-snapped");
       if (this.maskRightEl) this.maskRightEl.classList.remove("is-snapped");
-      this.refreshVisualState();
+      this.applyPosition();
       return;
     }
     this.snapToLines = !!enabled;
@@ -9470,60 +9140,102 @@ export class ReadingRuler {
         this.currentY = this.targetY;
       }
     }
-    this.refreshVisualState();
+    this.applyPosition();
   }
 
   setWordTracking(enabled) {
     this.disableWordTransition();
     if (this.isImageOnlyPdf) {
       this.wordTracking = false;
-    } else {
-      this.wordTracking = !!enabled;
-    }
-    if (this.isPdfMode) {
-      this.wordTrackingExplicitlyEnabledInPdf = this.wordTracking;
-    }
-    this._lastEmptyWordsDetectTime = 0;
-    this._lastActiveLineIndex = -1;
-    this._lastAppliedWordWidth = null;
-    this._lastWordSolidRatio = null;
-    this.updateBodyClasses();
-
-    if (!this.enabled) {
-      this.updateStyles();
+      this.wordTrackingExplicitlyEnabledInPdf = false;
+      this.updateBodyClasses();
+      this.applyPosition();
       return;
     }
-
-    if (!this.cachedLines || this.cachedLines.length === 0) {
-      this.refreshLines();
-    }
+    this.wordTracking = !!enabled;
+    this.wordTrackingExplicitlyEnabledInPdf = this.isPdfMode ? !!enabled : false;
+    this.updateBodyClasses();
 
     if (this.wordTracking) {
-      this._forceRefreshWords = true;
-      this.refreshWords();
-      this._forceRefreshWords = false;
-
-      if (this.cachedWords && this.cachedWords.length > 0) {
-        const targetLine = this.activeLineIndex >= 0 ? this.activeLineIndex : 0;
-        let wordIdx = this.cachedWords.findIndex(w => w.lineIndex === targetLine);
-        if (wordIdx < 0) wordIdx = 0;
-        this.activeWordIndex = wordIdx;
-        this.setWordWindow(wordIdx);
+      if (!this.cachedLines || this.cachedLines.length === 0) {
+        this.detectLines();
       }
-      if (this.rulerEl) this.rulerEl.classList.add("word-tracking-mode");
-    } else {
-      this.activeWordIndex = -1;
+      if (!this.cachedWords || this.cachedWords.length === 0) {
+        this.refreshWords();
+      }
+
+      if (this.cachedWords.length > 0) {
+        let targetWordIndex = -1;
+        if (this.activeWordIndex >= 0 && this.activeWordIndex < this.cachedWords.length) {
+          if (this.activeLineIndex < 0 || this.cachedWords[this.activeWordIndex].lineIndex === this.activeLineIndex) {
+            targetWordIndex = this.activeWordIndex;
+          }
+        }
+
+        if (targetWordIndex < 0) {
+          const hasPointer = Number.isFinite(this.lastPointerX) && Number.isFinite(this.lastPointerY);
+          let minDiff = Infinity;
+          let lineFirstIdx = -1;
+
+          for (let w = 0; w < this.cachedWords.length; w++) {
+            const word = this.cachedWords[w];
+            const isSameLine = (this.activeLineIndex >= 0 && word.lineIndex === this.activeLineIndex);
+            if (isSameLine && lineFirstIdx < 0) {
+              lineFirstIdx = w;
+            }
+            if (hasPointer) {
+              const linePenalty = (this.activeLineIndex >= 0 && !isSameLine) ? 500 : 0;
+              const diff = Math.abs(this.lastPointerY - word.centerY) * 3 + Math.abs(this.lastPointerX - word.centerX) + linePenalty;
+              if (diff < minDiff) {
+                minDiff = diff;
+                targetWordIndex = w;
+              }
+            }
+          }
+
+          if (targetWordIndex < 0) {
+            targetWordIndex = lineFirstIdx >= 0 ? lineFirstIdx : 0;
+          }
+        }
+
+        if (targetWordIndex >= 0) {
+          this.activeWordIndex = targetWordIndex;
+          this.setWordWindow(targetWordIndex);
+          const targetWord = this.cachedWords[targetWordIndex];
+          if (targetWord) {
+            if (!Number.isFinite(this.lastPointerX)) {
+              this.lastPointerX = targetWord.centerX;
+              this.lastValidPointerX = this.lastPointerX;
+            }
+            if (!Number.isFinite(this.lastPointerY)) {
+              this.lastPointerY = targetWord.centerY;
+              this.lastValidPointerY = this.lastPointerY;
+            }
+          }
+        }
+      }
+
       if (this.rulerEl) {
-        this.rulerEl.classList.remove("word-tracking-mode", "no-preview");
+        this.rulerEl.classList.add("word-tracking-mode");
+      }
+    } else {
+      this.cachedWords = [];
+      this.previewWidth = 0;
+      this.totalWidth = 0;
+      if (this.rulerEl) {
+        this.rulerEl.classList.remove("word-tracking-mode");
+      }
+      if (this.wordWaveEl) {
+        this.wordWaveEl.style.display = "none";
       }
       if (this.cachedLines && this.cachedLines.length > 0) {
-        const lineIdx = Math.max(0, Math.min(this.cachedLines.length - 1, this.activeLineIndex >= 0 ? this.activeLineIndex : 0));
-        this.activeLineIndex = lineIdx;
-        const geom = this.computeLineGeometry(lineIdx);
+        const targetIdx = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length) ? this.activeLineIndex : 0;
+        this.activeLineIndex = targetIdx;
+        const geom = this.computeLineGeometry(targetIdx);
         if (geom) {
           this.height = geom.height;
           this.targetY = geom.targetY;
-          this.currentY = geom.targetY;
+          this.currentY = this.targetY;
         }
       }
     }
@@ -9537,15 +9249,14 @@ export class ReadingRuler {
     document.documentElement.style.setProperty("--focus-dim-opacity", String(this.dimOpacity));
     const masks = [this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl, this.maskInactiveSpreadEl];
     const themeBg = "var(--bg-theme, var(--color-bg, #fbf0d9))";
-    for (const m of masks) {
-      if (m) {
-        m.style.setProperty("opacity", String(this.dimOpacity), "important");
-        if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
+      for (const m of masks) {
+        if (m) {
           m.style.setProperty("background-color", themeBg, "important");
+          m.style.setProperty("opacity", String(this.dimOpacity), "important");
         }
       }
-    }
-    if (this.mode === "bottom-cover") {
+    } else if (this.mode === "bottom-cover") {
       if (this.maskBottomEl) {
         this.maskBottomEl.style.setProperty("display", "block", "important");
         this.maskBottomEl.style.setProperty("background-color", themeBg, "important");
@@ -9559,8 +9270,19 @@ export class ReadingRuler {
         this.maskInactiveSpreadEl.style.setProperty("z-index", "15", "important");
         this.maskInactiveSpreadEl.style.setProperty("pointer-events", "none", "important");
       }
+    } else {
+      // V EPUB a textovém PDF režimu odstraníme inline barvy a průhlednost, aby se použily CSS vlastnosti motivu (--bg-theme a --focus-dim-opacity)
+      for (const m of masks) {
+        if (m) {
+          m.style.removeProperty("background-color");
+          m.style.removeProperty("opacity");
+        }
+      }
     }
-    this.refreshVisualState();
+    this.updateStyles();
+    if ((this.mode === "focus" || this.mode === "bottom-cover") && this.enabled) {
+      this.applyPosition();
+    }
   }
 
   setFollowMode(mode) {
@@ -9568,11 +9290,14 @@ export class ReadingRuler {
       this.followMode = "mouse";
       this.stationaryScreenY = null;
       this.updateBodyClasses();
-      this.refreshVisualState();
       return;
     }
     this.disableWordTransition();
     this.followMode = mode;
+    this._verticalScrollAnchorPending = false;
+    this._relativeTrackingActive = false;
+    this._scrollAnchorPhysicalY = null;
+    this._scrollAnchorVirtualY = null;
     if (mode !== "keyboard") {
       this.stationaryScreenY = null;
     }
@@ -9592,7 +9317,6 @@ export class ReadingRuler {
     } else {
       this.setCursorHidden(false);
     }
-    this.refreshVisualState();
   }
 
 
@@ -9600,12 +9324,27 @@ export class ReadingRuler {
    * Vyvolá se při přechodu na jinou stránku nebo kapitolu.
    * Okamžitě a synchronně usadí pravítko na cílový řádek bez jakéhokoliv časovače či prodlevy.
    */
-  onPageChange(direction = 0, isPageChanged = true, immediateRuler = true) {
+  onPageChange(direction = 0, isPageChanged = true, immediate = true) {
     if (!this.enabled) {
       this.forceReleaseNavigationLocks();
       return;
     }
     this.clearPageTransitionTimersAndRAFs();
+    this.isLineLocked = true;
+    this.isNavigatingPage = true;
+    this.navigatingPageLockoutEndTime = Date.now() + 300;
+
+    const stage = this.getStageElement();
+    if (stage) stage.classList.add("is-turning-page");
+    document.body.classList.add("is-turning-page");
+    const content = document.getElementById("reader-content");
+    if (content) content.classList.add("is-turning-page");
+
+    clearTimeout(this._navSafetyTimer);
+    this._navSafetyTimer = setTimeout(() => {
+      this.forceReleaseNavigationLocks();
+    }, 300); // 300ms maximum lock lifetime
+
     this.disableWordTransition();
     if (this.wordTransitionTimer) {
       clearTimeout(this.wordTransitionTimer);
@@ -9618,71 +9357,23 @@ export class ReadingRuler {
       clearTimeout(this.pageChangeTimer);
       this.pageChangeTimer = null;
     }
-    const content = document.getElementById("reader-content");
     if (content && this._onTransitionEnd) {
       content.removeEventListener("transitionend", this._onTransitionEnd);
       this._onTransitionEnd = null;
     }
+
+    this.hideForPageTransition();
 
     this.penHistory = [];
     this.touchHistory = [];
     this._maxLineIndexOnPage = -1;
     this._maxWordIndexOnPage = -1;
 
-    // Clear the transition lock:
-    this.isPageTransitioning = false;
-    this.isNavigating = false;
-    this.isNavigatingPage = false;
-
-    // Refresh lines and words for the active page:
-    this.refreshLines();
-    if (this.wordTracking) {
-      this.refreshWords();
-    }
-
+    // Okamžité synchronní usazení pravítka na nové stránce podle směru listování
+    // Pro švihnutí stylusu vždy resynchronizovat na horní řádek příchozí stránky
     const targetDirection = this.flickResyncTopLine ? 1 : direction;
     this.flickResyncTopLine = false;
-
-    if (this.wordTracking) {
-      if (this.cachedWords && this.cachedWords.length > 0) {
-        this.activeWordIndex = (targetDirection >= 0 ? 0 : this.cachedWords.length - 1);
-        this.setWordWindow(this.activeWordIndex);
-        if (this.cachedWords[this.activeWordIndex] && this.cachedWords[this.activeWordIndex].lineIndex != null) {
-          this.activeLineIndex = this.cachedWords[this.activeWordIndex].lineIndex;
-        }
-      } else {
-        this.activeLineIndex = 0;
-        const geom = this.computeLineGeometry(0);
-        if (geom) {
-          this.height = geom.height;
-          this.targetY = geom.targetY;
-          this.currentY = geom.targetY;
-        }
-      }
-    }
-
-    // Explicitly UNHIDE and reveal the ruler DOM elements:
-    if (this.rulerEl) {
-      this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
-      this.rulerEl.classList.add("is-visible");
-      this.rulerEl.style.removeProperty("transition");
-      this.rulerEl.style.display = "block";
-      this.rulerEl.style.opacity = "1";
-      this.rulerEl.style.visibility = "visible";
-      if (this.wordTracking) {
-        this.rulerEl.classList.add("word-tracking-mode");
-      }
-    }
-    if (this.maskTopEl) this.maskTopEl.style.display = "";
-    if (this.maskBottomEl) this.maskBottomEl.style.display = "";
-    if (this.maskLeftEl) this.maskLeftEl.style.display = "";
-    if (this.maskRightEl) this.maskRightEl.style.display = "";
-
-    // Immediately execute this.applyPosition(); so the ruler sits perfectly on the first word of the new page.
-    this.applyPosition();
-
-    // Synchronize full position reset and geometry calculations
-    this.resetPositionForPage(targetDirection, isPageChanged);
+    this.resetPositionForPage(targetDirection, immediate);
   }
 
   destroy() {
