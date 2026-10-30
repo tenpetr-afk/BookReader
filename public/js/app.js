@@ -3747,10 +3747,7 @@ export class LuminaApp {
       await this.loadCurrentChapter(targetPage);
       if (this.ruler && this.ruler.enabled) {
         this.ruler.forceReleaseNavigationLocks();
-        this.ruler.refreshLines();
-        this.ruler.resetPositionForPage(1);
         this.ruler.updateStyles();
-        this.ruler.applyPosition();
       }
     } catch (err) {
       console.error("Chyba při otevírání knihy:", err);
