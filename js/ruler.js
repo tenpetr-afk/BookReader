@@ -5473,20 +5473,20 @@ export class ReadingRuler {
   }
 
   /**
-   * Vyhodnotí index řádku podle typu ukazatele:
-   * - Pro Apple Pencil (pointerType === 'pen') v režimu sledování myši:
-   *   1. Calibration Window pro aktivní řádek N:
-   *      - Pravítko je uzamčené na řádku N, pokud se fyzické e.clientY nachází v rozsahu:
-   *        Min Y: lineN.top + (lineN.height * 0.5) (vertikální střed řádku N)
-   *        Max Y: lineNext.top + (lineNext.height * 0.5) (vertikální střed řádku N+1)
-   *      - Včetně inter-line mezery mezi řádky N a N+1.
+   * Vyhodnotí index řádku podle typu ukazatele a hysterezního tolerančního okna (60% Hysteresis):
+   * - Pro Apple Pencil (pointerType === 'pen') a kurzor myši v režimu sledování (followMode === 'mouse'):
+   *   1. Calibration Window / toleranční okno pro aktivní řádek N:
+   *      - Pravítko zůstává pevně uzamčené na řádku N, dokud se svislá souřadnice ukazatele
+   *        pohybuje pod horním okrajem aktuálního řádku a nad 60% hranicí výšky následujícího řádku.
+   *      - Zahrnuje celou inter-line mezeru mezi řádky N a N+1 i horních 60 % výšky řádku N+1.
    *   2. Přepínací prahy (Switching Thresholds):
-   *      - Pohyb DOLŮ: Přeskok na řádek N+1 nastane POUZE tehdy, když e.clientY překročí střed řádku N+1.
-   *      - Pohyb NAHORU: Návrat na řádek N-1 okamžitě, když e.clientY vystoupá nad střed řádku N.
+   *      - Pohyb DOLŮ: Přeskok na řádek N+1 nastane POUZE tehdy, když e.clientY pronikne do 60 % výšky řádku N+1
+   *        (nextLine ? nextLine.top + nextLine.height * 0.60 : Infinity).
+   *      - Pohyb NAHORU: Návrat na řádek N-1 nastane, když e.clientY vystoupá nad práh předchozího řádku.
    *   3. Ochrana okrajů (First & Last Line Safeguards):
-   *      - Pokud je e.clientY nad středem řádku 0, zůstane uzamčeno na řádku 0.
-   *      - Pokud je e.clientY pod středem posledního řádku, zůstane uzamčeno na posledním řádku.
-   * - Pro myš (pointerType === 'mouse'): standardní přímé přichytávání centrované přímo na kurzor bez zkreslení.
+   *      - Pokud je e.clientY nad řádkem 0, zůstane uzamčeno na řádku 0.
+   *      - Pokud je e.clientY pod posledním řádkem, zůstane uzamčeno na posledním řádku.
+   * - Pro ostatní ukazatele mimo režim sledování: standardní přímé přichytávání bez hystereze.
    */
   getHysteresisLineIndex(curY, isPen = false, activeColumn = null) {
     if (!isPen || this.followMode === "mouse") {
@@ -5573,8 +5573,8 @@ export class ReadingRuler {
       return lastItem.index;
     }
 
-    // 4. Pointer Isolation: Pro myš (pointerType === 'mouse') standardní přímé přichytávání bez zkreslení
-    if (!isPen || this.followMode !== "mouse") {
+    // Pro ukazatele mimo režim sledování a mimo stylus (např. klávesový režim) standardní přímé přichytávání bez hystereze
+    if (!isPen && this.followMode !== "mouse") {
       let minDiff = Infinity;
       let closestIdx = pool[0].index;
       for (let i = 0; i < pool.length; i++) {
@@ -5589,7 +5589,7 @@ export class ReadingRuler {
       return closestIdx;
     }
 
-    // 1., 2. & 3. Calibration Window & Switching Thresholds pro Apple Pencil (pointerType === 'pen'):
+    // 1., 2. & 3. Calibration Window & Switching Thresholds (60% Hysteresis):
     let activeInPool = -1;
     for (let i = 0; i < pool.length; i++) {
       if (pool[i].index === this.activeLineIndex) {
@@ -5612,14 +5612,14 @@ export class ReadingRuler {
     const currentLine = pool[activeInPool].line;
     const prevLine = activeInPool > 0 ? pool[activeInPool - 1].line : null;
     const nextLine = activeInPool < pool.length - 1 ? pool[activeInPool + 1].line : null;
-    const downThreshold = nextLine ? Math.max(currentLine.bottom + 2, (currentLine.bottom + nextLine.top) * 0.5 + 3) : Infinity;
+    const downThreshold = nextLine ? (nextLine.top + nextLine.height * 0.60) : Infinity;
     const upThreshold = prevLine ? Math.min(currentLine.top - 2, (prevLine.bottom + currentLine.top) * 0.5 - 3) : -Infinity;
 
     if (curY > downThreshold) {
       let newPoolIdx = activeInPool + 1;
       while (newPoolIdx < pool.length - 1) {
         const next = pool[newPoolIdx + 1].line;
-        if (curY > next.top + next.height * 0.5) {
+        if (curY > next.top + next.height * 0.60) {
           newPoolIdx++;
         } else {
           break;
@@ -5627,7 +5627,7 @@ export class ReadingRuler {
       }
       return pool[newPoolIdx].index;
     } else if (curY < upThreshold) {
-      // 3. First Line Safeguard: Pokud je e.clientY nad středem řádku 0, zůstává uzamčeno na řádku 0
+      // 3. First Line Safeguard: Pokud je e.clientY nad řádkem 0, zůstává uzamčeno na řádku 0
       if (activeInPool === 0) return pool[0].index;
       let newPoolIdx = activeInPool - 1;
       while (newPoolIdx > 0) {
