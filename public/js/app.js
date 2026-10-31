@@ -4789,8 +4789,12 @@ export class LuminaApp {
     }
 
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.refreshLines();
-      this.ruler.applyPosition();
+      requestAnimationFrame(() => {
+        if (!this.ruler || !this.ruler.enabled) return;
+        this.ruler.refreshLines();
+        this.ruler.refreshWords();
+        this.ruler.applyPosition();
+      });
     }
   }
 

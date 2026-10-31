@@ -70,7 +70,8 @@ body.columns-2 {
 
 .bionic-fixation, .bionic-bold {
   font-weight: 700;
-  letter-spacing: -0.012em;
+  line-height: inherit;
+  letter-spacing: inherit;
 }
 
 /* ==========================================================================
@@ -184,9 +185,9 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 /* Hloubková dědičnost typografie pro přebití vložených EPUB stylů */
 #reader-stage,
 #reader-content,
-#reader-content *:not(.textLayer):not(.textLayer *):not(.bionic-fixation):not(.bionic-bold),
+#reader-content *:not(.textLayer):not(.textLayer *),
 .paged-content,
-.paged-content *:not(.bionic-fixation):not(.bionic-bold) {
+.paged-content * {
   line-height: var(--reader-line-height) !important;
   letter-spacing: var(--reader-letter-spacing) !important;
   word-spacing: var(--reader-word-spacing) !important;
