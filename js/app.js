@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js";
-import { EpubParser } from "./epub-parser.js";
-import { PDFLoader } from "./pdf-loader.js";
-import { tracker, ReadingTracker } from "./tracker.js";
-import { ReadingRuler } from "./ruler.js";
-import { StatsCharts } from "./charts.js";
-import { supabaseSync } from "./supabase-sync.js";
-import { supabase } from "./supabase-client.js";
+import { storage, computeFileHash } from "./storage.js?v=2.1.7";
+import { EpubParser } from "./epub-parser.js?v=2.1.7";
+import { PDFLoader } from "./pdf-loader.js?v=2.1.7";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.1.7";
+import { ReadingRuler } from "./ruler.js?v=2.1.7";
+import { StatsCharts } from "./charts.js?v=2.1.7";
+import { supabaseSync } from "./supabase-sync.js?v=2.1.7";
+import { supabase } from "./supabase-client.js?v=2.1.7";
 
-export const APP_VERSION = "v1.21.0";
+export const APP_VERSION = "v2.1.7";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -171,15 +171,7 @@ export class LuminaApp {
             console.warn("[Supabase Sync] Nepodařilo se hydratovat knihy z cloudu:", e);
           }
         }
-        if (!cloudLoaded && (!books || books.length === 0)) {
-          // Automaticky nabídnout nebo nahrát vzorovou knihu
-          try {
-            await this.loadBundledSampleBook();
-            books = await storage.getAllBooks();
-          } catch (sampleErr) {
-            console.warn("[LuminaApp] Nepodařilo se načíst vzorovou knihu:", sampleErr);
-          }
-        }
+
       }
     } catch (loadErr) {
       console.warn("[LuminaApp] Chyba při synchronizaci/načítání výchozí knihovny:", loadErr);
@@ -229,7 +221,6 @@ export class LuminaApp {
       fileInput: document.getElementById("file-input"),
       dropZone: document.getElementById("drop-zone"),
       btnUpload: document.getElementById("btn-upload"),
-      btnLoadSample: document.getElementById("btn-load-sample"),
       btnToggleSettingsLib: document.getElementById("btn-toggle-settings-lib"),
       btnToggleStatsLib: document.getElementById("btn-toggle-stats-lib"),
       btnCloudSync: document.getElementById("btn-cloud-sync"),
@@ -1005,9 +996,6 @@ export class LuminaApp {
       });
     });
 
-    // Vzorová kniha tlačítko
-    this.dom.btnLoadSample?.addEventListener("click", () => this.loadBundledSampleBook());
-
     // 2. Přepínání pohledů a stránkování
     if (this.dom.btnBackToLibrary) this.dom.btnBackToLibrary.addEventListener("click", () => this.showLibraryView());
     
@@ -1646,11 +1634,8 @@ export class LuminaApp {
       // Stejný handler pro touchstart (iPad – pointerdown může být passive v některých kontextech)
       document.addEventListener("touchstart", (e) => {
         if (!this.dom.rulerQuickPopover || this.dom.rulerQuickPopover.classList.contains("is-hidden")) return;
-        const touch = e.touches[0];
-        if (!touch) return;
-        const target = document.elementFromPoint(touch.clientX, touch.clientY);
-        const insidePopover = this.dom.rulerQuickPopover.contains(target);
-        const insideBtn = this.dom.btnRulerQuickMenu && this.dom.btnRulerQuickMenu.contains(target);
+        const insidePopover = this.dom.rulerQuickPopover.contains(e.target);
+        const insideBtn = this.dom.btnRulerQuickMenu && this.dom.btnRulerQuickMenu.contains(e.target);
         if (insidePopover || insideBtn) return;
         e.preventDefault();
         e.stopPropagation();
@@ -1757,13 +1742,46 @@ export class LuminaApp {
     document.addEventListener("click", _handleOutsideTap);
     document.addEventListener("touchend", _handleOutsideTap, { passive: true });
 
+    const bindRulerSettingAction = (el, action) => {
+      if (!el) return;
+      let lastTrigger = 0;
+      const trigger = (e) => {
+        const now = Date.now();
+        if (now - lastTrigger < 250) {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          return;
+        }
+        lastTrigger = now;
+        action(e);
+      };
+
+      el.addEventListener("pointerup", (e) => {
+        if (e.pointerType === "pen" || e.pointerType === "touch") {
+          const rect = el.getBoundingClientRect();
+          if (
+            e.clientX >= rect.left - 10 &&
+            e.clientX <= rect.right + 10 &&
+            e.clientY >= rect.top - 10 &&
+            e.clientY <= rect.bottom + 10
+          ) {
+            trigger(e);
+          }
+        }
+      });
+
+      el.addEventListener("click", (e) => {
+        trigger(e);
+      });
+    };
+
     const popoverSnapToggle = this.dom.popoverRulerSnapToggle || document.getElementById("popover-ruler-snap") || document.getElementById("popover-ruler-snap-toggle");
     if (popoverSnapToggle) {
       const handlePopoverSnap = (e) => {
         if (this.isPdfMode && this.isImageOnlyPdf) return;
         if (e) {
           e.stopPropagation();
-          if (e.type === "click" && e.target && e.target.tagName !== "INPUT") {
+          if (e.target && e.target.tagName !== "INPUT" && e.cancelable) {
             e.preventDefault();
           }
         }
@@ -1778,24 +1796,24 @@ export class LuminaApp {
         this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       };
-      popoverSnapToggle.addEventListener("click", handlePopoverSnap);
+      bindRulerSettingAction(popoverSnapToggle, handlePopoverSnap);
       if (popoverSnapToggle.tagName === "INPUT") {
         popoverSnapToggle.addEventListener("change", handlePopoverSnap);
       }
     }
 
     if (this.dom.popoverModeLine) {
-      this.dom.popoverModeLine.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      bindRulerSettingAction(this.dom.popoverModeLine, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
         this.setWordTracking(false);
       });
     }
 
     if (this.dom.popoverModeWord) {
-      this.dom.popoverModeWord.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      bindRulerSettingAction(this.dom.popoverModeWord, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
         if (this.isPdfMode && this.isImageOnlyPdf) return;
         this.setWordTracking(true);
       });
@@ -1803,9 +1821,9 @@ export class LuminaApp {
 
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
       if (btn !== this.dom.popoverModeLine && btn !== this.dom.popoverModeWord) {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
           if (this.isPdfMode && this.isImageOnlyPdf) return;
           const isWord = btn.dataset.rulerModeType === "word";
           this.setWordTracking(isWord);
@@ -1815,10 +1833,10 @@ export class LuminaApp {
 
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetBtn = e.target.closest('[data-ruler-style]') || btn;
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-style]') || btn) : btn;
           const newMode = targetBtn ? targetBtn.dataset.rulerStyle : null;
           if (!newMode) return;
           if (!this.settings.ruler) this.settings.ruler = {};
@@ -1833,10 +1851,10 @@ export class LuminaApp {
 
     if (this.dom.popoverColorButtons) {
       this.dom.popoverColorButtons.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetBtn = e.target.closest('[data-ruler-color]') || btn;
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-color]') || btn) : btn;
           const newColor = targetBtn ? targetBtn.dataset.rulerColor : null;
           if (!newColor) return;
           if (!this.settings.ruler) this.settings.ruler = {};
@@ -2166,14 +2184,16 @@ export class LuminaApp {
         this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       };
-      drawerSnapToggle.addEventListener("click", handleDrawerSnap);
+      bindRulerSettingAction(drawerSnapToggle, handleDrawerSnap);
       if (drawerSnapToggle.tagName === "INPUT") {
         drawerSnapToggle.addEventListener("change", handleDrawerSnap);
       }
     }
 
     if (this.dom.rulerWordTrackingSetting) {
-      this.dom.rulerWordTrackingSetting.addEventListener("click", () => {
+      bindRulerSettingAction(this.dom.rulerWordTrackingSetting, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
         const nextVal = !(this.settings.ruler.wordTracking ?? false);
         this.setWordTracking(nextVal);
       });
@@ -2192,10 +2212,10 @@ export class LuminaApp {
     }
 
     this.dom.rulerModeSelects.forEach(btn => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const targetBtn = e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn;
+      bindRulerSettingAction(btn, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
+        const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn) : btn;
         const newMode = targetBtn ? (targetBtn.dataset.rulerMode || targetBtn.dataset.rulerStyle) : null;
         if (!newMode) return;
         if (!this.settings.ruler) this.settings.ruler = {};
@@ -2209,10 +2229,10 @@ export class LuminaApp {
 
     if (this.dom.rulerColorSelects) {
       this.dom.rulerColorSelects.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetBtn = e.target.closest('[data-ruler-color]') || btn;
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-color]') || btn) : btn;
           const newColor = targetBtn ? targetBtn.dataset.rulerColor : null;
           if (!newColor) return;
           if (!this.settings.ruler) this.settings.ruler = {};
@@ -2261,8 +2281,8 @@ export class LuminaApp {
 
     if (this.dom.rulerFollowButtons) {
       this.dom.rulerFollowButtons.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
+        bindRulerSettingAction(btn, (e) => {
+          if (e) e.stopPropagation();
           const val = btn.dataset.rulerFollow;
           if (!val) return;
           if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") return;
@@ -3333,22 +3353,6 @@ export class LuminaApp {
     }
   }
 
-  async loadBundledSampleBook() {
-    if (this.isImporting) return;
-    try {
-      this.showToast("Načítám vzorovou knihu R.U.R...", "info");
-      const resp = await fetch("sample-books/rur.epub");
-      if (!resp.ok) throw new Error("Soubor rur.epub nebyl nalezen na serveru");
-      const blob = await resp.blob();
-      const file = new File([blob], "rur.epub", { type: "application/epub+zip" });
-      await this.handleFileUpload(file);
-    } catch (e) {
-      console.warn("Chyba při načítání vzorové knihy:", e);
-      this.showToast("Vzorovou knihu se nepodařilo načíst.", "error");
-      this.renderLibrary();
-    }
-  }
-
   async loadLibrary() {
     try {
       await supabaseSync.syncAll({ silent: true });
@@ -3775,10 +3779,7 @@ export class LuminaApp {
       await this.loadCurrentChapter(targetPage);
       if (this.ruler && this.ruler.enabled) {
         this.ruler.forceReleaseNavigationLocks();
-        this.ruler.refreshLines();
-        this.ruler.resetPositionForPage(1);
         this.ruler.updateStyles();
-        this.ruler.applyPosition();
       }
     } catch (err) {
       console.error("Chyba při otevírání knihy:", err);
@@ -4595,15 +4596,7 @@ export class LuminaApp {
         navDirection = finalPageIndex > 0 ? 1 : 0;
       }
 
-      // Phase 3 (Immediate Ruler Re-Indexing & Masking): Synchronní usazení a zamaskování
-      this.goToPage(finalPageIndex, navDirection, true, { isInitialLoad: true });
-
-      // Pojistka synchronního refreshnutí a zamaskování pravítka pro cílovou stránku
-      if (this.ruler && this.ruler.enabled) {
-        this.ruler.resetPositionForPage(navDirection, true);
-      }
-
-      // Phase 4 (Reveal): Obnovení viditelnosti po ukotvení a zamaskování cílové strany
+      // Reveal: Nejprve odeber třídu is-chapter-loading a nastav opacity = "1" na stage i readerContent
       if (stage) {
         stage.classList.remove("is-chapter-loading");
         void stage.offsetWidth;
@@ -4611,7 +4604,7 @@ export class LuminaApp {
       }
       if (this.dom.readerContent) {
         this.dom.readerContent.classList.remove("is-chapter-loading");
-        void this.dom.readerContent.offsetWidth; // Vynutíme uplatnění cílové transformace před odhalením
+        void this.dom.readerContent.offsetWidth;
         this.dom.readerContent.style.opacity = "1";
       }
       requestAnimationFrame(() => {
@@ -4622,6 +4615,13 @@ export class LuminaApp {
           this.dom.readerContent.style.transition = "";
         }
       });
+
+      this.goToPage(finalPageIndex, navDirection, true, { isInitialLoad: true, skipRulerUpdate: true });
+
+      // Pojistka synchronního refreshnutí a zamaskování pravítka pro cílovou stránku
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.resetPositionForPage(navDirection, true);
+      }
     } catch (e) {
       if (stage) {
         stage.classList.remove("is-chapter-loading");
@@ -4704,6 +4704,20 @@ export class LuminaApp {
       clearTimeout(this._sliderCommitTimer);
       this._sliderCommitTimer = null;
     }
+    if (this._sliderCssRafId) {
+      cancelAnimationFrame(this._sliderCssRafId);
+      this._sliderCssRafId = null;
+    }
+    // Synchronously flush all typography and stage margin CSS custom properties
+    // before measuring column step and line positions on the next animation frame
+    document.documentElement.style.setProperty("--reader-font-size", `${this.settings.fontSize}px`);
+    document.documentElement.style.setProperty("--reader-line-height", this.settings.lineHeight);
+    document.documentElement.style.setProperty("--reader-letter-spacing", `${this.settings.letterSpacing}px`);
+    document.documentElement.style.setProperty("--reader-word-spacing", `${this.settings.wordSpacing}px`);
+    const m = this.settings.marginPercent ?? 8;
+    document.documentElement.style.setProperty("--reader-stage-width", `${100 - (m * 2)}vw`);
+    document.documentElement.style.setProperty("--col-gap", `${(m * 0.25).toFixed(2)}vw`);
+
     if (this._bionicSuspendedForDrag) {
       this.renderChapterHtml();
       this._bionicSuspendedForDrag = false;
@@ -4718,6 +4732,16 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
           this.ruler.updateStyles();
           this.ruler.refreshLines();
+          if (this.ruler.snapToLines && this.ruler.cachedLines.length > 0) {
+            const clampedIdx = Math.max(0, Math.min(this.ruler.activeLineIndex >= 0 ? this.ruler.activeLineIndex : 0, this.ruler.cachedLines.length - 1));
+            this.ruler.activeLineIndex = clampedIdx;
+            const geom = this.ruler.computeLineGeometry(clampedIdx);
+            if (geom) {
+              this.ruler.height = geom.height;
+              this.ruler.targetY = geom.targetY;
+              this.ruler.currentY = geom.targetY;
+            }
+          }
           this.ruler.applyPosition();
         }
         return;
@@ -4730,6 +4754,19 @@ export class LuminaApp {
         this.ruler.forceReleaseNavigationLocks();
         this.ruler.updateStyles();
         this.ruler.refreshLines();
+        if (this.ruler.wordTracking) {
+          this.ruler.refreshWords();
+        }
+        if (this.ruler.snapToLines && this.ruler.cachedLines.length > 0) {
+          const clampedIdx = Math.max(0, Math.min(this.ruler.activeLineIndex >= 0 ? this.ruler.activeLineIndex : 0, this.ruler.cachedLines.length - 1));
+          this.ruler.activeLineIndex = clampedIdx;
+          const geom = this.ruler.computeLineGeometry(clampedIdx);
+          if (geom) {
+            this.ruler.height = geom.height;
+            this.ruler.targetY = geom.targetY;
+            this.ruler.currentY = geom.targetY;
+          }
+        }
         this.ruler.applyPosition();
       }
     });
@@ -4789,8 +4826,12 @@ export class LuminaApp {
     }
 
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.refreshLines();
-      this.ruler.applyPosition();
+      requestAnimationFrame(() => {
+        if (!this.ruler || !this.ruler.enabled) return;
+        this.ruler.refreshLines();
+        this.ruler.refreshWords();
+        this.ruler.applyPosition();
+      });
     }
   }
 
@@ -5059,18 +5100,20 @@ export class LuminaApp {
           cancelAnimationFrame(this._rulerPageChangeRafId);
           this._rulerPageChangeRafId = null;
         }
-        this._rulerPageChangeRafId = requestAnimationFrame(() => {
+        if (!options?.skipRulerUpdate) {
           this._rulerPageChangeRafId = requestAnimationFrame(() => {
-            this._rulerPageChangeRafId = null;
-            try {
-              if (this.ruler && this.ruler.enabled) {
-                this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
+            this._rulerPageChangeRafId = requestAnimationFrame(() => {
+              this._rulerPageChangeRafId = null;
+              try {
+                if (this.ruler && this.ruler.enabled) {
+                  this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
+                }
+              } catch (rulerErr) {
+                console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
               }
-            } catch (rulerErr) {
-              console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
-            }
+            });
           });
-        });
+        }
       }
 
       requestAnimationFrame(() => {
@@ -5791,7 +5834,8 @@ export class LuminaApp {
       rulerContainer.style.display = showRuler ? "flex" : "none";
       rulerContainer.classList.toggle("is-hidden", !showRuler);
     }
-    if (showRuler && this.settings.ruler.enabled) {
+    const hasReaderContent = !!(this.dom.readerContent && this.dom.readerContent.innerHTML.trim());
+    if (showRuler && this.settings.ruler.enabled && hasReaderContent) {
       this.ruler.setEnabled(true);
     } else {
       this.ruler.setEnabled(false);
@@ -6273,8 +6317,11 @@ export class LuminaApp {
 
   async initSessionAnalytics() {
     const rawSessions = await storage.getAllReadingSessions();
-    // Filtrujeme striktně pouze relace s délkou alespoň 5 minut (>= 300 sekund)
+    const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
+    // Filtrujeme striktně pouze relace s délkou alespoň 5 minut (>= 300 sekund) a nesmazané relace
     const savedSessions = (rawSessions || []).filter(s => {
+      const sid = String(s.sessionId ?? s.id ?? "").trim();
+      if (sid && deletedSet.has(sid)) return false;
       const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
       return dur >= 300;
     });
@@ -6423,7 +6470,10 @@ export class LuminaApp {
             e.stopPropagation();
             e.preventDefault();
             if (!window.confirm("Opravdu si přejete smazat tuto čtecí relaci? Statistiky budou automaticky přepočítány.")) return;
-            const targetId = deleteBtn.getAttribute("data-session-id") || sid || s.sessionId || s.id;
+            const targetId = String(deleteBtn.getAttribute("data-session-id") || sid || s.sessionId || s.id || "").trim();
+            if (!targetId) return;
+
+            deleteBtn.disabled = true;
 
             try {
               await storage.deleteReadingSession(targetId);

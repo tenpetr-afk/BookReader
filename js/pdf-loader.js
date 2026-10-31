@@ -105,6 +105,13 @@ export class PDFLoader {
     return this.app?.dom?.pagedViewport || document.getElementById("paged-viewport") || this.container?.parentElement || window;
   }
 
+  _isDarkThemeActive() {
+    const docTheme = document.documentElement.getAttribute("data-theme");
+    if (docTheme === "dark" || docTheme === "oled") return true;
+    const bodyTheme = document.body?.getAttribute("data-theme");
+    return bodyTheme === "dark" || bodyTheme === "oled";
+  }
+
   _destroyCanvas(canvas) {
     if (!canvas) return;
     try {
@@ -122,6 +129,15 @@ export class PDFLoader {
 
   _cleanupContainerCanvases(container) {
     if (!container) return;
+    const blobImgs = container.querySelectorAll("img[data-blob-url]");
+    for (const img of blobImgs) {
+      if (img.dataset.blobUrl) {
+        try {
+          URL.revokeObjectURL(img.dataset.blobUrl);
+        } catch (e) {}
+      }
+      img.removeAttribute("src");
+    }
     const canvases = container.querySelectorAll("canvas");
     for (const canvas of canvases) {
       this._destroyCanvas(canvas);
@@ -305,7 +321,7 @@ export class PDFLoader {
       }
       this._cleanupContainerCanvases(container);
 
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
 
       if (this.isSpreadActive()) {
         // --- Režim dvoustrany (Two-Page Spread) ---
@@ -375,6 +391,8 @@ export class PDFLoader {
             const slot = document.createElement("div");
             slot.className = "pdf-page-slot pdf-page-container";
             slot.dataset.pageNumber = String(pageNum);
+            slot.dataset.scale = String(uniformScale);
+            slot.dataset.dpr = String(dpr);
             slot.style.width = `${floorW}px`;
             slot.style.height = `${floorH}px`;
             slot.style.position = "relative";
@@ -393,7 +411,7 @@ export class PDFLoader {
             const imageLayer = document.createElement("div");
             imageLayer.className = "pdf-image-layer";
 
-            const ctx = canvas.getContext("2d");
+            const ctx = canvas.getContext("2d", { alpha: false });
             const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
 
             slot.appendChild(canvas);
@@ -432,11 +450,13 @@ export class PDFLoader {
           this.currentTextLayerTasks = [];
           this.currentTextLayerTask = null;
 
-          await Promise.all(renderTasks.map(t =>
-            this._extractAndTagImages(t.page, t.viewport, t.canvas, dpr, t.imageLayer).catch(imgErr => {
-              console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
-            })
-          ));
+          if (this._isDarkThemeActive()) {
+            await Promise.all(renderTasks.map(t =>
+              this._extractAndTagImages(t.page, t.viewport, t.canvas, dpr, t.imageLayer).catch(imgErr => {
+                console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
+              })
+            ));
+          }
         } finally {
           for (const p of pages) {
             try {
@@ -480,6 +500,9 @@ export class PDFLoader {
 
           const pageContainer = document.createElement("div");
           pageContainer.className = "pdf-page-container";
+          pageContainer.dataset.pageNumber = String(pageNumber);
+          pageContainer.dataset.scale = String(scale);
+          pageContainer.dataset.dpr = String(dpr);
           this.pageContainer = pageContainer;
 
           pageContainer.style.position = "relative";
@@ -516,7 +539,7 @@ export class PDFLoader {
           imageLayer.className = "pdf-image-layer";
           this.imageLayer = imageLayer;
 
-          const ctx = canvas.getContext("2d");
+          const ctx = canvas.getContext("2d", { alpha: false });
           const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
 
           pageContainer.appendChild(canvas);
@@ -535,10 +558,12 @@ export class PDFLoader {
           this.currentRenderTask = null;
           this.currentTextLayerTask = null;
 
-          try {
-            await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
-          } catch (imgErr) {
-            console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
+          if (this._isDarkThemeActive()) {
+            try {
+              await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
+            } catch (imgErr) {
+              console.warn("[PDFLoader] Chyba při extrakci obrázků pro smart dark mode:", imgErr);
+            }
           }
         } finally {
           try {
@@ -733,12 +758,15 @@ export class PDFLoader {
       const scale = availW / pageWidth;
 
       const viewport = page.getViewport({ scale });
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
 
       const floorW = Math.floor(viewport.width);
       const floorH = Math.floor(viewport.height);
 
       this._cleanupContainerCanvases(pageContainer);
+      pageContainer.dataset.pageNumber = String(pageNumber);
+      pageContainer.dataset.scale = String(scale);
+      pageContainer.dataset.dpr = String(dpr);
       pageContainer.style.width = `${floorW}px`;
       pageContainer.style.height = `${floorH}px`;
       pageContainer.style.minHeight = `${floorH}px`;
@@ -762,7 +790,7 @@ export class PDFLoader {
       const imageLayer = document.createElement("div");
       imageLayer.className = "pdf-image-layer";
 
-      const ctx = canvas.getContext("2d");
+      const ctx = canvas.getContext("2d", { alpha: false });
       const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
 
       pageContainer.appendChild(canvas);
@@ -778,11 +806,13 @@ export class PDFLoader {
       const tTask = this._renderTextLayerForPage(page, viewport, pageContainer, pageNumber);
       await Promise.all([renderTask.promise, tTask]);
 
-      // Smart dark mode zachování původních barev fotografií a ilustrací
-      try {
-        await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
-      } catch (imgErr) {
-        console.warn(`[PDFLoader] Chyba při extrakci obrázků pro stranu ${pageNumber}:`, imgErr);
+      // Smart dark mode zachování původních barev fotografií a ilustrací (pouze v dark/oled tématu)
+      if (this._isDarkThemeActive()) {
+        try {
+          await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
+        } catch (imgErr) {
+          console.warn(`[PDFLoader] Chyba při extrakci obrázků pro stranu ${pageNumber}:`, imgErr);
+        }
       }
 
       this.renderedPages.add(pageNumber);
@@ -995,7 +1025,6 @@ export class PDFLoader {
    */
   async goToPage(pageNumber, direction = 0) {
     const target = Math.max(1, Math.min(this.numPages, pageNumber));
-    const dir = direction !== 0 ? direction : (target > this.currentPage ? 1 : -1);
 
     if (this.isVerticalMode()) {
       this.currentPage = target;
@@ -1012,17 +1041,46 @@ export class PDFLoader {
       if (typeof this.onPageChanged === "function") {
         this.onPageChanged(this.currentPage, this.numPages);
       }
-      if (this.app?.ruler && this.app.ruler.enabled) {
-        this.app.ruler.onPageChange(dir, true, true);
-      }
       return;
     }
 
     await this.renderPage(target);
+  }
 
-    // Resynchronizace pravítka na nové straně
-    if (this.app?.ruler && this.app.ruler.enabled) {
-      this.app.ruler.onPageChange(dir, true, true);
+  /**
+   * Zajistí extrakci obrázků pro Smart Dark Mode na vyžádání (při přepnutí tématu na dark/oled),
+   * pokud ještě nebyly pro aktuálně vykreslené strany extrahovány.
+   */
+  async ensureDarkModeImagesExtracted() {
+    if (!this.pdfDoc || !this._isDarkThemeActive()) return;
+    const container = this.container || document.getElementById("reader-content");
+    if (!container) return;
+
+    const pageContainers = container.querySelectorAll(".pdf-page-container");
+    for (const pageContainer of pageContainers) {
+      const imageLayer = pageContainer.querySelector(".pdf-image-layer");
+      const canvas = pageContainer.querySelector("canvas.pdf-page-canvas, canvas");
+      if (!imageLayer || !canvas || imageLayer.dataset.extracted === "true") continue;
+
+      const pageNum = parseInt(pageContainer.dataset.pageNumber, 10) || this.currentPage || 1;
+      const scale = parseFloat(pageContainer.dataset.scale);
+      const dpr = parseFloat(pageContainer.dataset.dpr) || Math.min(window.devicePixelRatio || 1, 1.5);
+      if (!pageNum || pageNum < 1 || pageNum > this.numPages) continue;
+
+      let page = null;
+      try {
+        page = await this.pdfDoc.getPage(pageNum);
+        const viewport = Number.isFinite(scale) && scale > 0
+          ? page.getViewport({ scale })
+          : page.getViewport({ scale: 1 });
+        await this._extractAndTagImages(page, viewport, canvas, dpr, imageLayer);
+      } catch (err) {
+        console.warn(`[PDFLoader] Chyba při dodatečné extrakci obrázků pro stranu ${pageNum}:`, err);
+      } finally {
+        try {
+          if (typeof page?.cleanup === "function") page.cleanup();
+        } catch (e) {}
+      }
     }
   }
 
@@ -1032,6 +1090,8 @@ export class PDFLoader {
    */
   async _extractAndTagImages(page, viewport, sourceCanvas, dpr, imageLayer) {
     if (!page || !imageLayer || !sourceCanvas) return;
+    if (imageLayer.dataset.extracted === "true") return;
+    imageLayer.dataset.extracted = "true";
 
     const opList = await page.getOperatorList();
     if (!opList || !opList.fnArray || !opList.argsArray) return;
@@ -1140,7 +1200,7 @@ export class PDFLoader {
         const offCanvas = document.createElement("canvas");
         offCanvas.width = sw;
         offCanvas.height = sh;
-        const offCtx = offCanvas.getContext("2d");
+        const offCtx = offCanvas.getContext("2d", { willReadFrequently: true });
         if (!offCtx) {
           this._destroyCanvas(offCanvas);
           continue;
@@ -1174,10 +1234,22 @@ export class PDFLoader {
           } catch (e) {}
         }
 
+        const blob = await new Promise(resolve => {
+          if (typeof offCanvas.toBlob === "function") {
+            offCanvas.toBlob(resolve, "image/png");
+          } else {
+            resolve(null);
+          }
+        });
+        this._destroyCanvas(offCanvas);
+        if (!blob || !imageLayer.isConnected) continue;
+
+        const blobUrl = URL.createObjectURL(blob);
         const imgEl = document.createElement("img");
         imgEl.className = "re-inverted-image natural-pdf-image";
         imgEl.alt = "";
-        imgEl.src = offCanvas.toDataURL("image/png");
+        imgEl.dataset.blobUrl = blobUrl;
+        imgEl.src = blobUrl;
         imgEl.style.position = "absolute";
         imgEl.style.left = `${(sx / dpr)}px`;
         imgEl.style.top = `${(sy / dpr)}px`;
@@ -1186,7 +1258,6 @@ export class PDFLoader {
         imgEl.style.pointerEvents = "none";
 
         imageLayer.appendChild(imgEl);
-        this._destroyCanvas(offCanvas);
       }
     }
   }
@@ -1530,8 +1601,21 @@ export class PDFLoader {
       let hasAnyText = false;
       const num = this.numPages;
 
+      const yieldToIdle = () => new Promise(resolve => {
+        if (typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(() => resolve(), { timeout: 250 });
+        } else {
+          setTimeout(resolve, 80);
+        }
+      });
+
       for (let pNum = 1; pNum <= num; pNum++) {
         if (!this.pdfDoc) return;
+
+        while (this.isRendering || this.app?.isNavigating) {
+          if (!this.pdfDoc) return;
+          await new Promise(r => setTimeout(r, 80));
+        }
 
         let words = this.pageWordCounts.get(pNum);
         if (words === undefined) {
@@ -1560,7 +1644,7 @@ export class PDFLoader {
         totalWords += words;
 
         if (pNum % 5 === 0) {
-          await new Promise(r => setTimeout(r, 10));
+          await yieldToIdle();
         }
       }
 

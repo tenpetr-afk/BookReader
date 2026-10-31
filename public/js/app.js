@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js";
-import { EpubParser } from "./epub-parser.js";
-import { PDFLoader } from "./pdf-loader.js";
-import { tracker, ReadingTracker } from "./tracker.js";
-import { ReadingRuler } from "./ruler.js";
-import { StatsCharts } from "./charts.js";
-import { supabaseSync } from "./supabase-sync.js";
-import { supabase } from "./supabase-client.js";
+import { storage, computeFileHash } from "./storage.js?v=2.1.7";
+import { EpubParser } from "./epub-parser.js?v=2.1.7";
+import { PDFLoader } from "./pdf-loader.js?v=2.1.7";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.1.7";
+import { ReadingRuler } from "./ruler.js?v=2.1.7";
+import { StatsCharts } from "./charts.js?v=2.1.7";
+import { supabaseSync } from "./supabase-sync.js?v=2.1.7";
+import { supabase } from "./supabase-client.js?v=2.1.7";
 
-export const APP_VERSION = "v1.21.0";
+export const APP_VERSION = "v2.1.7";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -4704,6 +4704,20 @@ export class LuminaApp {
       clearTimeout(this._sliderCommitTimer);
       this._sliderCommitTimer = null;
     }
+    if (this._sliderCssRafId) {
+      cancelAnimationFrame(this._sliderCssRafId);
+      this._sliderCssRafId = null;
+    }
+    // Synchronously flush all typography and stage margin CSS custom properties
+    // before measuring column step and line positions on the next animation frame
+    document.documentElement.style.setProperty("--reader-font-size", `${this.settings.fontSize}px`);
+    document.documentElement.style.setProperty("--reader-line-height", this.settings.lineHeight);
+    document.documentElement.style.setProperty("--reader-letter-spacing", `${this.settings.letterSpacing}px`);
+    document.documentElement.style.setProperty("--reader-word-spacing", `${this.settings.wordSpacing}px`);
+    const m = this.settings.marginPercent ?? 8;
+    document.documentElement.style.setProperty("--reader-stage-width", `${100 - (m * 2)}vw`);
+    document.documentElement.style.setProperty("--col-gap", `${(m * 0.25).toFixed(2)}vw`);
+
     if (this._bionicSuspendedForDrag) {
       this.renderChapterHtml();
       this._bionicSuspendedForDrag = false;
@@ -4718,6 +4732,16 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
           this.ruler.updateStyles();
           this.ruler.refreshLines();
+          if (this.ruler.snapToLines && this.ruler.cachedLines.length > 0) {
+            const clampedIdx = Math.max(0, Math.min(this.ruler.activeLineIndex >= 0 ? this.ruler.activeLineIndex : 0, this.ruler.cachedLines.length - 1));
+            this.ruler.activeLineIndex = clampedIdx;
+            const geom = this.ruler.computeLineGeometry(clampedIdx);
+            if (geom) {
+              this.ruler.height = geom.height;
+              this.ruler.targetY = geom.targetY;
+              this.ruler.currentY = geom.targetY;
+            }
+          }
           this.ruler.applyPosition();
         }
         return;
@@ -4730,6 +4754,19 @@ export class LuminaApp {
         this.ruler.forceReleaseNavigationLocks();
         this.ruler.updateStyles();
         this.ruler.refreshLines();
+        if (this.ruler.wordTracking) {
+          this.ruler.refreshWords();
+        }
+        if (this.ruler.snapToLines && this.ruler.cachedLines.length > 0) {
+          const clampedIdx = Math.max(0, Math.min(this.ruler.activeLineIndex >= 0 ? this.ruler.activeLineIndex : 0, this.ruler.cachedLines.length - 1));
+          this.ruler.activeLineIndex = clampedIdx;
+          const geom = this.ruler.computeLineGeometry(clampedIdx);
+          if (geom) {
+            this.ruler.height = geom.height;
+            this.ruler.targetY = geom.targetY;
+            this.ruler.currentY = geom.targetY;
+          }
+        }
         this.ruler.applyPosition();
       }
     });

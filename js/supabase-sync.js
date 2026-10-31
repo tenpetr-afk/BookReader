@@ -798,6 +798,11 @@ export class SupabaseSync {
 
       // 5. Synchronizace čtecích relací a agregovaných statistik (reading_sessions & reading_stats_summary)
       try {
+        const deletedIds = typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : [];
+        if (deletedIds.length > 0) {
+          await supabase.from("reading_sessions").delete().in("id", deletedIds);
+        }
+
         let lastSyncTime = localStorage.getItem('lumina_last_sessions_sync') || null;
         const localSessionsCheck = await storage.getAllReadingSessions();
         if (!localSessionsCheck || localSessionsCheck.length === 0) {
@@ -871,6 +876,14 @@ export class SupabaseSync {
    */
   async pushSingleSession(session) {
     if (!this.isOnline() || !supabase || !session) return null;
+
+    const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
+    const sid = String(session.sessionId ?? "").trim();
+    const id = String(session.id ?? "").trim();
+    if ((sid && deletedSet.has(sid)) || (id && deletedSet.has(id))) {
+      return null;
+    }
+
     const dur = Math.round(Number(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0));
     if (dur < 300) return null; // Striktně zahodit relace < 5 minut
 
@@ -905,9 +918,14 @@ export class SupabaseSync {
       return { success: false, reason: "invalid_input" };
     }
 
+    const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
     const cleanPayloads = [];
     for (const session of sessions) {
       if (!session) continue;
+      const sid = String(session.sessionId ?? "").trim();
+      const id = String(session.id ?? "").trim();
+      if ((sid && deletedSet.has(sid)) || (id && deletedSet.has(id))) continue;
+
       const dur = Math.round(Number(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0));
       if (dur < 300) continue; // Pouze relace >= 5 minut
 
@@ -947,6 +965,11 @@ export class SupabaseSync {
    */
   async pushSessionAndStats(session) {
     if (!this.isOnline() || !supabase || !session) return;
+    const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
+    const sid = String(session.sessionId ?? "").trim();
+    const id = String(session.id ?? "").trim();
+    if ((sid && deletedSet.has(sid)) || (id && deletedSet.has(id))) return;
+
     const dur = Math.max(0, Math.round(Number(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0)));
     if (dur < 300) return; // Pouze relace >= 5 minut
 
@@ -964,28 +987,45 @@ export class SupabaseSync {
    * @returns {Promise<{ success: boolean, error?: any, reason?: string }>}
    */
   async deleteReadingSession(sessionId) {
-    if (!sessionId) return { success: false, error: "Missing sessionId" };
+    const targetId = String(sessionId ?? "").trim();
+    if (!targetId) return { success: false, error: "Missing sessionId" };
+
+    // Zaznamenat tombstone PŘED síťovým voláním, aby se smazání neztratilo ani v režimu offline
+    if (typeof storage.addDeletedSessionId === "function") {
+      storage.addDeletedSessionId(targetId);
+    } else {
+      try {
+        const raw = localStorage.getItem("lumina_deleted_session_ids");
+        const list = raw ? JSON.parse(raw) : [];
+        if (!list.includes(targetId)) {
+          list.push(targetId);
+          localStorage.setItem("lumina_deleted_session_ids", JSON.stringify(list));
+        }
+      } catch (_) {}
+    }
+
     if (!this.isOnline() || !supabase) {
       return { success: false, reason: "offline" };
     }
 
-    const targetIdStr = String(sessionId).trim();
-
     try {
       const { error } = await supabase
-        .from('reading_sessions')
+        .from("reading_sessions")
         .delete()
-        .eq('id', targetIdStr);
+        .eq("id", targetId);
 
       if (error) {
-        console.warn("[SupabaseSync] Chyba při mazání relace v cloudu:", error);
+        console.error("[SupabaseSync] Chyba při mazání relace v cloudu:", error);
         return { success: false, error };
       }
 
-      await this.syncStatsSummary();
+      if (typeof storage.recalculateAndNormalizeStats === "function") {
+        await storage.recalculateAndNormalizeStats();
+      }
+      await this.syncStatsSummary({ overwriteCloud: true });
       return { success: true };
     } catch (err) {
-      console.warn("[SupabaseSync] Výjimka při mazání relace v cloudu:", err);
+      console.error("[SupabaseSync] Výjimka při mazání relace v cloudu:", err);
       return { success: false, error: err };
     }
   }
@@ -995,29 +1035,31 @@ export class SupabaseSync {
    * Striktně odesílá POUZE povolené sloupce databázového schématu reading_stats_summary:
    * id, total_words_read, total_reading_seconds, global_avg_wpm, streak_days, last_read_date, daily_minutes_map, updated_at
    */
-  async syncStatsSummary() {
+  async syncStatsSummary({ overwriteCloud = false } = {}) {
     if (!this.isOnline() || !supabase) return null;
 
     try {
       const { ReadingTracker } = await import("./tracker.js");
       const localStats = await ReadingTracker.computeGlobalStats();
+      const hasDeletedTombstones = (typeof storage.getDeletedSessionIds === "function" && storage.getDeletedSessionIds().length > 0);
 
-      // 1. Zkusit stáhnout stávající summary z cloudu
-      const { data: cloudSummaryList, error: sumErr } = await supabase
-        .from("reading_stats_summary")
-        .select("*")
-        .limit(1);
+      let cloudSummary = null;
+      if (!overwriteCloud && !hasDeletedTombstones) {
+        const { data: cloudSummaryList, error: sumErr } = await supabase
+          .from("reading_stats_summary")
+          .select("*")
+          .limit(1);
 
-      if (sumErr) {
-        if (sumErr.code !== "PGRST205") {
-          console.warn("[SupabaseSync] Tabulka reading_stats_summary není dostupná:", sumErr.message || sumErr);
+        if (sumErr) {
+          if (sumErr.code !== "PGRST205") {
+            console.warn("[SupabaseSync] Tabulka reading_stats_summary není dostupná:", sumErr.message || sumErr);
+          }
+          return null;
         }
-        return null;
+        cloudSummary = Array.isArray(cloudSummaryList) && cloudSummaryList.length > 0 ? cloudSummaryList[0] : null;
       }
 
-      const cloudSummary = Array.isArray(cloudSummaryList) && cloudSummaryList.length > 0 ? cloudSummaryList[0] : null;
-
-      // 2. Sestavit mapu denních minut
+      // 2. Sestavit mapu denních minut z reálných čtecích relací
       const dailyMinutesMap = {};
       const localDailyStorage = storage.getDailyReadingTimeMap();
       for (const [dStr, sec] of Object.entries(localDailyStorage)) {
@@ -1036,8 +1078,8 @@ export class SupabaseSync {
         }
       }
 
-      // 3. Idempotentní sloučení s cloudovou mapou denních minut
-      if (cloudSummary) {
+      // 3. Idempotentní sloučení s cloudovou mapou denních minut (pouze pokud nepřepisujeme po smazání relace)
+      if (cloudSummary && !overwriteCloud && !hasDeletedTombstones) {
         const cloudMap = cloudSummary.daily_minutes_map || cloudSummary.dailyMinutesMap || {};
         for (const [dateStr, minutes] of Object.entries(cloudMap)) {
           const m = Number(minutes) || 0;
@@ -1059,7 +1101,7 @@ export class SupabaseSync {
         id: "global",
         total_words_read: Math.round(Number(localStats.totalWords || 0)),
         total_reading_seconds: Math.round(Number(localStats.totalActiveTime || 0)),
-        global_avg_wpm: Math.round(Number(localStats.averageWpm || 220)),
+        global_avg_wpm: Math.round(Number(localStats.averageWpm || 0)),
         streak_days: Math.round(Number(localStats.streak || 0)),
         last_read_date: lastReadDate,
         daily_minutes_map: dailyMinutesMap,
@@ -1091,6 +1133,17 @@ export class SupabaseSync {
   async pullReadingSessions(lastSyncTimestamp = null) {
     if (!this.isOnline() || !supabase) return [];
 
+    // 0. Před stažením relací vyčistit ze Supabase případné lokálně smazané relace (tombstones)
+    const deletedIds = typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : [];
+    const deletedSet = new Set(deletedIds);
+    if (deletedIds.length > 0) {
+      try {
+        await supabase.from("reading_sessions").delete().in("id", deletedIds);
+      } catch (purgeErr) {
+        console.warn("[SupabaseSync] Chyba při mazání pending deletedIds ze Supabase:", purgeErr);
+      }
+    }
+
     let query = supabase
       .from('reading_sessions')
       .select('*')
@@ -1111,6 +1164,15 @@ export class SupabaseSync {
 
     if (!data || data.length === 0) return [];
 
+    // Odfiltrovat všechny řádky, jejichž ID je v lumina_deleted_session_ids
+    const validRows = data.filter(row => {
+      if (!row) return false;
+      const rowId = String(row.id ?? row.sessionId ?? "").trim();
+      return !(rowId && deletedSet.has(rowId));
+    });
+
+    if (validRows.length === 0) return [];
+
     // Pomocná mapa knih pro případné doplnění chybějícího bookTitle
     let booksMap = null;
     try {
@@ -1120,7 +1182,10 @@ export class SupabaseSync {
 
     // 2. Iterate and Save EVERY Session into IndexedDB
     let maxUpdatedAt = lastSyncTimestamp;
-    for (const session of data) {
+    for (const session of validRows) {
+      const rowId = String(session.id ?? session.sessionId ?? "").trim();
+      if (rowId && deletedSet.has(rowId)) continue;
+
       if (!session.bookTitle && !session.book_title && session.book_id && booksMap) {
         const b = booksMap.get(session.book_id);
         if (b?.title) session.bookTitle = b.title;
@@ -1134,9 +1199,13 @@ export class SupabaseSync {
       if (!session.bookId && session.book_id) {
         session.bookId = session.book_id;
       }
-      await storage.saveReadingSession(session);
-      if (session.updated_at && (!maxUpdatedAt || session.updated_at > maxUpdatedAt)) {
-        maxUpdatedAt = session.updated_at;
+      try {
+        await storage.saveReadingSession(session);
+        if (session.updated_at && (!maxUpdatedAt || session.updated_at > maxUpdatedAt)) {
+          maxUpdatedAt = session.updated_at;
+        }
+      } catch (saveErr) {
+        console.warn("[SupabaseSync] Chyba při ukládání stažené relace do IndexedDB:", saveErr);
       }
     }
 
@@ -1145,7 +1214,7 @@ export class SupabaseSync {
       localStorage.setItem('lumina_last_sessions_sync', maxUpdatedAt);
     }
 
-    return data;
+    return validRows;
   }
 
   /**
@@ -1165,6 +1234,8 @@ export class SupabaseSync {
       const localSessions = await storage.getAllReadingSessions();
       if (!localSessions || localSessions.length === 0) return { uploaded: 0 };
 
+      const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
+
       const { data: cloudSessionsRaw, error: sessErr } = await supabase
         .from("reading_sessions")
         .select("id, updated_at");
@@ -1180,8 +1251,8 @@ export class SupabaseSync {
       const toUpload = [];
 
       for (const s of localSessions) {
-        const sid = String(s.sessionId || s.id || "");
-        if (!sid) continue;
+        const sid = String(s.sessionId || s.id || "").trim();
+        if (!sid || deletedSet.has(sid)) continue;
 
         const dur = Math.max(0, Math.round(Number(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0)));
         if (dur < 300) continue; // Pouze relace >= 5 minut

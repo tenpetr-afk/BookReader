@@ -29,8 +29,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
   <!-- Styly aplikace -->
-  <link rel="stylesheet" href="css/style.css" />
-  <link rel="stylesheet" href="css/reader.css" />
+  <link rel="stylesheet" href="css/style.css?v=2.1.7" />
+  <link rel="stylesheet" href="css/reader.css?v=2.1.7" />
 </head>
 <body class="show-footer-bar">
 
@@ -108,12 +108,9 @@
       <section id="empty-library" class="empty-state">
         <div class="empty-icon">📖</div>
         <h3>Vaše knihovna je prázdná</h3>
-        <p>Nahrajte svou oblíbenou elektronickou knihu ve formátu EPUB nebo PDF přetažením sem, nebo načtěte vzorovou knihu.</p>
+        <p>Nahrajte svou oblíbenou elektronickou knihu ve formátu EPUB nebo PDF přetažením sem.</p>
         <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
-          <button id="btn-load-sample" class="btn btn-primary">
-            Načíst ukázkovou knihu (Karel Čapek: R.U.R.)
-          </button>
-          <button class="btn btn-secondary" onclick="document.getElementById('file-input').click()">
+          <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">
             Vybrat EPUB / PDF z počítače
           </button>
         </div>
@@ -781,6 +778,6 @@
   <div id="toast-notification" class="toast" role="status" aria-live="polite"></div>
 
   <!-- Hlavní aplikační skript -->
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/app.js?v=2.1.7"></script>
 </body>
 </html>
