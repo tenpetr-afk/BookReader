@@ -66,6 +66,8 @@ export class LuminaApp {
     this._libraryNeedsRefresh = false;
     this._statsNeedRefresh = false;
     this._rulerPageChangeRafId = null;
+    this._rulerPageChangeTimer = null;
+    this._rulerTransitionEndHandler = null;
     this._isLoadingNextChapter = false;
     this._isLoadingPrevChapter = false;
     this._isModeTransitioning = false;
@@ -5094,25 +5096,69 @@ export class LuminaApp {
         this.saveProgress(false);
       }, 150);
 
-      // Odložená aktualizace pravítka do double requestAnimationFrame po layout flush na WebKitu/iPadu
+      // Odložená aktualizace pravítka po layout flush a ustálení na WebKitu/iPadu
       if (this.ruler && this.ruler.enabled) {
         if (this._rulerPageChangeRafId) {
           cancelAnimationFrame(this._rulerPageChangeRafId);
           this._rulerPageChangeRafId = null;
         }
+        if (this._rulerPageChangeTimer) {
+          clearTimeout(this._rulerPageChangeTimer);
+          this._rulerPageChangeTimer = null;
+        }
+        const content = this.dom.readerContent || document.getElementById("reader-content");
+        if (content && this._rulerTransitionEndHandler) {
+          content.removeEventListener("transitionend", this._rulerTransitionEndHandler);
+          this._rulerTransitionEndHandler = null;
+        }
+
         if (!options?.skipRulerUpdate) {
-          this._rulerPageChangeRafId = requestAnimationFrame(() => {
-            this._rulerPageChangeRafId = requestAnimationFrame(() => {
-              this._rulerPageChangeRafId = null;
-              try {
-                if (this.ruler && this.ruler.enabled) {
-                  this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
-                }
-              } catch (rulerErr) {
-                console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
+          let transitionDuration = 0;
+          if (content) {
+            try {
+              const cs = window.getComputedStyle(content);
+              const transProp = cs.transitionProperty || "";
+              const transDur = parseFloat(cs.transitionDuration) || 0;
+              if (transDur > 0 && (transProp.includes("transform") || transProp === "all")) {
+                transitionDuration = transDur * 1000;
               }
+            } catch (e) {}
+          }
+
+          const executeRulerPageChange = () => {
+            if (this._rulerPageChangeTimer) {
+              clearTimeout(this._rulerPageChangeTimer);
+              this._rulerPageChangeTimer = null;
+            }
+            if (content && this._rulerTransitionEndHandler) {
+              content.removeEventListener("transitionend", this._rulerTransitionEndHandler);
+              this._rulerTransitionEndHandler = null;
+            }
+            try {
+              if (this.ruler && this.ruler.enabled) {
+                this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
+              }
+            } catch (rulerErr) {
+              console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
+            }
+          };
+
+          if (transitionDuration > 0 && content) {
+            this._rulerTransitionEndHandler = (e) => {
+              if (e && e.target !== content) return;
+              executeRulerPageChange();
+            };
+            content.addEventListener("transitionend", this._rulerTransitionEndHandler, { once: true });
+            this._rulerPageChangeTimer = setTimeout(executeRulerPageChange, Math.round(transitionDuration + 50));
+          } else {
+            // Post-Transition Settle Verification: double requestAnimationFrame + debounced settle timeout (60ms)
+            this._rulerPageChangeRafId = requestAnimationFrame(() => {
+              this._rulerPageChangeRafId = requestAnimationFrame(() => {
+                this._rulerPageChangeRafId = null;
+                this._rulerPageChangeTimer = setTimeout(executeRulerPageChange, 60);
+              });
             });
-          });
+          }
         }
       }
 
@@ -5136,7 +5182,7 @@ export class LuminaApp {
       if (stage) stage.classList.remove("is-turning-page");
       if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
       document.body.classList.remove("is-turning-page");
-      if (this.ruler && this.ruler.enabled && !this._rulerPageChangeRafId) {
+      if (this.ruler && this.ruler.enabled && !this._rulerPageChangeRafId && !this._rulerPageChangeTimer) {
         this.ruler.forceReleaseNavigationLocks();
       }
     }

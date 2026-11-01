@@ -98,6 +98,7 @@ export class ReadingRuler {
     this.navigatingPageLockoutEndTime = 0;
     this.pageChangeTimer = null;
     this._onTransitionEnd = null;
+    this._calibrationTimer = null;
 
     // Apple Pencil (Stylus) & Pointer sledování & Mutex stav
     this.isDraggingRuler = false; // Mutex zámek během aktivního tažení
@@ -382,6 +383,15 @@ export class ReadingRuler {
     if (this.pointerRafId) {
       cancelAnimationFrame(this.pointerRafId);
       this.pointerRafId = null;
+    }
+    if (this._calibrationTimer) {
+      clearTimeout(this._calibrationTimer);
+      this._calibrationTimer = null;
+    }
+    const content = document.getElementById("reader-content");
+    if (content && this._onTransitionEnd) {
+      content.removeEventListener("transitionend", this._onTransitionEnd);
+      this._onTransitionEnd = null;
     }
     if (this.animFrameId) {
       cancelAnimationFrame(this.animFrameId);
@@ -6735,7 +6745,6 @@ export class ReadingRuler {
       } catch (err) {
         console.error("[ReadingRuler] Error in resetPositionForPage:", err);
       } finally {
-        this.clearPageTransitionTimersAndRAFs();
         this.forceReleaseNavigationLocks();
       }
 
@@ -6747,9 +6756,108 @@ export class ReadingRuler {
           this.setNoTransition(false);
         }
       });
+
+      this.scheduleBackgroundCalibration(100);
     };
 
     performReset();
+  }
+
+  /**
+   * Naplánuje tichou kalibrační kontrolu geometrie řádků na pozadí (Two-Pass Calibration).
+   * Spouští se 100ms po úvodním přichycení pravítka na nové stránce.
+   * Pokud se plně ustálené souřadnice liší od původního měření o více než 1–2 px,
+   * hladce aktualizuje cachedLines a re-aplikuje pozici bez probliknutí či blokování navigace.
+   */
+  scheduleBackgroundCalibration(delay = 100) {
+    if (this._calibrationTimer) {
+      clearTimeout(this._calibrationTimer);
+      this._calibrationTimer = null;
+    }
+    if (!this.enabled || this.isImageOnlyPdf) {
+      return;
+    }
+    this._calibrationTimer = setTimeout(() => {
+      this._calibrationTimer = null;
+      this.runBackgroundCalibration();
+    }, delay);
+  }
+
+  runBackgroundCalibration() {
+    if (!this.enabled || this.isImageOnlyPdf) {
+      return;
+    }
+    // Pokud uživatel aktivně manipuluje s pravítkem, probíhá listování nebo je načítána kapitola, kontrolu přeskočíme
+    if (
+      this.isDragging ||
+      this.isDraggingRuler ||
+      this.isHoldActive ||
+      this.isPageTransitioning ||
+      this.isNavigating ||
+      this.isNavigatingPage ||
+      document.body.classList.contains("is-turning-page") ||
+      document.body.classList.contains("is-chapter-loading") ||
+      !!(this.app?.isNavigating)
+    ) {
+      return;
+    }
+
+    if (!this.cachedLines || this.cachedLines.length === 0) {
+      return;
+    }
+
+    const oldLines = this.cachedLines.slice();
+    const oldActiveIdx = this.activeLineIndex;
+    const oldWordIdx = this.activeWordIndex;
+
+    // Tiché znovunačtení řádků nad plně ustáleným layoutem
+    const newLines = this.detectLines(true);
+    if (!newLines || newLines.length === 0) {
+      this.cachedLines = oldLines;
+      return;
+    }
+
+    // Porovnání souřadnic řádků mezi in-flight a settled stavem
+    let maxDiffY = 0;
+    const checkCount = Math.min(oldLines.length, newLines.length);
+    for (let i = 0; i < checkCount; i++) {
+      const diffY = Math.abs(newLines[i].centerY - oldLines[i].centerY);
+      if (diffY > maxDiffY) {
+        maxDiffY = diffY;
+      }
+    }
+
+    const activeIdx = Math.max(0, Math.min(newLines.length - 1, oldActiveIdx >= 0 ? oldActiveIdx : 0));
+    const activeDiffY = (oldLines[activeIdx] && newLines[activeIdx])
+      ? Math.abs(newLines[activeIdx].centerY - oldLines[activeIdx].centerY)
+      : maxDiffY;
+
+    const effectiveDiff = Math.max(maxDiffY, activeDiffY);
+
+    // Pokud je rozdíl větší než 1–2px (např. >= 1.2px), došlo ke zkreslení in-flight měření
+    if (effectiveDiff >= 1.2) {
+      if (this.wordTracking) {
+        this.refreshWords();
+      }
+      this.activeLineIndex = activeIdx;
+      const geom = this.computeLineGeometry(activeIdx);
+      if (geom) {
+        this.height = geom.height;
+        this.targetY = geom.targetY;
+        if (!this.isDragging && !this.isDraggingRuler) {
+          this.currentY = geom.targetY;
+        }
+      }
+      if (this.wordTracking && oldWordIdx >= 0 && this.cachedWords && this.cachedWords.length > 0) {
+        const wIdx = Math.min(this.cachedWords.length - 1, oldWordIdx);
+        this.activeWordIndex = wIdx;
+        this.setWordWindow(wIdx);
+      }
+
+      // Plynulá aktualizace pozice pravítka bez vizuálního probliknutí (využívá .is-snapped animaci)
+      this._snapRulerInstantOrAnimated();
+      this.applyPosition();
+    }
   }
 
   getReaderContainer() {
@@ -9559,7 +9667,8 @@ export class ReadingRuler {
 
   /**
    * Vyvolá se při přechodu na jinou stránku nebo kapitolu.
-   * Okamžitě a synchronně usadí pravítko na cílový řádek bez jakéhokoliv časovače či prodlevy.
+   * Zajišťuje, že se měření řádků provede až po úplném ustálení DOM layoutu a přechodových animací
+   * (Post-Transition Settle Verification), s následnou tichou rekalibrací na pozadí (Two-Pass Calibration).
    */
   onPageChange(direction = 0, isPageChanged = true, immediateRuler = true) {
     if (!this.enabled) {
@@ -9590,60 +9699,65 @@ export class ReadingRuler {
     this._maxLineIndexOnPage = -1;
     this._maxWordIndexOnPage = -1;
 
-    // Clear the transition lock:
-    this.isPageTransitioning = false;
-    this.isNavigating = false;
-    this.isNavigatingPage = false;
-
-    // Refresh lines and words for the active page:
-    this.refreshLines();
-    if (this.wordTracking) {
-      this.refreshWords();
-    }
-
     const targetDirection = this.flickResyncTopLine ? 1 : direction;
     this.flickResyncTopLine = false;
 
-    if (this.wordTracking) {
-      if (this.cachedWords && this.cachedWords.length > 0) {
-        this.activeWordIndex = (targetDirection >= 0 ? 0 : this.cachedWords.length - 1);
-        this.setWordWindow(this.activeWordIndex);
-        if (this.cachedWords[this.activeWordIndex] && this.cachedWords[this.activeWordIndex].lineIndex != null) {
-          this.activeLineIndex = this.cachedWords[this.activeWordIndex].lineIndex;
+    const stage = this.getStageElement();
+    const isDocTurning = document.body.classList.contains("is-turning-page") ||
+      (stage && stage.classList.contains("is-turning-page")) ||
+      (content && content.classList.contains("is-turning-page"));
+
+    let hasActiveTransition = false;
+    let transitionDurationMs = 0;
+    if (content) {
+      try {
+        const cs = window.getComputedStyle(content);
+        const transProp = cs.transitionProperty || "";
+        const dur = parseFloat(cs.transitionDuration) || 0;
+        if (dur > 0 && (transProp.includes("transform") || transProp === "all")) {
+          hasActiveTransition = true;
+          transitionDurationMs = dur * 1000;
         }
-      } else {
-        this.activeLineIndex = 0;
-        const geom = this.computeLineGeometry(0);
-        if (geom) {
-          this.height = geom.height;
-          this.targetY = geom.targetY;
-          this.currentY = geom.targetY;
-        }
-      }
+      } catch (e) {}
     }
 
-    // Explicitly UNHIDE and reveal the ruler DOM elements:
-    if (this.rulerEl) {
-      this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
-      this.rulerEl.classList.add("is-visible");
-      this.rulerEl.style.removeProperty("transition");
-      this.rulerEl.style.display = "block";
-      this.rulerEl.style.opacity = "1";
-      this.rulerEl.style.visibility = "visible";
-      if (this.wordTracking) {
-        this.rulerEl.classList.add("word-tracking-mode");
+    const executePageReset = () => {
+      if (this.pageChangeTimer) {
+        clearTimeout(this.pageChangeTimer);
+        this.pageChangeTimer = null;
       }
+      if (content && this._onTransitionEnd) {
+        content.removeEventListener("transitionend", this._onTransitionEnd);
+        this._onTransitionEnd = null;
+      }
+      this.resetPositionForPage(targetDirection, isPageChanged);
+    };
+
+    // 1. Post-Transition Settle Verification:
+    // Pokud je CSS přechod aktivní, počkáme na transitionend (s pojistným timeoutem)
+    if (hasActiveTransition && content) {
+      this._onTransitionEnd = (e) => {
+        if (e && e.target !== content) return;
+        executePageReset();
+      };
+      content.addEventListener("transitionend", this._onTransitionEnd, { once: true });
+      this.pageChangeTimer = setTimeout(executePageReset, Math.round(transitionDurationMs + 50));
+      return;
     }
-    if (this.maskTopEl) this.maskTopEl.style.display = "";
-    if (this.maskBottomEl) this.maskBottomEl.style.display = "";
-    if (this.maskLeftEl) this.maskLeftEl.style.display = "";
-    if (this.maskRightEl) this.maskRightEl.style.display = "";
 
-    // Immediately execute this.applyPosition(); so the ruler sits perfectly on the first word of the new page.
-    this.applyPosition();
+    // Pokud probíhá otáčení stránky v DOMu, počkáme na double requestAnimationFrame + debounced settle timeout (60ms)
+    if (isDocTurning) {
+      this.pageChangeRafId = requestAnimationFrame(() => {
+        this.pageChangeRafId = requestAnimationFrame(() => {
+          this.pageChangeRafId = null;
+          this.pageChangeTimer = setTimeout(executePageReset, 60);
+        });
+      });
+      return;
+    }
 
-    // Synchronize full position reset and geometry calculations
-    this.resetPositionForPage(targetDirection, isPageChanged);
+    // Pokud je již layout plně ustálen, provedeme usazení rovnou
+    executePageReset();
   }
 
   destroy() {
