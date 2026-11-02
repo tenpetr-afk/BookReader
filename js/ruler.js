@@ -5483,16 +5483,17 @@ export class ReadingRuler {
   }
 
   /**
-   * Vyhodnotí index řádku podle typu ukazatele a hysterezního tolerančního okna (Typographic Hysteresis):
+   * Vyhodnotí index řádku podle typu ukazatele a hysterezního tolerančního okna (Deadband Hysteresis):
    * - Pro Apple Pencil (pointerType === 'pen') a kurzor myši v režimu sledování (followMode === 'mouse'):
    *   1. Calibration Window / toleranční okno pro aktivní řádek N:
-   *      - Pravítko zůstává pevně uzamčené na řádku N, dokud se svislá souřadnice ukazatele
-   *        pohybuje v tolerančním okně upThreshold <= pointerY <= downThreshold (uvnitř typografického těla malých písmen).
-   *   2. Symetrické přepínací prahy (Typographic Baseline & x-Height Thresholds):
-   *      - Pohyb DOLŮ: Přeskok na řádek N+1 nastane, jakmile pointerY klesne pod účaří (baseline) aktuálního řádku N
-   *        (downThreshold = nextLine ? currentLine.centerY + gH * 0.25 : Infinity).
-   *      - Pohyb NAHORU: Návrat na řádek N-1 nastane symetricky, jakmile pointerY vystoupá nad střední výšku (x-height) aktuálního řádku N
-   *        (upThreshold = prevLine ? currentLine.centerY - gH * 0.25 : -Infinity).
+   *      - Pravítko zůstává pevně uzamčené na řádku N v celém těle řádku i v mezidobí mezi řádky (deadband buffer).
+   *   2. Stabilní nepřekrývající se prahy (Stable Non-Overlapping Thresholds):
+   *      - Pohyb DOLŮ: Přeskok na řádek N+1 nastane POUZE tehdy, jakmile pointer překročí mezeru mezi řádky
+   *        a vstoupí do horní části řádku N+1 (30 % výšky):
+   *        (downThreshold = nextLine ? nextLine.top + nextLine.height * 0.30 : Infinity).
+   *      - Pohyb NAHORU: Návrat na řádek N-1 nastane POUZE tehdy, jakmile pointer překročí mezeru
+   *        a dosáhne spodní části řádku N-1 (70 % výšky):
+   *        (upThreshold = prevLine ? prevLine.top + prevLine.height * 0.70 : -Infinity).
    *   3. Ochrana okrajů (First & Last Line Safeguards):
    *      - Pokud je pointerY nad řádkem 0, zůstane uzamčeno na řádku 0.
    *      - Pokud je pointerY pod posledním řádkem, zůstane uzamčeno na posledním řádku.
@@ -5619,33 +5620,30 @@ export class ReadingRuler {
       }
     }
 
-    const currentLine = pool[activeInPool].line;
+    const currentLine = pool[activeInPool]?.line;
+    // Ensure currentLine is valid
+    if (!currentLine) return pool[activeInPool]?.index ?? activeInPool;
+
     const prevLine = activeInPool > 0 ? pool[activeInPool - 1].line : null;
     const nextLine = activeInPool < pool.length - 1 ? pool[activeInPool + 1].line : null;
 
-    // Derive glyph height from cache or fallback to line.height * 0.7
-    const gH = (this.glyphHeightByFontSize && currentLine.fontSize)
-      ? (this.glyphHeightByFontSize.get(Math.round(currentLine.fontSize)) || currentLine.height)
-      : currentLine.height;
-
-    // Upward switch triggers at the top of lowercase letters of currentLine:
-    const upThreshold = prevLine 
-      ? (currentLine.centerY - gH * 0.25)
-      : -Infinity;
-
-    // Downward switch triggers just below the baseline of currentLine:
-    const downThreshold = nextLine 
-      ? (currentLine.centerY + gH * 0.25)
+    // 1. Transition DOWN to nextLine:
+    // Trigger ONLY when the pointer has crossed the inter-line gap and enters the upper body of nextLine (e.g. 30% into nextLine.height)
+    const downThreshold = nextLine
+      ? (nextLine.top + nextLine.height * 0.30)
       : Infinity;
+
+    // 2. Transition UP to prevLine:
+    // Trigger ONLY when the pointer has moved completely above currentLine and reaches the baseline/lower edge of prevLine (e.g. 70% into prevLine.height / prevLine.bottom - prevLine.height * 0.30)
+    const upThreshold = prevLine
+      ? (prevLine.top + prevLine.height * 0.70)
+      : -Infinity;
 
     if (curY > downThreshold) {
       let newPoolIdx = activeInPool + 1;
       while (newPoolIdx < pool.length - 1) {
-        const next = pool[newPoolIdx].line;
-        const nextGH = (this.glyphHeightByFontSize && next.fontSize)
-          ? (this.glyphHeightByFontSize.get(Math.round(next.fontSize)) || next.height)
-          : next.height;
-        if (curY > next.centerY + nextGH * 0.25) {
+        const next = pool[newPoolIdx + 1].line;
+        if (curY > next.top + next.height * 0.30) {
           newPoolIdx++;
         } else {
           break;
@@ -5657,11 +5655,8 @@ export class ReadingRuler {
       if (activeInPool === 0) return pool[0].index;
       let newPoolIdx = activeInPool - 1;
       while (newPoolIdx > 0) {
-        const prev = pool[newPoolIdx].line;
-        const prevGH = (this.glyphHeightByFontSize && prev.fontSize)
-          ? (this.glyphHeightByFontSize.get(Math.round(prev.fontSize)) || prev.height)
-          : prev.height;
-        if (curY < prev.centerY - prevGH * 0.25) {
+        const prev = pool[newPoolIdx - 1].line;
+        if (curY < prev.top + prev.height * 0.70) {
           newPoolIdx--;
         } else {
           break;
