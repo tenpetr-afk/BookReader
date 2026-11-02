@@ -106,24 +106,25 @@ export class LuminaApp {
       }
     } catch (_) {}
 
-    // 2. Nastavení a pravítko
+    // 2. Nastavení motivu a zobrazení UI ihned
     try {
       this.applySettings();
     } catch (e) {
       console.warn("[LuminaApp] Chyba při aplikování nastavení:", e);
     }
 
+    // 3. Klíčové navázání událostí - MUSÍ proběhnout VŽDY a OKAMŽITĚ, aby tlačítka nezůstala hluchá
+    try {
+      this.setupEventListeners();
+    } catch (e) {
+      console.error("[LuminaApp] Kritická chyba při setupEventListeners:", e);
+    }
+
+    // 4. Inicializace doplňkových komponent čtečky a zkratek
     try {
       this.initRuler();
     } catch (e) {
       console.warn("[LuminaApp] Chyba při inicializaci pravítka:", e);
-    }
-
-    // 3. Klíčové navázání událostí - MUSÍ proběhnout vždy, aby tlačítka nezůstala hluchá
-    try {
-      this.bindEvents();
-    } catch (e) {
-      console.error("[LuminaApp] Kritická chyba při bindEvents:", e);
     }
 
     try {
@@ -143,61 +144,32 @@ export class LuminaApp {
       this.initCloudSync();
     } catch (e) {
       console.warn("[LuminaApp] Chyba při inicializaci cloud sync:", e);
+      this.updateSyncUI("idle");
     }
 
-    // 4. Automatická kontrola a migrace statistik v IndexedDB
-    try {
-      await storage.sanitizeCorruptedStats();
-    } catch (e) {
-      console.warn("[LuminaApp] Chyba při startovní kontrole integrity statistik:", e);
-    }
-
-    // 5. Načíst knihy z IndexedDB s bezpečnou cloudovou hydratací
+    // 5. Okamžité načtení lokálních knih z IndexedDB a vykreslení knihovny (bez blokování cloudem)
     let books = [];
     try {
       books = await storage.getAllBooks();
     } catch (dbErr) {
-      console.error("[LuminaApp] Chyba při načítání knih z IndexedDB:", dbErr);
+      console.warn("[LuminaApp] Chyba při načítání knih z IndexedDB:", dbErr);
       books = [];
     }
 
-    try {
-      if (books.length === 0) {
-        let cloudLoaded = false;
-        if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
-          try {
-            await this.loadLibrary();
-            books = await storage.getAllBooks();
-            if (books && books.length > 0) cloudLoaded = true;
-          } catch (e) {
-            console.warn("[Supabase Sync] Nepodařilo se hydratovat knihy z cloudu:", e);
-          }
-        }
-
-      }
-    } catch (loadErr) {
-      console.warn("[LuminaApp] Chyba při synchronizaci/načítání výchozí knihovny:", loadErr);
-    }
-
-    // 6. Vykreslit knihovnu (vždy zobrazit existující knihy nebo prázdný stav)
     try {
       await this.renderLibrary();
     } catch (renderErr) {
       console.error("[LuminaApp] Chyba při renderLibrary:", renderErr);
     }
 
-    // 7. Spuštění asynchronní synchronizace s cloudem v pozadí (neblokující)
+    // 6. Asynchronní kontrola a migrace statistik v IndexedDB na pozadí (neblokující)
     try {
-      setTimeout(() => {
-        try {
-          this.syncWithCloud(false).catch(err => {
-            console.warn("[LuminaApp] Chyba při tiché synchronizaci na pozadí:", err);
-          });
-        } catch (_) {}
-      }, 1000);
+      storage.sanitizeCorruptedStats().catch(e => {
+        console.warn("[LuminaApp] Chyba při startovní kontrole integrity statistik:", e);
+      });
     } catch (_) {}
 
-    // 8. Zkontrolovat naposledy čtenou knihu a obnovit stav čtení při znovunačtení
+    // 7. Zkontrolovat naposledy čtenou knihu a obnovit stav čtení při znovunačtení
     try {
       const lastBookId = storage.getLastActiveBookId();
       const activeView = localStorage.getItem("lumina_active_view");
@@ -209,6 +181,33 @@ export class LuminaApp {
     } catch (restoreErr) {
       console.warn("[LuminaApp] Chyba při obnovení rozečtené knihy:", restoreErr);
     }
+
+    // 8. Bezpečná a tichá asynchronní synchronizace s cloudem v pozadí (neblokující)
+    try {
+      setTimeout(() => {
+        try {
+          if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
+            this.syncWithCloud(false).then(async (res) => {
+              // Pokud byla lokální knihovna prázdná a cloud stáhl knihy, znovu vykreslit
+              if (books.length === 0 && res?.stats?.downloaded > 0) {
+                await this.renderLibrary();
+              }
+            }).catch(err => {
+              console.warn("[LuminaApp] Chyba při tiché synchronizaci na pozadí:", err);
+              this.updateSyncUI("idle");
+            });
+          } else {
+            this.updateSyncUI("idle");
+          }
+        } catch (_) {
+          this.updateSyncUI("idle");
+        }
+      }, 600);
+    } catch (_) {}
+  }
+
+  setupEventListeners() {
+    this.bindEvents();
   }
 
   cacheDom() {
@@ -652,9 +651,9 @@ export class LuminaApp {
     const showRuler = s.showRulerButton !== false;
     this.setSwitchState(this.dom.rulerToggle, showRuler);
     const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;
-    if (rulerContainer) {
+    if (rulerContainer && rulerContainer.style) {
       rulerContainer.style.display = showRuler ? "flex" : "none";
-      rulerContainer.classList.toggle("is-hidden", !showRuler);
+      rulerContainer.classList?.toggle?.("is-hidden", !showRuler);
     }
     if (!showRuler && this.ruler?.enabled) {
       this.ruler.setEnabled(false);
@@ -1103,107 +1102,174 @@ export class LuminaApp {
     let touchStartTime = 0;
     let isSwiping = false;
 
-    this.dom.pagedViewport.addEventListener("touchstart", (e) => {
-      if (this.isVerticalReadingMode()) return;
-      if (this.isUiOrOverlayEvent(e)) {
-        isSwiping = false;
-        return;
-      }
-      if (this.isNavigating) {
-        isSwiping = false;
-        return;
-      }
-      if (e.touches.length !== 1) {
-        isSwiping = false;
-        return;
-      }
-      // Apple Pencil v režimu sledování myši nesmí zahajovat swipe
-      if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
-        isSwiping = false;
-        return;
-      }
-      touchStartX = e.touches[0].clientX;
-      touchStartY = e.touches[0].clientY;
-      touchStartTime = Date.now();
-      isSwiping = true;
-    }, { passive: true });
-
-    this.dom.pagedViewport.addEventListener("touchend", (e) => {
-      if (this.isVerticalReadingMode()) return;
-      if (this.isUiOrOverlayEvent(e)) {
-        isSwiping = false;
-        return;
-      }
-      if (this.isNavigating || this.ruler?.isLineLocked || (Date.now() - lastSwipeTime < 450) || (Date.now() - (this.ruler?.lastSwipeTime || 0) < 450)) {
-        isSwiping = false;
-        return;
-      }
-      if (!isSwiping || e.changedTouches.length !== 1) {
-        isSwiping = false;
-        return;
-      }
-      isSwiping = false;
-
-      // Stylus v režimu sledování myši nesmí otáčet stránky ani krokovat
-      if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
-        return;
-      }
-
-      const touchEndX = e.changedTouches[0].clientX;
-      const touchEndY = e.changedTouches[0].clientY;
-      const deltaX = touchEndX - touchStartX;
-      const deltaY = touchEndY - touchStartY;
-      const absDeltaX = Math.abs(deltaX);
-      const absDeltaY = Math.abs(deltaY);
-      const dist = Math.hypot(deltaX, deltaY);
-      const duration = Date.now() - touchStartTime;
-      const velocity = duration > 0 ? absDeltaX / duration : 0;
-
-      // 1. Horizontální přejetí (relaxed finger swipe) pro okamžité, plynulé otáčení stránek:
-      // Ergonomické prahy: |ΔX| >= 30 px, |ΔY| <= 65 px, trvání <= 450 ms, rychlost >= 0.3 px/ms
-      if (absDeltaX >= 30 && absDeltaY <= 65 && duration <= 450 && velocity >= 0.3) {
-        lastSwipeTime = Date.now();
-        if (this.ruler) {
-          this.ruler.lastSwipeTime = Date.now();
-          this.ruler.cancelHold(false);
-          this.ruler.isHoldTriggered = false;
-          this.ruler.isDraggingRuler = false;
-          this.ruler.flickResyncTopLine = true;
-          this.ruler.isLineLocked = true;
-          this.ruler.suppressLineAdvancement = true;
-          this.ruler.lockAdvancement(400);
+    if (this.dom.pagedViewport) {
+      this.dom.pagedViewport.addEventListener("touchstart", (e) => {
+        if (this.isVerticalReadingMode()) return;
+        if (this.isUiOrOverlayEvent(e)) {
+          isSwiping = false;
+          return;
         }
-        if (deltaX < 0) {
-          this.nextPage();
-        } else {
-          this.prevPage();
+        if (this.isNavigating) {
+          isSwiping = false;
+          return;
         }
-        return;
-      }
+        if (e.touches.length !== 1) {
+          isSwiping = false;
+          return;
+        }
+        // Apple Pencil v režimu sledování myši nesmí zahajovat swipe
+        if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
+          isSwiping = false;
+          return;
+        }
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        touchStartTime = Date.now();
+        isSwiping = true;
+      }, { passive: true });
 
-      // 2. V režimu sledování myši ("mouse") prst nehýbe ani neukotvuje pravítko
-      if (this.ruler && this.ruler.enabled && this.ruler.followMode === "mouse") {
-        if (absDeltaX < 15 && absDeltaY < 15 && this.isCenterTap(touchEndX, touchEndY)) {
+      this.dom.pagedViewport.addEventListener("touchend", (e) => {
+        if (this.isVerticalReadingMode()) return;
+        if (this.isUiOrOverlayEvent(e)) {
+          isSwiping = false;
+          return;
+        }
+        if (this.isNavigating || this.ruler?.isLineLocked || (Date.now() - lastSwipeTime < 450) || (Date.now() - (this.ruler?.lastSwipeTime || 0) < 450)) {
+          isSwiping = false;
+          return;
+        }
+        if (!isSwiping || e.changedTouches.length !== 1) {
+          isSwiping = false;
+          return;
+        }
+        isSwiping = false;
+
+        // Stylus v režimu sledování myši nesmí otáčet stránky ani krokovat
+        if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
+          return;
+        }
+
+        const touchEndX = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+        const deltaX = touchEndX - touchStartX;
+        const deltaY = touchEndY - touchStartY;
+        const absDeltaX = Math.abs(deltaX);
+        const absDeltaY = Math.abs(deltaY);
+        const dist = Math.hypot(deltaX, deltaY);
+        const duration = Date.now() - touchStartTime;
+        const velocity = duration > 0 ? absDeltaX / duration : 0;
+
+        // 1. Horizontální přejetí (relaxed finger swipe) pro okamžité, plynulé otáčení stránek:
+        // Ergonomické prahy: |ΔX| >= 30 px, |ΔY| <= 65 px, trvání <= 450 ms, rychlost >= 0.3 px/ms
+        if (absDeltaX >= 30 && absDeltaY <= 65 && duration <= 450 && velocity >= 0.3) {
+          lastSwipeTime = Date.now();
+          if (this.ruler) {
+            this.ruler.lastSwipeTime = Date.now();
+            this.ruler.cancelHold(false);
+            this.ruler.isHoldTriggered = false;
+            this.ruler.isDraggingRuler = false;
+            this.ruler.flickResyncTopLine = true;
+            this.ruler.isLineLocked = true;
+            this.ruler.suppressLineAdvancement = true;
+            this.ruler.lockAdvancement(400);
+          }
+          if (deltaX < 0) {
+            this.nextPage();
+          } else {
+            this.prevPage();
+          }
+          return;
+        }
+
+        // 2. V režimu sledování myši ("mouse") prst nehýbe ani neukotvuje pravítko
+        if (this.ruler && this.ruler.enabled && this.ruler.followMode === "mouse") {
+          if (absDeltaX < 15 && absDeltaY < 15 && this.isCenterTap(touchEndX, touchEndY)) {
+            lastTapTime = Date.now();
+            this.toggleReaderChrome();
+            e.preventDefault();
+          }
+          return;
+        }
+
+        // 3. Dotykové zóny pro krokování pravítka v klávesovém režimu (layout zóny)
+        // Krokování se spustí pouze při čistém, stacionárním klepnutí (|deltaX| < 10px a |deltaY| < 10px)
+        if (this.ruler && this.ruler.enabled && this.ruler.followMode === "keyboard") {
+          if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+            return;
+          }
+          if (absDeltaX >= 10 || absDeltaY >= 10 || dist >= 10) return;
+          if (this.ruler.isHoldTriggered) {
+            this.ruler.isHoldTriggered = false;
+            return;
+          }
+          if (typeof this.ruler.handleTap === "function") {
+            const handled = this.ruler.handleTap(touchEndX, touchEndY, "touch", dist);
+            if (handled) {
+              lastTapTime = Date.now();
+              e.preventDefault();
+            }
+            return;
+          }
           lastTapTime = Date.now();
-          this.toggleReaderChrome();
+          const dir = this.getRulerTapDirection(touchEndX, touchEndY);
+          this.ruler.stepLine(dir, true);
           e.preventDefault();
+          return;
         }
-        return;
-      }
 
-      // 3. Dotykové zóny pro krokování pravítka v klávesovém režimu (layout zóny)
-      // Krokování se spustí pouze při čistém, stacionárním klepnutí (|deltaX| < 10px a |deltaY| < 10px)
-      if (this.ruler && this.ruler.enabled && this.ruler.followMode === "keyboard") {
+        // 4. Běžné klepnutí (Tap) když je pravítko vypnuté
+        if (absDeltaX < 15 && absDeltaY < 15) {
+          if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+            this.closeFloatingDock();
+            e.preventDefault();
+            return;
+          }
+          if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+            return;
+          }
+          if (this.isCenterTap(touchEndX, touchEndY)) {
+            lastTapTime = Date.now();
+            this.toggleReaderChrome();
+            e.preventDefault();
+            return;
+          }
+        }
+      }, { passive: false });
+
+      // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
+      this.dom.pagedViewport.addEventListener("click", (e) => {
+        if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+          this.closeFloatingDock();
+          return;
+        }
+        if (this.isUiOrOverlayEvent(e)) return;
+        if (this.isNavigating || this.ruler?.isLineLocked) return;
+        if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
+          return;
+        }
         if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
           return;
         }
-        if (absDeltaX >= 10 || absDeltaY >= 10 || dist >= 10) return;
+
+        // Klepnutí doprostřed obrazovky přepne zobrazení hlavičky a spodní lišty
+        if (this.isCenterTap(e.clientX, e.clientY)) {
+          if (!this.ruler || !this.ruler.enabled || this.ruler.followMode === "mouse") {
+            lastTapTime = Date.now();
+            this.toggleReaderChrome();
+            return;
+          }
+        }
+
+        if (!this.ruler || !this.ruler.enabled) return;
+        if (this.ruler.followMode === "mouse") {
+          return;
+        }
         if (this.ruler.isHoldTriggered) {
           this.ruler.isHoldTriggered = false;
           return;
         }
-        if (typeof this.ruler.handleTap === "function") {
-          const handled = this.ruler.handleTap(touchEndX, touchEndY, "touch", dist);
+        if (typeof this.ruler.handleTap === "function" && this.ruler.followMode === "keyboard") {
+          const handled = this.ruler.handleTap(e.clientX, e.clientY, "mouse", 0);
           if (handled) {
             lastTapTime = Date.now();
             e.preventDefault();
@@ -1211,111 +1277,46 @@ export class LuminaApp {
           return;
         }
         lastTapTime = Date.now();
-        const dir = this.getRulerTapDirection(touchEndX, touchEndY);
+        const dir = this.getRulerTapDirection(e.clientX, e.clientY);
         this.ruler.stepLine(dir, true);
-        e.preventDefault();
-        return;
-      }
+      });
 
-      // 4. Běžné klepnutí (Tap) když je pravítko vypnuté
-      if (absDeltaX < 15 && absDeltaY < 15) {
-        if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
-          this.closeFloatingDock();
-          e.preventDefault();
-          return;
+      // Přejetí dvěma prsty po touchpadu nebo kolečko myši (Mac Trackpad - vždy přesně 1 strana)
+      let isWheelTurnLocked = false;
+      let wheelMomentumTimer = null;
+
+      this.dom.pagedViewport.addEventListener("wheel", (e) => {
+        if (this.isVerticalReadingMode()) return;
+        if (this.isAnyModalOrMenuOpen()) return;
+        if (this.isNavigating || this.ruler?.isLineLocked) return;
+        this.ruler?.cancelHold();
+        const absX = Math.abs(e.deltaX);
+        const absY = Math.abs(e.deltaY);
+        const isHorizontal = absX >= absY;
+        const delta = isHorizontal ? e.deltaX : (absY > 35 ? e.deltaY : 0);
+
+        // Pokud ještě trvá setrvačnost předchozího gesta, další stranu neotáčíme
+        if (!isWheelTurnLocked && Math.abs(delta) > 22) {
+          isWheelTurnLocked = true;
+          if (delta > 0) {
+            this.nextPage();
+          } else {
+            this.prevPage();
+          }
         }
-        if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
-          return;
+
+        // Resetujeme zámek teprve, až intenzita pohybu klesne (konec fyzického gesta prsty)
+        clearTimeout(wheelMomentumTimer);
+        wheelMomentumTimer = setTimeout(() => {
+          isWheelTurnLocked = false;
+        }, 160);
+
+        // Pokud setrvačnost klesla na naprosté minimum, uvolníme dříve pro svižnost
+        if (Math.abs(delta) < 3) {
+          isWheelTurnLocked = false;
         }
-        if (this.isCenterTap(touchEndX, touchEndY)) {
-          lastTapTime = Date.now();
-          this.toggleReaderChrome();
-          e.preventDefault();
-          return;
-        }
-      }
-    }, { passive: false });
-
-    // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
-    this.dom.pagedViewport.addEventListener("click", (e) => {
-      if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
-        this.closeFloatingDock();
-        return;
-      }
-      if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating || this.ruler?.isLineLocked) return;
-      if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
-        return;
-      }
-      if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
-        return;
-      }
-
-      // Klepnutí doprostřed obrazovky přepne zobrazení hlavičky a spodní lišty
-      if (this.isCenterTap(e.clientX, e.clientY)) {
-        if (!this.ruler || !this.ruler.enabled || this.ruler.followMode === "mouse") {
-          lastTapTime = Date.now();
-          this.toggleReaderChrome();
-          return;
-        }
-      }
-
-      if (!this.ruler || !this.ruler.enabled) return;
-      if (this.ruler.followMode === "mouse") {
-        return;
-      }
-      if (this.ruler.isHoldTriggered) {
-        this.ruler.isHoldTriggered = false;
-        return;
-      }
-      if (typeof this.ruler.handleTap === "function" && this.ruler.followMode === "keyboard") {
-        const handled = this.ruler.handleTap(e.clientX, e.clientY, "mouse", 0);
-        if (handled) {
-          lastTapTime = Date.now();
-          e.preventDefault();
-        }
-        return;
-      }
-      lastTapTime = Date.now();
-      const dir = this.getRulerTapDirection(e.clientX, e.clientY);
-      this.ruler.stepLine(dir, true);
-    });
-
-    // Přejetí dvěma prsty po touchpadu nebo kolečko myši (Mac Trackpad - vždy přesně 1 strana)
-    let isWheelTurnLocked = false;
-    let wheelMomentumTimer = null;
-
-    this.dom.pagedViewport.addEventListener("wheel", (e) => {
-      if (this.isVerticalReadingMode()) return;
-      if (this.isAnyModalOrMenuOpen()) return;
-      if (this.isNavigating || this.ruler?.isLineLocked) return;
-      this.ruler?.cancelHold();
-      const absX = Math.abs(e.deltaX);
-      const absY = Math.abs(e.deltaY);
-      const isHorizontal = absX >= absY;
-      const delta = isHorizontal ? e.deltaX : (absY > 35 ? e.deltaY : 0);
-
-      // Pokud ještě trvá setrvačnost předchozího gesta, další stranu neotáčíme
-      if (!isWheelTurnLocked && Math.abs(delta) > 22) {
-        isWheelTurnLocked = true;
-        if (delta > 0) {
-          this.nextPage();
-        } else {
-          this.prevPage();
-        }
-      }
-
-      // Resetujeme zámek teprve, až intenzita pohybu klesne (konec fyzického gesta prsty)
-      clearTimeout(wheelMomentumTimer);
-      wheelMomentumTimer = setTimeout(() => {
-        isWheelTurnLocked = false;
-      }, 160);
-
-      // Pokud setrvačnost klesla na naprosté minimum, uvolníme dříve pro svižnost
-      if (Math.abs(delta) < 3) {
-        isWheelTurnLocked = false;
-      }
-    }, { passive: true });
+      }, { passive: true });
+    }
 
     // Přizpůsobení stran při změně orientace iPadu (Portrait/Landscape) a velikosti okna
     let lastEffectiveCols = this.resolveEffectiveColumnCount();
@@ -1556,9 +1557,11 @@ export class LuminaApp {
         this.closeStatsModal();
       });
     }
-    this.dom.statsModal.addEventListener("click", (e) => {
-      if (e.target === this.dom.statsModal) this.closeStatsModal();
-    });
+    if (this.dom.statsModal) {
+      this.dom.statsModal.addEventListener("click", (e) => {
+        if (e.target === this.dom.statsModal) this.closeStatsModal();
+      });
+    }
 
     // Pravítko toggle tlačítko v hlavičce
     if (this.dom.btnToggleRuler) {
@@ -2152,9 +2155,9 @@ export class LuminaApp {
         this.settings.showRulerButton = nextVal;
         this.setSwitchState(this.dom.rulerToggle, nextVal);
         const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;
-        if (rulerContainer) {
+        if (rulerContainer && rulerContainer.style) {
           rulerContainer.style.display = nextVal ? "flex" : "none";
-          rulerContainer.classList.toggle("is-hidden", !nextVal);
+          rulerContainer.classList?.toggle?.("is-hidden", !nextVal);
         }
         if (!nextVal && this.ruler?.enabled) {
           this.ruler.setEnabled(false);
@@ -2358,23 +2361,25 @@ export class LuminaApp {
     }
 
     // Export statistik
-    this.dom.btnExportData.addEventListener("click", async () => {
-      const stats = await ReadingTracker.computeGlobalStats();
-      const sessions = await storage.getAllReadingSessions();
-      const exportObj = {
-        exportedAt: new Date().toISOString(),
-        stats,
-        readingSessions: sessions,
-        sessions
-      };
-      const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `luminareader-stats-${new Date().toISOString().split("T")[0]}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
+    if (this.dom.btnExportData) {
+      this.dom.btnExportData.addEventListener("click", async () => {
+        const stats = await ReadingTracker.computeGlobalStats();
+        const sessions = await storage.getAllReadingSessions();
+        const exportObj = {
+          exportedAt: new Date().toISOString(),
+          stats,
+          readingSessions: sessions,
+          sessions
+        };
+        const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `luminareader-stats-${new Date().toISOString().split("T")[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
 
     // Přepočítání a normalizace statistik
     if (this.dom.btnRecalcStats) {
@@ -2411,12 +2416,25 @@ export class LuminaApp {
         if (!confirmed) return;
         try {
           this.dom.btnResetStats.disabled = true;
+
+          // 1. Získat ID všech stávajících relací pro tombstones
+          let existingIds = [];
+          try {
+            const sessions = await storage.getAllReadingSessions();
+            existingIds = (sessions || []).map(s => String(s.sessionId || s.id || "").trim()).filter(Boolean);
+          } catch (_) {}
+
+          // 2. Lokální reset dat a záznam tombstones
           await storage.resetReadingStats();
+          existingIds.forEach(id => storage.addDeletedSessionId(id));
+
           tracker.stopSession();
           tracker.creditedBlocks.clear();
+
+          // 3. Cloudový soft-delete všech relací a nulování reading_stats_summary
           if (supabaseSync && supabaseSync.isOnline()) {
             try {
-              await supabaseSync.clearCloudReadingStats();
+              await supabaseSync.clearCloudReadingStats(existingIds);
             } catch (cloudErr) {
               console.warn("Varování při resetování cloudových statistik:", cloudErr);
             }
@@ -2788,9 +2806,9 @@ export class LuminaApp {
 
     const showRuler = this.settings.showRulerButton !== false;
     const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;
-    if (rulerContainer) {
+    if (rulerContainer && rulerContainer.style) {
       rulerContainer.style.display = showRuler ? "flex" : "none";
-      rulerContainer.classList.toggle("is-hidden", !showRuler);
+      rulerContainer.classList?.toggle?.("is-hidden", !showRuler);
     }
 
     const isWordTrackingActive = !!this.settings.ruler.wordTracking;
@@ -5876,9 +5894,9 @@ export class LuminaApp {
     }
     const showRuler = this.settings.showRulerButton !== false;
     const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;
-    if (rulerContainer) {
+    if (rulerContainer && rulerContainer.style) {
       rulerContainer.style.display = showRuler ? "flex" : "none";
-      rulerContainer.classList.toggle("is-hidden", !showRuler);
+      rulerContainer.classList?.toggle?.("is-hidden", !showRuler);
     }
     const hasReaderContent = !!(this.dom.readerContent && this.dom.readerContent.innerHTML.trim());
     if (showRuler && this.settings.ruler.enabled && hasReaderContent) {
@@ -6366,6 +6384,8 @@ export class LuminaApp {
     const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
     // Filtrujeme striktně pouze relace s délkou alespoň 5 minut (>= 300 sekund) a nesmazané relace
     const savedSessions = (rawSessions || []).filter(s => {
+      if (!s) return false;
+      if (s.is_deleted === true || s.is_deleted === "true") return false;
       const sid = String(s.sessionId ?? s.id ?? "").trim();
       if (sid && deletedSet.has(sid)) return false;
       const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
@@ -6558,8 +6578,11 @@ export class LuminaApp {
 
   selectSession(sessionId) {
     if (!this._availableSessions) return;
-    const session = this._availableSessions.find(s => s.sessionId === sessionId || s.id === sessionId);
-    if (!session) return;
+    const session = this._availableSessions.find(s => (s.sessionId === sessionId || s.id === sessionId) && s.is_deleted !== true && s.is_deleted !== "true");
+    if (!session) {
+      this.renderEmptySessionTimeline();
+      return;
+    }
 
     const sid = session.sessionId || session.id;
     this._selectedSessionId = sid;

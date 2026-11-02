@@ -87,7 +87,13 @@ export class StorageManager {
 
   async getDB() {
     if (this.db) return this.db;
-    return await this.initPromise;
+    try {
+      this.db = await this.initPromise;
+      return this.db;
+    } catch (err) {
+      console.warn("[storage] IndexedDB nedostupná nebo selhala:", err);
+      return null;
+    }
   }
 
   // --- KNIHY (BOOKS) ---
@@ -186,13 +192,18 @@ export class StorageManager {
       }
     }
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readwrite");
-      const store = tx.objectStore("books");
-      const request = store.put(bookData);
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("books", "readwrite");
+        const store = tx.objectStore("books");
+        const request = store.put(bookData);
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
     });
   }
 
@@ -298,84 +309,127 @@ export class StorageManager {
   }
 
   async getBook(id) {
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readonly");
-      const store = tx.objectStore("books");
-      const request = store.get(id);
+    if (!id) return null;
+    try {
+      const db = await this.getDB();
+      if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return null;
+      return await new Promise((resolve) => {
+        try {
+          const tx = db.transaction("books", "readonly");
+          const store = tx.objectStore("books");
+          const request = store.get(id);
 
-      request.onsuccess = () => {
-        const book = request.result;
-        if (book) {
-          this.normalizeBookProgress(book);
+          request.onsuccess = () => {
+            const book = request.result;
+            if (book) {
+              this.normalizeBookProgress(book);
+            }
+            resolve(book || null);
+          };
+          request.onerror = () => resolve(null);
+        } catch (_) {
+          resolve(null);
         }
-        resolve(book);
-      };
-      request.onerror = () => reject(request.error);
-    });
+      });
+    } catch (_) {
+      return null;
+    }
   }
 
   async getAllBooks() {
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readonly");
-      const store = tx.objectStore("books");
-      const request = store.getAll();
+    try {
+      const db = await this.getDB();
+      if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return [];
+      return await new Promise((resolve) => {
+        try {
+          const tx = db.transaction("books", "readonly");
+          const store = tx.objectStore("books");
+          const request = store.getAll();
 
-      request.onsuccess = () => {
-        const books = request.result || [];
-        for (const book of books) {
-          this.normalizeBookProgress(book);
+          request.onsuccess = () => {
+            const books = request.result || [];
+            for (const book of books) {
+              if (book) {
+                this.normalizeBookProgress(book);
+              }
+            }
+            // Seřadit podle naposledy čtených
+            books.sort((a, b) => (b.lastReadAt || b.addedAt || 0) - (a.lastReadAt || a.addedAt || 0));
+            resolve(books);
+          };
+          request.onerror = () => resolve([]);
+        } catch (txErr) {
+          console.warn("[storage] getAllBooks tx error:", txErr);
+          resolve([]);
         }
-        // Seřadit podle naposledy čtených
-        books.sort((a, b) => (b.lastReadAt || b.addedAt || 0) - (a.lastReadAt || a.addedAt || 0));
-        resolve(books);
-      };
-      request.onerror = () => reject(request.error);
-    });
+      });
+    } catch (err) {
+      console.warn("[storage] getAllBooks error:", err);
+      return [];
+    }
   }
 
   async deleteBook(id) {
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const storeNames = ["books"];
-      if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
-      if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
+    if (!db || !db.objectStoreNames) return false;
+    return new Promise((resolve) => {
+      try {
+        const storeNames = ["books"];
+        if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
+        if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
 
-      const tx = db.transaction(storeNames, "readwrite");
-      const bookStore = tx.objectStore("books");
-      bookStore.delete(id);
+        const tx = db.transaction(storeNames, "readwrite");
+        const bookStore = tx.objectStore("books");
+        try { bookStore.delete(id); } catch (_) {}
 
-      // Smazat i přidružené relace ze sessions
-      if (db.objectStoreNames.contains("sessions")) {
-        const sessionStore = tx.objectStore("sessions");
-        const index = sessionStore.index("bookId");
-        const request = index.openCursor(IDBKeyRange.only(id));
-        request.onsuccess = (e) => {
-          const cursor = e.target.result;
-          if (cursor) {
-            cursor.delete();
-            cursor.continue();
-          }
-        };
+        // Smazat i přidružené relace ze sessions
+        if (db.objectStoreNames.contains("sessions")) {
+          try {
+            const sessionStore = tx.objectStore("sessions");
+            const index = sessionStore.index("bookId");
+            const request = index.openCursor(IDBKeyRange.only(id));
+            request.onsuccess = (e) => {
+              try {
+                const cursor = e.target.result;
+                if (cursor) {
+                  try { cursor.delete(); } catch (_) {}
+                  cursor.continue();
+                }
+              } catch (_) {}
+            };
+          } catch (_) {}
+        }
+
+        // Smazat i přidružené relace z reading_sessions
+        if (db.objectStoreNames.contains("reading_sessions")) {
+          try {
+            const readingStore = tx.objectStore("reading_sessions");
+            const index = readingStore.index("bookId");
+            const request = index.openCursor(IDBKeyRange.only(id));
+            request.onsuccess = (e) => {
+              try {
+                const cursor = e.target.result;
+                if (cursor) {
+                  const sid = cursor.value?.sessionId || cursor.value?.id;
+                  if (sid) {
+                    this.addDeletedSessionId(sid);
+                    this._removeSessionFromLocalStorage(sid);
+                  }
+                  try { cursor.delete(); } catch (_) {}
+                  cursor.continue();
+                }
+              } catch (_) {}
+            };
+          } catch (_) {}
+        }
+
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (txErr) {
+        console.warn("[storage] deleteBook error:", txErr);
+        resolve(false);
       }
-
-      // Smazat i přidružené relace z reading_sessions
-      if (db.objectStoreNames.contains("reading_sessions")) {
-        const readingStore = tx.objectStore("reading_sessions");
-        const index = readingStore.index("bookId");
-        const request = index.openCursor(IDBKeyRange.only(id));
-        request.onsuccess = (e) => {
-          const cursor = e.target.result;
-          if (cursor) {
-            cursor.delete();
-            cursor.continue();
-          }
-        };
-      }
-
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => reject(tx.error);
     });
   }
 
@@ -504,7 +558,10 @@ export class StorageManager {
   async saveReadingSession(sessionData) {
     if (!sessionData) return null;
 
-    // Ignorovat relace označené jako smazané (tombstones)
+    // Ignorovat relace označené jako smazané (tombstones a is_deleted flag)
+    if (sessionData.is_deleted === true || sessionData.is_deleted === "true") {
+      return null;
+    }
     const deletedSet = new Set(this.getDeletedSessionIds());
     const rawSid = String(sessionData.sessionId ?? "").trim();
     const rawId = String(sessionData.id ?? "").trim();
@@ -570,41 +627,58 @@ export class StorageManager {
       intra_session_samples: cleanedSamples,
       date: localDate,
       timestamp,
+      is_deleted: false,
+      isDeleted: false,
       updatedAt
     };
 
-    return new Promise((resolve, reject) => {
-      const stores = [];
-      if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
-      if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
+    if (!db || !db.objectStoreNames) {
+      this._cacheSessionToLocalStorage(normalizedSession);
+      return normalizedSession;
+    }
 
-      if (stores.length === 0) {
-        this._cacheSessionToLocalStorage(normalizedSession);
-        return resolve(normalizedSession);
-      }
+    return new Promise((resolve) => {
+      try {
+        const stores = [];
+        if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
+        if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
 
-      const tx = db.transaction(stores, "readwrite");
-      if (db.objectStoreNames.contains("reading_sessions")) {
-        tx.objectStore("reading_sessions").put(normalizedSession);
-      }
-      if (db.objectStoreNames.contains("sessions")) {
-        try {
-          const legacyCopy = { ...normalizedSession };
-          delete legacyCopy.id;
-          tx.objectStore("sessions").put(legacyCopy);
-        } catch (legacyErr) {
-          console.warn("[storage] Zápis do legacy úložiště sessions přeskočen:", legacyErr);
+        if (stores.length === 0) {
+          this._cacheSessionToLocalStorage(normalizedSession);
+          return resolve(normalizedSession);
         }
-      }
 
-      tx.oncomplete = () => {
+        const tx = db.transaction(stores, "readwrite");
+        if (db.objectStoreNames.contains("reading_sessions")) {
+          tx.objectStore("reading_sessions").put(normalizedSession);
+        }
+        if (db.objectStoreNames.contains("sessions")) {
+          try {
+            const legacyCopy = { ...normalizedSession };
+            delete legacyCopy.id;
+            tx.objectStore("sessions").put(legacyCopy);
+          } catch (legacyErr) {
+            console.warn("[storage] Zápis do legacy úložiště sessions přeskočen:", legacyErr);
+          }
+        }
+
+        tx.oncomplete = () => {
+          this._cacheSessionToLocalStorage(normalizedSession);
+          resolve(normalizedSession);
+        };
+        tx.onerror = () => {
+          this._cacheSessionToLocalStorage(normalizedSession);
+          resolve(normalizedSession);
+        };
+        tx.onabort = () => {
+          this._cacheSessionToLocalStorage(normalizedSession);
+          resolve(normalizedSession);
+        };
+      } catch (err) {
+        console.warn("[storage] saveReadingSession IndexedDB error:", err);
         this._cacheSessionToLocalStorage(normalizedSession);
         resolve(normalizedSession);
-      };
-      tx.onerror = () => {
-        this._cacheSessionToLocalStorage(normalizedSession);
-        reject(tx.error);
-      };
+      }
     });
   }
 
@@ -620,61 +694,79 @@ export class StorageManager {
     if (!targetIdStr) return { success: false, error: "Missing sessionId" };
 
     // 0. Trvale zaznamenat ID smazané relace (tombstone)
-    this.addDeletedSessionId(targetIdStr);
+    try {
+      this.addDeletedSessionId(targetIdStr);
+    } catch (_) {}
     try {
       localStorage.setItem("lumina_sessions_migrated", "true");
     } catch (_) {}
 
-    const db = await this.getDB();
+    try {
+      const db = await this.getDB();
+      if (db && db.objectStoreNames) {
+        const storeNames = [];
+        if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
+        if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
 
-    const storeNames = [];
-    if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
-    if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
+        if (storeNames.length > 0) {
+          await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(storeNames, "readwrite");
 
-    if (storeNames.length > 0) {
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction(storeNames, "readwrite");
+              for (const sName of storeNames) {
+                const store = tx.objectStore(sName);
 
-        for (const sName of storeNames) {
-          const store = tx.objectStore(sName);
+                // 1. Direct key delete attempts
+                try { store.delete(sessionId); } catch (_) {}
+                try { store.delete(targetIdStr); } catch (_) {}
+                if (!isNaN(Number(sessionId))) {
+                  try { store.delete(Number(sessionId)); } catch (_) {}
+                }
 
-          // 1. Direct key delete attempts
-          try { store.delete(sessionId); } catch (_) {}
-          try { store.delete(targetIdStr); } catch (_) {}
-          if (!isNaN(Number(sessionId))) {
-            try { store.delete(Number(sessionId)); } catch (_) {}
-          }
-
-          // 2. Comprehensive cursor scan matching id, sessionId, or cursor keys
-          const cursorReq = store.openCursor();
-          cursorReq.onsuccess = (e) => {
-            const cursor = e.target.result;
-            if (cursor) {
-              const val = cursor.value || {};
-              const matches = (
-                val.id === sessionId ||
-                val.sessionId === sessionId ||
-                String(val.id ?? "").trim() === targetIdStr ||
-                String(val.sessionId ?? "").trim() === targetIdStr ||
-                String(cursor.key ?? "").trim() === targetIdStr ||
-                String(cursor.primaryKey ?? "").trim() === targetIdStr
-              );
-              if (matches) {
-                try { cursor.delete(); } catch (_) {}
+                // 2. Comprehensive cursor scan matching id, sessionId, or cursor keys
+                try {
+                  const cursorReq = store.openCursor();
+                  cursorReq.onsuccess = (e) => {
+                    try {
+                      const cursor = e.target.result;
+                      if (cursor) {
+                        const val = cursor.value || {};
+                        const matches = (
+                          val.id === sessionId ||
+                          val.sessionId === sessionId ||
+                          String(val.id ?? "").trim() === targetIdStr ||
+                          String(val.sessionId ?? "").trim() === targetIdStr ||
+                          String(cursor.key ?? "").trim() === targetIdStr ||
+                          String(cursor.primaryKey ?? "").trim() === targetIdStr
+                        );
+                        if (matches) {
+                          try { cursor.delete(); } catch (_) {}
+                        }
+                        cursor.continue();
+                      }
+                    } catch (_) {}
+                  };
+                  cursorReq.onerror = () => resolve();
+                } catch (_) {}
               }
-              cursor.continue();
-            }
-          };
-          cursorReq.onerror = () => reject(cursorReq.error);
-        }
 
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error);
-      });
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => resolve();
+              tx.onabort = () => resolve();
+            } catch (txErr) {
+              console.warn("[storage] deleteReadingSession tx error:", txErr);
+              resolve();
+            }
+          });
+        }
+      }
+    } catch (dbErr) {
+      console.warn("[storage] deleteReadingSession error:", dbErr);
     }
 
-    this._removeSessionFromLocalStorage(targetIdStr);
+    try {
+      this._removeSessionFromLocalStorage(targetIdStr);
+    } catch (_) {}
 
     // 3. Recalculate global cumulative stats, words, time, and streak
     if (!skipRecalculate && typeof this.recalculateAndNormalizeStats === "function") {
@@ -690,32 +782,41 @@ export class StorageManager {
 
   _removeSessionFromLocalStorage(sessionId) {
     try {
-      const targetIdStr = String(sessionId).trim();
+      const targetIdStr = String(sessionId ?? "").trim();
+      if (!targetIdStr) return;
       const raw = localStorage.getItem("lumina_reading_sessions");
       if (raw) {
         const list = JSON.parse(raw);
-        const filtered = list.filter(s => {
-          const sId = String(s.sessionId ?? "").trim();
-          const id = String(s.id ?? "").trim();
-          return s.sessionId !== sessionId &&
-                 s.id !== sessionId &&
-                 sId !== targetIdStr &&
-                 id !== targetIdStr;
-        });
-        localStorage.setItem("lumina_reading_sessions", JSON.stringify(filtered));
+        if (Array.isArray(list)) {
+          const filtered = list.filter(s => {
+            if (!s || typeof s !== "object") return false;
+            const sId = String(s.sessionId ?? "").trim();
+            const id = String(s.id ?? "").trim();
+            return s.sessionId !== sessionId &&
+                   s.id !== sessionId &&
+                   sId !== targetIdStr &&
+                   id !== targetIdStr;
+          });
+          localStorage.setItem("lumina_reading_sessions", JSON.stringify(filtered));
+        }
       }
     } catch (_) {}
   }
 
   _cacheSessionToLocalStorage(session) {
     try {
+      if (!session || typeof session !== "object") return;
+      if (session.is_deleted === true || session.is_deleted === "true") return;
       const deletedSet = new Set(this.getDeletedSessionIds());
-      const sid = String(session?.sessionId ?? session?.id ?? "").trim();
+      const sid = String(session.sessionId ?? session.id ?? "").trim();
       if (sid && deletedSet.has(sid)) return;
 
       const raw = localStorage.getItem("lumina_reading_sessions");
       const list = raw ? JSON.parse(raw) : [];
-      const filtered = list.filter(s => {
+      const safeList = Array.isArray(list) ? list : [];
+      const filtered = safeList.filter(s => {
+        if (!s || typeof s !== "object") return false;
+        if (s.is_deleted === true || s.is_deleted === "true") return false;
         const existingId = String(s.sessionId ?? s.id ?? "").trim();
         return existingId !== sid && !deletedSet.has(existingId);
       });
@@ -731,57 +832,76 @@ export class StorageManager {
   }
 
   async getAllReadingSessions() {
-    const db = await this.getDB();
     const deletedSet = new Set(this.getDeletedSessionIds());
     const isNotDeleted = (s) => {
-      if (!s) return false;
+      if (!s || typeof s !== "object") return false;
+      if (s.is_deleted === true || s.is_deleted === "true") return false;
       const sid = String(s.sessionId ?? "").trim();
       const id = String(s.id ?? "").trim();
       return !(sid && deletedSet.has(sid)) && !(id && deletedSet.has(id));
     };
 
-    return new Promise((resolve) => {
-      if (!db.objectStoreNames.contains("reading_sessions")) {
-        return this._getOldSessions().then(oldList => {
-          const filtered = (oldList || []).filter(s => {
-            if (!isNotDeleted(s)) return false;
-            const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
-            return dur >= 300;
-          });
-          filtered.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
-          resolve(filtered);
-        });
+    const getLocalStorageFallback = () => {
+      try {
+        const raw = localStorage.getItem("lumina_reading_sessions");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return parsed.filter(s => isNotDeleted(s) && Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0)) >= 300);
+          }
+        }
+      } catch (_) {}
+      return [];
+    };
+
+    try {
+      const db = await this.getDB();
+      if (!db || !db.objectStoreNames) {
+        return getLocalStorageFallback();
       }
 
-      const tx = db.transaction("reading_sessions", "readonly");
-      const store = tx.objectStore("reading_sessions");
-      const request = store.getAll();
-
-      request.onsuccess = async () => {
-        let results = (request.result || []).filter(isNotDeleted);
-
-        // Odfiltrujeme relace kratší než 5 minut (>= 300 sekund)
-        results = results.filter(s => {
-          const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
-          return dur >= 300;
-        });
-
-        // Seřadit sestupně (nejnovější nahoře)
-        results.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
-        resolve(results);
-      };
-
-      request.onerror = () => {
+      return await new Promise((resolve) => {
         try {
-          const raw = localStorage.getItem("lumina_reading_sessions");
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            return resolve(parsed.filter(s => isNotDeleted(s) && (s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0) >= 300));
+          if (!db.objectStoreNames.contains("reading_sessions")) {
+            return this._getOldSessions().then(oldList => {
+              const filtered = (oldList || []).filter(s => {
+                if (!isNotDeleted(s)) return false;
+                const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
+                return dur >= 300;
+              });
+              filtered.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
+              resolve(filtered);
+            }).catch(() => resolve(getLocalStorageFallback()));
           }
-        } catch (_) {}
-        resolve([]);
-      };
-    });
+
+          const tx = db.transaction("reading_sessions", "readonly");
+          const store = tx.objectStore("reading_sessions");
+          const request = store.getAll();
+
+          request.onsuccess = async () => {
+            let results = (request.result || []).filter(isNotDeleted);
+
+            // Odfiltrujeme relace kratší než 5 minut (>= 300 sekund)
+            results = results.filter(s => {
+              const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
+              return dur >= 300;
+            });
+
+            // Seřadit sestupně (nejnovější nahoře)
+            results.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
+            resolve(results);
+          };
+
+          request.onerror = () => resolve(getLocalStorageFallback());
+        } catch (txErr) {
+          console.warn("[storage] getAllReadingSessions tx error:", txErr);
+          resolve(getLocalStorageFallback());
+        }
+      });
+    } catch (err) {
+      console.warn("[storage] getAllReadingSessions error:", err);
+      return getLocalStorageFallback();
+    }
   }
 
   async _getOldSessions() {
@@ -1116,8 +1236,12 @@ export class StorageManager {
    * 3. Přepočítá celkový souhrn (reading_stats_summary a denní časy) z opravených relací.
    */
   async recalculateAndNormalizeStats() {
-    const allSessions = await this.getAllReadingSessions();
-    const books = await this.getAllBooks();
+    let allSessions = [];
+    let books = [];
+    try {
+      allSessions = await this.getAllReadingSessions();
+      books = await this.getAllBooks();
+    } catch (_) {}
     let normalizedCount = 0;
 
     const dailyReadingMap = {};
@@ -1125,10 +1249,26 @@ export class StorageManager {
     let totalWords = 0;
 
     for (const session of allSessions) {
+      if (!session || typeof session !== "object") continue;
+      const targetSid = session.sessionId || session.id;
+
+      if (session.is_deleted === true || session.is_deleted === "true") {
+        if (targetSid) {
+          try {
+            await this.deleteReadingSession(targetSid, true);
+          } catch (_) {}
+        }
+        normalizedCount++;
+        continue;
+      }
       const durationSec = Math.max(0, Math.round(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0));
       // Úplné odstranění relací nesplňujících minimální práh 5 minut (300 sekund)
       if (durationSec < 300) {
-        await this.deleteReadingSession(session.sessionId || session.id, true);
+        if (targetSid) {
+          try {
+            await this.deleteReadingSession(targetSid, true);
+          } catch (_) {}
+        }
         normalizedCount++;
         continue;
       }
@@ -1263,19 +1403,43 @@ export class StorageManager {
    * Zachovává všechny knihy v knihovně a veškerá uživatelská nastavení
    */
   async resetReadingStats() {
-    const db = await this.getDB();
-    const stores = [];
-    if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
-    if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
+    // 0. Zaznamenat všechny stávající ID relací do tombstones před vymazáním
+    try {
+      const existing = await this.getAllReadingSessions();
+      if (Array.isArray(existing)) {
+        for (const s of existing) {
+          const sid = String(s.sessionId || s.id || "").trim();
+          if (sid) {
+            this.addDeletedSessionId(sid);
+          }
+        }
+      }
+    } catch (_) {}
 
-    if (stores.length > 0) {
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction(stores, "readwrite");
-        stores.forEach(s => tx.objectStore(s).clear());
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => reject(tx.error);
-      });
-    }
+    try {
+      const db = await this.getDB();
+      if (db && db.objectStoreNames) {
+        const stores = [];
+        if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
+        if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
+
+        if (stores.length > 0) {
+          await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(stores, "readwrite");
+              stores.forEach(s => {
+                try { tx.objectStore(s).clear(); } catch (_) {}
+              });
+              tx.oncomplete = () => resolve(true);
+              tx.onerror = () => resolve(true);
+              tx.onabort = () => resolve(true);
+            } catch (_) {
+              resolve(true);
+            }
+          });
+        }
+      }
+    } catch (_) {}
 
     try {
       localStorage.removeItem("lumina_reading_sessions");
@@ -1295,32 +1459,45 @@ export class StorageManager {
   }
 
   async deleteBookRaw(id) {
-    if (!id) return;
+    if (!id) return false;
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readwrite");
-      const store = tx.objectStore("books");
-      store.delete(id);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => reject(tx.error);
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return false;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("books", "readwrite");
+        const store = tx.objectStore("books");
+        store.delete(id);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (_) {
+        resolve(false);
+      }
     });
   }
 
   async saveBookRaw(bookData) {
     if (!bookData) return null;
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readwrite");
-      const store = tx.objectStore("books");
-      store.put(bookData);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => reject(tx.error);
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("books", "readwrite");
+        const store = tx.objectStore("books");
+        store.put(bookData);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (_) {
+        resolve(false);
+      }
     });
   }
 
   async migrateSessionsBookId(oldBookId, newBookId) {
     if (!oldBookId || !newBookId || oldBookId === newBookId) return;
     const db = await this.getDB();
+    if (!db || !db.objectStoreNames) return;
     const storeNames = [];
     if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
     if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");

@@ -1098,20 +1098,6 @@ export class SupabaseSync {
       return { success: false, error: err };
     }
   }
-        console.error("[SupabaseSync] Chyba při mazání relace v cloudu:", error);
-        return { success: false, error };
-      }
-
-      if (typeof storage.recalculateAndNormalizeStats === "function") {
-        await storage.recalculateAndNormalizeStats();
-      }
-      await this.syncStatsSummary({ overwriteCloud: true });
-      return { success: true };
-    } catch (err) {
-      console.error("[SupabaseSync] Výjimka při mazání relace v cloudu:", err);
-      return { success: false, error: err };
-    }
-  }
 
   /**
    * Synchronizuje souhrnné statistiky čtení (reading_stats_summary) mezi zařízeními
