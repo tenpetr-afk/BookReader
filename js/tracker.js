@@ -4,7 +4,7 @@
  * odhaduje zbývající čas a ukládá detailní čtecí relace s časovou osou WPM.
  */
 
-import { storage } from "./storage.js?v=2.2.6";
+import { storage } from "./storage.js?v=2.2.7";
 
 export const MIN_VALID_WPM = 40;
 export const MAX_VALID_WPM = 650;

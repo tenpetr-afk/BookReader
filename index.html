@@ -32,8 +32,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
 
   <!-- Styly aplikace -->
-  <link rel="stylesheet" href="./css/style.css?v=2.2.6" />
-  <link rel="stylesheet" href="./css/reader.css?v=2.2.6" />
+  <link rel="stylesheet" href="./css/style.css?v=2.2.7" />
+  <link rel="stylesheet" href="./css/reader.css?v=2.2.7" />
 </head>
 <body class="show-footer-bar">
 
@@ -218,12 +218,23 @@
             </div>
 
             <!-- Styl zobrazení -->
-            <div class="popover-section">
+            <div class="popover-section" id="popover-ruler-style-section">
               <div class="popover-section-label">Styl pravítka</div>
               <div class="popover-styles-grid columns-3">
+                <button type="button" class="popover-style-btn" data-ruler-style="off">Vypnuto</button>
                 <button type="button" class="popover-style-btn active" data-ruler-style="highlight">Zvýrazňovač</button>
-                <button type="button" class="popover-style-btn" data-ruler-style="focus">Zaostření</button>
                 <button type="button" class="popover-style-btn" data-ruler-style="bottom-cover">Spodní clona</button>
+              </div>
+            </div>
+
+            <!-- Zaostření okolí -->
+            <div class="popover-section" id="popover-ruler-focus-section">
+              <div class="popover-section-label">Zaostření okolí</div>
+              <div class="popover-styles-grid columns-4">
+                <button type="button" class="popover-style-btn active" data-ruler-focus="off">Vypnuto</button>
+                <button type="button" class="popover-style-btn" data-ruler-focus="up">Nahoře</button>
+                <button type="button" class="popover-style-btn" data-ruler-focus="down">Dole</button>
+                <button type="button" class="popover-style-btn" data-ruler-focus="both">Obojí</button>
               </div>
             </div>
 
@@ -242,7 +253,7 @@
             <!-- Intenzita ztmavení okolí -->
             <div class="popover-section" id="popover-ruler-opacity-section">
               <div class="popover-row-between">
-                <span class="popover-section-label">Ztmavení okolí (Zaostření)</span>
+                <span class="popover-section-label">Ztmavení okolí</span>
                 <span id="popover-val-ruler-opacity" class="popover-val-badge">65%</span>
               </div>
               <div class="popover-slider-wrapper">
@@ -547,12 +558,22 @@
             </div>
           </div>
 
-          <div style="margin-bottom: 1rem;">
+          <div style="margin-bottom: 1rem;" id="drawer-ruler-style-section">
             <div class="slider-label"><span>Styl pravítka</span></div>
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem;">
-              <button class="font-btn" data-ruler-mode="highlight" data-ruler-style="highlight">Zvýrazňovač</button>
-              <button class="font-btn" data-ruler-mode="focus" data-ruler-style="focus">Zaostření</button>
-              <button class="font-btn" data-ruler-mode="bottom-cover" data-ruler-style="bottom-cover">Spodní clona</button>
+              <button type="button" class="font-btn" data-ruler-mode="off" data-ruler-style="off">Vypnuto</button>
+              <button type="button" class="font-btn active" data-ruler-mode="highlight" data-ruler-style="highlight">Zvýrazňovač</button>
+              <button type="button" class="font-btn" data-ruler-mode="bottom-cover" data-ruler-style="bottom-cover">Spodní clona</button>
+            </div>
+          </div>
+
+          <div style="margin-bottom: 1rem;" id="drawer-ruler-focus-section">
+            <div class="slider-label"><span>Zaostření okolí</span></div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem;">
+              <button type="button" class="font-btn active" data-ruler-focus="off">Vypnuto</button>
+              <button type="button" class="font-btn" data-ruler-focus="up">Nahoře</button>
+              <button type="button" class="font-btn" data-ruler-focus="down">Dole</button>
+              <button type="button" class="font-btn" data-ruler-focus="both">Obojí</button>
             </div>
           </div>
 
@@ -592,7 +613,7 @@
 
           <div class="slider-setting" id="drawer-ruler-opacity-section">
             <div class="slider-label">
-              <span>Intenzita ztmavení okolí (režim Zaostření)</span>
+              <span>Intenzita ztmavení okolí</span>
               <span id="val-ruler-opacity">65%</span>
             </div>
             <input type="range" id="slider-ruler-opacity" class="slider-input" min="20" max="90" value="65" />
@@ -781,6 +802,6 @@
   <div id="toast-notification" class="toast" role="status" aria-live="polite"></div>
 
   <!-- Hlavní aplikační skript -->
-  <script type="module" src="./js/app.js?v=2.2.6"></script>
+  <script type="module" src="./js/app.js?v=2.2.7"></script>
 </body>
 </html>

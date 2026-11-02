@@ -1362,7 +1362,18 @@ body.ruler-vertical-mode .ruler-focused-image {
 .reading-ruler.mode-underline.color-lavender { border-bottom: 3.5px solid #a855f7; }
 .reading-ruler.mode-underline.color-slate { border-bottom: 3.5px solid #64748b; }
 
-/* 3. Režim: Zaostřovací maska (Focus Window) */
+/* 3. Režim: Vypnuto a Zaostřovací maska */
+.reading-ruler.mode-off {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 .reading-ruler.mode-focus:not(.is-media-focus) {
   background: transparent !important;
   border: none !important;
@@ -1547,23 +1558,18 @@ canvas.active-focus,
 }
 
 /* Režim PDF: tématicky sladěný překryv pro režim Zaostření (Focus Mode), identický s EPUB */
-.ruler-mask.pdf-overlay-mask:not(.mode-bottom-cover) {
+.ruler-mask.pdf-overlay-mask {
   background-color: var(--bg-theme, var(--color-bg, #fbf0d9)) !important;
   opacity: var(--focus-dim-opacity, 0.65) !important;
   z-index: 15 !important;
 }
 
-/* Režim Spodní clona (Bottom Cover): maska striktně dědí barvu pozadí aktivního motivu */
 .ruler-mask.ruler-mask-bottom {
   background-color: var(--bg-theme, var(--color-bg, #fbf0d9)) !important;
   transition: none !important;
   z-index: 15 !important;
 }
 
-body.ruler-mode-bottom-cover .ruler-mask.ruler-mask-bottom,
-body.ruler-mode-bottom-cover .ruler-mask-bottom,
-body.ruler-mode-bottom-cover .ruler-mask.pdf-overlay-mask.ruler-mask-bottom,
-.ruler-mask.ruler-mask-bottom.mode-bottom-cover,
 .ruler-mask.ruler-mask-inactive-spread,
 .ruler-mask-inactive-spread {
   background-color: var(--bg-theme, var(--color-bg, #fbf0d9)) !important;
@@ -1573,11 +1579,6 @@ body.ruler-mode-bottom-cover .ruler-mask.pdf-overlay-mask.ruler-mask-bottom,
   pointer-events: none !important;
 }
 
-body.ruler-mode-bottom-cover .ruler-mask-top,
-body.ruler-mode-bottom-cover .ruler-mask-left,
-body.ruler-mode-bottom-cover .ruler-mask-right {
-  display: none !important;
-}
 
 /* ==========================================================================
    Rychlý konfigurační popover pravítka na horní liště (Quick Popover)
@@ -1839,6 +1840,16 @@ body.ruler-mode-bottom-cover .ruler-mask-right {
 
 .popover-styles-grid.columns-3 {
   grid-template-columns: repeat(3, 1fr);
+}
+
+.popover-styles-grid.columns-4 {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.3rem;
+}
+
+.popover-styles-grid.columns-4 .popover-style-btn {
+  padding: 0.4rem 0.15rem;
+  font-size: 0.75rem;
 }
 
 .popover-style-btn {

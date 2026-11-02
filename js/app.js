@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.2.6";
-import { EpubParser } from "./epub-parser.js?v=2.2.6";
-import { PDFLoader } from "./pdf-loader.js?v=2.2.6";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.2.6";
-import { ReadingRuler } from "./ruler.js?v=2.2.6";
-import { StatsCharts } from "./charts.js?v=2.2.6";
-import { supabaseSync } from "./supabase-sync.js?v=2.2.6";
-import { supabase } from "./supabase-client.js?v=2.2.6";
+import { storage, computeFileHash } from "./storage.js?v=2.2.7";
+import { EpubParser } from "./epub-parser.js?v=2.2.7";
+import { PDFLoader } from "./pdf-loader.js?v=2.2.7";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.2.7";
+import { ReadingRuler } from "./ruler.js?v=2.2.7";
+import { StatsCharts } from "./charts.js?v=2.2.7";
+import { supabaseSync } from "./supabase-sync.js?v=2.2.7";
+import { supabase } from "./supabase-client.js?v=2.2.7";
 
-export const APP_VERSION = "v2.2.6";
+export const APP_VERSION = "v2.2.7";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -357,8 +357,9 @@ export class LuminaApp {
       settingPencilFlick: document.getElementById("setting-pencil-flick"),
       rulerAutoHeightSetting: document.getElementById("ruler-auto-height-setting"),
       settingRulerHeightContainer: document.getElementById("setting-ruler-height-container"),
-      rulerModeSelects: document.querySelectorAll("[data-ruler-mode]"),
+      rulerModeSelects: document.querySelectorAll("#settings-drawer [data-ruler-mode], #settings-drawer [data-ruler-style]"),
       rulerColorSelects: document.querySelectorAll("#settings-drawer [data-ruler-color]"),
+      drawerFocusButtons: document.querySelectorAll("#settings-drawer [data-ruler-focus]"),
       sliderRulerHeight: document.getElementById("slider-ruler-height"),
       valRulerHeight: document.getElementById("val-ruler-height"),
       sliderRulerOpacity: document.getElementById("slider-ruler-opacity"),
@@ -373,6 +374,7 @@ export class LuminaApp {
       popoverModeLine: document.getElementById("popover-mode-line"),
       popoverModeWord: document.getElementById("popover-mode-word"),
       popoverStyleButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-style]"),
+      popoverFocusButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-focus]"),
       popoverColorButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-color]"),
       popoverRulerSnapToggle: document.getElementById("popover-ruler-snap") || document.getElementById("popover-ruler-snap-toggle"),
       popoverRulerAutoHeightToggle: document.getElementById("popover-ruler-auto-height-toggle"),
@@ -506,7 +508,10 @@ export class LuminaApp {
     const isInReader = this.dom.viewReader ? !this.dom.viewReader.classList.contains("is-hidden") : true;
     const showRuler = this.settings.showRulerButton !== false;
     this.ruler.setEnabled(isInReader && showRuler && this.settings.ruler.enabled);
-    this.ruler.setMode(this.settings.ruler.mode);
+    const rulerStyle = this.settings.ruler.style || this.settings.ruler.mode || "highlight";
+    const rulerFocus = this.settings.ruler.focusMode || "off";
+    this.ruler.setStyle(rulerStyle);
+    this.ruler.setFocusMode(rulerFocus);
     this.ruler.setColor(this.settings.ruler.color);
     this.ruler.setHeight(this.settings.ruler.height);
     this.ruler.setAutoHeight(true);
@@ -524,7 +529,7 @@ export class LuminaApp {
 
     this.updateRulerToggleButtonUI();
     this.updateTouchZonesUI();
-    this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+    this.updateRulerSettingsVisibility(rulerStyle, rulerFocus, this.isPdfMode);
   }
 
   setSwitchState(el, checked) {
@@ -1842,13 +1847,47 @@ export class LuminaApp {
           if (e && e.cancelable) e.preventDefault();
           if (e) e.stopPropagation();
           const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-style]') || btn) : btn;
-          const newMode = targetBtn ? targetBtn.dataset.rulerStyle : null;
-          if (!newMode) return;
+          const newStyle = targetBtn ? targetBtn.dataset.rulerStyle : null;
+          if (!newStyle || !["off", "highlight", "bottom-cover"].includes(newStyle)) return;
           if (!this.settings.ruler) this.settings.ruler = {};
-          this.settings.ruler.mode = newMode;
-          this.ruler.setMode(this.settings.ruler.mode);
+          this.settings.ruler.style = newStyle;
+          this.settings.ruler.mode = newStyle;
+          if (newStyle !== "off" && !this.settings.ruler.enabled) {
+            this.settings.ruler.enabled = true;
+            if (this.ruler) this.ruler.setEnabled(true);
+          }
+          if (this.ruler) {
+            this.ruler.setStyle(newStyle);
+          }
           this.updateRulerToggleButtonUI();
-          this.updateRulerSettingsVisibility(newMode, this.isPdfMode);
+          this.updateRulerSettingsVisibility(newStyle, this.settings.ruler.focusMode, this.isPdfMode);
+          storage.saveSettings(this.settings);
+        });
+      });
+    }
+
+    if (this.dom.popoverFocusButtons) {
+      this.dom.popoverFocusButtons.forEach(btn => {
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-focus]') || btn) : btn;
+          let newFocus = targetBtn ? targetBtn.dataset.rulerFocus : null;
+          if (!newFocus) return;
+          if (newFocus === "above") newFocus = "up";
+          if (newFocus === "below") newFocus = "down";
+          if (!["off", "up", "down", "both"].includes(newFocus)) return;
+          if (!this.settings.ruler) this.settings.ruler = {};
+          this.settings.ruler.focusMode = newFocus;
+          if (newFocus !== "off" && !this.settings.ruler.enabled) {
+            this.settings.ruler.enabled = true;
+            if (this.ruler) this.ruler.setEnabled(true);
+          }
+          if (this.ruler) {
+            this.ruler.setFocusMode(newFocus);
+          }
+          this.updateRulerToggleButtonUI();
+          this.updateRulerSettingsVisibility(this.settings.ruler.style || this.settings.ruler.mode, newFocus, this.isPdfMode);
           storage.saveSettings(this.settings);
         });
       });
@@ -2216,21 +2255,57 @@ export class LuminaApp {
       });
     }
 
-    this.dom.rulerModeSelects.forEach(btn => {
-      bindRulerSettingAction(btn, (e) => {
-        if (e && e.cancelable) e.preventDefault();
-        if (e) e.stopPropagation();
-        const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn) : btn;
-        const newMode = targetBtn ? (targetBtn.dataset.rulerMode || targetBtn.dataset.rulerStyle) : null;
-        if (!newMode) return;
-        if (!this.settings.ruler) this.settings.ruler = {};
-        this.settings.ruler.mode = newMode;
-        this.ruler.setMode(this.settings.ruler.mode);
-        this.updateRulerToggleButtonUI();
-        this.updateRulerSettingsVisibility(newMode, this.isPdfMode);
-        storage.saveSettings(this.settings);
+    if (this.dom.rulerModeSelects) {
+      this.dom.rulerModeSelects.forEach(btn => {
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn) : btn;
+          const newStyle = targetBtn ? (targetBtn.dataset.rulerStyle || targetBtn.dataset.rulerMode) : null;
+          if (!newStyle || !["off", "highlight", "bottom-cover"].includes(newStyle)) return;
+          if (!this.settings.ruler) this.settings.ruler = {};
+          this.settings.ruler.style = newStyle;
+          this.settings.ruler.mode = newStyle;
+          if (newStyle !== "off" && !this.settings.ruler.enabled) {
+            this.settings.ruler.enabled = true;
+            if (this.ruler) this.ruler.setEnabled(true);
+          }
+          if (this.ruler) {
+            this.ruler.setStyle(newStyle);
+          }
+          this.updateRulerToggleButtonUI();
+          this.updateRulerSettingsVisibility(newStyle, this.settings.ruler.focusMode, this.isPdfMode);
+          storage.saveSettings(this.settings);
+        });
       });
-    });
+    }
+
+    if (this.dom.drawerFocusButtons) {
+      this.dom.drawerFocusButtons.forEach(btn => {
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-focus]') || btn) : btn;
+          let newFocus = targetBtn ? targetBtn.dataset.rulerFocus : null;
+          if (!newFocus) return;
+          if (newFocus === "above") newFocus = "up";
+          if (newFocus === "below") newFocus = "down";
+          if (!["off", "up", "down", "both"].includes(newFocus)) return;
+          if (!this.settings.ruler) this.settings.ruler = {};
+          this.settings.ruler.focusMode = newFocus;
+          if (newFocus !== "off" && !this.settings.ruler.enabled) {
+            this.settings.ruler.enabled = true;
+            if (this.ruler) this.ruler.setEnabled(true);
+          }
+          if (this.ruler) {
+            this.ruler.setFocusMode(newFocus);
+          }
+          this.updateRulerToggleButtonUI();
+          this.updateRulerSettingsVisibility(this.settings.ruler.style || this.settings.ruler.mode, newFocus, this.isPdfMode);
+          storage.saveSettings(this.settings);
+        });
+      });
+    }
 
     if (this.dom.rulerColorSelects) {
       this.dom.rulerColorSelects.forEach(btn => {
@@ -2717,7 +2792,13 @@ export class LuminaApp {
     if (this.settings.showRulerButton === false) return;
 
     document.body.classList.add("in-reader-view");
-    this.ruler.toggle();
+    const willEnable = !this.ruler.enabled;
+    if (willEnable && (!this.settings.ruler.style || this.settings.ruler.style === "off") && (!this.settings.ruler.focusMode || this.settings.ruler.focusMode === "off")) {
+      this.settings.ruler.style = "highlight";
+      this.settings.ruler.mode = "highlight";
+      if (this.ruler) this.ruler.setStyle("highlight");
+    }
+    this.ruler.setEnabled(willEnable);
     this.settings.ruler.enabled = this.ruler.enabled;
     storage.saveSettings(this.settings);
     this.updateRulerToggleButtonUI();
@@ -2817,9 +2898,14 @@ export class LuminaApp {
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
       btn.classList.toggle("active", (btn.dataset.rulerModeType === "word") === isWordTrackingActive);
     });
+    const currentStyle = this.settings.ruler.style || this.settings.ruler.mode || "highlight";
+    let currentFocus = this.settings.ruler.focusMode || "off";
+    if (currentFocus === "above") currentFocus = "up";
+    if (currentFocus === "below") currentFocus = "down";
+
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
-        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === this.settings.ruler.mode);
+        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === currentStyle);
       });
     }
     if (this.dom.popoverColorButtons) {
@@ -2829,7 +2915,7 @@ export class LuminaApp {
     }
     if (this.dom.rulerModeSelects) {
       this.dom.rulerModeSelects.forEach(btn => {
-        btn.classList.toggle("active", (btn.dataset.rulerMode || btn.dataset.rulerStyle) === this.settings.ruler.mode);
+        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === currentStyle);
       });
     }
     if (this.dom.rulerColorSelects) {
@@ -2837,8 +2923,13 @@ export class LuminaApp {
         btn.classList.toggle("active", btn.dataset.rulerColor === this.settings.ruler.color);
       });
     }
+    document.querySelectorAll("[data-ruler-focus]").forEach(btn => {
+      const f = btn.dataset.rulerFocus;
+      const normalized = (f === "above" ? "up" : (f === "below" ? "down" : f));
+      btn.classList.toggle("active", normalized === currentFocus);
+    });
     this.updateTouchZonesUI();
-    this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+    this.updateRulerSettingsVisibility(currentStyle, currentFocus, this.isPdfMode);
   }
 
 
@@ -3038,29 +3129,40 @@ export class LuminaApp {
 
   /**
    * Kontextově adaptivní viditelnost ovládacích prvků pravítka v popoveru a draweru.
-   * @param {string} [style] - highlight | focus | bottom-cover
+   * @param {string} [style] - off | highlight | bottom-cover
+   * @param {string|boolean} [focusMode] - off | up | down | both (nebo boolean isPdf při legacy volání)
    * @param {boolean} [isPdf] - zda je aktivní PDF dokument
    */
-  updateRulerSettingsVisibility(style = null, isPdf = null) {
-    const activeStyle = style || this.settings?.ruler?.mode || this.ruler?.mode || "highlight";
+  updateRulerSettingsVisibility(style = null, focusMode = null, isPdf = null) {
+    if (typeof focusMode === "boolean") {
+      isPdf = focusMode;
+      focusMode = null;
+    }
+    const activeStyle = style || this.settings?.ruler?.style || this.settings?.ruler?.mode || this.ruler?.style || "highlight";
+    let activeFocus = focusMode || this.settings?.ruler?.focusMode || this.ruler?.focusMode || "off";
+    if (activeFocus === "above") activeFocus = "up";
+    if (activeFocus === "below") activeFocus = "down";
     const activePdf = isPdf !== null && isPdf !== undefined ? !!isPdf : !!this.isPdfMode;
     const isImageOnly = activePdf && !!this.isImageOnlyPdf;
 
-    // 1. Color section: skryto pro režim focus (Zaostření)
-    const hideColor = activeStyle === "focus";
+    // 1. Color section: skryto pro styl "off" (Vypnuto)
+    const hideColor = activeStyle === "off";
     const popoverColor = this.dom.popoverRulerColorSection || document.getElementById("popover-ruler-color-section");
     if (popoverColor) popoverColor.classList.toggle("is-hidden", hideColor);
 
     const drawerColor = this.dom.drawerRulerColorSection || document.getElementById("drawer-ruler-color-section");
     if (drawerColor) drawerColor.classList.toggle("is-hidden", hideColor);
 
-    // 2. Dimming opacity section: skryto pro režim highlight (Zvýrazňovač)
-    const hideOpacity = activeStyle === "highlight";
+    // 2. Dimming opacity section: skryto a zakázáno pro zaostření "off" (Vypnuto)
+    const hideOpacity = activeFocus === "off";
     const popoverOpacity = this.dom.popoverRulerOpacitySection || document.getElementById("popover-ruler-opacity-section");
     if (popoverOpacity) popoverOpacity.classList.toggle("is-hidden", hideOpacity);
 
     const drawerOpacity = this.dom.drawerRulerOpacitySection || document.getElementById("drawer-ruler-opacity-section");
     if (drawerOpacity) drawerOpacity.classList.toggle("is-hidden", hideOpacity);
+
+    if (this.dom.sliderRulerOpacity) this.dom.sliderRulerOpacity.disabled = hideOpacity;
+    if (this.dom.popoverSliderRulerOpacity) this.dom.popoverSliderRulerOpacity.disabled = hideOpacity;
 
     // 3. PDF height & auto-height section: skryto pro režim bottom-cover nebo mimo PDF dokument
     const hidePdfHeight = !activePdf || activeStyle === "bottom-cover";

@@ -246,13 +246,13 @@ export class StorageManager {
   }
 
   async uploadBook(book) {
-    const { supabaseSync } = await import("./supabase-sync.js?v=2.2.6");
+    const { supabaseSync } = await import("./supabase-sync.js?v=2.2.7");
     return await supabaseSync.uploadBook(book);
   }
 
   async syncWithCloud(options) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.2.6");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.2.7");
       return await supabaseSync.syncAll(options);
     } catch (err) {
       console.warn("[StorageManager] syncWithCloud selhal:", err);
@@ -262,7 +262,7 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.2.6");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.2.7");
       return await supabaseSync.pushSessionAndStats(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
@@ -272,7 +272,7 @@ export class StorageManager {
 
   async pushReadingSessionsToCloud(sessions) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.2.6");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.2.7");
       return await supabaseSync.pushMultipleSessions(sessions);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
@@ -784,7 +784,7 @@ export class StorageManager {
    */
   async reconcileSessionsWithCloud() {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.2.6");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.2.7");
       if (!supabaseSync || !supabaseSync.isOnline()) {
         return { success: false, reason: "offline", purged: 0, saved: 0 };
       }
@@ -1212,7 +1212,9 @@ export class StorageManager {
       showRulerButton: true, // zobrazení tlačítka pravítka v dolní liště
       ruler: {
         enabled: false,
-        mode: "highlight", // highlight, focus
+        mode: "highlight", // backward compat: highlight, bottom-cover, off
+        style: "highlight", // off, highlight, bottom-cover
+        focusMode: "off", // off, up, down, both
         height: 48, // px
         autoHeight: true, // Automatická výška podle velikosti řádku
         pdfAutoHeight: true, // Automatická výška pravítka pro PDF (výchozí zapnuto)
@@ -1255,6 +1257,27 @@ export class StorageManager {
         if (merged.ruler.mode === "underline") {
           merged.ruler.mode = "highlight";
         }
+        if (merged.ruler.mode === "focus") {
+          merged.ruler.style = "off";
+          merged.ruler.focusMode = "both";
+          merged.ruler.mode = "off";
+        } else {
+          if (parsed.ruler && parsed.ruler.style !== undefined) {
+            merged.ruler.style = parsed.ruler.style;
+          } else if (parsed.ruler && parsed.ruler.mode !== undefined) {
+            merged.ruler.style = parsed.ruler.mode;
+          }
+          if (parsed.ruler && parsed.ruler.focusMode !== undefined) {
+            merged.ruler.focusMode = parsed.ruler.focusMode;
+          }
+        }
+        if (!["off", "highlight", "bottom-cover"].includes(merged.ruler.style)) {
+          merged.ruler.style = "highlight";
+        }
+        if (!["off", "up", "down", "both"].includes(merged.ruler.focusMode)) {
+          merged.ruler.focusMode = "off";
+        }
+        merged.ruler.mode = merged.ruler.style;
         if (merged.ruler.followMode !== "keyboard") {
           merged.ruler.followMode = "mouse";
         }

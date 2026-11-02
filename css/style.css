@@ -2075,6 +2075,19 @@ body.settings-sheet-open .drawer-backdrop {
   border-radius: 4px !important;
 }
 
+.reading-ruler.mode-off,
+body.is-pdf-mode .reading-ruler.mode-off,
+.reading-ruler.pdf-ruler-overlay.mode-off {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 .reading-ruler.word-tracking-mode.mode-focus,
 .reading-ruler.mode-focus,
 .reading-ruler.mode-focus.word-tracking-mode,

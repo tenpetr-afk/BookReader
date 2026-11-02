@@ -40,7 +40,9 @@ export class ReadingRuler {
 
     // Nastavení
     this.enabled = false;
-    this.mode = "highlight"; // "highlight" | "focus" | "underline" | "bottom-cover"
+    this.style = "highlight"; // "off" | "highlight" | "bottom-cover"
+    this.mode = "highlight"; // mirrors style for backward compatibility
+    this.focusMode = "off"; // "off" | "up" | "down" | "both"
     this.rulerPadding = RULER_PADDING;
     this.manualHeight = 48; // px (při vypnutém autoHeight)
     this.height = 36; // aktuální efektivní výška
@@ -2589,13 +2591,14 @@ export class ReadingRuler {
     this.rulerEl.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
 
     // Optimalizovaná aktualizace dimming masek v režimu Focus výhradně přes transform (pro EPUB i PDF)
-    if (this.mode === "focus") {
+    const isFocusActive = this.enabled && this.focusMode && this.focusMode !== "off";
+    if (isFocusActive) {
       const vh = vHeight || window.innerHeight;
-      const rh = Math.round(h);
-      if (this.maskTopEl) {
+      const rh = (this.style === "bottom-cover" || this.mode === "bottom-cover") ? 0 : Math.round(h);
+      if (this.maskTopEl && this.maskTopEl.style.display !== "none") {
         this.maskTopEl.style.transform = `translate3d(0, ${Math.round(ry - vh)}px, 0)`;
       }
-      if (this.maskBottomEl) {
+      if (this.maskBottomEl && this.maskBottomEl.style.display !== "none") {
         this.maskBottomEl.style.transform = `translate3d(0, ${Math.round(ry + rh)}px, 0)`;
       }
       if (this.maskLeftEl && this.maskLeftEl.style.display !== "none") {
@@ -2604,10 +2607,6 @@ export class ReadingRuler {
       if (this.maskRightEl && this.maskRightEl.style.display !== "none") {
         const rRight = Math.round(this._slitRight || window.innerWidth);
         this.maskRightEl.style.transform = `translate3d(${rRight}px, ${ry}px, 0)`;
-      }
-    } else if (this.mode === "bottom-cover") {
-      if (this.maskBottomEl) {
-        this.maskBottomEl.style.transform = `translate3d(0, ${ry}px, 0)`;
       }
     }
   }
@@ -5071,6 +5070,7 @@ export class ReadingRuler {
       this._lastComputedLineGeom &&
       this._lastComputedLineGeom.index === clampedIdx &&
       this._lastComputedLineGeom.mode === this.mode &&
+      this._lastComputedLineGeom.style === (this.style || this.mode) &&
       this._lastComputedLineGeom.autoHeight === currentAutoHeight &&
       this._lastComputedLineGeom.manualHeight === currentManualHeight &&
       this._lastComputedLineGeom.linesRef === this.cachedLines
@@ -5192,6 +5192,9 @@ export class ReadingRuler {
       const mediaGeom = {
         height,
         targetY,
+        lineTop: Math.round(mediaT - padding),
+        lineBottom: targetY + height,
+        lineHeight: height,
         left: targetLeft,
         width: targetWidth,
         columnLeft: targetLeft,
@@ -5205,6 +5208,7 @@ export class ReadingRuler {
       this._lastComputedLineGeom = {
         index: clampedIdx,
         mode: this.mode,
+        style: this.style || this.mode,
         autoHeight: currentAutoHeight,
         manualHeight: currentManualHeight,
         linesRef: this.cachedLines,
@@ -5216,110 +5220,106 @@ export class ReadingRuler {
     let height;
     let targetY;
 
-    if (this.mode === "bottom-cover") {
-      let hasNext = false;
-      if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
-        const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-        const nextSlot = (nextLine.element || nextLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-        if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
-          if (Number.isFinite(nextLine.top) && nextLine.top > (line.top ?? line.centerY)) {
-            hasNext = true;
+    // Vždy spočítáme referenční spodní okraj (bottom-cover linka / clona)
+    let hasNext = false;
+    if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
+      const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+      const nextSlot = (nextLine.element || nextLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
+      if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
+        if (Number.isFinite(nextLine.top) && nextLine.top > (line.top ?? line.centerY)) {
+          hasNext = true;
+        }
+      }
+    }
+    const roundedFs = Math.round(line.fontSize || 16);
+    const glyphH = this.glyphHeightByFontSize?.get(roundedFs) || line.height || 18;
+    const curBottom = line.centerY + glyphH / 2;
+
+    const isPdfLine = !!(this.isPdfMode || line.isPdfLine);
+    const effectiveCoverOffset = isPdfLine ? COVER_LINE_OFFSET : 1;
+
+    let coverTargetY = Math.round(curBottom + effectiveCoverOffset);
+    if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+      const clearancePx = isPdfLine ? 1 : 2;
+      const maxAllowedY = Math.floor(nextLine.top - clearancePx);
+      if (coverTargetY > maxAllowedY) {
+        coverTargetY = Math.max(Math.round(curBottom), maxAllowedY);
+      }
+    }
+
+    // Spočítáme horní okraj a výšku řádku pro zvýrazňovač / zaostření
+    const isAuto = this.isPdfMode ? this.pdfAutoHeight : this.autoHeight;
+    let computedTopY;
+    let computedLineH;
+    if (isAuto) {
+      const rFs = Math.round(line.fontSize || 0);
+      let h = (this.lineHeightByFontSize && rFs && (
+          this.lineHeightByFontSize.get(rFs) ||
+          this.lineHeightByFontSize.get(rFs - 1) ||
+          this.lineHeightByFontSize.get(rFs + 1)
+        ))
+        || this.uniformLineHeight
+        || (this.isPdfMode ? this.pdfStandardLineHeight : null)
+        || this.height
+        || (this.isPdfMode ? 20 : 28);
+
+      if (this.isPdfMode || line.isPdfLine) {
+        if (Number.isFinite(line.height) && line.height > 0) {
+          const maxCompactH = Math.round(line.height + 4);
+          if (h > maxCompactH + 1) {
+            h = maxCompactH;
           }
         }
-      }
-      const roundedFs = Math.round(line.fontSize || 16);
-      const glyphH = this.glyphHeightByFontSize?.get(roundedFs) || line.height || 18;
-      const curBottom = line.centerY + glyphH / 2;
 
-      // In EPUB, Range.getClientRects() bottom (curBottom) already sits at the bottom of the lowest
-      // descenders (p, j, g, y), ~4px below the alphabetic baseline. Adding 1px places the 2px guide
-      // cleanly 1–2px below the lowest descender pixel while keeping 4–5px clearance above the next line.
-      const isPdfLine = !!(this.isPdfMode || line.isPdfLine);
-      const effectiveCoverOffset = isPdfLine ? COVER_LINE_OFFSET : 1;
-
-      let coverTargetY = Math.round(curBottom + effectiveCoverOffset);
-      if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-        const clearancePx = isPdfLine ? 1 : 2;
-        const maxAllowedY = Math.floor(nextLine.top - clearancePx);
-        if (coverTargetY > maxAllowedY) {
-          coverTargetY = Math.max(Math.round(curBottom), maxAllowedY);
+        const minLineH = Math.max(8, Math.round(line.height || 10));
+        if (prevLine && Number.isFinite(prevLine.bottom) && prevLine.bottom < line.centerY) {
+          const symTopH = Math.floor((line.centerY - prevLine.bottom - 0.5) * 2);
+          if (symTopH < h) {
+            h = Math.max(minLineH, symTopH);
+          }
         }
-      }
+        if (nextLine && Number.isFinite(nextLine.top) && nextLine.top > line.centerY) {
+          const symBottomH = Math.floor((nextLine.top - line.centerY - 0.5) * 2);
+          if (symBottomH < h) {
+            h = Math.max(minLineH, symBottomH);
+          }
+        }
 
+        let topEdge = Math.round(line.centerY - h / 2);
+        let bottomEdge = topEdge + h;
+
+        if (prevLine && Number.isFinite(prevLine.bottom) && topEdge < prevLine.bottom) {
+          topEdge = Math.ceil(prevLine.bottom);
+        }
+        if (nextLine && Number.isFinite(nextLine.top) && bottomEdge > nextLine.top) {
+          bottomEdge = Math.floor(nextLine.top);
+        }
+        if (bottomEdge > topEdge) {
+          computedLineH = bottomEdge - topEdge;
+          computedTopY = topEdge;
+        } else {
+          computedLineH = h;
+          computedTopY = Math.round(line.centerY - h / 2);
+        }
+      } else {
+        computedLineH = h;
+        const visualCenterY = line.centerY - 1;
+        computedTopY = Math.round(visualCenterY - h / 2);
+      }
+    } else {
+      const h = this.isPdfMode
+        ? (Number.isFinite(this.pdfRulerHeight) ? this.pdfRulerHeight : 32)
+        : (this.manualHeight || 36);
+      computedTopY = Math.round(line.centerY - h / 2);
+      computedLineH = h;
+    }
+
+    if (this.style === "bottom-cover" || this.mode === "bottom-cover") {
       targetY = coverTargetY;
       height = 2;
     } else {
-      const isAuto = this.isPdfMode ? this.pdfAutoHeight : this.autoHeight;
-      if (isAuto) {
-        const roundedFs = Math.round(line.fontSize || 0);
-        let h = (this.lineHeightByFontSize && roundedFs && (
-            this.lineHeightByFontSize.get(roundedFs) ||
-            this.lineHeightByFontSize.get(roundedFs - 1) ||
-            this.lineHeightByFontSize.get(roundedFs + 1)
-          ))
-          || this.uniformLineHeight
-          || (this.isPdfMode ? this.pdfStandardLineHeight : null)
-          || this.height
-          || (this.isPdfMode ? 20 : 28);
-
-        if (this.isPdfMode || line.isPdfLine) {
-          // PDF Mode: strictly wrap current line of text with minimal uniform padding;
-          // never balloon on boundary/standalone lines and never shift into empty margins.
-          if (Number.isFinite(line.height) && line.height > 0) {
-            const maxCompactH = Math.round(line.height + 4);
-            if (h > maxCompactH + 1) {
-              h = maxCompactH;
-            }
-          }
-
-          // Symmetric collision clearance against immediately adjacent lines (applies equally
-          // to first, middle, and last lines of a tight block without shifting centerY)
-          const minLineH = Math.max(8, Math.round(line.height || 10));
-          if (prevLine && Number.isFinite(prevLine.bottom) && prevLine.bottom < line.centerY) {
-            const symTopH = Math.floor((line.centerY - prevLine.bottom - 0.5) * 2);
-            if (symTopH < h) {
-              h = Math.max(minLineH, symTopH);
-            }
-          }
-          if (nextLine && Number.isFinite(nextLine.top) && nextLine.top > line.centerY) {
-            const symBottomH = Math.floor((nextLine.top - line.centerY - 0.5) * 2);
-            if (symBottomH < h) {
-              h = Math.max(minLineH, symBottomH);
-            }
-          }
-
-          let topEdge = Math.round(line.centerY - h / 2);
-          let bottomEdge = topEdge + h;
-
-          // Edge-only non-overlap guard: clip only the colliding edge, never push the opposite edge into whitespace
-          if (prevLine && Number.isFinite(prevLine.bottom) && topEdge < prevLine.bottom) {
-            topEdge = Math.ceil(prevLine.bottom);
-          }
-          if (nextLine && Number.isFinite(nextLine.top) && bottomEdge > nextLine.top) {
-            bottomEdge = Math.floor(nextLine.top);
-          }
-          if (bottomEdge > topEdge) {
-            height = bottomEdge - topEdge;
-            targetY = topEdge;
-          } else {
-            height = h;
-            targetY = Math.round(line.centerY - h / 2);
-          }
-        } else {
-          // EPUB Mode: keep h 100% constant for a given fontSize across all lines,
-          // centered on the visual ink center (line.centerY - 1px, since WebKit inline boxes
-          // include ~2px of empty leading above uppercase diacritics at rect.top).
-          height = h;
-          const visualCenterY = line.centerY - 1;
-          targetY = Math.round(visualCenterY - h / 2);
-        }
-      } else {
-        const h = this.isPdfMode
-          ? (Number.isFinite(this.pdfRulerHeight) ? this.pdfRulerHeight : 32)
-          : (this.manualHeight || 36);
-        targetY = Math.round(line.centerY - h / 2);
-        height = h;
-      }
+      targetY = computedTopY;
+      height = computedLineH;
     }
 
     let left = line.columnLeft ?? line.left ?? (line.columnIndex === 1 ? this.column1Left : this.column0Left) ?? this.textBlockLeft ?? 0;
@@ -5381,6 +5381,9 @@ export class ReadingRuler {
     const geom = {
       height,
       targetY,
+      lineTop: computedTopY,
+      lineBottom: coverTargetY,
+      lineHeight: computedLineH,
       left,
       width,
       columnLeft: left,
@@ -5394,6 +5397,7 @@ export class ReadingRuler {
     this._lastComputedLineGeom = {
       index: clampedIdx,
       mode: this.mode,
+      style: this.style || this.mode,
       autoHeight: currentAutoHeight,
       manualHeight: currentManualHeight,
       linesRef: this.cachedLines,
@@ -7474,16 +7478,11 @@ export class ReadingRuler {
     const allLines = document.querySelectorAll(".reading-line, .line-focused, .line-dimmed");
     allLines.forEach(l => l.classList.remove("line-focused", "line-dimmed", "active-focus"));
 
-    const hasLines = this.isPdfMode || (this.cachedLines && this.cachedLines.length > 0);
-    const isBottomCover = this.mode === "bottom-cover" && this.enabled && !this.isPageTransitioning && hasLines;
-    const isTwoColOrSpread = (!this.isVerticalMode() && this.isTwoCol) || (!this.isVerticalMode() && this.isSpreadActive && this.isSpreadActive());
-    const masks = (isBottomCover && isTwoColOrSpread)
-      ? [this.maskTopEl, this.maskLeftEl, this.maskRightEl]
-      : [this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl, this.maskInactiveSpreadEl];
+    const masks = [this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl, this.maskInactiveSpreadEl];
     for (const m of masks) {
       if (m) {
         m.style.display = "none";
-        m.classList.remove("is-visible", "pdf-overlay-mask");
+        m.classList.remove("is-visible", "pdf-overlay-mask", "mode-bottom-cover");
         m.classList.add("is-hidden");
         m.style.removeProperty("background-color");
         m.style.removeProperty("opacity");
@@ -7538,14 +7537,25 @@ export class ReadingRuler {
       return;
     }
 
-    if (this.isPageTransitioning) {
-      this.rulerEl.classList.add("is-page-transitioning");
-      this.rulerEl.style.opacity = "0";
-      this.rulerEl.style.visibility = "hidden";
+    const activeStyle = this.style || this.mode || "highlight";
+    const isStyleOff = activeStyle === "off";
+
+    if (this.isPageTransitioning || isStyleOff) {
+      this.rulerEl.classList.remove("is-visible");
+      this.rulerEl.classList.add("is-hidden");
+      if (isStyleOff) {
+        this.rulerEl.classList.add("mode-off");
+      }
+      if (this.isPageTransitioning) {
+        this.rulerEl.classList.add("is-page-transitioning");
+      }
+      this.rulerEl.style.setProperty("display", "none", "important");
+      this.rulerEl.style.setProperty("opacity", "0", "important");
+      this.rulerEl.style.setProperty("visibility", "hidden", "important");
       if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
     } else {
+      this.rulerEl.classList.remove("is-hidden", "is-page-transitioning", "mode-off");
       this.rulerEl.classList.add("is-visible");
-      this.rulerEl.classList.remove("is-hidden", "is-page-transitioning");
       if (this.rulerEl.style.display === "none") {
         this.rulerEl.style.display = "block";
       }
@@ -7603,65 +7613,25 @@ export class ReadingRuler {
         if (!Number.isFinite(this.currentY)) {
           this.currentY = vScrollTop + Math.round(window.innerHeight * 0.3);
         }
-        if (this.mode === "bottom-cover") {
+        if (this.style === "bottom-cover" || this.mode === "bottom-cover") {
           this.currentY = Math.max(0, Math.min(maxScrollHeight, this.currentY));
         } else {
           this.currentY = Math.max(0, Math.min(maxScrollHeight - h, this.currentY));
         }
 
         const screenY = Math.round(this.currentY - vScrollTop);
+        const colorHexMap = {
+          amber: "#f59e0b",
+          cyan: "#06b6d4",
+          emerald: "#10b981",
+          lavender: "#a855f7",
+          slate: "#64748b"
+        };
+        this._rulerLeft = Math.round(targetLeft);
+        this._rulerWidth = Math.round(targetWidth);
 
-        if (this.mode === "bottom-cover" && this.enabled && !this.isPageTransitioning) {
-          const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.75;
-          const colorHexMap = {
-            amber: "#f59e0b",
-            cyan: "#06b6d4",
-            emerald: "#10b981",
-            lavender: "#a855f7",
-            slate: "#64748b"
-          };
-
-          if (this.maskTopEl) {
-            this.maskTopEl.style.display = "none";
-            this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible");
-            this.maskTopEl.classList.add("is-hidden");
-          }
-          if (this.maskLeftEl) {
-            this.maskLeftEl.style.display = "none";
-            this.maskLeftEl.classList.remove("pdf-overlay-mask", "is-visible");
-            this.maskLeftEl.classList.add("is-hidden");
-          }
-          if (this.maskRightEl) {
-            this.maskRightEl.style.display = "none";
-            this.maskRightEl.classList.remove("pdf-overlay-mask", "is-visible");
-            this.maskRightEl.classList.add("is-hidden");
-          }
-          if (this.maskInactiveSpreadEl) {
-            this.maskInactiveSpreadEl.style.display = "none";
-            this.maskInactiveSpreadEl.classList.remove("pdf-overlay-mask", "is-visible");
-            this.maskInactiveSpreadEl.classList.add("is-hidden");
-          }
-
-          this._rulerLeft = Math.round(targetLeft);
-          this._rulerWidth = Math.round(targetWidth);
-
-          if (this.maskBottomEl) {
-            this.maskBottomEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover is-visible";
-            this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-hidden");
-            this.maskBottomEl.style.setProperty("display", "block", "important");
-            this.maskBottomEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
-            this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
-            this.maskBottomEl.style.setProperty("z-index", "15", "important");
-            this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
-            this.maskBottomEl.style.top = "0px";
-            this.maskBottomEl.style.left = "0px";
-            this.maskBottomEl.style.right = "auto";
-            this.maskBottomEl.style.width = "100%";
-            this.maskBottomEl.style.maxWidth = "none";
-            this.maskBottomEl.style.height = `${Math.max(window.innerHeight * 2, 2000)}px`;
-            this.maskBottomEl.style.transform = `translate3d(0, ${Math.round(screenY)}px, 0)`;
-          }
-
+        // 1. Vizuální indikátor pravítka ve vertikálním PDF módu
+        if (this.style === "bottom-cover") {
           this.rulerEl.style.top = "0px";
           this.rulerEl.style.left = "0px";
           this.rulerEl.style.right = "auto";
@@ -7670,117 +7640,144 @@ export class ReadingRuler {
           this.rulerEl.style.height = "2px";
           this.rulerEl.style.transform = `translate3d(${Math.round(targetLeft)}px, ${Math.round(screenY)}px, 0)`;
           this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
-          return;
+          this.rulerEl.style.opacity = "1";
+          this.rulerEl.style.visibility = "visible";
+          this.rulerEl.style.display = "block";
+        } else if (this.style === "off" || this.mode === "off") {
+          this.rulerEl.classList.remove("is-visible");
+          this.rulerEl.classList.add("is-hidden", "mode-off");
+          this.rulerEl.style.setProperty("display", "none", "important");
+          this.rulerEl.style.setProperty("opacity", "0", "important");
+          this.rulerEl.style.setProperty("visibility", "hidden", "important");
+          this.rulerEl.style.backgroundColor = "transparent";
+          this.rulerEl.style.border = "none";
+          this.rulerEl.style.outline = "none";
+          this.rulerEl.style.boxShadow = "none";
+          if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+        } else {
+          // Highlight
+          this.rulerEl.style.top = "0px";
+          this.rulerEl.style.left = "0px";
+          this.rulerEl.style.right = "auto";
+          this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
+          this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
+          this.rulerEl.style.height = `${h}px`;
+          this.rulerEl.style.transform = `translate3d(${Math.round(targetLeft)}px, ${screenY}px, 0)`;
+          this.rulerEl.style.backgroundColor = "";
+          this.rulerEl.style.border = "none";
+          this.rulerEl.style.outline = "none";
+          this.rulerEl.style.boxShadow = "none";
+          this.rulerEl.style.opacity = "1";
+          this.rulerEl.style.visibility = "visible";
+          this.rulerEl.style.display = "block";
         }
 
-        this.rulerEl.style.top = "0px";
-        this.rulerEl.style.left = "0px";
-        this.rulerEl.style.right = "auto";
-        this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
-        this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
-        this.rulerEl.style.transform = `translate3d(${Math.round(targetLeft)}px, ${screenY}px, 0)`;
-        this.rulerEl.style.backgroundColor = "";
-        this.rulerEl.style.border = "none";
-        this.rulerEl.style.outline = "none";
-        this.rulerEl.style.boxShadow = "none";
-
-        // Dimming mask ve vertikálním PDF módu
-        if (this.mode === "focus" && this.enabled && !this.isPageTransitioning) {
+        // 2. Dimming masky ve vertikálním PDF módu dle focusMode
+        const isPdfFocus = this.enabled && !this.isPageTransitioning && this.focusMode && this.focusMode !== "off";
+        if (isPdfFocus) {
           const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.65;
           const themeBg = "var(--bg-theme, var(--color-bg, #fbf0d9))";
           const vh = window.innerHeight;
           const roundH = Math.round(h);
           const roundScreenY = Math.round(screenY);
-          const bottomBandTop = Math.round(roundScreenY + roundH);
+          const topBandBottom = roundScreenY;
+          const bottomBandTop = this.style === "bottom-cover" ? roundScreenY : Math.round(roundScreenY + roundH);
 
-          const slitLeft = Math.max(0, Math.round(targetLeft));
-          const slitRight = Math.min(window.innerWidth, Math.round(targetLeft + targetWidth));
-          this._rulerLeft = Math.round(targetLeft);
-          this._rulerWidth = Math.round(targetWidth);
-          this._slitLeft = slitLeft;
-          this._slitRight = slitRight;
-
-          if (this.maskTopEl) {
-            this.maskTopEl.className = "ruler-mask ruler-mask-top is-visible";
-            this.maskTopEl.classList.remove("pdf-overlay-mask");
-            this.maskTopEl.style.setProperty("display", "block", "important");
-            this.maskTopEl.style.setProperty("background-color", themeBg, "important");
-            this.maskTopEl.style.setProperty("opacity", String(dimOpacity), "important");
-            this.maskTopEl.style.top = "0px";
-            this.maskTopEl.style.left = "0px";
-            this.maskTopEl.style.right = "auto";
-            this.maskTopEl.style.maxWidth = "none";
-            this.maskTopEl.style.width = "100%";
-            this.maskTopEl.style.height = `${vh}px`;
-            this.maskTopEl.style.transform = `translate3d(0, ${Math.round(roundScreenY - vh)}px, 0)`;
-          }
-
-          if (this.maskBottomEl) {
-            this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-visible";
-            this.maskBottomEl.classList.remove("pdf-overlay-mask", "mode-bottom-cover");
-            this.maskBottomEl.style.setProperty("display", "block", "important");
-            this.maskBottomEl.style.setProperty("background-color", themeBg, "important");
-            this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
-            this.maskBottomEl.style.top = "0px";
-            this.maskBottomEl.style.left = "0px";
-            this.maskBottomEl.style.right = "auto";
-            this.maskBottomEl.style.maxWidth = "none";
-            this.maskBottomEl.style.width = "100%";
-            this.maskBottomEl.style.height = `${vh}px`;
-            this.maskBottomEl.style.transform = `translate3d(0, ${bottomBandTop}px, 0)`;
-          }
-
-          const leftBandWidth = Math.max(0, slitLeft);
-          if (leftBandWidth > 0 && this.maskLeftEl) {
-            this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
-            this.maskLeftEl.classList.remove("pdf-overlay-mask");
-            this.maskLeftEl.style.setProperty("display", "block", "important");
-            this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
-            this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
-            this.maskLeftEl.style.top = "0px";
-            this.maskLeftEl.style.left = "0px";
-            this.maskLeftEl.style.right = "auto";
-            this.maskLeftEl.style.maxWidth = "none";
-            this.maskLeftEl.style.width = `${leftBandWidth}px`;
-            this.maskLeftEl.style.height = `${roundH}px`;
-            this.maskLeftEl.style.transform = `translate3d(0, ${roundScreenY}px, 0)`;
-          } else if (this.maskLeftEl) {
-            this.maskLeftEl.style.display = "none";
-            this.maskLeftEl.classList.remove("is-visible");
-            this.maskLeftEl.classList.add("is-hidden");
-          }
-
-          const rightBandLeft = slitRight;
-          const rightBandWidth = Math.max(0, window.innerWidth - rightBandLeft);
-          if (rightBandWidth > 0 && this.maskRightEl) {
-            this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
-            this.maskRightEl.classList.remove("pdf-overlay-mask");
-            this.maskRightEl.style.setProperty("display", "block", "important");
-            this.maskRightEl.style.setProperty("background-color", themeBg, "important");
-            this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
-            this.maskRightEl.style.top = "0px";
-            this.maskRightEl.style.left = "0px";
-            this.maskRightEl.style.right = "auto";
-            this.maskRightEl.style.maxWidth = "none";
-            this.maskRightEl.style.width = `${rightBandWidth}px`;
-            this.maskRightEl.style.height = `${roundH}px`;
-            this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${roundScreenY}px, 0)`;
-          } else if (this.maskRightEl) {
-            this.maskRightEl.style.display = "none";
-            this.maskRightEl.classList.remove("is-visible");
-            this.maskRightEl.classList.add("is-hidden");
-          }
-
-          if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
-        } else {
-          if (this.maskTopEl) {
+          if (this.focusMode === "up" || this.focusMode === "both") {
+            if (this.maskTopEl) {
+              this.maskTopEl.className = "ruler-mask ruler-mask-top is-visible";
+              this.maskTopEl.classList.remove("pdf-overlay-mask");
+              this.maskTopEl.style.setProperty("display", "block", "important");
+              this.maskTopEl.style.setProperty("background-color", themeBg, "important");
+              this.maskTopEl.style.setProperty("opacity", String(dimOpacity), "important");
+              this.maskTopEl.style.top = "0px";
+              this.maskTopEl.style.left = "0px";
+              this.maskTopEl.style.right = "auto";
+              this.maskTopEl.style.maxWidth = "none";
+              this.maskTopEl.style.width = "100%";
+              this.maskTopEl.style.height = `${vh}px`;
+              this.maskTopEl.style.transform = `translate3d(0, ${Math.round(topBandBottom - vh)}px, 0)`;
+            }
+          } else if (this.maskTopEl) {
             this.maskTopEl.style.display = "none";
             this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible");
+            this.maskTopEl.classList.add("is-hidden");
           }
-          if (this.maskBottomEl) {
+
+          if (this.focusMode === "down" || this.focusMode === "both") {
+            if (this.maskBottomEl) {
+              this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-visible";
+              this.maskBottomEl.classList.remove("pdf-overlay-mask", "mode-bottom-cover");
+              this.maskBottomEl.style.setProperty("display", "block", "important");
+              this.maskBottomEl.style.setProperty("background-color", themeBg, "important");
+              this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
+              this.maskBottomEl.style.setProperty("z-index", "15", "important");
+              this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
+              this.maskBottomEl.style.top = "0px";
+              this.maskBottomEl.style.left = "0px";
+              this.maskBottomEl.style.right = "auto";
+              this.maskBottomEl.style.maxWidth = "none";
+              this.maskBottomEl.style.width = "100%";
+              this.maskBottomEl.style.height = `${Math.max(vh * 2, 2000)}px`;
+              this.maskBottomEl.style.transform = `translate3d(0, ${bottomBandTop}px, 0)`;
+            }
+          } else if (this.maskBottomEl) {
             this.maskBottomEl.style.display = "none";
             this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-visible");
+            this.maskBottomEl.classList.add("is-hidden");
           }
+
+          if (this.focusMode === "both") {
+            const slitLeft = Math.max(0, Math.round(targetLeft));
+            const slitRight = Math.min(window.innerWidth, Math.round(targetLeft + targetWidth));
+            const leftBandWidth = Math.max(0, slitLeft);
+            if (leftBandWidth > 0 && this.maskLeftEl) {
+              this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
+              this.maskLeftEl.classList.remove("pdf-overlay-mask");
+              this.maskLeftEl.style.setProperty("display", "block", "important");
+              this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
+              this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
+              this.maskLeftEl.style.top = "0px";
+              this.maskLeftEl.style.left = "0px";
+              this.maskLeftEl.style.right = "auto";
+              this.maskLeftEl.style.maxWidth = "none";
+              this.maskLeftEl.style.width = `${leftBandWidth}px`;
+              this.maskLeftEl.style.height = `${roundH}px`;
+              this.maskLeftEl.style.transform = `translate3d(0, ${roundScreenY}px, 0)`;
+            } else if (this.maskLeftEl) {
+              this.maskLeftEl.style.display = "none";
+              this.maskLeftEl.classList.remove("is-visible");
+              this.maskLeftEl.classList.add("is-hidden");
+            }
+
+            const rightBandLeft = slitRight;
+            const rightBandWidth = Math.max(0, window.innerWidth - rightBandLeft);
+            if (rightBandWidth > 0 && this.maskRightEl) {
+              this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
+              this.maskRightEl.classList.remove("pdf-overlay-mask");
+              this.maskRightEl.style.setProperty("display", "block", "important");
+              this.maskRightEl.style.setProperty("background-color", themeBg, "important");
+              this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
+              this.maskRightEl.style.top = "0px";
+              this.maskRightEl.style.left = "0px";
+              this.maskRightEl.style.right = "auto";
+              this.maskRightEl.style.maxWidth = "none";
+              this.maskRightEl.style.width = `${rightBandWidth}px`;
+              this.maskRightEl.style.height = `${roundH}px`;
+              this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${roundScreenY}px, 0)`;
+            } else if (this.maskRightEl) {
+              this.maskRightEl.style.display = "none";
+              this.maskRightEl.classList.remove("is-visible");
+              this.maskRightEl.classList.add("is-hidden");
+            }
+          } else {
+            if (this.maskLeftEl) { this.maskLeftEl.style.display = "none"; this.maskLeftEl.classList.remove("is-visible"); this.maskLeftEl.classList.add("is-hidden"); }
+            if (this.maskRightEl) { this.maskRightEl.style.display = "none"; this.maskRightEl.classList.remove("is-visible"); this.maskRightEl.classList.add("is-hidden"); }
+          }
+          if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
+        } else {
+          if (this.maskTopEl) { this.maskTopEl.style.display = "none"; this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible"); }
+          if (this.maskBottomEl) { this.maskBottomEl.style.display = "none"; this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-visible"); }
           if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
           if (this.maskRightEl) this.maskRightEl.style.display = "none";
           if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
@@ -7828,238 +7825,215 @@ export class ReadingRuler {
 
       // Clamp currentY within bounds
       let y = Number.isFinite(this.currentY) ? Math.round(this.currentY) : Math.round(boundsTop + 50);
-      if (this.mode === "bottom-cover") {
+      if (this.style === "bottom-cover" || this.mode === "bottom-cover") {
         y = Math.max(Math.round(boundsTop), Math.min(Math.round(boundsBottom), y));
       } else {
         y = Math.max(Math.round(boundsTop), Math.min(Math.round(boundsBottom - h), y));
       }
       this.currentY = y;
 
-      if (this.mode === "bottom-cover" && this.enabled && !this.isPageTransitioning) {
-        const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.75;
-        const colorHexMap = {
-          amber: "#f59e0b",
-          cyan: "#06b6d4",
-          emerald: "#10b981",
-          lavender: "#a855f7",
-          slate: "#64748b"
-        };
+      const activeStyle = this.style || this.mode || "highlight";
+      const colorHexMap = {
+        amber: "#f59e0b",
+        cyan: "#06b6d4",
+        emerald: "#10b981",
+        lavender: "#a855f7",
+        slate: "#64748b"
+      };
 
-        if (this.maskTopEl) {
-          this.maskTopEl.style.display = "none";
-          this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible");
-          this.maskTopEl.classList.add("is-hidden");
-        }
-        if (this.maskLeftEl) {
-          this.maskLeftEl.style.display = "none";
-          this.maskLeftEl.classList.remove("pdf-overlay-mask", "is-visible");
-          this.maskLeftEl.classList.add("is-hidden");
-        }
-        if (this.maskRightEl) {
-          this.maskRightEl.style.display = "none";
-          this.maskRightEl.classList.remove("pdf-overlay-mask", "is-visible");
-          this.maskRightEl.classList.add("is-hidden");
-        }
+      // 1. Vizuální indikátor pravítka v horizontálním PDF módu
+      const rulerTop = y;
+      const rulerLeft = Math.round(targetLeft);
+      const rulerWidth = Math.round(targetWidth);
+      this._rulerLeft = rulerLeft;
+      this._rulerWidth = rulerWidth;
 
-        if (spreadInfo) {
-          const activeRect = spreadInfo.activeRect;
-          const inactiveRect = spreadInfo.inactiveRect;
-
-          // Vertikální oříznutí linky a clony podle aktivní strany
-          const screenY = Math.max(Math.round(activeRect.top), Math.min(Math.round(activeRect.bottom), Math.round(this.currentY)));
-          this.currentY = screenY;
-
-          // 1. Maska aktivní strany (maskBottomEl): kryje od screenY dolů k dolnímu okraji stránky
-          if (this.maskBottomEl) {
-            this.maskBottomEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover is-visible";
-            this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-hidden");
-            this.maskBottomEl.style.setProperty("display", "block", "important");
-            this.maskBottomEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
-            this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
-            this.maskBottomEl.style.setProperty("z-index", "15", "important");
-            this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
-            this.maskBottomEl.style.top = `${Math.round(screenY)}px`;
-            this.maskBottomEl.style.left = `${Math.round(activeRect.left)}px`;
-            this.maskBottomEl.style.transform = "none";
-            this.maskBottomEl.style.width = `${Math.round(activeRect.width)}px`;
-            this.maskBottomEl.style.height = `${Math.max(0, Math.round(activeRect.bottom - screenY))}px`;
-          }
-
-          // 2. Maska neaktivní strany (maskInactiveSpreadEl): kryje celou neaktivní stranu (100% výška od horního k dolnímu okraji)
-          if (!this.maskInactiveSpreadEl) {
-            this.maskInactiveSpreadEl = document.createElement("div");
-            this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover ruler-mask-inactive-spread is-visible";
-            this.maskInactiveSpreadEl.style.willChange = "transform";
-            this.maskInactiveSpreadEl.style.contain = "paint";
-            document.body.appendChild(this.maskInactiveSpreadEl);
-          }
-          this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover ruler-mask-inactive-spread is-visible";
-          this.maskInactiveSpreadEl.classList.remove("pdf-overlay-mask", "is-hidden");
-          this.maskInactiveSpreadEl.style.setProperty("display", "block", "important");
-          this.maskInactiveSpreadEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
-          this.maskInactiveSpreadEl.style.setProperty("opacity", String(dimOpacity), "important");
-          this.maskInactiveSpreadEl.style.setProperty("z-index", "15", "important");
-          this.maskInactiveSpreadEl.style.setProperty("pointer-events", "none", "important");
-          this.maskInactiveSpreadEl.style.top = `${Math.round(inactiveRect.top)}px`;
-          this.maskInactiveSpreadEl.style.left = `${Math.round(inactiveRect.left)}px`;
-          this.maskInactiveSpreadEl.style.transform = "none";
-          this.maskInactiveSpreadEl.style.width = `${Math.round(inactiveRect.width)}px`;
-          this.maskInactiveSpreadEl.style.height = `${Math.round(inactiveRect.height)}px`;
-
-          // 3. Vodicí linka pravítka: na hranici clony aktivní stránky (přes šířku pouze aktivní strany)
-          this.rulerEl.style.top = `${Math.round(screenY)}px`;
-          this.rulerEl.style.left = `${Math.round(activeRect.left)}px`;
-          this.rulerEl.style.right = "auto";
-          this.rulerEl.style.transform = "none";
-          this.rulerEl.style.width = `${Math.round(activeRect.width)}px`;
-          this.rulerEl.style.maxWidth = `${Math.round(activeRect.width)}px`;
-          this.rulerEl.style.height = "2px";
-          this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
-          return;
-        }
-
-        // Pokud není aktivní dvoustrana, auxiliární masku skryjeme
-        if (this.maskInactiveSpreadEl) {
-          this.maskInactiveSpreadEl.style.display = "none";
-          this.maskInactiveSpreadEl.classList.remove("is-visible");
-          this.maskInactiveSpreadEl.classList.add("is-hidden");
-        }
-
-        const screenY = y;
-        if (this.maskBottomEl) {
-          this.maskBottomEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover is-visible";
-          this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-hidden");
-          this.maskBottomEl.style.setProperty("display", "block", "important");
-          this.maskBottomEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
-          this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
-          this.maskBottomEl.style.setProperty("z-index", "15", "important");
-          this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
-          this.maskBottomEl.style.top = `${Math.round(screenY)}px`;
-          this.maskBottomEl.style.left = `${Math.round(targetLeft)}px`;
-          this.maskBottomEl.style.transform = "none";
-          this.maskBottomEl.style.width = `${Math.round(targetWidth)}px`;
-          this.maskBottomEl.style.height = `${Math.max(0, Math.round(boundsBottom - screenY))}px`;
-        }
-
-        this.rulerEl.style.top = `${Math.round(screenY)}px`;
-        this.rulerEl.style.left = `${Math.round(targetLeft)}px`;
+      if (activeStyle === "bottom-cover") {
+        this.rulerEl.style.top = "0px";
+        this.rulerEl.style.left = "0px";
         this.rulerEl.style.right = "auto";
-        this.rulerEl.style.transform = "none";
-        this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
-        this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
+        this.rulerEl.style.width = `${rulerWidth}px`;
+        this.rulerEl.style.maxWidth = `${rulerWidth}px`;
         this.rulerEl.style.height = "2px";
+        this.rulerEl.style.transform = `translate3d(${rulerLeft}px, ${rulerTop}px, 0)`;
         this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
-        return;
+        this.rulerEl.style.border = "none";
+        this.rulerEl.style.outline = "none";
+        this.rulerEl.style.boxShadow = "none";
+        this.rulerEl.style.opacity = "1";
+        this.rulerEl.style.visibility = "visible";
+        this.rulerEl.style.display = "block";
+      } else if (activeStyle === "off") {
+        this.rulerEl.classList.remove("is-visible");
+        this.rulerEl.classList.add("is-hidden", "mode-off");
+        this.rulerEl.style.setProperty("display", "none", "important");
+        this.rulerEl.style.setProperty("opacity", "0", "important");
+        this.rulerEl.style.setProperty("visibility", "hidden", "important");
+        this.rulerEl.style.backgroundColor = "transparent";
+        this.rulerEl.style.border = "none";
+        this.rulerEl.style.outline = "none";
+        this.rulerEl.style.boxShadow = "none";
+        if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+      } else {
+        // highlight
+        this.rulerEl.style.top = "0px";
+        this.rulerEl.style.left = "0px";
+        this.rulerEl.style.right = "auto";
+        this.rulerEl.style.width = `${rulerWidth}px`;
+        this.rulerEl.style.maxWidth = `${rulerWidth}px`;
+        this.rulerEl.style.height = `${Math.round(h)}px`;
+        this.rulerEl.style.transform = `translate3d(${rulerLeft}px, ${rulerTop}px, 0)`;
+        this.rulerEl.style.backgroundColor = "";
+        this.rulerEl.style.border = "none";
+        this.rulerEl.style.outline = "none";
+        this.rulerEl.style.boxShadow = "none";
+        this.rulerEl.style.opacity = "1";
+        this.rulerEl.style.visibility = "visible";
+        this.rulerEl.style.display = "block";
       }
 
-      this.rulerEl.style.top = "0px";
-      this.rulerEl.style.left = "0px";
-      this.rulerEl.style.right = "auto";
-      this.rulerEl.style.width = `${Math.round(targetWidth)}px`;
-      this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
-      this.rulerEl.style.transform = `translate3d(${Math.round(targetLeft)}px, ${y}px, 0)`;
-      this.rulerEl.style.backgroundColor = "";
-      this.rulerEl.style.border = "none";
-      this.rulerEl.style.outline = "none";
-      this.rulerEl.style.boxShadow = "none";
-
-      // Dimming mode in PDF: use top and bottom semi-transparent overlay bands leaving the active line slot un-dimmed.
-      if (this.mode === "focus" && this.enabled && !this.isPageTransitioning) {
+      // 2. Dimming masky v horizontálním PDF módu dle focusMode
+      const isPdfFocus = this.enabled && !this.isPageTransitioning && this.focusMode && this.focusMode !== "off";
+      if (isPdfFocus) {
         const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.65;
         const themeBg = "var(--bg-theme, var(--color-bg, #fbf0d9))";
         const vh = window.innerHeight;
         const roundH = Math.round(h);
         const roundY = Math.round(y);
-        const bottomBandTop = Math.round(roundY + roundH);
+        const topBandBottom = roundY;
+        const bottomBandTop = activeStyle === "bottom-cover" ? roundY : Math.round(roundY + roundH);
 
         const slitLeft = Math.max(0, Math.round(targetLeft));
         const slitRight = Math.min(window.innerWidth, Math.round(targetLeft + targetWidth));
-        this._rulerLeft = Math.round(targetLeft);
-        this._rulerWidth = Math.round(targetWidth);
         this._slitLeft = slitLeft;
         this._slitRight = slitRight;
 
-        if (this.maskTopEl) {
-          this.maskTopEl.className = "ruler-mask ruler-mask-top is-visible";
-          this.maskTopEl.classList.remove("pdf-overlay-mask");
-          this.maskTopEl.style.setProperty("display", "block", "important");
-          this.maskTopEl.style.setProperty("background-color", themeBg, "important");
-          this.maskTopEl.style.setProperty("opacity", String(dimOpacity), "important");
-          this.maskTopEl.style.top = "0px";
-          this.maskTopEl.style.left = "0px";
-          this.maskTopEl.style.right = "auto";
-          this.maskTopEl.style.maxWidth = "none";
-          this.maskTopEl.style.width = "100%";
-          this.maskTopEl.style.height = `${vh}px`;
-          this.maskTopEl.style.transform = `translate3d(0, ${Math.round(roundY - vh)}px, 0)`;
-        }
-
-        if (this.maskBottomEl) {
-          this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-visible";
-          this.maskBottomEl.classList.remove("pdf-overlay-mask", "mode-bottom-cover");
-          this.maskBottomEl.style.setProperty("display", "block", "important");
-          this.maskBottomEl.style.setProperty("background-color", themeBg, "important");
-          this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
-          this.maskBottomEl.style.top = "0px";
-          this.maskBottomEl.style.left = "0px";
-          this.maskBottomEl.style.right = "auto";
-          this.maskBottomEl.style.maxWidth = "none";
-          this.maskBottomEl.style.width = "100%";
-          this.maskBottomEl.style.height = `${vh}px`;
-          this.maskBottomEl.style.transform = `translate3d(0, ${bottomBandTop}px, 0)`;
-        }
-
-        const leftBandWidth = Math.max(0, slitLeft);
-        if (leftBandWidth > 0 && this.maskLeftEl) {
-          this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
-          this.maskLeftEl.classList.remove("pdf-overlay-mask");
-          this.maskLeftEl.style.setProperty("display", "block", "important");
-          this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
-          this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
-          this.maskLeftEl.style.top = "0px";
-          this.maskLeftEl.style.left = "0px";
-          this.maskLeftEl.style.right = "auto";
-          this.maskLeftEl.style.maxWidth = "none";
-          this.maskLeftEl.style.width = `${leftBandWidth}px`;
-          this.maskLeftEl.style.height = `${roundH}px`;
-          this.maskLeftEl.style.transform = `translate3d(0, ${roundY}px, 0)`;
-        } else if (this.maskLeftEl) {
-          this.maskLeftEl.style.display = "none";
-          this.maskLeftEl.classList.remove("is-visible");
-          this.maskLeftEl.classList.add("is-hidden");
-        }
-
-        const rightBandLeft = slitRight;
-        const rightBandWidth = Math.max(0, window.innerWidth - rightBandLeft);
-        if (rightBandWidth > 0 && this.maskRightEl) {
-          this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
-          this.maskRightEl.classList.remove("pdf-overlay-mask");
-          this.maskRightEl.style.setProperty("display", "block", "important");
-          this.maskRightEl.style.setProperty("background-color", themeBg, "important");
-          this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
-          this.maskRightEl.style.top = "0px";
-          this.maskRightEl.style.left = "0px";
-          this.maskRightEl.style.right = "auto";
-          this.maskRightEl.style.maxWidth = "none";
-          this.maskRightEl.style.width = `${rightBandWidth}px`;
-          this.maskRightEl.style.height = `${roundH}px`;
-          this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${roundY}px, 0)`;
-        } else if (this.maskRightEl) {
-          this.maskRightEl.style.display = "none";
-          this.maskRightEl.classList.remove("is-visible");
-          this.maskRightEl.classList.add("is-hidden");
-        }
-
-        if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
-      } else {
-        if (this.maskTopEl) {
+        // Horní maska: pro "up" a "both"
+        if (this.focusMode === "up" || this.focusMode === "both") {
+          if (this.maskTopEl) {
+            this.maskTopEl.className = "ruler-mask ruler-mask-top is-visible";
+            this.maskTopEl.classList.remove("pdf-overlay-mask");
+            this.maskTopEl.style.setProperty("display", "block", "important");
+            this.maskTopEl.style.setProperty("background-color", themeBg, "important");
+            this.maskTopEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskTopEl.style.top = "0px";
+            this.maskTopEl.style.left = "0px";
+            this.maskTopEl.style.right = "auto";
+            this.maskTopEl.style.maxWidth = "none";
+            this.maskTopEl.style.width = "100%";
+            this.maskTopEl.style.height = `${vh}px`;
+            this.maskTopEl.style.transform = `translate3d(0, ${Math.round(topBandBottom - vh)}px, 0)`;
+          }
+        } else if (this.maskTopEl) {
           this.maskTopEl.style.display = "none";
           this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible");
+          this.maskTopEl.classList.add("is-hidden");
         }
-        if (this.maskBottomEl) {
+
+        // Dolní maska: pro "down" a "both"
+        if (this.focusMode === "down" || this.focusMode === "both") {
+          if (this.maskBottomEl) {
+            this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-visible";
+            this.maskBottomEl.classList.remove("pdf-overlay-mask", "mode-bottom-cover");
+            this.maskBottomEl.style.setProperty("display", "block", "important");
+            this.maskBottomEl.style.setProperty("background-color", themeBg, "important");
+            this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskBottomEl.style.top = "0px";
+            this.maskBottomEl.style.left = "0px";
+            this.maskBottomEl.style.right = "auto";
+            this.maskBottomEl.style.maxWidth = "none";
+            this.maskBottomEl.style.width = "100%";
+            this.maskBottomEl.style.height = `${vh}px`;
+            this.maskBottomEl.style.transform = `translate3d(0, ${bottomBandTop}px, 0)`;
+          }
+        } else if (this.maskBottomEl) {
           this.maskBottomEl.style.display = "none";
           this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-visible");
+          this.maskBottomEl.classList.add("is-hidden");
         }
+
+        // Postranní masky: aktivní pouze v režimu "both"
+        if (this.focusMode === "both") {
+          const leftBandWidth = Math.max(0, slitLeft);
+          if (leftBandWidth > 0 && this.maskLeftEl) {
+            this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
+            this.maskLeftEl.classList.remove("pdf-overlay-mask");
+            this.maskLeftEl.style.setProperty("display", "block", "important");
+            this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
+            this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskLeftEl.style.top = "0px";
+            this.maskLeftEl.style.left = "0px";
+            this.maskLeftEl.style.right = "auto";
+            this.maskLeftEl.style.maxWidth = "none";
+            this.maskLeftEl.style.width = `${leftBandWidth}px`;
+            this.maskLeftEl.style.height = `${roundH}px`;
+            this.maskLeftEl.style.transform = `translate3d(0, ${roundY}px, 0)`;
+          } else if (this.maskLeftEl) {
+            this.maskLeftEl.style.display = "none";
+            this.maskLeftEl.classList.remove("is-visible");
+            this.maskLeftEl.classList.add("is-hidden");
+          }
+
+          const rightBandLeft = slitRight;
+          const rightBandWidth = Math.max(0, window.innerWidth - rightBandLeft);
+          if (rightBandWidth > 0 && this.maskRightEl) {
+            this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
+            this.maskRightEl.classList.remove("pdf-overlay-mask");
+            this.maskRightEl.style.setProperty("display", "block", "important");
+            this.maskRightEl.style.setProperty("background-color", themeBg, "important");
+            this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskRightEl.style.top = "0px";
+            this.maskRightEl.style.left = "0px";
+            this.maskRightEl.style.right = "auto";
+            this.maskRightEl.style.maxWidth = "none";
+            this.maskRightEl.style.width = `${rightBandWidth}px`;
+            this.maskRightEl.style.height = `${roundH}px`;
+            this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${roundY}px, 0)`;
+          } else if (this.maskRightEl) {
+            this.maskRightEl.style.display = "none";
+            this.maskRightEl.classList.remove("is-visible");
+            this.maskRightEl.classList.add("is-hidden");
+          }
+        } else {
+          if (this.maskLeftEl) { this.maskLeftEl.style.display = "none"; this.maskLeftEl.classList.remove("is-visible"); this.maskLeftEl.classList.add("is-hidden"); }
+          if (this.maskRightEl) { this.maskRightEl.style.display = "none"; this.maskRightEl.classList.remove("is-visible"); this.maskRightEl.classList.add("is-hidden"); }
+        }
+
+        // Maska neaktivní stránky při dvoustraně
+        if (spreadInfo) {
+          const isLeftPage = spreadInfo.activeRect.left < spreadInfo.inactiveRect.left;
+          const needInactiveSpread = (isLeftPage && (this.focusMode === "down" || this.focusMode === "both")) ||
+                                     (!isLeftPage && (this.focusMode === "up" || this.focusMode === "both"));
+          if (needInactiveSpread) {
+            const inactiveRect = spreadInfo.inactiveRect;
+            if (!this.maskInactiveSpreadEl) {
+              this.maskInactiveSpreadEl = document.createElement("div");
+              this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom ruler-mask-inactive-spread is-visible";
+              this.maskInactiveSpreadEl.style.willChange = "transform";
+              this.maskInactiveSpreadEl.style.contain = "paint";
+              document.body.appendChild(this.maskInactiveSpreadEl);
+            }
+            this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom ruler-mask-inactive-spread is-visible";
+            this.maskInactiveSpreadEl.classList.remove("pdf-overlay-mask", "is-hidden");
+            this.maskInactiveSpreadEl.style.setProperty("display", "block", "important");
+            this.maskInactiveSpreadEl.style.setProperty("background-color", themeBg, "important");
+            this.maskInactiveSpreadEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskInactiveSpreadEl.style.setProperty("z-index", "15", "important");
+            this.maskInactiveSpreadEl.style.setProperty("pointer-events", "none", "important");
+            this.maskInactiveSpreadEl.style.top = `${Math.round(inactiveRect.top)}px`;
+            this.maskInactiveSpreadEl.style.left = `${Math.round(inactiveRect.left)}px`;
+            this.maskInactiveSpreadEl.style.transform = "none";
+            this.maskInactiveSpreadEl.style.width = `${Math.round(inactiveRect.width)}px`;
+            this.maskInactiveSpreadEl.style.height = `${Math.round(inactiveRect.height)}px`;
+          } else if (this.maskInactiveSpreadEl) {
+            this.maskInactiveSpreadEl.style.display = "none";
+          }
+        } else if (this.maskInactiveSpreadEl) {
+          this.maskInactiveSpreadEl.style.display = "none";
+        }
+      } else {
+        if (this.maskTopEl) { this.maskTopEl.style.display = "none"; this.maskTopEl.classList.remove("pdf-overlay-mask", "is-visible"); }
+        if (this.maskBottomEl) { this.maskBottomEl.style.display = "none"; this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-visible"); }
         if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
         if (this.maskRightEl) this.maskRightEl.style.display = "none";
         if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
@@ -8109,20 +8083,20 @@ export class ReadingRuler {
         y = activeGeom.targetY;
         this.targetY = activeGeom.targetY;
         this.currentY = activeGeom.targetY;
-        if (this.mode !== "bottom-cover" && activeGeom.height) {
+        if (this.style !== "bottom-cover" && this.mode !== "bottom-cover" && activeGeom.height) {
           h = activeGeom.height;
           this.height = h;
         }
       }
     } else if (this.isPdfMode && this.activeLineIndex >= 0 && this.cachedLines && this.cachedLines.length > 0) {
       activeGeom = this.computeLineGeometry(this.activeLineIndex);
-      if (activeGeom && this.mode !== "bottom-cover" && activeGeom.height) {
+      if (activeGeom && this.style !== "bottom-cover" && this.mode !== "bottom-cover" && activeGeom.height) {
         h = activeGeom.height;
         this.height = h;
       }
     }
 
-    this.rulerEl.style.height = this.mode === "bottom-cover" ? "2px" : `${h}px`;
+    this.rulerEl.style.height = (this.style === "bottom-cover" || this.mode === "bottom-cover") ? "2px" : `${h}px`;
 
     let screenY = isVertical ? Math.round(y - vScrollTop) : y;
     if (isVertical && this.followMode === "keyboard") {
@@ -8202,14 +8176,14 @@ export class ReadingRuler {
         this.wordWaveEl.classList.remove("is-snapped");
         this.wordWaveEl.style.setProperty("transition", "none", "important");
       }
-    } else if (this.mode === "focus" || !this.wordTracking) {
+    } else if ((this.style || this.mode) === "off" || !this.wordTracking) {
       if (this.rulerEl) this.rulerEl.style.transition = "none";
     }
 
     let slitLeft = 0;
     let slitRight = window.innerWidth;
 
-    const isBottomCoverWordTracking = !this.isPdfMode && this.mode === "bottom-cover" && !!this.wordTracking;
+    const isBottomCoverWordTracking = !this.isPdfMode && (this.style === "bottom-cover" || this.mode === "bottom-cover") && !!this.wordTracking;
 
     if (this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia && !isBottomCoverWordTracking) {
       const x = Number.isFinite(this.wordLeft) ? Math.round(this.wordLeft) : 0;
@@ -8432,83 +8406,181 @@ export class ReadingRuler {
     slitLeft = Math.max(0, slitLeft);
     slitRight = Math.min(window.innerWidth, Math.max(slitLeft, slitRight));
 
+    const colorHexMap = {
+      amber: "#f59e0b",
+      cyan: "#06b6d4",
+      emerald: "#10b981",
+      lavender: "#a855f7",
+      slate: "#64748b"
+    };
+
+    const geom = activeGeom || this.computeLineGeometry(this.activeLineIndex);
+    const docLineTop = (geom && Number.isFinite(geom.lineTop)) ? geom.lineTop : (activeStyle === "bottom-cover" ? (y - h) : y);
+    const docLineBottom = (geom && Number.isFinite(geom.lineBottom)) ? geom.lineBottom : (activeStyle === "bottom-cover" ? y : (y + h));
+    const lineScreenTop = isVertical ? Math.round(docLineTop - vScrollTop) : Math.round(docLineTop);
+    const lineScreenBottom = isVertical ? Math.round(docLineBottom - vScrollTop) : Math.round(docLineBottom);
+    const lineH = Math.max(1, lineScreenBottom - lineScreenTop);
+
+    // Vizuální indikátor pravítka dle activeStyle (off / highlight / bottom-cover)
+    this.rulerEl.style.setProperty("transition", "none", "important");
+    if (activeStyle === "bottom-cover") {
+      this.rulerEl.style.top = "0px";
+      this.rulerEl.style.left = "0px";
+      this.rulerEl.style.right = "auto";
+      this.rulerEl.style.width = `${Math.round(this._rulerWidth || colWidth || 100)}px`;
+      this.rulerEl.style.maxWidth = `${Math.round(this._rulerWidth || colWidth || 100)}px`;
+      this.rulerEl.style.height = "2px";
+      this.rulerEl.style.transform = `translate3d(${Math.round(this._rulerLeft != null ? this._rulerLeft : (colLeft || 0))}px, ${lineScreenBottom}px, 0)`;
+      this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+      this.rulerEl.style.border = "none";
+      this.rulerEl.style.outline = "none";
+      this.rulerEl.style.boxShadow = "none";
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
+      this.rulerEl.style.display = "block";
+    } else if (activeStyle === "off") {
+      this.rulerEl.classList.remove("is-visible");
+      this.rulerEl.classList.add("is-hidden", "mode-off");
+      this.rulerEl.style.setProperty("display", "none", "important");
+      this.rulerEl.style.setProperty("opacity", "0", "important");
+      this.rulerEl.style.setProperty("visibility", "hidden", "important");
+      this.rulerEl.style.backgroundColor = "transparent";
+      this.rulerEl.style.border = "none";
+      this.rulerEl.style.outline = "none";
+      this.rulerEl.style.boxShadow = "none";
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+    } else {
+      // highlight
+      this.rulerEl.style.top = "0px";
+      this.rulerEl.style.left = "0px";
+      this.rulerEl.style.right = "auto";
+      this.rulerEl.style.width = `${Math.round(this._rulerWidth || colWidth || 100)}px`;
+      this.rulerEl.style.maxWidth = `${Math.round(this._rulerWidth || colWidth || 100)}px`;
+      this.rulerEl.style.height = `${lineH}px`;
+      this.rulerEl.style.transform = `translate3d(${Math.round(this._rulerLeft != null ? this._rulerLeft : (colLeft || 0))}px, ${lineScreenTop}px, 0)`;
+      this.rulerEl.style.backgroundColor = "";
+      this.rulerEl.style.border = "none";
+      this.rulerEl.style.outline = "none";
+      this.rulerEl.style.boxShadow = "none";
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
+      this.rulerEl.style.display = "block";
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+    }
+
     const stage = this.getStageElement();
-    if (this.mode === "focus" && this.enabled) {
+    const isFocus = this.enabled && !this.isPageTransitioning && this.focusMode && this.focusMode !== "off" && (this.isPdfMode || this.cachedLines.length > 0) && currentLine;
+
+    if (isFocus) {
       this._focusMaskDirty = true;
-      if (!isCurrentMedia) {
-        this.rulerEl.style.border = "none";
-        this.rulerEl.style.outline = "none";
-        this.rulerEl.style.boxShadow = "none";
-      }
-      if (this.cachedLines.length === 0 || this.isPageTransitioning || !currentLine) {
+      if (this.cachedLines.length === 0) {
         this.clearFocusTextMask(stage);
         return;
       }
 
       const vh = window.innerHeight;
-      const roundScreenY = Math.round(screenY);
-      const roundH = Math.round(h);
-      this._slitRight = slitRight;
-
       const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.65;
       const themeBg = "var(--bg-theme, var(--color-bg, #fbf0d9))";
 
-      // 1. Horní maska: pokrývá prostor od horního okraje obrazovky dolů k screenY
-      if (this.maskTopEl) {
-        this.maskTopEl.className = "ruler-mask ruler-mask-top is-visible";
-        this.maskTopEl.style.setProperty("display", "block", "important");
-        if (this.isPdfMode) {
+      const isSpread = !isVertical && (useFastCachedGeom ? !!this._cachedIsSpread : this.isSpreadActive());
+      const spreadInfo = isSpread ? (useFastCachedGeom ? this._getCachedSpreadInfoForLine(currentLine) : this.getActiveSpreadInfo(currentLine)) : null;
+      const isTwoCol = !isVertical && this.isTwoCol;
+
+      let coverLeft = 0;
+      let coverWidth = window.innerWidth;
+
+      if (spreadInfo) {
+        const activeRect = spreadInfo.activeRect;
+        coverLeft = Math.round(activeRect.left);
+        coverWidth = Math.round(activeRect.width);
+      } else if (isTwoCol) {
+        const sRect = (useFastCachedGeom && this._cachedStageRect)
+          ? this._cachedStageRect
+          : (stage || this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.();
+        if (sRect && sRect.width > 50) {
+          const singleColW = Math.max(80, Math.floor(((this.stageWidth || sRect.width || window.innerWidth) - (this.colGap || 40)) / 2));
+          const c0Left = this.column0Left ?? Math.max(0, Math.round(sRect.left));
+          const c0Width = this.column0Width ?? singleColW;
+          const c1Left = this.column1Left ?? Math.round(c0Left + singleColW + (this.colGap || 40));
+          const c1Width = this.column1Width ?? singleColW;
+          const activeCol = (currentLine && currentLine.columnIndex === 1) ? 1 : 0;
+          coverLeft = activeCol === 1 ? c1Left : c0Left;
+          coverWidth = activeCol === 1 ? c1Width : c0Width;
+        }
+      } else if (!isVertical && this.isPdfMode) {
+        const cachedPdfRect = currentLine?.canvasRect || this._cachedCanvasRect;
+        if (cachedPdfRect && cachedPdfRect.width > 50) {
+          coverLeft = Math.round(cachedPdfRect.left);
+          coverWidth = Math.round(cachedPdfRect.width);
+        }
+      }
+
+      const useFullWidth = isVertical || (!spreadInfo && !isTwoCol && !this.isPdfMode);
+      const maskLeft = useFullWidth ? 0 : coverLeft;
+      const maskWidth = useFullWidth ? "100%" : `${coverWidth}px`;
+
+      // 1. Horní maska: pro "up" a "both"
+      if (this.focusMode === "up" || this.focusMode === "both") {
+        if (this.maskTopEl) {
+          this.maskTopEl.className = "ruler-mask ruler-mask-top is-visible";
+          this.maskTopEl.classList.remove("pdf-overlay-mask");
+          this.maskTopEl.style.setProperty("display", "block", "important");
           this.maskTopEl.style.setProperty("background-color", themeBg, "important");
           this.maskTopEl.style.setProperty("opacity", String(dimOpacity), "important");
+          this.maskTopEl.style.top = "0px";
+          this.maskTopEl.style.left = "0px";
+          this.maskTopEl.style.right = "auto";
+          this.maskTopEl.style.maxWidth = "none";
+          this.maskTopEl.style.width = maskWidth;
+          this.maskTopEl.style.height = `${vh}px`;
+          this.maskTopEl.style.transform = `translate3d(${maskLeft}px, ${Math.round(lineScreenTop - vh)}px, 0)`;
         }
-        this.maskTopEl.style.top = "0px";
-        this.maskTopEl.style.left = "0px";
-        this.maskTopEl.style.right = "auto";
-        this.maskTopEl.style.maxWidth = "none";
-        this.maskTopEl.style.width = "100%";
-        this.maskTopEl.style.height = `${vh}px`;
-        this.maskTopEl.style.transform = `translate3d(0, ${Math.round(roundScreenY - vh)}px, 0)`;
+      } else if (this.maskTopEl) {
+        this.maskTopEl.style.display = "none";
+        this.maskTopEl.classList.remove("is-visible");
+        this.maskTopEl.classList.add("is-hidden");
       }
 
-      // 2. Dolní maska: pokrývá prostor od screenY + h dolů ke spodnímu okraji obrazovky
-      const bottomBandTop = Math.round(roundScreenY + roundH);
-      if (this.maskBottomEl) {
-        this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-visible";
-        this.maskBottomEl.classList.remove("mode-bottom-cover");
-        this.maskBottomEl.style.setProperty("display", "block", "important");
-        if (this.isPdfMode) {
+      // 2. Dolní maska: pro "down" a "both"
+      if (this.focusMode === "down" || this.focusMode === "both") {
+        if (this.maskBottomEl) {
+          this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-visible";
+          this.maskBottomEl.classList.remove("pdf-overlay-mask", "mode-bottom-cover");
+          this.maskBottomEl.style.setProperty("display", "block", "important");
           this.maskBottomEl.style.setProperty("background-color", themeBg, "important");
           this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
+          this.maskBottomEl.style.setProperty("z-index", "15", "important");
+          this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
+          this.maskBottomEl.style.top = "0px";
+          this.maskBottomEl.style.left = "0px";
+          this.maskBottomEl.style.right = "auto";
+          this.maskBottomEl.style.maxWidth = "none";
+          this.maskBottomEl.style.width = maskWidth;
+          this.maskBottomEl.style.height = `${Math.max(vh * 2, 2000)}px`;
+          this.maskBottomEl.style.transform = `translate3d(${maskLeft}px, ${lineScreenBottom}px, 0)`;
         }
-        this.maskBottomEl.style.top = "0px";
-        this.maskBottomEl.style.left = "0px";
-        this.maskBottomEl.style.right = "auto";
-        this.maskBottomEl.style.maxWidth = "none";
-        this.maskBottomEl.style.width = "100%";
-        this.maskBottomEl.style.height = `${vh}px`;
-        this.maskBottomEl.style.transform = `translate3d(0, ${bottomBandTop}px, 0)`;
+      } else if (this.maskBottomEl) {
+        this.maskBottomEl.style.display = "none";
+        this.maskBottomEl.classList.remove("is-visible");
+        this.maskBottomEl.classList.add("is-hidden");
       }
 
-      // 3. Postranní masky (při sledování jednotlivých slov, ve dvousloupcovém režimu, nebo v PDF režimu)
-      const isTwoCol = !isVertical && this.isTwoCol;
-      const needSideMasks = (this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia) || isTwoCol || this.isPdfMode;
-
+      // 3. Postranní masky: pouze v režimu "both" (při sledování slov, 2-sloupcích nebo PDF)
+      const needSideMasks = this.focusMode === "both" && ((this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia) || isTwoCol || this.isPdfMode);
       if (needSideMasks) {
         const leftBandWidth = Math.max(0, Math.round(slitLeft));
         if (leftBandWidth > 0 && this.maskLeftEl) {
           this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
           this.maskLeftEl.style.setProperty("display", "block", "important");
-          if (this.isPdfMode) {
-            this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
-            this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
-          }
+          this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
+          this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
           this.maskLeftEl.style.top = "0px";
           this.maskLeftEl.style.left = "0px";
           this.maskLeftEl.style.right = "auto";
           this.maskLeftEl.style.maxWidth = "none";
           this.maskLeftEl.style.width = `${leftBandWidth}px`;
-          this.maskLeftEl.style.height = `${roundH}px`;
-          this.maskLeftEl.style.transform = `translate3d(0, ${roundScreenY}px, 0)`;
+          this.maskLeftEl.style.height = `${lineH}px`;
+          this.maskLeftEl.style.transform = `translate3d(0, ${lineScreenTop}px, 0)`;
         } else if (this.maskLeftEl) {
           this.maskLeftEl.style.display = "none";
           this.maskLeftEl.classList.remove("is-visible");
@@ -8520,156 +8592,71 @@ export class ReadingRuler {
         if (rightBandWidth > 0 && this.maskRightEl) {
           this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
           this.maskRightEl.style.setProperty("display", "block", "important");
-          if (this.isPdfMode) {
-            this.maskRightEl.style.setProperty("background-color", themeBg, "important");
-            this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
-          }
+          this.maskRightEl.style.setProperty("background-color", themeBg, "important");
+          this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
           this.maskRightEl.style.top = "0px";
           this.maskRightEl.style.left = "0px";
           this.maskRightEl.style.right = "auto";
           this.maskRightEl.style.maxWidth = "none";
           this.maskRightEl.style.width = `${rightBandWidth}px`;
-          this.maskRightEl.style.height = `${roundH}px`;
-          this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${roundScreenY}px, 0)`;
+          this.maskRightEl.style.height = `${lineH}px`;
+          this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${lineScreenTop}px, 0)`;
         } else if (this.maskRightEl) {
           this.maskRightEl.style.display = "none";
           this.maskRightEl.classList.remove("is-visible");
           this.maskRightEl.classList.add("is-hidden");
         }
       } else {
-        if (this.maskLeftEl) {
-          this.maskLeftEl.style.display = "none";
-          this.maskLeftEl.classList.remove("is-visible");
-          this.maskLeftEl.classList.add("is-hidden");
-        }
-        if (this.maskRightEl) {
-          this.maskRightEl.style.display = "none";
-          this.maskRightEl.classList.remove("is-visible");
-          this.maskRightEl.classList.add("is-hidden");
-        }
-      }
-      if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
-    } else if (this.mode === "bottom-cover" && this.enabled) {
-      this._focusMaskDirty = true;
-      if (this.cachedLines.length === 0 || this.isPageTransitioning || !currentLine) {
-        if (this.maskBottomEl) {
-          this.maskBottomEl.style.display = "none";
-          this.maskBottomEl.classList.remove("is-visible");
-          this.maskBottomEl.classList.add("is-hidden");
-        }
-        if (this.maskInactiveSpreadEl) {
-          this.maskInactiveSpreadEl.style.display = "none";
-          this.maskInactiveSpreadEl.classList.remove("is-visible");
-          this.maskInactiveSpreadEl.classList.add("is-hidden");
-        }
-        this.clearFocusTextMask(stage);
-        return;
+        if (this.maskLeftEl) { this.maskLeftEl.style.display = "none"; this.maskLeftEl.classList.remove("is-visible"); this.maskLeftEl.classList.add("is-hidden"); }
+        if (this.maskRightEl) { this.maskRightEl.style.display = "none"; this.maskRightEl.classList.remove("is-visible"); this.maskRightEl.classList.add("is-hidden"); }
       }
 
-      // Check if subsequent line exists in the same column/container
-      let nextLine = null;
-      let hasNext = false;
-      if (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length - 1) {
-        const candidateNext = this.cachedLines[this.activeLineIndex + 1];
-        if (candidateNext && (candidateNext.columnIndex === currentLine.columnIndex || (currentLine.columnIndex == null && candidateNext.columnIndex == null))) {
-          const lineSlot = (currentLine.element || currentLine.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-          const nextSlot = (candidateNext.element || candidateNext.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
-          if (!lineSlot || !nextSlot || lineSlot === nextSlot) {
-            if (Number.isFinite(candidateNext.top) && candidateNext.top > (currentLine.top ?? currentLine.centerY)) {
-              nextLine = candidateNext;
-              hasNext = true;
-            }
-          }
-        }
-      }
-
-      const geom = this.computeLineGeometry(this.activeLineIndex);
-      let boundaryDocY;
-      if (geom && Number.isFinite(geom.targetY)) {
-        boundaryDocY = geom.targetY;
-      } else {
-        const roundedFs = Math.round(currentLine.fontSize || 16);
-        const glyphH = this.glyphHeightByFontSize?.get(roundedFs) || currentLine.height || 18;
-        const curBottom = currentLine.centerY + glyphH / 2;
-        const isPdfLine = !!(this.isPdfMode || currentLine.isPdfLine);
-        const effectiveCoverOffset = isPdfLine ? COVER_LINE_OFFSET : 1;
-
-        let coverTargetY = Math.round(curBottom + effectiveCoverOffset);
-        if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-          const clearancePx = isPdfLine ? 1 : 2;
-          const maxAllowedY = Math.floor(nextLine.top - clearancePx);
-          if (coverTargetY > maxAllowedY) {
-            coverTargetY = Math.max(Math.round(curBottom), maxAllowedY);
-          }
-        }
-        boundaryDocY = coverTargetY;
-      }
-
-      let roundScreenY;
-      if (this.snapToLines) {
-        const boundaryScreenY = isVertical ? Math.round(boundaryDocY - vScrollTop) : Math.round(boundaryDocY);
-        roundScreenY = boundaryScreenY;
-        this.targetY = Math.round(boundaryDocY);
-        if (!this.isDraggingRuler && !this.isDragging) {
-          this.currentY = this.targetY;
-        }
-      } else {
-        roundScreenY = Math.round(screenY);
-      }
-
-      const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.75;
-      const colorHexMap = {
-        amber: "#f59e0b",
-        cyan: "#06b6d4",
-        emerald: "#10b981",
-        lavender: "#a855f7",
-        slate: "#64748b"
-      };
-
-      if (this.maskTopEl) {
-        this.maskTopEl.style.display = "none";
-        this.maskTopEl.classList.remove("is-visible");
-        this.maskTopEl.classList.add("is-hidden");
-      }
-      if (this.maskLeftEl) {
-        this.maskLeftEl.style.display = "none";
-        this.maskLeftEl.classList.remove("is-visible");
-        this.maskLeftEl.classList.add("is-hidden");
-      }
-      if (this.maskRightEl) {
-        this.maskRightEl.style.display = "none";
-        this.maskRightEl.classList.remove("is-visible");
-        this.maskRightEl.classList.add("is-hidden");
-      }
-
-      const lineEl = currentLine ? (currentLine.element || currentLine.el) : null;
-      const isSpread = !isVertical && (useFastCachedGeom ? !!this._cachedIsSpread : this.isSpreadActive());
-      const spreadInfo = isSpread ? (useFastCachedGeom ? this._getCachedSpreadInfoForLine(currentLine) : this.getActiveSpreadInfo(currentLine)) : null;
-
-      let coverLeft = 0;
-      let coverWidth = window.innerWidth;
-      let coverHeight = Math.max(0, window.innerHeight - roundScreenY);
-
+      // 4. Maska protilehlé neaktivní stránky / sloupce při dvoustraně / 2-sloupcích
+      let needInactiveMask = false;
+      let inactiveRect = null;
       if (spreadInfo) {
-        const activeRect = spreadInfo.activeRect;
-        const inactiveRect = spreadInfo.inactiveRect;
+        const isLeftPage = spreadInfo.activeRect.left < spreadInfo.inactiveRect.left;
+        if ((isLeftPage && (this.focusMode === "down" || this.focusMode === "both")) ||
+            (!isLeftPage && (this.focusMode === "up" || this.focusMode === "both"))) {
+          needInactiveMask = true;
+          inactiveRect = spreadInfo.inactiveRect;
+        }
+      } else if (isTwoCol) {
+        const activeCol = (currentLine && currentLine.columnIndex === 1) ? 1 : 0;
+        if ((activeCol === 0 && (this.focusMode === "down" || this.focusMode === "both")) ||
+            (activeCol === 1 && (this.focusMode === "up" || this.focusMode === "both"))) {
+          needInactiveMask = true;
+          const sRect = (useFastCachedGeom && this._cachedStageRect)
+            ? this._cachedStageRect
+            : (stage || this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.();
+          if (sRect && sRect.width > 50) {
+            const singleColW = Math.max(80, Math.floor(((this.stageWidth || sRect.width || window.innerWidth) - (this.colGap || 40)) / 2));
+            const c0Left = this.column0Left ?? Math.max(0, Math.round(sRect.left));
+            const c0Width = this.column0Width ?? singleColW;
+            const c1Left = this.column1Left ?? Math.round(c0Left + singleColW + (this.colGap || 40));
+            const c1Width = this.column1Width ?? singleColW;
+            inactiveRect = {
+              left: activeCol === 1 ? c0Left : c1Left,
+              top: Math.round(sRect.top),
+              width: activeCol === 1 ? c0Width : c1Width,
+              height: Math.max(0, Math.round(sRect.height))
+            };
+          }
+        }
+      }
 
-        coverLeft = Math.round(activeRect.left);
-        coverWidth = Math.round(activeRect.width);
-        coverHeight = Math.max(0, Math.round(activeRect.bottom - roundScreenY));
-
-        // Auxiliární celostránková maska pro neaktivní stranu dvoustrany
+      if (needInactiveMask && inactiveRect) {
         if (!this.maskInactiveSpreadEl) {
           this.maskInactiveSpreadEl = document.createElement("div");
-          this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover ruler-mask-inactive-spread is-visible";
+          this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom ruler-mask-inactive-spread is-visible";
           this.maskInactiveSpreadEl.style.willChange = "transform";
           this.maskInactiveSpreadEl.style.contain = "paint";
           document.body.appendChild(this.maskInactiveSpreadEl);
         }
-        this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover ruler-mask-inactive-spread is-visible";
+        this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom ruler-mask-inactive-spread is-visible";
         this.maskInactiveSpreadEl.classList.remove("pdf-overlay-mask", "is-hidden");
         this.maskInactiveSpreadEl.style.setProperty("display", "block", "important");
-        this.maskInactiveSpreadEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
+        this.maskInactiveSpreadEl.style.setProperty("background-color", themeBg, "important");
         this.maskInactiveSpreadEl.style.setProperty("opacity", String(dimOpacity), "important");
         this.maskInactiveSpreadEl.style.setProperty("z-index", "15", "important");
         this.maskInactiveSpreadEl.style.setProperty("pointer-events", "none", "important");
@@ -8677,245 +8664,19 @@ export class ReadingRuler {
         this.maskInactiveSpreadEl.style.left = `${Math.round(inactiveRect.left)}px`;
         this.maskInactiveSpreadEl.style.transform = "none";
         this.maskInactiveSpreadEl.style.width = `${Math.round(inactiveRect.width)}px`;
+        this.maskInactiveSpreadEl.style.maxWidth = `${Math.round(inactiveRect.width)}px`;
         this.maskInactiveSpreadEl.style.height = `${Math.round(inactiveRect.height)}px`;
-      } else if (isVertical) {
-        if (this.maskInactiveSpreadEl) {
-          this.maskInactiveSpreadEl.style.display = "none";
-          this.maskInactiveSpreadEl.classList.remove("is-visible");
-          this.maskInactiveSpreadEl.classList.add("is-hidden");
-        }
-        coverLeft = 0;
-        coverWidth = window.innerWidth;
-        coverHeight = Math.max(0, window.innerHeight - roundScreenY);
-      } else {
-        // Zkontrolujeme, zda se jedná o PDF stránku (kontejner/canvas)
-        const cachedPdfRect = currentLine?.canvasRect || (this.isPdfMode ? this._cachedCanvasRect : null);
-        if (useFastCachedGeom && cachedPdfRect && cachedPdfRect.width > 50) {
-          if (this.maskInactiveSpreadEl) {
-            this.maskInactiveSpreadEl.style.display = "none";
-            this.maskInactiveSpreadEl.classList.remove("is-visible");
-            this.maskInactiveSpreadEl.classList.add("is-hidden");
-          }
-          coverLeft = Math.round(cachedPdfRect.left);
-          coverWidth = Math.round(cachedPdfRect.width);
-          coverHeight = Math.max(0, Math.round(cachedPdfRect.bottom - roundScreenY));
-        } else if (this.isPdfMode || currentLine?.isPdfLine) {
-          const pdfContainers = document.querySelectorAll("#reader-content .pdf-page-container, #reader-content .pdf-page-slot");
-          let pdfPage = lineEl ? lineEl.closest(".pdf-page-container, .pdf-page-slot") : null;
-          if (!pdfPage && pdfContainers.length > 0) {
-            if (pdfContainers.length === 1) {
-              pdfPage = pdfContainers[0];
-            } else {
-              let minDist = Infinity;
-              for (const c of pdfContainers) {
-                const r = c.getBoundingClientRect();
-                if (r.bottom >= 0 && r.top <= window.innerHeight) {
-                  const dist = Math.abs((r.top + r.bottom) / 2 - roundScreenY);
-                  if (dist < minDist) {
-                    minDist = dist;
-                    pdfPage = c;
-                  }
-                }
-              }
-              if (!pdfPage) pdfPage = pdfContainers[0];
-            }
-          }
-
-          if (pdfPage) {
-            if (this.maskInactiveSpreadEl) {
-              this.maskInactiveSpreadEl.style.display = "none";
-              this.maskInactiveSpreadEl.classList.remove("is-visible");
-              this.maskInactiveSpreadEl.classList.add("is-hidden");
-            }
-            const canvas = pdfPage.querySelector("canvas") || pdfPage;
-            let cRect = canvas.getBoundingClientRect();
-            if (cRect.width < 50 && pdfPage !== canvas) {
-              cRect = pdfPage.getBoundingClientRect();
-            }
-            if (cRect.width > 50) {
-              this._cachedCanvasRect = cRect;
-              coverLeft = Math.round(cRect.left);
-              coverWidth = Math.round(cRect.width);
-              coverHeight = Math.max(0, Math.round(cRect.bottom - roundScreenY));
-            }
-          }
-        } else {
-          // EPUB / obecný režim
-          const sRect = (useFastCachedGeom && this._cachedStageRect)
-            ? this._cachedStageRect
-            : (stage || this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.();
-          const isTwoCol = !isVertical && this.isTwoCol;
-
-          if (isTwoCol && sRect && sRect.width > 50) {
-            const pageContainerTop = Math.round(sRect.top);
-            const pageContainerBottom = Math.round(sRect.bottom);
-            const pageContainerHeight = Math.max(0, Math.round(sRect.height));
-
-            const singleColW = Math.max(80, Math.floor(((this.stageWidth || sRect.width || window.innerWidth) - (this.colGap || 40)) / 2));
-            const c0Left = this.column0Left ?? Math.max(0, Math.round(sRect.left));
-            const c0Width = this.column0Width ?? singleColW;
-            const c1Left = this.column1Left ?? Math.round(c0Left + singleColW + (this.colGap || 40));
-            const c1Width = this.column1Width ?? singleColW;
-
-            const activeCol = (currentLine && currentLine.columnIndex === 1) ? 1 : 0;
-
-            if (activeCol === 1) {
-              coverLeft = c1Left;
-              coverWidth = c1Width;
-            } else {
-              coverLeft = c0Left;
-              coverWidth = c0Width;
-            }
-            coverHeight = Math.max(0, pageContainerBottom - roundScreenY);
-
-            // Inaktivní sloupec - zakrytí celé protilehlé strany textového kontejneru
-            const inactiveLeft = activeCol === 1 ? c0Left : c1Left;
-            const inactiveWidth = activeCol === 1 ? c0Width : c1Width;
-            const inactiveTop = pageContainerTop;
-            const inactiveHeight = pageContainerHeight;
-
-            if (!this.maskInactiveSpreadEl) {
-              this.maskInactiveSpreadEl = document.createElement("div");
-              this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover ruler-mask-inactive-spread is-visible";
-              this.maskInactiveSpreadEl.style.willChange = "transform";
-              this.maskInactiveSpreadEl.style.contain = "paint";
-              document.body.appendChild(this.maskInactiveSpreadEl);
-            }
-            this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover ruler-mask-inactive-spread is-visible";
-            this.maskInactiveSpreadEl.classList.remove("pdf-overlay-mask", "is-hidden");
-            this.maskInactiveSpreadEl.style.setProperty("display", "block", "important");
-            this.maskInactiveSpreadEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
-            this.maskInactiveSpreadEl.style.setProperty("opacity", String(dimOpacity), "important");
-            this.maskInactiveSpreadEl.style.setProperty("z-index", "15", "important");
-            this.maskInactiveSpreadEl.style.setProperty("pointer-events", "none", "important");
-            this.maskInactiveSpreadEl.style.top = `${inactiveTop}px`;
-            this.maskInactiveSpreadEl.style.left = `${inactiveLeft}px`;
-            this.maskInactiveSpreadEl.style.transform = "none";
-            this.maskInactiveSpreadEl.style.width = `${inactiveWidth}px`;
-            this.maskInactiveSpreadEl.style.maxWidth = `${inactiveWidth}px`;
-            this.maskInactiveSpreadEl.style.height = `${inactiveHeight}px`;
-          } else {
-            if (this.maskInactiveSpreadEl) {
-              this.maskInactiveSpreadEl.style.display = "none";
-              this.maskInactiveSpreadEl.classList.remove("is-visible");
-              this.maskInactiveSpreadEl.classList.add("is-hidden");
-            }
-            if (sRect && sRect.width > 50) {
-              coverLeft = Math.max(0, Math.round(sRect.left));
-              coverWidth = Math.round(sRect.width);
-              coverHeight = Math.max(0, window.innerHeight - roundScreenY);
-            } else {
-              coverLeft = 0;
-              coverWidth = window.innerWidth;
-              coverHeight = Math.max(0, window.innerHeight - roundScreenY);
-            }
-          }
-        }
-      }
-
-      // Decouple guide line (rulerEl) horizontal dimensions from the full-page dimming mask (maskBottomEl)
-      let rulerLeft = coverLeft;
-      let rulerWidth = coverWidth;
-
-      if (isCurrentMedia) {
-        const geom = this.computeLineGeometry(this.activeLineIndex);
-        if (geom && Number.isFinite(geom.left) && Number.isFinite(geom.width) && geom.width > 0) {
-          rulerLeft = Math.round(geom.left);
-          rulerWidth = Math.round(geom.width);
-        }
-      } else if (isVertical && (this.isPdfMode || currentLine?.isPdfLine)) {
-        const pageCol = this.getPageTextColumnBounds(currentLine);
-        rulerLeft = Math.round(pageCol.left);
-        rulerWidth = Math.round(pageCol.width);
-      } else if (spreadInfo) {
-        const cRect = spreadInfo.activeRect;
-        const padding = 12;
-        const pageCol = useFastCachedGeom ? null : this.getPageTextColumnBounds(currentLine);
-        if (pageCol && pageCol.width > 50) {
-          rulerLeft = Math.max(Math.round(cRect.left), Math.round(pageCol.left));
-          rulerWidth = Math.min(Math.round(pageCol.width), Math.round(cRect.right - rulerLeft));
-        } else if (currentLine && currentLine.textLeft != null && currentLine.textRight != null && currentLine.textRight > currentLine.textLeft) {
-          rulerLeft = Math.max(Math.round(cRect.left), Math.round(currentLine.textLeft - padding));
-          const rRight = Math.min(Math.round(cRect.right), Math.round(currentLine.textRight + padding));
-          rulerWidth = Math.max(50, rRight - rulerLeft);
-        } else if (currentLine && currentLine.left != null && currentLine.width != null) {
-          rulerLeft = Math.max(Math.round(cRect.left), Math.round(currentLine.left));
-          rulerWidth = Math.min(Math.round(currentLine.width), Math.round(cRect.right - rulerLeft));
-        } else {
-          rulerLeft = Math.round(cRect.left + padding);
-          rulerWidth = Math.round(cRect.width - (padding * 2));
-        }
-        rulerLeft = Math.max(Math.round(cRect.left), rulerLeft);
-        if (rulerLeft + rulerWidth > cRect.right) {
-          rulerWidth = Math.max(50, Math.round(cRect.right - rulerLeft));
-        }
-      } else if (currentLine) {
-        const lineLeft = (currentLine.columnLeft != null && Number.isFinite(currentLine.columnLeft))
-          ? currentLine.columnLeft
-          : ((currentLine.left != null && Number.isFinite(currentLine.left)) ? currentLine.left : null);
-
-        const lineWidth = (currentLine.columnWidth != null && Number.isFinite(currentLine.columnWidth) && currentLine.columnWidth > 0)
-          ? currentLine.columnWidth
-          : ((currentLine.width != null && Number.isFinite(currentLine.width) && currentLine.width > 0) ? currentLine.width : null);
-
-        if (lineLeft !== null && lineWidth !== null) {
-          rulerLeft = Math.round(lineLeft);
-          rulerWidth = Math.round(lineWidth);
-        }
-      }
-
-      this._rulerLeft = rulerLeft;
-      this._rulerWidth = rulerWidth;
-
-      if (this.maskBottomEl) {
-        this.maskBottomEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover is-visible";
-        this.maskBottomEl.classList.remove("pdf-overlay-mask", "is-hidden");
-        this.maskBottomEl.style.setProperty("display", "block", "important");
-        this.maskBottomEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
-        this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
-        this.maskBottomEl.style.setProperty("z-index", "15", "important");
-        this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
-        this.maskBottomEl.style.setProperty("transition", "none", "important");
-        if (isVertical) {
-          this.maskBottomEl.style.top = "0px";
-          this.maskBottomEl.style.left = "0px";
-          this.maskBottomEl.style.right = "auto";
-          this.maskBottomEl.style.width = "100%";
-          this.maskBottomEl.style.maxWidth = "none";
-          this.maskBottomEl.style.height = `${Math.max(window.innerHeight * 2, 2000)}px`;
-          this.maskBottomEl.style.transform = `translate3d(0, ${roundScreenY}px, 0)`;
-        } else {
-          this.maskBottomEl.style.top = "0px";
-          this.maskBottomEl.style.left = "0px";
-          this.maskBottomEl.style.right = "auto";
-          this.maskBottomEl.style.transform = `translate3d(${coverLeft}px, ${roundScreenY}px, 0)`;
-          this.maskBottomEl.style.width = `${coverWidth}px`;
-          this.maskBottomEl.style.maxWidth = `${coverWidth}px`;
-          this.maskBottomEl.style.height = `${coverHeight}px`;
-        }
-      }
-
-      this.rulerEl.style.setProperty("transition", "none", "important");
-      if (isVertical) {
-        this.rulerEl.style.top = "0px";
-        this.rulerEl.style.left = "0px";
-        this.rulerEl.style.right = "auto";
-        this.rulerEl.style.width = `${rulerWidth}px`;
-        this.rulerEl.style.maxWidth = `${rulerWidth}px`;
-        this.rulerEl.style.height = "2px";
-        this.rulerEl.style.transform = `translate3d(${rulerLeft}px, ${roundScreenY}px, 0)`;
-        this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
-      } else {
-        this.rulerEl.style.top = "0px";
-        this.rulerEl.style.left = "0px";
-        this.rulerEl.style.right = "auto";
-        this.rulerEl.style.transform = `translate3d(${rulerLeft}px, ${roundScreenY}px, 0)`;
-        this.rulerEl.style.width = `${rulerWidth}px`;
-        this.rulerEl.style.maxWidth = `${rulerWidth}px`;
-        this.rulerEl.style.height = "2px";
-        this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+      } else if (this.maskInactiveSpreadEl) {
+        this.maskInactiveSpreadEl.style.display = "none";
+        this.maskInactiveSpreadEl.classList.remove("is-visible");
+        this.maskInactiveSpreadEl.classList.add("is-hidden");
       }
     } else {
+      if (this.maskTopEl) { this.maskTopEl.style.display = "none"; this.maskTopEl.classList.remove("is-visible"); this.maskTopEl.classList.add("is-hidden"); }
+      if (this.maskBottomEl) { this.maskBottomEl.style.display = "none"; this.maskBottomEl.classList.remove("is-visible"); this.maskBottomEl.classList.add("is-hidden"); }
+      if (this.maskLeftEl) { this.maskLeftEl.style.display = "none"; this.maskLeftEl.classList.remove("is-visible"); this.maskLeftEl.classList.add("is-hidden"); }
+      if (this.maskRightEl) { this.maskRightEl.style.display = "none"; this.maskRightEl.classList.remove("is-visible"); this.maskRightEl.classList.add("is-hidden"); }
+      if (this.maskInactiveSpreadEl) { this.maskInactiveSpreadEl.style.display = "none"; this.maskInactiveSpreadEl.classList.remove("is-visible"); this.maskInactiveSpreadEl.classList.add("is-hidden"); }
       if (this._focusMaskDirty) {
         this.clearFocusTextMask(stage);
         this._focusMaskDirty = false;
@@ -9039,17 +8800,19 @@ export class ReadingRuler {
     }
 
     const hasLines = this.isPdfMode || this.cachedLines.length > 0;
-    const isFocus = this.enabled && this.mode === "focus" && !this.isPageTransitioning && hasLines;
-    const isBottomCover = this.enabled && this.mode === "bottom-cover" && !this.isPageTransitioning && hasLines;
+    const isFocus = this.enabled && this.focusMode && this.focusMode !== "off" && !this.isPageTransitioning && hasLines;
+    const isBottomCover = this.enabled && (this.style === "bottom-cover" || this.mode === "bottom-cover") && !this.isPageTransitioning && hasLines;
     const transitionClass = this.horizontalWordTransition ? "word-transition-active" : "word-transition-snap";
 
     this.rulerEl.classList.add("reading-ruler");
 
     // Mode classes
-    this.rulerEl.classList.toggle("mode-highlight", this.mode === "highlight");
-    this.rulerEl.classList.toggle("mode-focus", this.mode === "focus");
-    this.rulerEl.classList.toggle("mode-underline", this.mode === "underline");
-    this.rulerEl.classList.toggle("mode-bottom-cover", this.mode === "bottom-cover");
+    const activeStyle = this.style || this.mode || "highlight";
+    this.rulerEl.classList.toggle("mode-off", activeStyle === "off");
+    this.rulerEl.classList.toggle("mode-highlight", activeStyle === "highlight");
+    this.rulerEl.classList.toggle("mode-focus", this.focusMode && this.focusMode !== "off");
+    this.rulerEl.classList.toggle("mode-underline", activeStyle === "underline");
+    this.rulerEl.classList.toggle("mode-bottom-cover", activeStyle === "bottom-cover");
 
     // Color classes
     const classesToRemove = [];
@@ -9078,49 +8841,31 @@ export class ReadingRuler {
     this.rulerEl.classList.toggle("is-page-transitioning", !!this.isPageTransitioning);
 
     const isTwoCol = !this.isVerticalMode() && this.isTwoCol;
-    const showSideMasks = isFocus && (this.wordTracking || isTwoCol || this.isPdfMode);
+    const showTopMask = isFocus && (this.focusMode === "up" || this.focusMode === "both");
+    const showBottomMask = isFocus && (this.focusMode === "down" || this.focusMode === "both");
+    const showSideMasks = isFocus && (this.focusMode === "both") && (this.wordTracking || isTwoCol || this.isPdfMode);
 
-    if (this.maskTopEl) this.maskTopEl.className = `ruler-mask ruler-mask-top ${isFocus ? "is-visible" : "is-hidden"}`;
-    if (this.maskBottomEl) this.maskBottomEl.className = `ruler-mask ruler-mask-bottom ${(isFocus || isBottomCover) ? "is-visible" : "is-hidden"}`;
+    if (this.maskTopEl) this.maskTopEl.className = `ruler-mask ruler-mask-top ${showTopMask ? "is-visible" : "is-hidden"}`;
+    if (this.maskBottomEl) this.maskBottomEl.className = `ruler-mask ruler-mask-bottom ${showBottomMask ? "is-visible" : "is-hidden"}`;
     if (this.maskLeftEl) this.maskLeftEl.className = `ruler-mask ruler-mask-left ${showSideMasks ? "is-visible " + (this.wordTracking ? transitionClass : "") : "is-hidden"}`;
     if (this.maskRightEl) this.maskRightEl.className = `ruler-mask ruler-mask-right ${showSideMasks ? "is-visible " + (this.wordTracking ? transitionClass : "") : "is-hidden"}`;
 
     if (this.maskTopEl) this.maskTopEl.classList.remove("pdf-overlay-mask");
-    if (this.maskBottomEl) {
-      this.maskBottomEl.classList.remove("pdf-overlay-mask");
-      this.maskBottomEl.classList.toggle("mode-bottom-cover", isBottomCover);
-    }
+    if (this.maskBottomEl) this.maskBottomEl.classList.remove("pdf-overlay-mask", "mode-bottom-cover");
     if (this.maskLeftEl) this.maskLeftEl.classList.remove("pdf-overlay-mask");
     if (this.maskRightEl) this.maskRightEl.classList.remove("pdf-overlay-mask");
 
-    if (!isFocus && !isBottomCover) {
-      if (this.maskTopEl) this.maskTopEl.style.display = "none";
-      if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
+    if (!showTopMask && this.maskTopEl) this.maskTopEl.style.display = "none";
+    if (!showBottomMask && this.maskBottomEl) this.maskBottomEl.style.display = "none";
+    if (!showSideMasks) {
       if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
       if (this.maskRightEl) this.maskRightEl.style.display = "none";
+    }
+    if (!isFocus) {
       if (this.maskInactiveSpreadEl) {
         this.maskInactiveSpreadEl.style.display = "none";
         this.maskInactiveSpreadEl.classList.remove("is-visible");
         this.maskInactiveSpreadEl.classList.add("is-hidden");
-      }
-    } else if (isBottomCover) {
-      if (this.maskTopEl) this.maskTopEl.style.display = "none";
-      if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
-      if (this.maskRightEl) this.maskRightEl.style.display = "none";
-      if (this.maskBottomEl) {
-        const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.75;
-        this.maskBottomEl.style.setProperty("display", "block", "important");
-        this.maskBottomEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
-        this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
-        this.maskBottomEl.style.setProperty("z-index", "15", "important");
-        this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
-      }
-      if (!isTwoCol && !this.isSpreadActive?.()) {
-        if (this.maskInactiveSpreadEl) {
-          this.maskInactiveSpreadEl.style.display = "none";
-          this.maskInactiveSpreadEl.classList.remove("is-visible");
-          this.maskInactiveSpreadEl.classList.add("is-hidden");
-        }
       }
     }
 
@@ -9131,31 +8876,51 @@ export class ReadingRuler {
       lavender: "#a855f7",
       slate: "#64748b"
     };
-    if (this.mode === "bottom-cover") {
+    if (activeStyle === "bottom-cover") {
       const hex = colorHexMap[this.color] || "#f59e0b";
       this.rulerEl.style.backgroundColor = hex;
       this.rulerEl.style.color = hex;
       this.rulerEl.style.height = "2px";
       this.rulerEl.style.contain = "none";
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
+    } else if (activeStyle === "off") {
+      this.rulerEl.style.backgroundColor = "transparent";
+      this.rulerEl.style.color = "";
+      this.rulerEl.style.border = "none";
+      this.rulerEl.style.outline = "none";
+      this.rulerEl.style.boxShadow = "none";
+      this.rulerEl.style.contain = "paint";
+      this.rulerEl.style.setProperty("display", "none", "important");
+      this.rulerEl.style.setProperty("opacity", "0", "important");
+      this.rulerEl.style.setProperty("visibility", "hidden", "important");
     } else {
       this.rulerEl.style.backgroundColor = "";
       this.rulerEl.style.color = "";
       this.rulerEl.style.contain = "paint";
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
     }
 
-    const isBottomCoverWordTracking = !this.isPdfMode && this.mode === "bottom-cover" && !!this.wordTracking;
+    const isBottomCoverWordTracking = !this.isPdfMode && activeStyle === "bottom-cover" && !!this.wordTracking;
     if (!isBottomCoverWordTracking && this.wordWaveEl) {
       this.wordWaveEl.style.display = "none";
     }
 
     if (this.enabled && !this.isPageTransitioning) {
-      this.rulerEl.classList.add("is-visible");
-      this.rulerEl.classList.remove("is-hidden", "hidden");
-      if (this.rulerEl.style.display === "none") {
-        this.rulerEl.style.display = "block";
+      if (activeStyle === "off") {
+        this.rulerEl.classList.remove("is-visible");
+        this.rulerEl.classList.add("is-hidden", "mode-off");
+        this.rulerEl.style.setProperty("display", "none", "important");
+        this.rulerEl.style.setProperty("opacity", "0", "important");
+        this.rulerEl.style.setProperty("visibility", "hidden", "important");
+      } else {
+        this.rulerEl.classList.remove("is-hidden", "hidden", "mode-off");
+        this.rulerEl.classList.add("is-visible");
+        if (this.rulerEl.style.display === "none") {
+          this.rulerEl.style.display = "block";
+        }
       }
-      this.rulerEl.style.opacity = "1";
-      this.rulerEl.style.visibility = "visible";
     } else if (this.isPageTransitioning) {
       this.rulerEl.style.opacity = "0";
       this.rulerEl.style.visibility = "hidden";
@@ -9201,8 +8966,8 @@ export class ReadingRuler {
     const isRulerActive = !!this.enabled;
     const isMouseFollow = isRulerActive && this.followMode === "mouse";
     const isWordTracking = isRulerActive && !!this.wordTracking;
-    const isFocus = isRulerActive && this.mode === "focus";
-    const isBottomCover = isRulerActive && this.mode === "bottom-cover";
+    const isFocus = isRulerActive && this.focusMode && this.focusMode !== "off";
+    const isBottomCover = isRulerActive && (this.style === "bottom-cover" || this.mode === "bottom-cover");
     const isVertical = isRulerActive && this.isVerticalMode();
 
     document.body.classList.toggle("ruler-active", isRulerActive);
@@ -9269,10 +9034,20 @@ export class ReadingRuler {
       if (this.rulerEl) {
         this.rulerEl.classList.remove("is-page-transitioning");
         this.isPageTransitioning = false;
-        this.rulerEl.style.display = "block";
-        this.rulerEl.style.opacity = "1";
-        this.rulerEl.classList.remove("is-hidden", "hidden");
-        this.rulerEl.classList.add("is-visible");
+        const isStyleOff = (this.style || this.mode) === "off";
+        if (isStyleOff) {
+          this.rulerEl.classList.remove("is-visible");
+          this.rulerEl.classList.add("is-hidden", "mode-off");
+          this.rulerEl.style.setProperty("display", "none", "important");
+          this.rulerEl.style.setProperty("opacity", "0", "important");
+          this.rulerEl.style.setProperty("visibility", "hidden", "important");
+        } else {
+          this.rulerEl.classList.remove("mode-off", "is-hidden", "hidden");
+          this.rulerEl.classList.add("is-visible");
+          this.rulerEl.style.display = "block";
+          this.rulerEl.style.opacity = "1";
+          this.rulerEl.style.visibility = "visible";
+        }
       }
     }
     this.updateStyles();
@@ -9307,11 +9082,21 @@ export class ReadingRuler {
       return;
     }
     this.isPageTransitioning = false;
-    this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
-    this.rulerEl.classList.add("is-visible");
-    this.rulerEl.style.display = "block";
-    this.rulerEl.style.opacity = "1";
-    this.rulerEl.style.visibility = "visible";
+    const isStyleOff = (this.style || this.mode) === "off";
+    if (isStyleOff) {
+      this.rulerEl.classList.remove("is-page-transitioning", "is-visible");
+      this.rulerEl.classList.add("is-hidden", "mode-off");
+      this.rulerEl.style.setProperty("display", "none", "important");
+      this.rulerEl.style.setProperty("opacity", "0", "important");
+      this.rulerEl.style.setProperty("visibility", "hidden", "important");
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+    } else {
+      this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden", "mode-off");
+      this.rulerEl.classList.add("is-visible");
+      this.rulerEl.style.display = "block";
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
+    }
 
     if (!this.isImageOnlyPdf && (!this.cachedLines || this.cachedLines.length === 0)) {
       this.detectLines();
@@ -9341,30 +9126,12 @@ export class ReadingRuler {
     this.applyPosition();
   }
 
-  setMode(mode) {
-    if (["highlight", "focus", "underline", "bottom-cover"].includes(mode)) {
-      const prevMode = this.mode;
-      if (prevMode !== mode) {
-        if (prevMode === "focus" || prevMode === "bottom-cover") {
-          this.mode = mode;
-          this.clearFocusTextMask();
-          this._focusMaskDirty = false;
-        }
-      }
-      this.mode = mode;
-      if (mode === "focus" || mode === "bottom-cover") {
-        this._focusMaskDirty = true;
-      }
+  setStyle(style) {
+    if (["off", "highlight", "bottom-cover"].includes(style)) {
+      this.style = style;
+      this.mode = style;
       this._lastComputedLineGeom = null;
-      if (this.mode === "bottom-cover" && this.maskBottomEl) {
-        const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.75;
-        this.maskBottomEl.style.setProperty("display", "block", "important");
-        this.maskBottomEl.style.setProperty("background-color", "var(--bg-theme, var(--color-bg, #fbf0d9))", "important");
-        this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
-        this.maskBottomEl.style.setProperty("z-index", "15", "important");
-        this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
-      }
-      if ((this.mode === "focus" || this.mode === "bottom-cover") && (!this.cachedLines || this.cachedLines.length === 0)) {
+      if (this.style === "bottom-cover" && (!this.cachedLines || this.cachedLines.length === 0)) {
         this.detectLines();
         if (this.wordTracking) {
           this.refreshWords();
@@ -9378,36 +9145,73 @@ export class ReadingRuler {
           this.currentY = this.targetY;
         }
       }
-      if (this.wordTracking && this.activeWordIndex >= 0 && this.cachedWords && this.cachedWords.length > 0) {
-        this.setWordWindow(this.activeWordIndex);
-      }
       this.updateEffectiveHeight();
       this.updateBodyClasses();
-      this.updateRulerSettingsVisibility(this.mode, this.isPdfMode);
+      this.updateRulerSettingsVisibility(this.style, this.focusMode, this.isPdfMode);
       this.refreshVisualState();
     }
   }
 
-  updateRulerSettingsVisibility(style = this.mode, isPdf = this.isPdfMode) {
+  setFocusMode(focusMode) {
+    if (focusMode === "above") focusMode = "up";
+    if (focusMode === "below") focusMode = "down";
+    if (["off", "up", "down", "both"].includes(focusMode)) {
+      this.focusMode = focusMode;
+      if (this.focusMode !== "off") {
+        this._focusMaskDirty = true;
+        if (!this.cachedLines || this.cachedLines.length === 0) {
+          this.detectLines();
+          if (this.wordTracking) {
+            this.refreshWords();
+          }
+        }
+      } else {
+        this.clearFocusTextMask();
+        this._focusMaskDirty = false;
+      }
+      this.updateBodyClasses();
+      this.updateRulerSettingsVisibility(this.style, this.focusMode, this.isPdfMode);
+      this.refreshVisualState();
+    }
+  }
+
+  setMode(mode) {
+    if (mode === "focus") {
+      this.setStyle("off");
+      this.setFocusMode("both");
+    } else if (["off", "highlight", "bottom-cover"].includes(mode)) {
+      this.setStyle(mode);
+    }
+  }
+
+  updateRulerSettingsVisibility(style = this.style, focusMode = this.focusMode, isPdf = this.isPdfMode) {
     if (this.app && typeof this.app.updateRulerSettingsVisibility === "function") {
-      this.app.updateRulerSettingsVisibility(style, isPdf);
+      this.app.updateRulerSettingsVisibility(style, focusMode, isPdf);
       return;
     }
-    const activeStyle = style || this.mode || "highlight";
+    const activeStyle = style || this.style || this.mode || "highlight";
+    let activeFocus = focusMode || this.focusMode || "off";
+    if (activeFocus === "above") activeFocus = "up";
+    if (activeFocus === "below") activeFocus = "down";
     const activePdf = isPdf !== null && isPdf !== undefined ? !!isPdf : !!this.isPdfMode;
     const isImageOnly = activePdf && !!this.isImageOnlyPdf;
 
     const popoverColor = document.getElementById("popover-ruler-color-section");
     const drawerColor = document.getElementById("drawer-ruler-color-section");
-    const hideColor = activeStyle === "focus";
+    const hideColor = activeStyle === "off";
     if (popoverColor) popoverColor.classList.toggle("is-hidden", hideColor);
     if (drawerColor) drawerColor.classList.toggle("is-hidden", hideColor);
 
     const popoverOpacity = document.getElementById("popover-ruler-opacity-section");
     const drawerOpacity = document.getElementById("drawer-ruler-opacity-section");
-    const hideOpacity = activeStyle === "highlight";
+    const hideOpacity = activeFocus === "off";
     if (popoverOpacity) popoverOpacity.classList.toggle("is-hidden", hideOpacity);
     if (drawerOpacity) drawerOpacity.classList.toggle("is-hidden", hideOpacity);
+
+    const sliderOpacity = document.getElementById("slider-ruler-opacity");
+    const popoverSliderOpacity = document.getElementById("popover-slider-ruler-opacity");
+    if (sliderOpacity) sliderOpacity.disabled = hideOpacity;
+    if (popoverSliderOpacity) popoverSliderOpacity.disabled = hideOpacity;
 
     const popoverPdf = document.getElementById("popover-pdf-ruler-section");
     const drawerPdf = document.getElementById("drawer-pdf-ruler-section");
@@ -9494,11 +9298,19 @@ export class ReadingRuler {
       }
 
       if (this.enabled && !this.isPageTransitioning) {
-        this.rulerEl.classList.remove("is-hidden", "hidden");
-        this.rulerEl.classList.add("is-visible");
-        this.rulerEl.style.display = "block";
-        this.rulerEl.style.opacity = "1";
-        this.rulerEl.style.visibility = "visible";
+        if ((this.style || this.mode) === "off") {
+          this.rulerEl.classList.remove("is-visible");
+          this.rulerEl.classList.add("is-hidden", "mode-off");
+          this.rulerEl.style.setProperty("display", "none", "important");
+          this.rulerEl.style.setProperty("opacity", "0", "important");
+          this.rulerEl.style.setProperty("visibility", "hidden", "important");
+        } else {
+          this.rulerEl.classList.remove("mode-off", "is-hidden", "hidden");
+          this.rulerEl.classList.add("is-visible");
+          this.rulerEl.style.display = "block";
+          this.rulerEl.style.opacity = "1";
+          this.rulerEl.style.visibility = "visible";
+        }
       }
     }
 
@@ -9657,21 +9469,6 @@ export class ReadingRuler {
         if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
           m.style.setProperty("background-color", themeBg, "important");
         }
-      }
-    }
-    if (this.mode === "bottom-cover") {
-      if (this.maskBottomEl) {
-        this.maskBottomEl.style.setProperty("display", "block", "important");
-        this.maskBottomEl.style.setProperty("background-color", themeBg, "important");
-        this.maskBottomEl.style.setProperty("opacity", String(this.dimOpacity), "important");
-        this.maskBottomEl.style.setProperty("z-index", "15", "important");
-        this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
-      }
-      if (this.maskInactiveSpreadEl) {
-        this.maskInactiveSpreadEl.style.setProperty("background-color", themeBg, "important");
-        this.maskInactiveSpreadEl.style.setProperty("opacity", String(this.dimOpacity), "important");
-        this.maskInactiveSpreadEl.style.setProperty("z-index", "15", "important");
-        this.maskInactiveSpreadEl.style.setProperty("pointer-events", "none", "important");
       }
     }
     this.refreshVisualState();
