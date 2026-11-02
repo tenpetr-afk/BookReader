@@ -180,11 +180,10 @@ export class ReadingTracker {
    */
   attributeWords(count) {
     if (!this.isActive || !count || count <= 0) return;
+    if (this.currentReadingBlockId && this.creditedBlocks.has(this.currentReadingBlockId)) return;
     if (this.isIdle) {
       this.recordActivity();
     }
-    const clampedWords = Math.min(650, Math.round(count));
-    if (clampedWords <= 0) return;
 
     // Pokud před zapnutím pravítka běžela průběžná atribuce na téže stránce, nejprve ji nahradíme reálným posunem pravítka
     if (this.blockInterimWordsAttributed > 0) {
@@ -193,6 +192,16 @@ export class ReadingTracker {
       this.wordsCreditedOnCurrentPage = Math.max(0, this.wordsCreditedOnCurrentPage - this.blockInterimWordsAttributed);
       this.blockInterimWordsAttributed = 0;
     }
+
+    const maxPageWords = Math.max(0, Math.round(this.blockVisibleWords > 0 ? this.blockVisibleWords : 250));
+    const alreadyCredited = Math.max(0, Math.round(this.wordsCreditedOnCurrentPage || 0));
+    if (alreadyCredited >= maxPageWords) return;
+
+    let clampedWords = Math.min(650, Math.round(count));
+    if (alreadyCredited + clampedWords > maxPageWords) {
+      clampedWords = Math.max(0, maxPageWords - alreadyCredited);
+    }
+    if (clampedWords <= 0) return;
 
     this.isContinuousTrackingActive = true;
     this.wordsCreditedOnCurrentPage += clampedWords;
@@ -251,7 +260,7 @@ export class ReadingTracker {
    * způsobuje umělou WPM špičku), ale proporcionálně je rozdělí do všech minutových
    * bucketů spadajících do doby čtení dané stránky.
    */
-  commitCurrentBlockDwell(direction = 1, visibleWordsOverride = null) {
+  commitCurrentBlockDwell(direction = 1, visibleWordsOverride = null, isFlushing = false) {
     const blockId = this.currentReadingBlockId;
     const enterTime = this.blockEnterTimestamp || this.pageEnterTimestamp || this.currentPageStartTime;
     const now = Date.now();
@@ -284,31 +293,70 @@ export class ReadingTracker {
 
     // 1. Ochrana proti rychlému překlikávání stránek (< 3 sekundy) nebo opuštěné záložce (>= 600 sekund)
     if (dwellSeconds < 3.0 || dwellSeconds >= 600) {
-      if (interimAttributed > 0) {
-        this.sessionWordsRead = Math.max(0, this.sessionWordsRead - interimAttributed);
-        this.currentMinuteWords = Math.max(0, this.currentMinuteWords - interimAttributed);
+      const wordsToRollback = Math.max(creditedSoFar, interimAttributed);
+      if (wordsToRollback > 0) {
+        this.sessionWordsRead = Math.max(0, this.sessionWordsRead - wordsToRollback);
+        if (this.currentMinuteWords >= wordsToRollback) {
+          this.currentMinuteWords -= wordsToRollback;
+        } else {
+          let rem = wordsToRollback - this.currentMinuteWords;
+          this.currentMinuteWords = 0;
+          for (let i = this.intra_session_samples.length - 1; i >= 0 && rem > 0; i--) {
+            const s = this.intra_session_samples[i];
+            const take = Math.min(rem, s.words || 0);
+            s.words = Math.max(0, (s.words || 0) - take);
+            s.wpm = s.words;
+            rem -= take;
+          }
+        }
         this.wordsReadInCurrentMinute = this.currentMinuteWords;
       }
       return 0;
     }
 
-    // Při zpětném listování (prevPage) nedopočítáváme nepřečtený zbytek stránky
-    if (direction < 0) {
+    // Při ukončení relace (flush) nepřičítáme zbývající nepřečtená slova nedočtené stránky
+    if (isFlushing) {
       return 0;
     }
 
-    // 2. Výpočet zbývajících nezapočtených slov na stránce
-    const remainingUncreditedWords = Math.max(0, wordsOnPage - creditedSoFar);
+    // Při zpětném listování (prevPage) nedopočítáváme nepřečtený zbytek stránky a zrušíme průběžný odhad
+    if (direction < 0) {
+      if (interimAttributed > 0) {
+        this.sessionWordsRead = Math.max(0, this.sessionWordsRead - interimAttributed);
+        if (this.currentMinuteWords >= interimAttributed) {
+          this.currentMinuteWords -= interimAttributed;
+        } else {
+          let rem = interimAttributed - this.currentMinuteWords;
+          this.currentMinuteWords = 0;
+          for (let i = this.intra_session_samples.length - 1; i >= 0 && rem > 0; i--) {
+            const s = this.intra_session_samples[i];
+            const take = Math.min(rem, s.words || 0);
+            s.words = Math.max(0, (s.words || 0) - take);
+            s.wpm = s.words;
+            rem -= take;
+          }
+        }
+        this.wordsReadInCurrentMinute = this.currentMinuteWords;
+      }
+      return 0;
+    }
+
+    // 2. Výpočet zbývajících nezapočtených slov na stránce se stropem realistického čtení
+    // (max. 450 WPM vzhledem k aktivní době pobytu na stránce)
+    const effectiveDwellSeconds = activeDwellSeconds > 0 ? activeDwellSeconds : dwellSeconds;
+    const maxCreditedForDwell = Math.min(wordsOnPage, Math.round((450 / 60) * effectiveDwellSeconds));
+    const remainingUncreditedWords = Math.max(0, Math.min(wordsOnPage - creditedSoFar, maxCreditedForDwell - creditedSoFar));
 
     if (!this.creditedBlocks.has(blockId)) {
       this.creditedBlocks.add(blockId);
       if (remainingUncreditedWords > 0) {
-        // Proporcionální distribuce pro dlouhý pobyt na stránce (> 60s):
+        // Proporcionální distribuce pro pobyt přesahující hranici minuty nebo dlouhý pobyt (> 60s):
         // Zabraňuje náhlému WPM špičkovému skoku v aktuální minutě tím,
         // že nerozsype všechna slova do jediného aktivního bucketu, ale rozdělí
         // nezapočtená slova proporcionálně mezi všechny minutové buckety,
         // které do doby čtení této stránky zasahovaly.
-        if (dwellSeconds > 60) {
+        const crossesMinuteBoundary = Math.floor(startActiveSec / 60) < Math.floor(currentTotalActiveSec / 60);
+        if (dwellSeconds > 60 || crossesMinuteBoundary) {
           const minuteOverlaps = [];
           let sumOverlaps = 0;
 
@@ -352,7 +400,7 @@ export class ReadingTracker {
           }
         }
 
-        // Standardní přičtení pro dwell <= 60s nebo jediný minutový bucket
+        // Standardní přičtení pro dwell <= 60s uvnitř jediného minutového bucketu
         this.currentMinuteWords += remainingUncreditedWords;
         this.wordsReadInCurrentMinute = this.currentMinuteWords;
         this.sessionWordsRead += remainingUncreditedWords;
@@ -364,8 +412,8 @@ export class ReadingTracker {
   }
 
   // Alias pro zpětnou kompatibilitu
-  commitCurrentPageDwell(direction = 1, visibleWordsOverride = null) {
-    return this.commitCurrentBlockDwell(direction, visibleWordsOverride);
+  commitCurrentPageDwell(direction = 1, visibleWordsOverride = null, isFlushing = false) {
+    return this.commitCurrentBlockDwell(direction, visibleWordsOverride, isFlushing);
   }
 
   /**
@@ -761,7 +809,7 @@ export class ReadingTracker {
   }
 
   /**
-   * Sestaví finální pole vzorků (včetně případné neuzavřené poslední minuty >= 15s) a sjednocené metriky
+   * Sestaví finální pole vzorků (včetně případné neuzavřené poslední minuty >= 25s) a sjednocené metriky
    */
   _buildSessionMetrics(totalActiveSeconds) {
     const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
@@ -770,9 +818,19 @@ export class ReadingTracker {
 
     let samples = this.intra_session_samples.map(s => ({ ...s }));
 
-    // Pokud neuzavřená poslední minuta trvá >= 15s a obsahuje přečtená slova (> 0), připojíme dílčí vzorek
-    if (this.currentMinuteActiveSeconds >= 15 && partialWords > 0) {
-      const partialWpm = Math.round((this.currentMinuteWords / this.currentMinuteActiveSeconds) * 60);
+    // Pokud neuzavřená poslední minuta trvá >= 25s a obsahuje přečtená slova (> 0),
+    // připojíme dílčí vzorek s váženým vyhlazením podle předchozí minuty (ochrana proti boundary spiku)
+    if (this.currentMinuteActiveSeconds >= 25 && partialWords > 0) {
+      const rawPartialWpm = Math.round((this.currentMinuteWords / this.currentMinuteActiveSeconds) * 60);
+      let partialWpm = rawPartialWpm;
+      if (samples.length > 0) {
+        const prevWpm = Number(samples[samples.length - 1].wpm || 0);
+        if (prevWpm > 0) {
+          const weight = Math.min(1, Math.max(0, this.currentMinuteActiveSeconds / 60));
+          partialWpm = Math.round(weight * rawPartialWpm + (1 - weight) * prevWpm);
+        }
+      }
+      partialWpm = Math.min(MAX_VALID_WPM, Math.max(0, partialWpm));
       samples.push({
         minute: this.completedMinutesCount,
         elapsedSeconds: totalActiveSeconds,
@@ -843,8 +901,8 @@ export class ReadingTracker {
    * Uloží aktuální souvislou relaci do IndexedDB (reading_sessions) a aktualizuje knihu
    */
   async flushSession() {
-    // Před uložením zhodnotíme zbývající slova na aktuálně otevřeném bloku
-    this.commitCurrentBlockDwell(1);
+    // Před uložením zhodnotíme aktuální blok s příznakem isFlushing = true (nepřičítá unread remainder nedokončené stránky)
+    this.commitCurrentBlockDwell(1, null, true);
 
     const totalActiveSeconds = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
     const bookId = this.currentBookId;

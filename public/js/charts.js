@@ -269,7 +269,7 @@ export class StatsCharts {
       return;
     }
 
-    const durationSeconds = Math.max(0, Number(sessionData.duration ?? sessionData.durationSeconds ?? sessionData.activeSeconds ?? 0));
+    let durationSeconds = Math.max(0, Number(sessionData.duration ?? sessionData.durationSeconds ?? sessionData.activeSeconds ?? 0));
     const wordsRead = Math.max(0, Number(sessionData.words_read ?? sessionData.wordsRead ?? 0));
     const computedAvgWpm = durationSeconds >= 10 ? Math.round((wordsRead / durationSeconds) * 60) : 0;
     const avgWpm = Number(
@@ -374,6 +374,21 @@ export class StatsCharts {
           </div>
         `;
         return;
+      }
+    }
+
+    // Re-normalizace časových značek vzorků relativně k začátku aktivního čtení,
+    // pokud vzorky začínají po první minutě (sec > 60) nebo byly oříznuty,
+    // aby nevznikala umělá víceminutová horizontální police mezi sec = 0 a prvním aktivním vzorkem.
+    if (dedupedSamples.length > 0 && dedupedSamples[0].sec > 60) {
+      const shiftSec = dedupedSamples[0].sec - 60;
+      dedupedSamples = dedupedSamples.map((s, idx) => ({
+        ...s,
+        sec: Math.max(1, s.sec - shiftSec),
+        minute: idx + 1
+      }));
+      if (durationSeconds > shiftSec) {
+        durationSeconds = durationSeconds - shiftSec;
       }
     }
 
