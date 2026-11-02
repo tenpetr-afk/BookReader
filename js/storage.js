@@ -368,6 +368,11 @@ export class StorageManager {
         request.onsuccess = (e) => {
           const cursor = e.target.result;
           if (cursor) {
+            const sid = cursor.value?.sessionId || cursor.value?.id;
+            if (sid) {
+              this.addDeletedSessionId(sid);
+              this._removeSessionFromLocalStorage(sid);
+            }
             cursor.delete();
             cursor.continue();
           }
@@ -504,7 +509,10 @@ export class StorageManager {
   async saveReadingSession(sessionData) {
     if (!sessionData) return null;
 
-    // Ignorovat relace označené jako smazané (tombstones)
+    // Ignorovat relace označené jako smazané (tombstones a is_deleted flag)
+    if (sessionData.is_deleted === true || sessionData.is_deleted === "true") {
+      return null;
+    }
     const deletedSet = new Set(this.getDeletedSessionIds());
     const rawSid = String(sessionData.sessionId ?? "").trim();
     const rawId = String(sessionData.id ?? "").trim();
@@ -570,6 +578,8 @@ export class StorageManager {
       intra_session_samples: cleanedSamples,
       date: localDate,
       timestamp,
+      is_deleted: false,
+      isDeleted: false,
       updatedAt
     };
 
@@ -709,6 +719,7 @@ export class StorageManager {
 
   _cacheSessionToLocalStorage(session) {
     try {
+      if (session?.is_deleted === true || session?.is_deleted === "true") return;
       const deletedSet = new Set(this.getDeletedSessionIds());
       const sid = String(session?.sessionId ?? session?.id ?? "").trim();
       if (sid && deletedSet.has(sid)) return;
@@ -716,6 +727,7 @@ export class StorageManager {
       const raw = localStorage.getItem("lumina_reading_sessions");
       const list = raw ? JSON.parse(raw) : [];
       const filtered = list.filter(s => {
+        if (s?.is_deleted === true || s?.is_deleted === "true") return false;
         const existingId = String(s.sessionId ?? s.id ?? "").trim();
         return existingId !== sid && !deletedSet.has(existingId);
       });
@@ -735,6 +747,7 @@ export class StorageManager {
     const deletedSet = new Set(this.getDeletedSessionIds());
     const isNotDeleted = (s) => {
       if (!s) return false;
+      if (s.is_deleted === true || s.is_deleted === "true") return false;
       const sid = String(s.sessionId ?? "").trim();
       const id = String(s.id ?? "").trim();
       return !(sid && deletedSet.has(sid)) && !(id && deletedSet.has(id));
@@ -1125,6 +1138,11 @@ export class StorageManager {
     let totalWords = 0;
 
     for (const session of allSessions) {
+      if (session.is_deleted === true || session.is_deleted === "true") {
+        await this.deleteReadingSession(session.sessionId || session.id, true);
+        normalizedCount++;
+        continue;
+      }
       const durationSec = Math.max(0, Math.round(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0));
       // Úplné odstranění relací nesplňujících minimální práh 5 minut (300 sekund)
       if (durationSec < 300) {
@@ -1263,6 +1281,19 @@ export class StorageManager {
    * Zachovává všechny knihy v knihovně a veškerá uživatelská nastavení
    */
   async resetReadingStats() {
+    // 0. Zaznamenat všechny stávající ID relací do tombstones před vymazáním
+    try {
+      const existing = await this.getAllReadingSessions();
+      if (Array.isArray(existing)) {
+        for (const s of existing) {
+          const sid = String(s.sessionId || s.id || "").trim();
+          if (sid) {
+            this.addDeletedSessionId(sid);
+          }
+        }
+      }
+    } catch (_) {}
+
     const db = await this.getDB();
     const stores = [];
     if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");

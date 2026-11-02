@@ -2411,12 +2411,25 @@ export class LuminaApp {
         if (!confirmed) return;
         try {
           this.dom.btnResetStats.disabled = true;
+
+          // 1. Získat ID všech stávajících relací pro tombstones
+          let existingIds = [];
+          try {
+            const sessions = await storage.getAllReadingSessions();
+            existingIds = (sessions || []).map(s => String(s.sessionId || s.id || "").trim()).filter(Boolean);
+          } catch (_) {}
+
+          // 2. Lokální reset dat a záznam tombstones
           await storage.resetReadingStats();
+          existingIds.forEach(id => storage.addDeletedSessionId(id));
+
           tracker.stopSession();
           tracker.creditedBlocks.clear();
+
+          // 3. Cloudový soft-delete všech relací a nulování reading_stats_summary
           if (supabaseSync && supabaseSync.isOnline()) {
             try {
-              await supabaseSync.clearCloudReadingStats();
+              await supabaseSync.clearCloudReadingStats(existingIds);
             } catch (cloudErr) {
               console.warn("Varování při resetování cloudových statistik:", cloudErr);
             }
@@ -6366,6 +6379,8 @@ export class LuminaApp {
     const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
     // Filtrujeme striktně pouze relace s délkou alespoň 5 minut (>= 300 sekund) a nesmazané relace
     const savedSessions = (rawSessions || []).filter(s => {
+      if (!s) return false;
+      if (s.is_deleted === true || s.is_deleted === "true") return false;
       const sid = String(s.sessionId ?? s.id ?? "").trim();
       if (sid && deletedSet.has(sid)) return false;
       const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
@@ -6558,8 +6573,11 @@ export class LuminaApp {
 
   selectSession(sessionId) {
     if (!this._availableSessions) return;
-    const session = this._availableSessions.find(s => s.sessionId === sessionId || s.id === sessionId);
-    if (!session) return;
+    const session = this._availableSessions.find(s => (s.sessionId === sessionId || s.id === sessionId) && s.is_deleted !== true && s.is_deleted !== "true");
+    if (!session) {
+      this.renderEmptySessionTimeline();
+      return;
+    }
 
     const sid = session.sessionId || session.id;
     this._selectedSessionId = sid;

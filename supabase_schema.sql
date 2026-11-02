@@ -13,13 +13,18 @@ CREATE TABLE IF NOT EXISTS public.reading_sessions (
     avg_wpm INTEGER NOT NULL DEFAULT 220,
     peak_wpm INTEGER NOT NULL DEFAULT 220,
     intra_session_samples JSONB DEFAULT '[]'::jsonb,
+    is_deleted BOOLEAN DEFAULT FALSE,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+-- Migrace pro stávající databáze: přidání sloupce is_deleted pro soft delete
+ALTER TABLE public.reading_sessions ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
 
 -- Indexy pro efektivní vyhledávání a řazení
 CREATE INDEX IF NOT EXISTS idx_reading_sessions_book_id ON public.reading_sessions (book_id);
 CREATE INDEX IF NOT EXISTS idx_reading_sessions_start_time ON public.reading_sessions (start_time DESC);
 CREATE INDEX IF NOT EXISTS idx_reading_sessions_updated_at ON public.reading_sessions (updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reading_sessions_is_deleted_book_id ON public.reading_sessions (is_deleted, book_id);
 
 -- 2. Tabulka pro agregovaný souhrn čtecích statistik (reading_stats_summary)
 -- Uchovává kumulativní statistiky a denní časy čtení pro synchronizaci mezi zařízeními

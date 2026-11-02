@@ -260,7 +260,7 @@ export class StatsCharts {
     if (!container) return;
     container.innerHTML = "";
 
-    if (!sessionData) {
+    if (!sessionData || sessionData.is_deleted === true || sessionData.is_deleted === "true") {
       container.innerHTML = `
         <div class="chart-empty-state">
           <p>Není vybrána žádná čtecí relace.</p>

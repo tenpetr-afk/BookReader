@@ -882,6 +882,8 @@ export class ReadingTracker {
         timelineSamples: samples,
         date: dateKey,
         timestamp: now,
+        is_deleted: false,
+        isDeleted: false,
         updatedAt: new Date(now).toISOString()
       };
 
@@ -999,9 +1001,14 @@ export class ReadingTracker {
   static async computeGlobalStats(customSessions = null, customBooks = null) {
     const rawSessions = customSessions !== null ? customSessions : ((typeof storage !== "undefined" && storage.getAllReadingSessions) ? await storage.getAllReadingSessions() : []);
     const books = customBooks !== null ? customBooks : ((typeof storage !== "undefined" && storage.getAllBooks) ? await storage.getAllBooks() : []);
+    const deletedSet = new Set((typeof storage !== "undefined" && typeof storage.getDeletedSessionIds === "function") ? storage.getDeletedSessionIds() : []);
 
-    // Filtrujeme striktně pouze relace s aktivní dobou čtení >= 5 minut (300 sekund)
+    // Filtrujeme striktně pouze relace s aktivní dobou čtení >= 5 minut (300 sekund) a nesmazané relace
     const sessions = (rawSessions || []).filter(s => {
+      if (!s) return false;
+      if (s.is_deleted === true || s.is_deleted === "true") return false;
+      const sid = String(s.sessionId ?? s.id ?? "").trim();
+      if (sid && deletedSet.has(sid)) return false;
       const sec = Math.max(0, Math.round(s.duration ?? s.durationSeconds ?? s.activeSeconds ?? 0));
       return sec >= MIN_SESSION_DURATION_SEC;
     });
