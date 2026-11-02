@@ -884,7 +884,8 @@ export class ReadingTracker {
         timestamp: now,
         is_deleted: false,
         isDeleted: false,
-        updatedAt: new Date(now).toISOString()
+        updatedAt: new Date(now).toISOString(),
+        syncedToCloud: false
       };
 
       try {
@@ -907,7 +908,15 @@ export class ReadingTracker {
         }
 
         // PUSH DO SUPABASE: Odeslání platné relace (>= 5 min) a aktualizovaného souhrnu statistik
-        storage.pushReadingSessionAndStatsToCloud(savedSession || sessionRecord).catch(err => {
+        storage.pushReadingSessionAndStatsToCloud(savedSession || sessionRecord).then((res) => {
+          if (res?.success) {
+            const sid = (savedSession || sessionRecord).sessionId || (savedSession || sessionRecord).id;
+            if (sid) {
+              const toMark = { ...(savedSession || sessionRecord), syncedToCloud: true };
+              storage.saveReadingSession(toMark).catch(() => {});
+            }
+          }
+        }).catch(err => {
           console.warn("[LuminaSync] Varování při pushi čtecí relace do Supabase:", err);
         });
 

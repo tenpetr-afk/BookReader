@@ -551,6 +551,256 @@ export class StorageManager {
   }
 
   /**
+   * Pročistí sirotčí / zombie relace čtení z lokální IndexedDB i localStorage během cloudové synchronizace.
+   * Supabase slouží jako autorita pro smazání relací:
+   * Jakákoliv lokální relace v IndexedDB, která v Supabase neexistuje (nebo má is_deleted === true),
+   * je trvale smazána z IndexedDB přes store.delete(sessionId).
+   *
+   * @param {Iterable<string|number>} remoteValidSessionIds - Množina / pole platných ID relací v cloudu
+   * @param {Iterable<string|number>} [remoteDeletedSessionIds=[]] - Množina / pole smazaných ID relací v cloudu
+   * @returns {Promise<{ purgedCount: number, purgedIds: string[] }>}
+   */
+  async purgeOrphanReadingSessions(remoteValidSessionIds, remoteDeletedSessionIds = []) {
+    if (!remoteValidSessionIds && !remoteDeletedSessionIds) {
+      return { purgedCount: 0, purgedIds: [] };
+    }
+
+    const validRemoteSet = new Set(
+      Array.from(remoteValidSessionIds || [])
+        .map(id => String(id ?? "").trim())
+        .filter(Boolean)
+    );
+    const remoteDeletedSet = new Set(
+      Array.from(remoteDeletedSessionIds || [])
+        .map(id => String(id ?? "").trim())
+        .filter(Boolean)
+    );
+
+    const purgedIds = new Set();
+
+    try {
+      const db = await this.getDB();
+      if (db && db.objectStoreNames) {
+        const storeNames = [];
+        if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
+        if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
+
+        if (storeNames.length > 0) {
+          await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(storeNames, "readwrite");
+
+              // Kompletní kurzorový průchod a odstranění sirotčích i smazaných relací
+              for (const sName of storeNames) {
+                const store = tx.objectStore(sName);
+                const req = store.openCursor();
+
+                req.onsuccess = (e) => {
+                  try {
+                    const cursor = e.target.result;
+                    if (cursor) {
+                      const val = cursor.value || {};
+                      const sid = String(val.sessionId || val.id || cursor.key || "").trim();
+                      const isLocalPending = Boolean(val.syncedToCloud === false || val.isPendingSync === true);
+
+                      // Relace je sirotek (orphan), pokud:
+                      // 1. Je v Supabase označena jako is_deleted === true
+                      // 2. V Supabase vůbec neexistuje a není to nově vytvořená nesynchronizovaná lokální relace
+                      const isRemoteDeleted = Boolean(sid && remoteDeletedSet.has(sid));
+                      const isMissingFromRemote = Boolean(sid && !validRemoteSet.has(sid) && !isLocalPending);
+
+                      if (isRemoteDeleted || isMissingFromRemote) {
+                        try { cursor.delete(); } catch (_) {}
+                        try { store.delete(cursor.key); } catch (_) {}
+                        if (sid) {
+                          try { store.delete(sid); } catch (_) {}
+                          purgedIds.add(sid);
+                          this.addDeletedSessionId(sid);
+                        }
+                      }
+                      cursor.continue();
+                    }
+                  } catch (_) {}
+                };
+
+                req.onerror = () => resolve();
+              }
+
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => resolve();
+              tx.onabort = () => resolve();
+            } catch (txErr) {
+              console.warn("[storage] purgeOrphanReadingSessions tx error:", txErr);
+              resolve();
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("[storage] purgeOrphanReadingSessions error:", err);
+    }
+
+    // Dodatečné explicitní volání store.delete pro identifikované sirotky
+    if (purgedIds.size > 0) {
+      try {
+        const db = await this.getDB();
+        if (db && db.objectStoreNames && db.objectStoreNames.contains("reading_sessions")) {
+          await new Promise((resolve) => {
+            try {
+              const tx = db.transaction("reading_sessions", "readwrite");
+              const rsStore = tx.objectStore("reading_sessions");
+              for (const pId of purgedIds) {
+                try { rsStore.delete(pId); } catch (_) {}
+              }
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => resolve();
+              tx.onabort = () => resolve();
+            } catch (_) { resolve(); }
+          });
+        }
+      } catch (_) {}
+    }
+
+    // Vyčištění lokální paměti / cache v localStorage
+    try {
+      const raw = localStorage.getItem("lumina_reading_sessions");
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          const filtered = list.filter(s => {
+            if (!s || typeof s !== "object") return false;
+            const sid = String(s.sessionId || s.id || "").trim();
+            if (!sid) return false;
+            if (purgedIds.has(sid) || remoteDeletedSet.has(sid)) return false;
+            if (!validRemoteSet.has(sid) && s.syncedToCloud !== false && s.isPendingSync !== true) {
+              purgedIds.add(sid);
+              this.addDeletedSessionId(sid);
+              return false;
+            }
+            return true;
+          });
+          localStorage.setItem("lumina_reading_sessions", JSON.stringify(filtered));
+        }
+      }
+    } catch (_) {}
+
+    // Přepočet a normalizace odvozených statistik ihned po promazání
+    if (purgedIds.size > 0) {
+      try {
+        await this.recalculateAndNormalizeStats();
+      } catch (recalcErr) {
+        console.warn("[storage] Chyba při přepočtu statistik po promazání sirotčích relací:", recalcErr);
+      }
+    }
+
+    return { purgedCount: purgedIds.size, purgedIds: Array.from(purgedIds) };
+  }
+
+  /**
+   * Kompletní rekonsiliace relací čtení ze Supabase do IndexedDB:
+   * 1. Rozdělí vzdálené relace na platné vs is_deleted
+   * 2. Promaže všechny lokální sirotčí relace z IndexedDB (purge orphans)
+   * 3. Uloží/aktualizuje všechny platné vzdálené relace do IndexedDB (s příznakem syncedToCloud = true)
+   * 4. Přepočítá agregované metriky a statistiky
+   *
+   * @param {Array<Object>} remoteSessions
+   * @returns {Promise<{ saved: number, purged: number, purgedIds: string[] }>}
+   */
+  async reconcileReadingSessions(remoteSessions) {
+    if (!Array.isArray(remoteSessions)) {
+      return { saved: 0, purged: 0, purgedIds: [] };
+    }
+
+    const validRemoteMap = new Map();
+    const remoteDeletedIds = new Set();
+
+    for (const session of remoteSessions) {
+      if (!session) continue;
+      const rowId = String(session.id ?? session.sessionId ?? "").trim();
+      if (!rowId) continue;
+
+      const isDeleted = Boolean(session.is_deleted === true || session.is_deleted === "true");
+      if (isDeleted) {
+        remoteDeletedIds.add(rowId);
+      } else {
+        validRemoteMap.set(rowId, session);
+      }
+    }
+
+    // 1. Krok: Promazání sirotčích relací z lokálního úložiště
+    const purgeResult = await this.purgeOrphanReadingSessions(
+      Array.from(validRemoteMap.keys()),
+      Array.from(remoteDeletedIds)
+    );
+
+    // 2. Krok: Uložení/aktualizace platných vzdálených relací
+    const deletedTombstones = new Set(this.getDeletedSessionIds());
+    let savedCount = 0;
+
+    let booksMap = null;
+    try {
+      const localBooks = await this.getAllBooks();
+      booksMap = new Map((localBooks || []).map(b => [b.id, b]));
+    } catch (_) {}
+
+    for (const [rowId, session] of validRemoteMap.entries()) {
+      if (deletedTombstones.has(rowId)) continue;
+
+      if (!session.bookTitle && !session.book_title && session.book_id && booksMap) {
+        const b = booksMap.get(session.book_id);
+        if (b?.title) session.bookTitle = b.title;
+      }
+      if (!session.startTime && session.start_time) {
+        session.startTime = session.start_time;
+      }
+      if (!session.timestamp && session.startTime) {
+        session.timestamp = new Date(session.startTime).getTime();
+      }
+      if (!session.bookId && session.book_id) {
+        session.bookId = session.book_id;
+      }
+      session.syncedToCloud = true;
+
+      try {
+        await this.saveReadingSession(session);
+        savedCount++;
+      } catch (saveErr) {
+        console.warn("[storage] Chyba při ukládání rekonsiliované relace:", saveErr);
+      }
+    }
+
+    // 3. Krok: Přepočet a normalizace odvozených statistik
+    await this.recalculateAndNormalizeStats();
+
+    return {
+      saved: savedCount,
+      purged: purgeResult.purgedCount,
+      purgedIds: purgeResult.purgedIds
+    };
+  }
+
+  /**
+   * Rekonsiliuje čtecí relace přímo se Supabase cloudem
+   */
+  async reconcileSessionsWithCloud() {
+    try {
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.2.6");
+      if (!supabaseSync || !supabaseSync.isOnline()) {
+        return { success: false, reason: "offline", purged: 0, saved: 0 };
+      }
+      const remoteSessions = await supabaseSync.fetchCloudReadingSessions();
+      if (!Array.isArray(remoteSessions)) {
+        return { success: false, reason: "fetch_failed", purged: 0, saved: 0 };
+      }
+      const res = await this.reconcileReadingSessions(remoteSessions);
+      return { success: true, ...res };
+    } catch (err) {
+      console.warn("[StorageManager] reconcileSessionsWithCloud selhal:", err);
+      return { success: false, error: err, purged: 0, saved: 0 };
+    }
+  }
+
+  /**
    * Uloží detailní relaci čtení do reading_sessions a synchronizuje i do sessions (legacy)
    * Ukládá POUZE validní relace s délkou alespoň 5 minut (>= 300 sekund).
    * @param {Object} sessionData
@@ -629,7 +879,8 @@ export class StorageManager {
       timestamp,
       is_deleted: false,
       isDeleted: false,
-      updatedAt
+      updatedAt,
+      syncedToCloud: sessionData.syncedToCloud !== undefined ? Boolean(sessionData.syncedToCloud) : (sessionData.synced_to_cloud !== undefined ? Boolean(sessionData.synced_to_cloud) : true)
     };
 
     if (!db || !db.objectStoreNames) {
@@ -1666,4 +1917,16 @@ export function normalizeBookProgress(book) {
 
 export async function deduplicateBooks() {
   return await storage.deduplicateBooks();
+}
+
+export async function purgeOrphanReadingSessions(remoteValidIds, remoteDeletedIds) {
+  return await storage.purgeOrphanReadingSessions(remoteValidIds, remoteDeletedIds);
+}
+
+export async function reconcileReadingSessions(remoteSessions) {
+  return await storage.reconcileReadingSessions(remoteSessions);
+}
+
+export async function reconcileSessionsWithCloud() {
+  return await storage.reconcileSessionsWithCloud();
 }

@@ -3526,14 +3526,26 @@ export class LuminaApp {
 
     supabaseSync.onSyncCompleted(async (stats) => {
       const isReaderActive = this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden");
-      if (isReaderActive) {
+      const isStatsModalOpen = this.dom.statsModal && this.dom.statsModal.classList.contains("open");
+      if (isReaderActive && !isStatsModalOpen) {
         this._libraryNeedsRefresh = true;
         this._statsNeedRefresh = true;
         return;
       }
       console.log("[LuminaApp] Cloud sync byl dokončen, obnovuji statistiky a knihovnu:", stats);
       await this.refreshStatsUI();
-      await this.renderLibrary();
+      if (!isReaderActive) {
+        await this.renderLibrary();
+      }
+    });
+
+    // Globální posluchač události dokončení synchronizace a rekonsiliace relací
+    window.addEventListener("lumina-sync-completed", async (e) => {
+      const isReaderActive = this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden");
+      const isStatsModalOpen = this.dom.statsModal && this.dom.statsModal.classList.contains("open");
+      if (!isReaderActive || isStatsModalOpen) {
+        await this.refreshStatsUI();
+      }
     });
   }
 
@@ -3594,6 +3606,7 @@ export class LuminaApp {
       if (stats.uploadedToCloud > 0) parts.push(`postup odeslán`);
       if (stats.sessionsDownloaded > 0) parts.push(`relace staženy: ${stats.sessionsDownloaded}`);
       if (stats.sessionsUploaded > 0) parts.push(`relace odeslány: ${stats.sessionsUploaded}`);
+      if (stats.sessionsPurged > 0) parts.push(`relace promazány: ${stats.sessionsPurged}`);
       if (stats.sessionsMerged > 0) parts.push(`statistiky sloučeny`);
       
       const msg = parts.length > 0
@@ -6421,6 +6434,7 @@ export class LuminaApp {
         : (allSessions[0].sessionId || allSessions[0].id);
       this.selectSession(targetId);
     } else {
+      this._selectedSessionId = null;
       this.renderEmptySessionTimeline();
     }
   }

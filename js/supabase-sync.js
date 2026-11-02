@@ -449,6 +449,7 @@ export class SupabaseSync {
       sessionsDownloaded: 0,
       sessionsUploaded: 0,
       sessionsMerged: 0,
+      sessionsPurged: 0,
       total: 0
     };
 
@@ -838,9 +839,10 @@ export class SupabaseSync {
         }
 
         const pulledSessions = await this.pullReadingSessions(lastSyncTime);
-        console.log(`[SupabaseSync] Successfully imported ${pulledSessions.length} reading sessions.`);
+        console.log(`[SupabaseSync] Rekonsiliace čtecích relací dokončena.`);
 
         stats.sessionsDownloaded = Array.isArray(pulledSessions) ? pulledSessions.length : 0;
+        stats.sessionsPurged = pulledSessions?.purgedCount || 0;
 
         // Jednorázový přepočet globálních statistik po uložení všech stažených relací do IndexedDB
         if (typeof storage.recalculateAndNormalizeStats === "function") {
@@ -1195,7 +1197,32 @@ export class SupabaseSync {
   }
 
   /**
+   * Stáhne autoritativní sadu všech čtecích relací ze Supabase (včetně soft-deleted záznamů)
+   * @returns {Promise<Array<Object>|null>}
+   */
+  async fetchCloudReadingSessions() {
+    if (!this.isOnline() || !supabase) return null;
+    try {
+      const { data, error } = await supabase
+        .from('reading_sessions')
+        .select('*')
+        .order('updated_at', { ascending: true })
+        .limit(10000);
+
+      if (error) {
+        console.error('[SupabaseSync] Chyba při stahování relací ze Supabase:', error);
+        return null;
+      }
+      return Array.isArray(data) ? data : [];
+    } catch (err) {
+      console.error('[SupabaseSync] Výjimka při stahování relací ze Supabase:', err);
+      return null;
+    }
+  }
+
+  /**
    * Stáhne a importuje všechny dostupné čtecí relace ze Supabase do IndexedDB v jedné dávce
+   * Provádí autoritativní rekonsiliaci a promazání sirotčích (orphan/zombie) relací.
    * @param {string|null} [lastSyncTimestamp=null]
    * @returns {Promise<Array>}
    */
@@ -1204,7 +1231,6 @@ export class SupabaseSync {
 
     // 0. Před stažením relací synchronizovat lokální tombstones (smazané relace) do Supabase jako is_deleted = true
     const deletedIds = typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : [];
-    const deletedSet = new Set(deletedIds);
     if (deletedIds.length > 0) {
       try {
         const nowIso = new Date().toISOString();
@@ -1223,103 +1249,34 @@ export class SupabaseSync {
       }
     }
 
-    let query = supabase
-      .from('reading_sessions')
-      .select('*')
-      .order('updated_at', { ascending: true });
-
-    if (lastSyncTimestamp) {
-      query = query.gt('updated_at', lastSyncTimestamp);
-    }
-
-    // Fetch up to 1000 sessions in a single batch (no .limit(1) or .single())
-    query = query.limit(1000);
-
-    const { data, error } = await query;
-    if (error) {
-      console.error('[SupabaseSync] Error pulling reading sessions:', error);
+    // 1. Získat celkový aktuální stav relací ze Supabase pro autoritativní rekonsiliaci (včetně is_deleted = true)
+    const remoteRows = await this.fetchCloudReadingSessions();
+    if (!remoteRows) {
       return [];
     }
 
-    if (!data || data.length === 0) return [];
-
-    let maxUpdatedAt = lastSyncTimestamp;
-    const validRowsToSave = [];
-
-    // Zpracovat každý řádek:
-    // Pokud má row.is_deleted === true -> odstranit z lokálního IndexedDB/localStorage a uložit do tombstones
-    for (const session of data) {
-      if (!session) continue;
-      const rowId = String(session.id ?? session.sessionId ?? "").trim();
-      if (!rowId) continue;
-
-      const isDeleted = Boolean(session.is_deleted === true || session.is_deleted === "true");
-
-      if (isDeleted) {
-        if (typeof storage.addDeletedSessionId === "function") {
-          storage.addDeletedSessionId(rowId);
-        }
-        deletedSet.add(rowId);
-        try {
-          await storage.deleteReadingSession(rowId, true);
-        } catch (_) {}
-        if (session.updated_at && (!maxUpdatedAt || session.updated_at > maxUpdatedAt)) {
-          maxUpdatedAt = session.updated_at;
-        }
-        continue;
-      }
-
-      // Pokud je relace lokálně v deletedSet, ale v cloudu ještě nebyla smazaná:
-      if (deletedSet.has(rowId)) {
-        continue;
-      }
-
-      validRowsToSave.push(session);
+    // 2. Autoritativní rekonsiliace lokálního úložiště:
+    // Porovná staženou vzdálenou sadu s lokálním IndexedDB, smaže sirotky a uloží validní relace
+    let reconcileResult = { saved: 0, purged: 0, purgedIds: [] };
+    if (typeof storage.reconcileReadingSessions === "function") {
+      reconcileResult = await storage.reconcileReadingSessions(remoteRows);
     }
 
-    // Pomocná mapa knih pro případné doplnění chybějícího bookTitle
-    let booksMap = null;
-    if (validRowsToSave.length > 0) {
-      try {
-        const localBooks = await storage.getAllBooks();
-        booksMap = new Map((localBooks || []).map(b => [b.id, b]));
-      } catch (_) {}
-    }
-
-    // 2. Iterate and Save EVERY valid non-deleted Session into IndexedDB
-    for (const session of validRowsToSave) {
-      const rowId = String(session.id ?? session.sessionId ?? "").trim();
-      if (deletedSet.has(rowId)) continue;
-
-      if (!session.bookTitle && !session.book_title && session.book_id && booksMap) {
-        const b = booksMap.get(session.book_id);
-        if (b?.title) session.bookTitle = b.title;
-      }
-      if (!session.startTime && session.start_time) {
-        session.startTime = session.start_time;
-      }
-      if (!session.timestamp && session.startTime) {
-        session.timestamp = new Date(session.startTime).getTime();
-      }
-      if (!session.bookId && session.book_id) {
-        session.bookId = session.book_id;
-      }
-      try {
-        await storage.saveReadingSession(session);
-        if (session.updated_at && (!maxUpdatedAt || session.updated_at > maxUpdatedAt)) {
-          maxUpdatedAt = session.updated_at;
-        }
-      } catch (saveErr) {
-        console.warn("[SupabaseSync] Chyba při ukládání stažené relace do IndexedDB:", saveErr);
+    let maxUpdatedAt = null;
+    for (const session of remoteRows) {
+      if (session?.updated_at && (!maxUpdatedAt || session.updated_at > maxUpdatedAt)) {
+        maxUpdatedAt = session.updated_at;
       }
     }
 
-    // 3. Update the sync watermark only after ALL sessions in the batch are processed
+    // 3. Aktualizovat watermark synchronizace
     if (maxUpdatedAt) {
       localStorage.setItem('lumina_last_sessions_sync', maxUpdatedAt);
     }
 
-    return validRowsToSave;
+    const validSaved = remoteRows.filter(s => s && s.is_deleted !== true && s.is_deleted !== "true");
+    validSaved.purgedCount = reconcileResult.purged || 0;
+    return validSaved;
   }
 
   /**
@@ -1387,8 +1344,22 @@ export class SupabaseSync {
         const cloudInfo = cloudMap.get(sid);
 
         if (!cloudInfo) {
-          // Relace ještě není v cloudu -> nahrát
-          toUpload.push(s);
+          // Relace v cloudu neexistuje:
+          // Supabase je autoritou pro smazání relací.
+          // Pokud relace nebyla lokálně vytvořena v offline režimu (syncedToCloud === false nebo isPendingSync === true),
+          // jedná se o sirotčí relaci smazanou v cloudu na jiném zařízení -> NESMÍ být nahrána!
+          if (s.syncedToCloud === false || s.isPendingSync === true) {
+            toUpload.push(s);
+          } else {
+            console.log(`[SupabaseSync] Lokální relace ${sid} neexistuje v cloudu -> označuji jako smazanou v IndexedDB.`);
+            deletedSet.add(sid);
+            if (typeof storage.addDeletedSessionId === "function") {
+              storage.addDeletedSessionId(sid);
+            }
+            try {
+              await storage.deleteReadingSession(sid, true);
+            } catch (_) {}
+          }
         } else if (!cloudInfo.isDeleted && localUpdatedAt > cloudInfo.updatedAtMs + 1000) {
           // Lokální relace je novější a v cloudu není smazaná -> aktualizovat v cloudu
           toUpload.push(s);
@@ -1398,6 +1369,12 @@ export class SupabaseSync {
       if (toUpload.length > 0) {
         const upRes = await this.pushMultipleSessions(toUpload);
         if (upRes?.success) {
+          for (const s of toUpload) {
+            s.syncedToCloud = true;
+            try {
+              await storage.saveReadingSession(s);
+            } catch (_) {}
+          }
           return { uploaded: toUpload.length };
         }
       }
