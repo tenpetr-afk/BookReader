@@ -3940,9 +3940,9 @@ html.mode-vertical.reader-chrome-hidden .footer-actions-group,
 :root,
 [data-theme="light"],
 .theme-light {
-  --lq-glass-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.76) 0%, rgba(248, 250, 252, 0.48) 100%);
-  --lq-glass-bg-hover: linear-gradient(145deg, rgba(255, 255, 255, 0.88) 0%, rgba(248, 250, 252, 0.65) 100%);
-  --lq-glass-bg-active: linear-gradient(145deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.75) 100%);
+  --lq-glass-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.92) 0%, rgba(248, 250, 252, 0.86) 100%);
+  --lq-glass-bg-hover: linear-gradient(145deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.90) 100%);
+  --lq-glass-bg-active: linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.94) 100%);
   --lq-glass-border: rgba(255, 255, 255, 0.65);
   --lq-glass-border-top: rgba(255, 255, 255, 0.95);
   --lq-glass-border-bottom: rgba(203, 213, 225, 0.45);
@@ -3959,12 +3959,12 @@ html.mode-vertical.reader-chrome-hidden .footer-actions-group,
   --lq-glass-divider: rgba(15, 23, 42, 0.10);
 }
 
-/* Theme: Warm Paper (frosted white with subtle golden/amber highlights) */
+/* theme-warm */
 [data-theme="warm"],
 .theme-warm {
-  --lq-glass-bg: linear-gradient(145deg, rgba(255, 250, 240, 0.80) 0%, rgba(251, 240, 217, 0.52) 100%);
-  --lq-glass-bg-hover: linear-gradient(145deg, rgba(255, 253, 246, 0.90) 0%, rgba(253, 245, 228, 0.68) 100%);
-  --lq-glass-bg-active: linear-gradient(145deg, rgba(255, 255, 250, 0.95) 0%, rgba(255, 248, 234, 0.78) 100%);
+  --lq-glass-bg: linear-gradient(145deg, rgba(255, 250, 240, 0.92) 0%, rgba(251, 240, 217, 0.86) 100%);
+  --lq-glass-bg-hover: linear-gradient(145deg, rgba(255, 253, 246, 0.96) 0%, rgba(253, 245, 228, 0.90) 100%);
+  --lq-glass-bg-active: linear-gradient(145deg, rgba(255, 255, 250, 0.98) 0%, rgba(255, 248, 234, 0.94) 100%);
   --lq-glass-border: rgba(235, 215, 185, 0.70);
   --lq-glass-border-top: rgba(255, 255, 255, 0.98);
   --lq-glass-border-bottom: rgba(215, 190, 155, 0.50);
@@ -3984,9 +3984,9 @@ html.mode-vertical.reader-chrome-hidden .footer-actions-group,
 /* Theme: Sepia (frosted warm parchment with golden/sepia highlights) */
 [data-theme="sepia"],
 .theme-sepia {
-  --lq-glass-bg: linear-gradient(145deg, rgba(250, 244, 230, 0.80) 0%, rgba(244, 236, 216, 0.54) 100%);
-  --lq-glass-bg-hover: linear-gradient(145deg, rgba(254, 249, 239, 0.90) 0%, rgba(248, 241, 224, 0.70) 100%);
-  --lq-glass-bg-active: linear-gradient(145deg, rgba(255, 252, 245, 0.95) 0%, rgba(250, 245, 230, 0.78) 100%);
+  --lq-glass-bg: linear-gradient(145deg, rgba(250, 244, 230, 0.92) 0%, rgba(244, 236, 216, 0.86) 100%);
+  --lq-glass-bg-hover: linear-gradient(145deg, rgba(254, 249, 239, 0.96) 0%, rgba(248, 241, 224, 0.90) 100%);
+  --lq-glass-bg-active: linear-gradient(145deg, rgba(255, 252, 245, 0.98) 0%, rgba(250, 245, 230, 0.94) 100%);
   --lq-glass-border: rgba(224, 206, 178, 0.70);
   --lq-glass-border-top: rgba(255, 255, 255, 0.98);
   --lq-glass-border-bottom: rgba(200, 180, 145, 0.50);
@@ -4006,9 +4006,9 @@ html.mode-vertical.reader-chrome-hidden .footer-actions-group,
 /* Theme: Dark (deeply dark with silvery/crystalline specular rims) */
 [data-theme="dark"],
 .theme-dark {
-  --lq-glass-bg: linear-gradient(145deg, rgba(30, 41, 59, 0.70) 0%, rgba(15, 23, 42, 0.60) 100%);
-  --lq-glass-bg-hover: linear-gradient(145deg, rgba(45, 58, 80, 0.82) 0%, rgba(24, 34, 56, 0.72) 100%);
-  --lq-glass-bg-active: linear-gradient(145deg, rgba(55, 70, 95, 0.90) 0%, rgba(30, 42, 68, 0.80) 100%);
+  --lq-glass-bg: linear-gradient(145deg, rgba(30, 41, 59, 0.90) 0%, rgba(15, 23, 42, 0.85) 100%);
+  --lq-glass-bg-hover: linear-gradient(145deg, rgba(45, 58, 80, 0.94) 0%, rgba(24, 34, 56, 0.89) 100%);
+  --lq-glass-bg-active: linear-gradient(145deg, rgba(55, 70, 95, 0.97) 0%, rgba(30, 42, 68, 0.92) 100%);
   --lq-glass-border: rgba(255, 255, 255, 0.18);
   --lq-glass-border-top: rgba(255, 255, 255, 0.40);
   --lq-glass-border-bottom: rgba(0, 0, 0, 0.45);
@@ -4028,9 +4028,9 @@ html.mode-vertical.reader-chrome-hidden .footer-actions-group,
 /* Theme: OLED (pure black depth with crisp crystalline silvery specular rim) */
 [data-theme="oled"],
 .theme-oled {
-  --lq-glass-bg: linear-gradient(145deg, rgba(22, 22, 22, 0.75) 0%, rgba(6, 6, 6, 0.68) 100%);
-  --lq-glass-bg-hover: linear-gradient(145deg, rgba(38, 38, 38, 0.85) 0%, rgba(18, 18, 18, 0.78) 100%);
-  --lq-glass-bg-active: linear-gradient(145deg, rgba(48, 48, 48, 0.92) 0%, rgba(24, 24, 24, 0.84) 100%);
+  --lq-glass-bg: linear-gradient(145deg, rgba(22, 22, 22, 0.94) 0%, rgba(6, 6, 6, 0.88) 100%);
+  --lq-glass-bg-hover: linear-gradient(145deg, rgba(38, 38, 38, 0.96) 0%, rgba(18, 18, 18, 0.91) 100%);
+  --lq-glass-bg-active: linear-gradient(145deg, rgba(48, 48, 48, 0.98) 0%, rgba(24, 24, 24, 0.94) 100%);
   --lq-glass-border: rgba(255, 255, 255, 0.22);
   --lq-glass-border-top: rgba(255, 255, 255, 0.50);
   --lq-glass-border-bottom: rgba(0, 0, 0, 0.75);
@@ -4055,7 +4055,6 @@ body.ui-liquid-glass .dock-action-btn-wide,
 body.ui-liquid-glass .pill-scrubber-capsule,
 body.ui-liquid-glass .apple-books-capsule,
 body.ui-liquid-glass .pill-scrubber-tooltip,
-body.ui-liquid-glass .ruler-quick-popover,
 body.ui-liquid-glass .drawer-panel,
 body.ui-liquid-glass #settings-drawer,
 body.ui-liquid-glass #stats-modal .modal-content,
@@ -4127,8 +4126,31 @@ body.ui-liquid-glass #ruler-toggle-btn:hover {
   transform: translateY(-1px) scale(1.03) !important;
 }
 
-body.ui-liquid-glass .ruler-split-pill:active,
-body.ui-liquid-glass #ruler-toggle-btn:active {
+/* Když je otevřený popover pravítka, zamezit jakémukoliv hýbání či škálování pilulky a vypnout její backdrop filter, aby popover mohl čistě blurrovat text za sebou */
+body.ui-liquid-glass .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)),
+body.ui-liquid-glass #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)),
+.ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)),
+#ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)) {
+  transform: none !important;
+  will-change: auto !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+body.ui-liquid-glass .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)):hover,
+body.ui-liquid-glass #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)):hover,
+.ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)):hover,
+#ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)):hover,
+body.ui-liquid-glass .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)):active,
+body.ui-liquid-glass #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)):active,
+.ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)):active,
+#ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)):active {
+  transform: none !important;
+  will-change: auto !important;
+}
+
+body.ui-liquid-glass .ruler-split-pill:active:not(:has(#ruler-quick-popover:not(.is-hidden))),
+body.ui-liquid-glass #ruler-toggle-btn:active:not(:has(#ruler-quick-popover:not(.is-hidden))) {
   transform: scale(0.95) !important;
 }
 
@@ -4436,17 +4458,54 @@ body.ui-liquid-glass .popover-segmented-control .segment-btn.active {
 /* 5. Popovers, Drawers & Modals */
 
 /* Ruler Quick Popover */
+body.ui-liquid-glass #ruler-quick-popover,
 body.ui-liquid-glass .ruler-quick-popover {
   background: var(--lq-glass-bg) !important;
-  backdrop-filter: var(--lq-glass-blur) !important;
-  -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+  backdrop-filter: blur(28px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
   border: 1px solid var(--lq-glass-border) !important;
   border-top-color: var(--lq-glass-border-top) !important;
-  box-shadow: var(--lq-glass-rim), var(--lq-glass-shadow) !important;
+  border-bottom-color: var(--lq-glass-border-bottom, var(--lq-glass-border)) !important;
+  box-shadow: var(--lq-glass-rim), 0 20px 50px -8px rgba(0, 0, 0, 0.45), 0 8px 24px -4px rgba(0, 0, 0, 0.28) !important;
   border-radius: 20px !important;
   color: var(--lq-glass-text) !important;
-  transition: opacity 0.28s var(--lq-spring-easing),
-              transform 0.28s var(--lq-spring-easing) !important;
+  transform: none;
+  will-change: auto;
+  transition: opacity 0.28s var(--lq-spring-easing) !important;
+}
+
+#ruler-quick-popover:not(.is-hidden),
+.ruler-quick-popover:not(.is-hidden) {
+  transform: none !important;
+}
+
+/* Rigid panel containers: ensure popovers, modal contents, and drawers never shrink/bounce on touch or active */
+body.ui-liquid-glass #ruler-quick-popover:active,
+body.ui-liquid-glass .ruler-quick-popover:active,
+#ruler-quick-popover:active,
+.ruler-quick-popover:active,
+body.ui-liquid-glass .modal-content:active,
+body.ui-liquid-glass #stats-modal .modal-content:active,
+body.ui-liquid-glass .settings-modal .modal-content:active,
+.modal-content:active,
+#stats-modal .modal-content:active,
+.settings-modal .modal-content:active,
+body.ui-liquid-glass .drawer-panel:not(#settings-drawer):active,
+.drawer-panel:not(#settings-drawer):active,
+body.ui-liquid-glass .settings-modal:not(#settings-drawer):active,
+.settings-modal:not(#settings-drawer):active {
+  transform: none !important;
+}
+
+#settings-drawer.drawer-panel.open:active,
+#settings-drawer.open:active,
+#settings-drawer:active,
+.settings-drawer:active,
+body.ui-liquid-glass #settings-drawer.drawer-panel.open:active,
+body.ui-liquid-glass #settings-drawer.open:active,
+body.ui-liquid-glass #settings-drawer:active,
+body.ui-liquid-glass .settings-drawer:active {
+  transform: translate(-50%, 0) !important;
 }
 
 body.ui-liquid-glass .popover-style-btn {
@@ -4563,12 +4622,15 @@ body.ui-liquid-glass #stats-modal.modal-overlay {
   background: rgba(0, 0, 0, 0.45) !important;
 }
 
-body.ui-liquid-glass #stats-modal .modal-content {
+body.ui-liquid-glass #stats-modal .modal-content,
+body.ui-liquid-glass .settings-modal .modal-content,
+body.ui-liquid-glass .modal-content {
   background: var(--lq-glass-bg) !important;
   backdrop-filter: blur(28px) saturate(190%) !important;
   -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
   border: 1px solid var(--lq-glass-border) !important;
   border-top-color: var(--lq-glass-border-top) !important;
+  border-bottom-color: var(--lq-glass-border-bottom, var(--lq-glass-border)) !important;
   box-shadow: var(--lq-glass-rim), 0 24px 60px -8px rgba(0, 0, 0, 0.4) !important;
   border-radius: 24px !important;
   color: var(--lq-glass-text) !important;

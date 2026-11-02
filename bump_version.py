@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 bump_version.py - Nástroj pro správu verze a cache-busting v LuminaReader.
-Aktualizuje APP_VERSION v app.js a dotazy ?v=<verze> ve všech HTML a JS importech
-jak v kořenovém adresáři, tak v adresáři 'public/'.
+Aktualizuje APP_VERSION v app.js a dotazy ?v=<verze> ve všech HTML a JS importech.
 """
 
 import re
@@ -11,19 +10,12 @@ import os
 
 FILES_TO_UPDATE = [
     "index.html",
-    "public/index.html",
     "js/app.js",
-    "public/js/app.js",
     "js/supabase-sync.js",
-    "public/js/supabase-sync.js",
     "js/tracker.js",
-    "public/js/tracker.js",
     "js/epub-parser.js",
-    "public/js/epub-parser.js",
     "js/storage.js",
-    "public/js/storage.js",
     "js/pdf-loader.js",
-    "public/js/pdf-loader.js",
 ]
 
 def bump_version(new_version: str):
