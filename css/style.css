@@ -2224,7 +2224,13 @@ body.is-turning-page .ruler-word-wave,
   box-shadow: none !important;
 }
 
-.ruler-mask {
+.ruler-mask,
+.ruler-mask-top,
+.ruler-mask-bottom,
+.ruler-mask-left,
+.ruler-mask-right,
+.ruler-mask-inactive-spread,
+.ruler-mask.pdf-overlay-mask {
   z-index: 15 !important;
   pointer-events: none !important;
   backface-visibility: hidden;
@@ -2252,34 +2258,58 @@ body.is-turning-page .ruler-word-wave,
   overflow: visible !important;
 }
 
-/* Focus Mode: dimming neaktivních obrázků a ilustrací */
+/* Focus Mode: žádný blanket dimming obrázků a ilustrací – řízeno výhradně geometrickými maskami */
 body.ruler-active.ruler-mode-focus #reader-content img,
+body.ruler-active.ruler-mode-focus #reader-content figure,
+body.ruler-active.ruler-mode-focus #reader-content picture,
 body.ruler-active.ruler-mode-focus #reader-content .chapter-illustration,
 body.ruler-active.ruler-mode-focus #reader-content svg,
+body.ruler-active.ruler-mode-focus #reader-content [class*="ornament"],
+body.ruler-active.ruler-mode-focus #reader-content [class*="illustration"],
 .paged-stage.focus-active #reader-content img,
+.paged-stage.focus-active #reader-content figure,
+.paged-stage.focus-active #reader-content picture,
 .paged-stage.focus-active #reader-content .chapter-illustration,
 .paged-stage.focus-active #reader-content svg,
+.paged-stage.focus-active #reader-content [class*="ornament"],
+.paged-stage.focus-active #reader-content [class*="illustration"],
 .focus-active img,
+.focus-active figure,
+.focus-active picture,
 .focus-active .chapter-illustration,
-.focus-active svg {
-  opacity: 0.25;
-  filter: brightness(0.7);
+.focus-active svg,
+.focus-active [class*="ornament"],
+.focus-active [class*="illustration"] {
+  opacity: 1 !important;
+  filter: none !important;
   transition: none !important;
   -webkit-transition: none !important;
 }
 
 /* Active state (focused by ruler): plně rozsvíceno */
 body.ruler-active.ruler-mode-focus #reader-content img.active-focus,
+body.ruler-active.ruler-mode-focus #reader-content figure.active-focus,
+body.ruler-active.ruler-mode-focus #reader-content picture.active-focus,
 body.ruler-active.ruler-mode-focus #reader-content .chapter-illustration.active-focus,
 body.ruler-active.ruler-mode-focus #reader-content svg.active-focus,
+body.ruler-active.ruler-mode-focus #reader-content [class*="ornament"].active-focus,
+body.ruler-active.ruler-mode-focus #reader-content [class*="illustration"].active-focus,
 body.ruler-active.ruler-mode-focus #reader-content .ruler-focused-image,
 .paged-stage.focus-active #reader-content img.active-focus,
+.paged-stage.focus-active #reader-content figure.active-focus,
+.paged-stage.focus-active #reader-content picture.active-focus,
 .paged-stage.focus-active #reader-content .chapter-illustration.active-focus,
 .paged-stage.focus-active #reader-content svg.active-focus,
+.paged-stage.focus-active #reader-content [class*="ornament"].active-focus,
+.paged-stage.focus-active #reader-content [class*="illustration"].active-focus,
 .paged-stage.focus-active #reader-content .ruler-focused-image,
 .focus-active img.active-focus,
+.focus-active figure.active-focus,
+.focus-active picture.active-focus,
 .focus-active .chapter-illustration.active-focus,
 .focus-active svg.active-focus,
+.focus-active [class*="ornament"].active-focus,
+.focus-active [class*="illustration"].active-focus,
 .focus-active .ruler-focused-image {
   opacity: 1 !important;
   filter: none !important;

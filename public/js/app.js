@@ -1462,7 +1462,7 @@ export class LuminaApp {
     ].filter(Boolean);
 
     uiContainers.forEach((container) => {
-      ["pointerdown", "touchstart", "click"].forEach((eventType) => {
+      ["pointerdown", "pointermove", "pointerup", "touchstart", "touchmove", "touchend", "click"].forEach((eventType) => {
         container.addEventListener(eventType, (e) => {
           if (eventType === "click" && container.id === "reader-header") {
             if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
@@ -1473,7 +1473,7 @@ export class LuminaApp {
             }
           }
           e.stopPropagation();
-        });
+        }, { passive: eventType !== "touchmove" });
       });
     });
 
@@ -1677,8 +1677,10 @@ export class LuminaApp {
         }
       });
 
-      this.dom.rulerQuickPopover.addEventListener("click", (e) => {
-        e.stopPropagation();
+      ["pointerdown", "pointermove", "pointerup", "touchstart", "touchmove", "touchend", "click"].forEach((evt) => {
+        this.dom.rulerQuickPopover.addEventListener(evt, (e) => {
+          e.stopPropagation();
+        }, { passive: evt !== "touchmove" });
       });
 
       // Zavření popoveru kliknutím mimo (outside-click dismiss) — capture fáze, nejvyšší priorita.
@@ -3033,19 +3035,33 @@ export class LuminaApp {
     const enabled = !!isWordMode;
     this.settings.ruler.wordTracking = enabled;
 
+    // 1. Okamžitá synchronní aktualizace UI stavu tlačítek a přepínačů
     if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", !enabled);
     if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", enabled);
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
       btn.classList.toggle("active", (btn.dataset.rulerModeType === "word") === enabled);
     });
-
-    if (this.ruler) {
-      this.ruler.setWordTracking(enabled);
-      this.ruler.applyPosition();
+    if (this.dom.rulerWordTrackingSetting) {
+      this.setSwitchState(this.dom.rulerWordTrackingSetting, enabled);
     }
 
     this.updateRulerToggleButtonUI();
     storage.saveSettings(this.settings);
+
+    // 2. Odložená aktivace sledování slov do dalšího cyklu event loopu (okamžité vykreslení UI bez záseku)
+    if (this._wordTrackingTimeout) {
+      clearTimeout(this._wordTrackingTimeout);
+      this._wordTrackingTimeout = null;
+    }
+    requestAnimationFrame(() => {
+      this._wordTrackingTimeout = setTimeout(() => {
+        this._wordTrackingTimeout = null;
+        if (this.ruler) {
+          this.ruler.setWordTracking(enabled);
+          this.ruler.applyPosition();
+        }
+      }, 0);
+    });
   }
 
   updateRulerToggleButtonUI() {

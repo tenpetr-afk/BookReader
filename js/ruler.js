@@ -162,6 +162,8 @@ export class ReadingRuler {
     this.isLineLocked = false;
     this.lineLockTimer = null;
     this._navSafetyTimer = null;
+    this._trackingSuspendedByOverlay = false;
+    this._lineWordsCache = new Map();
     // Callback wired by app.js: () => bool — returns true when any drawer/panel is open.
     // When true, ruler click/tap handlers must yield to backdrop close logic.
     this.isAnyDrawerOpen = null;
@@ -730,7 +732,10 @@ export class ReadingRuler {
     if (!this.enabled) return false;
     if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) return false;
     if (this.wordTracking) {
-      if (this.cachedWords.length === 0) return false;
+      if (!this.cachedLines || this.cachedLines.length === 0) return false;
+      const isLastLine = this.activeLineIndex >= this.cachedLines.length - 1;
+      if (!isLastLine) return false;
+      if (!this.cachedWords || this.cachedWords.length === 0) return true;
       return this.activeWordIndex >= this.cachedWords.length - 1;
     }
     if (this.cachedLines.length === 0) return false;
@@ -807,26 +812,31 @@ export class ReadingRuler {
     this.maskTopEl.className = "ruler-mask ruler-mask-top is-hidden";
     this.maskTopEl.style.willChange = "transform";
     this.maskTopEl.style.contain = "paint";
+    this.maskTopEl.style.pointerEvents = "none";
 
     this.maskBottomEl = document.createElement("div");
     this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-hidden";
     this.maskBottomEl.style.willChange = "transform";
     this.maskBottomEl.style.contain = "paint";
+    this.maskBottomEl.style.pointerEvents = "none";
 
     this.maskLeftEl = document.createElement("div");
     this.maskLeftEl.className = "ruler-mask ruler-mask-left is-hidden";
     this.maskLeftEl.style.willChange = "transform";
     this.maskLeftEl.style.contain = "paint";
+    this.maskLeftEl.style.pointerEvents = "none";
 
     this.maskRightEl = document.createElement("div");
     this.maskRightEl.className = "ruler-mask ruler-mask-right is-hidden";
     this.maskRightEl.style.willChange = "transform";
     this.maskRightEl.style.contain = "paint";
+    this.maskRightEl.style.pointerEvents = "none";
 
     this.maskInactiveSpreadEl = document.createElement("div");
     this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom mode-bottom-cover ruler-mask-inactive-spread is-hidden";
     this.maskInactiveSpreadEl.style.willChange = "transform";
     this.maskInactiveSpreadEl.style.contain = "paint";
+    this.maskInactiveSpreadEl.style.pointerEvents = "none";
 
     document.body.appendChild(this.maskTopEl);
     document.body.appendChild(this.maskBottomEl);
@@ -848,6 +858,27 @@ export class ReadingRuler {
     return !!target.closest(
       "header, nav, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, a, [role='button'], [role='dialog'], [role='slider'], .btn, .btn-icon, .drawer-panel, .drawer, .drawer-backdrop, .modal-dialog, .modal-overlay, .paged-footer-bar, .reading-scrubber, .reader-header, .top-navbar, .ruler-btn-group, #ruler-toggle-btn, #ruler-split-pill, .ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, .ruler-quick-popover, .ruler-floating-controls, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group"
     );
+  }
+
+  /**
+   * Zjistí, zda je otevřen rychlý popover pravítka, zásuvka nastavení nebo jiný overlay panel,
+   * při kterém musí být pointer tracking a word proximity výpočty okamžitě pozastaveny.
+   */
+  isPopoverOrDrawerOpen() {
+    if (typeof this.isAnyDrawerOpen === "function" && this.isAnyDrawerOpen()) {
+      return true;
+    }
+    const popover = document.getElementById("ruler-quick-popover");
+    if (popover && !popover.classList.contains("is-hidden")) return true;
+    const settingsDrawer = document.getElementById("settings-drawer");
+    if (settingsDrawer && settingsDrawer.classList.contains("open")) return true;
+    const tocDrawer = document.getElementById("toc-drawer");
+    if (tocDrawer && tocDrawer.classList.contains("open")) return true;
+    const searchDrawer = document.getElementById("search-drawer");
+    if (searchDrawer && searchDrawer.classList.contains("open")) return true;
+    const statsModal = document.getElementById("stats-modal");
+    if (statsModal && statsModal.classList.contains("open")) return true;
+    return false;
   }
 
   /**
@@ -1359,6 +1390,19 @@ export class ReadingRuler {
    * Plynulá aktualizace pozice pravítka synchronizovaná s obnovovací frekvencí displeje (120Hz ProMotion)
    */
   schedulePointerUpdate(clientX, clientY, pointerType = "mouse") {
+    if (this.isPopoverOrDrawerOpen()) {
+      this._trackingSuspendedByOverlay = true;
+      if (this.pointerRafId) {
+        cancelAnimationFrame(this.pointerRafId);
+        this.pointerRafId = null;
+        this.rafPointerPending = false;
+      }
+      return;
+    }
+    if (this._trackingSuspendedByOverlay) {
+      return;
+    }
+
     const isDocTurning = document.body.classList.contains("is-turning-page") ||
       document.body.classList.contains("is-chapter-loading") ||
       !!(this.app?.isNavigating) ||
@@ -1378,31 +1422,42 @@ export class ReadingRuler {
     this.pendingPointerY = clientY;
     this.pendingPointerType = pointerType;
     this.activePointerType = pointerType;
-    if (!this.rafPointerPending) {
-      this.rafPointerPending = true;
-      this.pointerRafId = requestAnimationFrame(() => {
-        this.rafPointerPending = false;
-        this.pointerRafId = null;
-        if (this.enabled) {
-          const turning = document.body.classList.contains("is-turning-page") ||
-            document.body.classList.contains("is-chapter-loading") ||
-            !!(this.app?.isNavigating) ||
-            (Date.now() < this.navigatingPageLockoutEndTime);
-          if (!turning && (this.pendingPointerType === "mouse" || this.followMode === "mouse")) {
-            this.isLineLocked = false;
-            this.isPageTransitioning = false;
-          }
-          if (!this.isLineLocked && !this.isPageTransitioning) {
-            this.handlePointerMove(this.pendingPointerX, this.pendingPointerY, this.pendingPointerType);
-          }
-        }
-      });
+
+    // Gating v rAF: pokud je přepočet na další snímek již naplánován, ignorovat mezilehlé události
+    if (this.rafPointerPending) {
+      return;
     }
+
+    this.rafPointerPending = true;
+    this.pointerRafId = requestAnimationFrame(() => {
+      this.rafPointerPending = false;
+      this.pointerRafId = null;
+      if (!this.enabled || this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay) {
+        return;
+      }
+      const turning = document.body.classList.contains("is-turning-page") ||
+        document.body.classList.contains("is-chapter-loading") ||
+        !!(this.app?.isNavigating) ||
+        (Date.now() < this.navigatingPageLockoutEndTime);
+      if (!turning && (this.pendingPointerType === "mouse" || this.followMode === "mouse")) {
+        this.isLineLocked = false;
+        this.isPageTransitioning = false;
+      }
+      if (!this.isLineLocked && !this.isPageTransitioning) {
+        this.handlePointerMove(this.pendingPointerX, this.pendingPointerY, this.pendingPointerType);
+      }
+    });
   }
 
   isAlreadyAtPosition(clientX, clientY) {
     if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) return false;
     if (this.wordTracking && this.cachedWords.length > 0 && this.activeWordIndex >= 0) {
+      const activeLine = (this.cachedLines && this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
+        ? this.cachedLines[this.activeLineIndex]
+        : null;
+      if (activeLine && (clientY < activeLine.top - 8 || clientY > activeLine.bottom + 8)) {
+        return false;
+      }
       const effectiveY = clientY - 8;
       let minDiff = Infinity;
       let closestIdx = -1;
@@ -1529,27 +1584,16 @@ export class ReadingRuler {
         this.activeWordIndex = -1;
         this.rulerEl.classList.remove("word-tracking-mode");
       } else {
-        if (this.cachedWords.length === 0) {
-          this.refreshWords();
-        }
-        if (this.cachedWords.length > 0) {
-          let firstWordIdx = -1;
-          for (let w = 0; w < this.cachedWords.length; w++) {
-            if (this.cachedWords[w].lineIndex === closestIdx) {
-              firstWordIdx = w;
-              break;
-            }
-          }
-          if (firstWordIdx >= 0) {
-            this.activeWordIndex = firstWordIdx;
-            this.setWordWindow(firstWordIdx);
-            const cw = this.cachedWords[firstWordIdx];
-            if (cw) {
-              this.lastPointerX = cw.centerX;
-              this.lastPointerY = Math.round(cw.centerY - vScrollTop);
-              this.lastValidPointerX = this.lastPointerX;
-              this.lastValidPointerY = this.lastPointerY;
-            }
+        const words = this.ensureActiveWords(closestIdx);
+        if (words && words.length > 0) {
+          this.activeWordIndex = 0;
+          this.setWordWindow(0);
+          const cw = words[0];
+          if (cw) {
+            this.lastPointerX = cw.centerX;
+            this.lastPointerY = Math.round(cw.centerY - vScrollTop);
+            this.lastValidPointerX = this.lastPointerX;
+            this.lastValidPointerY = this.lastPointerY;
           }
         }
       }
@@ -1584,9 +1628,6 @@ export class ReadingRuler {
     if (this.cachedLines.length === 0) {
       this.detectLines();
     }
-    if (this.wordTracking && this.cachedWords.length === 0) {
-      this.refreshWords();
-    }
 
     let targetLineIdx = -1;
     let minDiff = Infinity;
@@ -1605,6 +1646,7 @@ export class ReadingRuler {
 
     this.activeLineIndex = targetLineIdx;
     const targetLine = (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) ? this.cachedLines[targetLineIdx] : null;
+    const isMediaLine = !!(targetLine && (targetLine.isMedia || !targetLine.hasText));
 
     const geom = this.computeLineGeometry(targetLineIdx);
     if (geom) {
@@ -1620,16 +1662,15 @@ export class ReadingRuler {
       this.stationaryScreenY = Math.round(clientY - h / 2);
     }
 
-    if (this.wordTracking) {
+    if (this.wordTracking && !isMediaLine) {
+      const words = this.ensureActiveWords(targetLineIdx);
       let closestWordIdx = -1;
       let minWordDist = Infinity;
-      for (let i = 0; i < this.cachedWords.length; i++) {
-        const w = this.cachedWords[i];
-        const isLineMatch = (w.lineIndex != null && w.lineIndex === targetLineIdx);
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
         const dy = docY < w.top ? w.top - docY : docY > w.bottom ? docY - w.bottom : 0;
         const dx = clientX < w.left ? w.left - clientX : clientX > w.right ? clientX - w.right : 0;
-        const linePenalty = isLineMatch ? 0 : 500;
-        const dist = dy * 3 + dx + linePenalty;
+        const dist = dy * 3 + dx;
         if (dist < minWordDist) {
           minWordDist = dist;
           closestWordIdx = i;
@@ -1638,13 +1679,15 @@ export class ReadingRuler {
       if (closestWordIdx >= 0) {
         this.activeWordIndex = closestWordIdx;
         this.setWordWindow(closestWordIdx);
-        const cw = this.cachedWords[closestWordIdx];
+        const cw = words[closestWordIdx];
         this.lastPointerX = cw ? cw.centerX : clientX;
         this.lastPointerY = cw ? Math.round(cw.centerY - vScrollTop) : clientY;
       }
       this.rulerEl.classList.add("word-tracking-mode");
     } else {
+      this.activeWordIndex = -1;
       this.rulerEl.classList.remove("word-tracking-mode");
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
       this.lastPointerX = targetLine ? targetLine.left : clientX;
       this.lastPointerY = targetLine ? Math.round(targetLine.centerY - vScrollTop) : clientY;
     }
@@ -1693,9 +1736,20 @@ export class ReadingRuler {
   attachEvents() {
     // 1. POINTER EVENTS: Sjednocené sledování pro prst, Apple Pencil i myš
     const onPointerDown = (e) => {
+      if (this.isPopoverOrDrawerOpen()) {
+        this.isPenTouching = false;
+        this._trackingSuspendedByOverlay = true;
+        return;
+      }
+
       if (this.isUiControl(e.target)) {
         this.isPenTouching = false;
+        this._trackingSuspendedByOverlay = true;
         return;
+      }
+
+      if (this.isPointerInStage(e.clientX, e.clientY)) {
+        this._trackingSuspendedByOverlay = false;
       }
 
       if (e.pointerType === "pen") {
@@ -1766,7 +1820,7 @@ export class ReadingRuler {
         this.activePointerId = e.pointerId;
         this.activePointerType = e.pointerType;
         this.isDraggingRuler = false;
-        this.handlePointerMove(e.clientX, e.clientY, e.pointerType);
+        this.schedulePointerUpdate(e.clientX, e.clientY, e.pointerType);
         return;
       }
 
@@ -1779,9 +1833,24 @@ export class ReadingRuler {
     };
 
     const onPointerMove = (e) => {
+      if (this.isPopoverOrDrawerOpen()) {
+        this.isPenTouching = false;
+        this._trackingSuspendedByOverlay = true;
+        return;
+      }
+
       if (this.isUiControl(e.target)) {
         this.isPenTouching = false;
+        this._trackingSuspendedByOverlay = true;
         return;
+      }
+
+      if (this._trackingSuspendedByOverlay) {
+        if (e.pointerType === "mouse" && this.isPointerInStage(e.clientX, e.clientY)) {
+          this._trackingSuspendedByOverlay = false;
+        } else {
+          return;
+        }
       }
 
       if (e.pointerType === "pen") {
@@ -2065,6 +2134,11 @@ export class ReadingRuler {
     // 2. TOUCH EVENTS (WebKit Safari fallback pro starší zařízení)
     const onTouchStart = (e) => {
       if (!this.enabled || this.isLineLocked) return;
+      if (this.isPopoverOrDrawerOpen()) {
+        this.holdStartTime = 0;
+        this._trackingSuspendedByOverlay = true;
+        return;
+      }
       if (this._scrollEndTimer) {
         clearTimeout(this._scrollEndTimer);
         this._scrollEndTimer = null;
@@ -2076,10 +2150,14 @@ export class ReadingRuler {
       this._scrollRafPending = false;
       this._isVerticalScrolling = false;
       const touch = e.touches[0];
-      if (this.isUiControl(e.target) || !touch || !this.isPointerInStage(touch.clientX, touch.clientY)) {
+      if (this.isUiControl(e.target) || (touch && this.isUiControl(touch.target)) || !touch || !this.isPointerInStage(touch.clientX, touch.clientY)) {
         this.holdStartTime = 0;
+        if (this.isUiControl(e.target) || (touch && this.isUiControl(touch.target))) {
+          this._trackingSuspendedByOverlay = true;
+        }
         return;
       }
+      this._trackingSuspendedByOverlay = false;
       if (e.target?.closest && e.target.closest("hr")) return;
       const isStylus = Array.from(e.touches).some(t => t.touchType === "stylus");
       if (isStylus) {
@@ -2104,6 +2182,13 @@ export class ReadingRuler {
     };
 
     const onTouchMove = (e) => {
+      if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay || this.isUiControl(e.target)) {
+        if (this.isPopoverOrDrawerOpen() || this.isUiControl(e.target)) {
+          this._trackingSuspendedByOverlay = true;
+        }
+        return;
+      }
+
       if (e.pointerType === "mouse" || this.followMode === "mouse") {
         const isDocTurning = document.body.classList.contains("is-turning-page") ||
           document.body.classList.contains("is-chapter-loading") ||
@@ -2268,7 +2353,7 @@ export class ReadingRuler {
     // Aktivní touchmove listener pro Apple Pencil na iPadOS Safari
     window.addEventListener("touchmove", (e) => {
       if (!this.enabled || this.followMode !== "mouse") return;
-      if (this.isUiControl(e.target)) return;
+      if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay || this.isUiControl(e.target)) return;
       const touches = e.touches ? Array.from(e.touches) : [];
       const stylusTouch = touches.find(t => t.touchType === "stylus") || ((Date.now() - this.lastPenTime < 500) ? touches[0] : null);
       if (stylusTouch && this.isPointerInStage(stylusTouch.clientX, stylusTouch.clientY)) {
@@ -2679,19 +2764,13 @@ export class ReadingRuler {
         if (targetLine.isMedia) {
           this.activeWordIndex = -1;
           this.rulerEl.classList.remove("word-tracking-mode");
-        } else if (this.wordTracking && this.cachedWords.length > 0) {
-          let wIdx = -1;
-          if (this.activeWordIndex >= 0 && this.activeWordIndex < this.cachedWords.length && this.cachedWords[this.activeWordIndex].lineIndex === targetIdx) {
+        } else if (this.wordTracking) {
+          const words = this.ensureActiveWords(targetIdx);
+          let wIdx = 0;
+          if (this.activeWordIndex >= 0 && this.activeWordIndex < words.length) {
             wIdx = this.activeWordIndex;
-          } else {
-            for (let w = 0; w < this.cachedWords.length; w++) {
-              if (this.cachedWords[w].lineIndex === targetIdx) {
-                wIdx = w;
-                break;
-              }
-            }
           }
-          if (wIdx >= 0) {
+          if (words.length > 0) {
             this.activeWordIndex = wIdx;
             this.setWordWindow(wIdx);
             this.rulerEl.classList.add("word-tracking-mode");
@@ -2739,15 +2818,13 @@ export class ReadingRuler {
       if (closestLine && closestLine.isMedia) {
         this.activeWordIndex = -1;
         this.rulerEl.classList.remove("word-tracking-mode");
-      } else if (this.wordTracking && this.cachedWords.length > 0) {
-        let wIdx = -1;
-        for (let w = 0; w < this.cachedWords.length; w++) {
-          if (this.cachedWords[w].lineIndex === closestIdx) {
-            wIdx = w;
-            break;
-          }
+      } else if (this.wordTracking) {
+        const words = this.ensureActiveWords(closestIdx);
+        let wIdx = 0;
+        if (this.activeWordIndex >= 0 && this.activeWordIndex < words.length) {
+          wIdx = this.activeWordIndex;
         }
-        if (wIdx >= 0) {
+        if (words.length > 0) {
           this.activeWordIndex = wIdx;
           this.setWordWindow(wIdx);
           this.rulerEl.classList.add("word-tracking-mode");
@@ -2945,6 +3022,7 @@ export class ReadingRuler {
    */
   detectLines(force = false) {
     this._lastComputedLineGeom = null;
+    this._clearWordCache();
     if (!force && (!this.cachedLines || this.cachedLines.length === 0) && this._lastEmptyDetectTime && (performance.now() - this._lastEmptyDetectTime < 150)) {
       return [];
     }
@@ -3291,7 +3369,7 @@ export class ReadingRuler {
       }
 
       // Detekce samostatných obrázků, ilustrací a multimediálních elementů
-      const mediaCandidates = content.querySelectorAll('img, figure, .chapter-illustration, svg');
+      const mediaCandidates = content.querySelectorAll('img, figure, .chapter-illustration, svg, picture, [class*="ornament"], [class*="illustration"]');
       const handledMediaNodes = new Set();
 
       mediaCandidates.forEach(mediaEl => {
@@ -3303,7 +3381,7 @@ export class ReadingRuler {
         }
 
         let target = mediaEl;
-        if (mediaEl.tagName === 'FIGURE' || mediaEl.classList.contains('chapter-illustration')) {
+        if (mediaEl.tagName === 'FIGURE' || mediaEl.classList.contains('chapter-illustration') || mediaEl.tagName === 'PICTURE') {
           const innerImg = mediaEl.querySelector('img, svg');
           if (innerImg) {
             target = innerImg;
@@ -3312,7 +3390,7 @@ export class ReadingRuler {
           handledMediaNodes.add(mediaEl);
         } else if (mediaEl.tagName === 'IMG') {
           handledMediaNodes.add(mediaEl);
-          const parentContainer = mediaEl.closest('figure, picture, .chapter-illustration');
+          const parentContainer = mediaEl.closest('figure, picture, .chapter-illustration, [class*="ornament"]');
           if (parentContainer) handledMediaNodes.add(parentContainer);
         } else if (mediaEl.tagName === 'SVG') {
           handledMediaNodes.add(mediaEl);
@@ -3326,8 +3404,8 @@ export class ReadingRuler {
         } catch (e) {}
 
         const rect = target.getBoundingClientRect();
-        // Přeskočit prázdné nebo miniaturní ikony/odrážky (< 24px)
-        if (rect.width < 24 || rect.height < 24) return;
+        // Přeskočit prázdné nebo miniaturní ikony/odrážky (< 12px x < 12px nebo < 6px výška)
+        if ((rect.width < 12 && rect.height < 12) || rect.width < 8 || rect.height < 6) return;
 
         // Horizontální layout filtr pro stránkový režim
         if (!isVertical && hasValidStageBounds && (rect.right < stageLeft - 20 || rect.left > stageRight + 20)) {
@@ -4064,6 +4142,7 @@ export class ReadingRuler {
     this._lastEmptyDetectTime = 0;
     this._lastActiveLineIndex = -1;
     this._lastActiveColumn = null;
+    this._clearWordCache();
     return this.detectLines(true);
   }
 
@@ -4082,816 +4161,348 @@ export class ReadingRuler {
   }
 
   /**
-   * Zmapuje přesné obdélníky všech viditelných slov na aktuální stránce.
+   * Vymaže mezipaměť slov a asociovaná slova pro řádky.
    */
-  refreshWords() {
-    if (!this._forceRefreshWords && (!this.cachedWords || this.cachedWords.length === 0) && this._lastEmptyWordsDetectTime && (performance.now() - this._lastEmptyWordsDetectTime < 150)) {
-      return [];
-    }
-    if (!this.enabled || !this.wordTracking) {
-      this.cachedWords = [];
-      return [];
+  _clearWordCache() {
+    this._lineWordsCache = new Map();
+    if (this.cachedLines) {
+      for (let i = 0; i < this.cachedLines.length; i++) {
+        this.cachedLines[i].words = null;
+        this.cachedLines[i].wordIndices = [];
+      }
     }
     this.cachedWords = [];
-    if (this.isImageOnlyPdf) {
+  }
+
+  /**
+   * Získá slova pro konkrétní řádek (lazy-load z cache nebo cíleným skenem jediného elementu/odstavce).
+   */
+  getWordsForLine(lineIdx) {
+    if (lineIdx < 0 || !this.cachedLines || lineIdx >= this.cachedLines.length) {
       return [];
     }
-    try {
-      const stage = this.container || document.getElementById("paged-stage");
-      const content = document.getElementById("reader-content");
-      if (!stage || !content) {
-        this.cachedWords = [];
-        return [];
+    const line = this.cachedLines[lineIdx];
+    if (!line || line.isMedia || !line.hasText) {
+      return [];
+    }
+    if (line.words && Array.isArray(line.words)) {
+      return line.words;
+    }
+    if (this._lineWordsCache && this._lineWordsCache.has(lineIdx)) {
+      const cached = this._lineWordsCache.get(lineIdx);
+      line.words = cached;
+      return cached;
+    }
+    return this._computeWordsForLine(lineIdx);
+  }
+
+  /**
+   * Cílený prostorový výpočet souřadnic slov pouze pro blok / element obsahující daný řádek.
+   * Eliminuje layout thrashing na celé stránce a redukuje počet měřených slov z 300–600 na 8–15.
+   */
+  _computeWordsForLine(lineIdx) {
+    const line = this.cachedLines[lineIdx];
+    if (!line || line.isMedia || !line.hasText) {
+      return [];
+    }
+    if (!this._lineWordsCache) this._lineWordsCache = new Map();
+
+    const isVertical = this.isVerticalMode();
+    const viewport = isVertical ? (this._cachedViewportEl || document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
+    const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
+    const stage = this.container || document.getElementById("paged-stage");
+    const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
+    const stageLeft = stageRect.left;
+    const stageRight = stageRect.right;
+    const stageTop = stageRect.top;
+    const stageBottom = stageRect.bottom;
+    const hasValidStageBounds = stageRect.width > 50 && stageRect.height > 50;
+    const isSpread = !isVertical && this.isSpreadActive();
+    const spreadInfo = isSpread ? this.getActiveSpreadInfo(line) : null;
+    const isTwoCol = !isVertical && (this.isTwoCol || isSpread);
+    const stageCenterX = stageRect.left + stageRect.width / 2;
+    const splitX = (isSpread && spreadInfo) ? spreadInfo.midGap : (isTwoCol && this.gapMiddle ? this.gapMiddle : stageCenterX);
+
+    let container = line.blockElement;
+    if (!container && line.element) {
+      container = line.element.closest("p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre, dd, dt") || line.element;
+    }
+    if (!container) {
+      container = line.el || line.element;
+    }
+    if (!container) {
+      line.words = [];
+      this._lineWordsCache.set(lineIdx, []);
+      return [];
+    }
+
+    let pdfTf = null;
+    if (this.isPdfMode || line.isPdfLine) {
+      const textLayer = container.closest(".textLayer") || (line.element ? line.element.closest(".textLayer") : null);
+      if (textLayer) {
+        const slot = textLayer.closest(".pdf-page-container, .pdf-page-slot") || textLayer.parentElement;
+        const canvas = slot ? slot.querySelector("canvas") : document.querySelector("#reader-content canvas");
+        if (canvas) {
+          const canvasRect = canvas.getBoundingClientRect();
+          const textLayerRect = textLayer.getBoundingClientRect();
+          if (canvasRect.height > 10 && textLayerRect.height > 10) {
+            pdfTf = {
+              canvasRect,
+              textLayerRect,
+              scaleY: canvasRect.height / textLayerRect.height,
+              scaleX: (canvasRect.width > 10 && textLayerRect.width > 10) ? (canvasRect.width / textLayerRect.width) : 1
+            };
+          }
+        }
       }
+    }
 
-      const stageRect = stage.getBoundingClientRect();
-      const stageLeft = stageRect.left;
-      const stageRight = stageRect.right;
-      const stageTop = stageRect.top;
-      const stageBottom = stageRect.bottom;
-      const isVertical = this.isVerticalMode();
-      const viewport = isVertical ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
-      const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
-      const hasValidStageBounds = stageRect.width > 50 && stageRect.height > 50;
-      const hasTextLayer = this.isPdfMode || !!content.querySelector('.textLayer');
+    // Identifikace kandidátních řádků spadajících pod tentýž kontejner
+    const candidateLines = [];
+    for (let j = 0; j < this.cachedLines.length; j++) {
+      const cl = this.cachedLines[j];
+      if (cl.isMedia) continue;
+      if (cl.blockElement === container || cl.element === container || (cl.element && container.contains(cl.element))) {
+        candidateLines.push({ line: cl, index: j });
+      }
+    }
+    if (candidateLines.length === 0) {
+      candidateLines.push({ line, index: lineIdx });
+    }
 
-      // PDF coordinate normalization map against underlying <canvas>
-      const pdfTransformMap = new Map();
-      const getPdfTransform = (tl) => {
-        if (!tl) return null;
-        if (pdfTransformMap.has(tl)) return pdfTransformMap.get(tl);
+    const words = [];
+    const range = document.createRange();
+    const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g;
+    const leadingNonSpaceRegex = /^[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/;
+    const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
+    const visitedBionicSpans = new Set();
+    const consumedTextOffsets = new Map();
 
-        const slot = tl.closest('.pdf-page-container, .pdf-page-slot') || tl.parentElement;
-        const canvas = slot ? slot.querySelector('canvas') : document.querySelector('#reader-content canvas');
-        if (!canvas) {
-          pdfTransformMap.set(tl, null);
-          return null;
+    const pushRangeRectsToWords = (cleanToken) => {
+      const clientRects = range.getClientRects();
+      if (!clientRects || clientRects.length === 0) return;
+
+      for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
+        const rect = clientRects[rIdx];
+        let rTop = rect.top;
+        let rBottom = rect.bottom;
+        let rHeight = rect.height;
+        let rLeft = rect.left;
+        let rRight = rect.right;
+
+        if (pdfTf) {
+          const relTop = rect.top - pdfTf.textLayerRect.top;
+          const relBottom = rect.bottom - pdfTf.textLayerRect.top;
+          rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
+          rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
+          rHeight = rBottom - rTop;
+
+          const relLeft = rect.left - pdfTf.textLayerRect.left;
+          const relRight = rect.right - pdfTf.textLayerRect.left;
+          rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
+          rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
         }
 
-        const canvasRect = canvas.getBoundingClientRect();
-        const textLayerRect = tl.getBoundingClientRect();
-
-        if (canvasRect.height > 10 && textLayerRect.height > 10) {
-          const scaleY = canvasRect.height / textLayerRect.height;
-          const scaleX = (canvasRect.width > 10 && textLayerRect.width > 10) ? (canvasRect.width / textLayerRect.width) : 1;
-          const tf = {
-            canvasRect,
-            textLayerRect,
-            scaleY,
-            scaleX
-          };
-          pdfTransformMap.set(tl, tf);
-          return tf;
-        }
-        pdfTransformMap.set(tl, null);
-        return null;
-      };
-
-      const words = [];
-      const BLOCK_TAGS = new Set([
-        "P", "LI", "BLOCKQUOTE", "H1", "H2", "H3", "H4", "H5", "H6",
-        "DIV", "SECTION", "ARTICLE", "HEADER", "FOOTER", "ASIDE", "NAV",
-        "TABLE", "TR", "TD", "TH", "PRE", "DD", "DT"
-      ]);
-      const blockRectCache = new Map();
-      const parentRectCache = new Map();
-      const offscreenBlocks = new Set();
-      const viewW = window.innerWidth;
-      const viewH = window.innerHeight;
-
-      const walker = document.createTreeWalker(content, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-        acceptNode(node) {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            if (node === content) {
-              return NodeFilter.FILTER_SKIP;
-            }
-            const tag = node.tagName;
-            if (
-              tag === "SCRIPT" || tag === "STYLE" || tag === "SVG" || tag === "PICTURE" ||
-              tag === "BUTTON" ||
-              node.classList.contains("ruler-floating-controls") ||
-              node.classList.contains("ruler-quick-popover") ||
-              node.classList.contains("toast-container")
-            ) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            if (tag === "FIGURE" || node.classList.contains("chapter-illustration")) {
-              if (!node.closest("figcaption")) return NodeFilter.FILTER_REJECT;
-            }
-
-            // Ořezání celých blokových elementů (odstavců) mimo viditelný viewport ještě před sestoupením do vnořených uzlů
-            if (BLOCK_TAGS.has(tag)) {
-              let rect = blockRectCache.get(node);
-              if (!rect) {
-                rect = node.getBoundingClientRect();
-                blockRectCache.set(node, rect);
-              }
-
-              if (!isVertical && hasValidStageBounds) {
-                if (
-                  rect.right < stageLeft - 30 ||
-                  rect.left > stageRight + 30 ||
-                  rect.bottom < stageTop - 30 ||
-                  rect.top > stageBottom + 30
-                ) {
-                  offscreenBlocks.add(node);
-                  return NodeFilter.FILTER_REJECT;
-                }
-              } else if (isVertical) {
-                if (
-                  rect.bottom < -30 ||
-                  rect.top > viewH + 30 ||
-                  rect.right < -30 ||
-                  rect.left > viewW + 30
-                ) {
-                  offscreenBlocks.add(node);
-                  return NodeFilter.FILTER_REJECT;
-                }
-              }
-              return NodeFilter.FILTER_SKIP;
-            }
-            return NodeFilter.FILTER_SKIP;
+        const rWidth = rRight - rLeft;
+        if (
+          rWidth > 0.5 &&
+          rHeight > 2 &&
+          rRight > stageLeft + 2 &&
+          rLeft < stageRight - 2 &&
+          (isVertical || (rBottom > stageTop && rTop < stageBottom))
+        ) {
+          if (!isVertical && hasValidStageBounds) {
+            const midX = (rLeft + rRight) / 2;
+            if (midX <= stageLeft + 2 || midX >= stageRight - 2) continue;
           }
-          return NodeFilter.FILTER_ACCEPT;
-        }
-      });
-      let node;
-      const range = document.createRange();
-      // Podpora všech unicode mezer, nezlomitelných mezer i neviditelných dělicích znaků
-      const wordRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g;
-      const leadingNonSpaceRegex = /^[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/;
-      const trailingNonSpaceRegex = /[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+$/;
-      const invisibleStripRegex = /[\u200B-\u200D\uFEFF\u00AD\u2060]/g;
-
-      const visitedBionicSpans = new Set();
-      const consumedTextOffsets = new Map();
-      const maxColSpan = (!isVertical && hasValidStageBounds)
-        ? Math.max(120, (this.isTwoCol ? stageRect.width * 0.55 : stageRect.width) - 4)
-        : Math.max(120, viewW);
-
-      let lastBionicBlock = null;
-      let lastBionicOffsetParent = null;
-      let lastBionicOffsetTop = null;
-      let lastBionicOffsetLeft = -Infinity;
-      let lastBionicLineFirstOffsetLeft = -Infinity;
-      let lastBionicColFirstOffsetLeft = -Infinity;
-      let lastBionicLineStatus = 0; // 1 = onscreen, -1 = offscreen-before, 2 = offscreen-after
-      let offscreenStrideCount = 0;
-
-      const consumeBionicWordSiblings = (bEl) => {
-        visitedBionicSpans.add(bEl);
-        let cur = bEl.nextSibling;
-        while (cur) {
-          if (cur.nodeType === Node.TEXT_NODE) {
-            const t = cur.textContent || "";
-            const m = leadingNonSpaceRegex.exec(t);
-            if (m && m[0].length > 0) {
-              consumedTextOffsets.set(cur, m[0].length);
-              if (
-                m[0].length === t.length &&
-                cur.nextSibling &&
-                cur.nextSibling.nodeType === Node.ELEMENT_NODE &&
-                cur.nextSibling.tagName === 'B' &&
-                (cur.nextSibling.classList.contains('bionic-fixation') || cur.nextSibling.classList.contains('bionic-bold'))
-              ) {
-                cur = cur.nextSibling;
-                continue;
-              }
-            }
-            break;
-          } else if (
-            cur.nodeType === Node.ELEMENT_NODE &&
-            cur.tagName === 'B' &&
-            (cur.classList.contains('bionic-fixation') || cur.classList.contains('bionic-bold'))
-          ) {
-            visitedBionicSpans.add(cur);
-            cur = cur.nextSibling;
-          } else {
-            break;
-          }
-        }
-      };
-
-      const pushRangeRectsToWords = (cleanToken, pdfTf) => {
-        const clientRects = range.getClientRects();
-        if (!clientRects || clientRects.length === 0) return 0;
-
-        // Fast path for single-line words (1 or 2 inline boxes on the same line) without temporary array allocations
-        if (!pdfTf && (clientRects.length === 1 || clientRects.length === 2)) {
-          const r0 = clientRects[0];
-          const r1 = clientRects.length === 2 ? clientRects[1] : null;
-          if (!r1 || Math.abs(r0.top - r1.top) <= 6) {
-            const rLeft = r1 ? Math.min(r0.left, r1.left) : r0.left;
-            const rRight = r1 ? Math.max(r0.right, r1.right) : r0.right;
-            const rTop = r1 ? Math.min(r0.top, r1.top) : r0.top;
-            const rBottom = r1 ? Math.max(r0.bottom, r1.bottom) : r0.bottom;
-            const rWidth = rRight - rLeft;
-            const rHeight = rBottom - rTop;
-
-            if (!isVertical && hasValidStageBounds && rLeft > stageRight + 20) {
-              return 2; // Offscreen to the right
-            }
-            if (isVertical && rTop > viewH + 20) {
-              return 2; // Offscreen below
-            }
-            if (
-              rWidth > 0.5 &&
-              rHeight > 2 &&
-              rRight > stageLeft + 2 &&
-              rLeft < stageRight - 2 &&
-              (isVertical || (rBottom > stageTop && rTop < stageBottom))
-            ) {
-              if (!isVertical && hasValidStageBounds) {
-                const midX = (rLeft + rRight) / 2;
-                if (midX <= stageLeft + 2 || midX >= stageRight - 2) return -1;
-              }
-              words.push({
-                text: cleanToken,
-                left: rLeft,
-                right: rRight,
-                top: rTop + vScrollTop,
-                bottom: rBottom + vScrollTop,
-                width: rWidth,
-                height: rHeight,
-                centerX: rLeft + rWidth / 2,
-                centerY: rTop + rHeight / 2 + vScrollTop
-              });
-              return 1;
-            }
-            return -1;
-          }
-        }
-
-        const subRects = [];
-        for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
-          const rect = clientRects[rIdx];
-          let rTop = rect.top;
-          let rBottom = rect.bottom;
-          let rHeight = rect.height;
-          let rLeft = rect.left;
-          let rRight = rect.right;
-
-          if (pdfTf) {
-            const relTop = rect.top - pdfTf.textLayerRect.top;
-            const relBottom = rect.bottom - pdfTf.textLayerRect.top;
-            rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
-            rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
-            rHeight = rBottom - rTop;
-
-            const relLeft = rect.left - pdfTf.textLayerRect.left;
-            const relRight = rect.right - pdfTf.textLayerRect.left;
-            rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
-            rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
-          }
-
-          const rWidth = rRight - rLeft;
-          if (
-            rWidth > 0.5 &&
-            rHeight > 2 &&
-            rRight > stageLeft + 2 &&
-            rLeft < stageRight - 2 &&
-            (isVertical || (rBottom > stageTop && rTop < stageBottom))
-          ) {
-            if (!isVertical && hasValidStageBounds) {
-              const midX = (rLeft + rRight) / 2;
-              if (midX <= stageLeft + 2 || midX >= stageRight - 2) continue;
-            }
-            subRects.push({
-              left: rLeft,
-              top: rTop,
-              right: rRight,
-              bottom: rBottom,
-              width: rWidth,
-              height: rHeight
-            });
-          }
-        }
-
-        if (subRects.length === 0) return -1;
-
-        if (subRects.length > 1) {
-          subRects.sort((a, b) => (a.top - b.top) || (a.left - b.left));
-        }
-
-        const lineMergedRects = [];
-        for (let sIdx = 0; sIdx < subRects.length; sIdx++) {
-          const r = subRects[sIdx];
-          if (lineMergedRects.length === 0) {
-            lineMergedRects.push({
-              left: r.left,
-              top: r.top,
-              right: r.right,
-              bottom: r.bottom,
-              width: r.width,
-              height: r.height
-            });
-          } else {
-            const prevR = lineMergedRects[lineMergedRects.length - 1];
-            const prevCenterY = (prevR.top + prevR.bottom) / 2;
-            const rCenterY = (r.top + r.bottom) / 2;
-            if (Math.abs(rCenterY - prevCenterY) <= 8 || Math.abs(r.top - prevR.top) <= 6) {
-              prevR.left = Math.min(prevR.left, r.left);
-              prevR.top = Math.min(prevR.top, r.top);
-              prevR.right = Math.max(prevR.right, r.right);
-              prevR.bottom = Math.max(prevR.bottom, r.bottom);
-              prevR.width = prevR.right - prevR.left;
-              prevR.height = prevR.bottom - prevR.top;
-            } else {
-              lineMergedRects.push({
-                left: r.left,
-                top: r.top,
-                right: r.right,
-                bottom: r.bottom,
-                width: r.width,
-                height: r.height
-              });
-            }
-          }
-        }
-
-        for (let sIdx = 0; sIdx < lineMergedRects.length; sIdx++) {
-          const r = lineMergedRects[sIdx];
           words.push({
             text: cleanToken,
-            left: r.left,
-            right: r.right,
-            top: r.top + vScrollTop,
-            bottom: r.bottom + vScrollTop,
-            width: r.width,
-            height: r.height,
-            centerX: r.left + r.width / 2,
-            centerY: r.top + r.height / 2 + vScrollTop
+            left: rLeft,
+            right: rRight,
+            top: rTop + vScrollTop,
+            bottom: rBottom + vScrollTop,
+            width: rWidth,
+            height: rHeight,
+            centerX: rLeft + rWidth / 2,
+            centerY: rTop + rHeight / 2 + vScrollTop
           });
         }
-        return 1;
-      };
+      }
+    };
 
-      while ((node = walker.nextNode())) {
-        const parent = node.parentElement;
-        if (!parent) continue;
-        const parentTag = parent.tagName;
-        if (parentTag === 'SCRIPT' || parentTag === 'STYLE') continue;
-        if (parent.closest('svg, audio, video')) continue;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const tag = node.tagName;
+          if (tag === "SCRIPT" || tag === "STYLE" || tag === "SVG" || tag === "PICTURE" || tag === "BUTTON") {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_SKIP;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
 
-        const blockElement = parent.closest('p, li, blockquote, h1, h2, h3, h4, h5, h6, div, td, th, pre') || parent;
-        if (offscreenBlocks.has(blockElement)) continue;
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (!parent) continue;
 
-        let bRect = blockRectCache.get(blockElement);
-        if (!bRect) {
-          bRect = blockElement.getBoundingClientRect();
-          blockRectCache.set(blockElement, bRect);
+      const bionicSpan = parent.closest(".bionic-word");
+      if (bionicSpan) {
+        if (visitedBionicSpans.has(bionicSpan)) continue;
+        visitedBionicSpans.add(bionicSpan);
+        const cleanToken = bionicSpan.textContent.replace(invisibleStripRegex, "").trim();
+        if (!cleanToken) continue;
+        try {
+          range.selectNodeContents(bionicSpan);
+          pushRangeRectsToWords(cleanToken);
+        } catch (e) {}
+        continue;
+      }
 
-          // Fast block-level filter: skip entire offscreen paragraphs before measuring inline <b> elements
-          if (!isVertical && hasValidStageBounds) {
-            if (
-              bRect.right < stageLeft - 20 ||
-              bRect.left > stageRight + 20 ||
-              bRect.bottom < stageTop - 20 ||
-              bRect.top > stageBottom + 20
-            ) {
-              offscreenBlocks.add(blockElement);
-              continue;
-            }
-          } else if (isVertical) {
-            if (
-              bRect.right < -20 ||
-              bRect.left > viewW + 20 ||
-              bRect.bottom < -20 ||
-              bRect.top > viewH + 20
-            ) {
-              offscreenBlocks.add(blockElement);
-              continue;
-            }
+      const isBionicFixationEl = parent.tagName === "B" && (parent.classList.contains("bionic-fixation") || parent.classList.contains("bionic-bold"));
+      if (isBionicFixationEl) {
+        if (visitedBionicSpans.has(parent)) continue;
+        visitedBionicSpans.add(parent);
+        let rawToken = parent.textContent || "";
+        let startNode = node;
+        let startOffset = 0;
+        let endNode = node;
+        let endOffset = (node.textContent || "").length;
+        const nextSib = parent.nextSibling;
+        if (nextSib && nextSib.nodeType === Node.TEXT_NODE) {
+          const t = nextSib.textContent || "";
+          const m = leadingNonSpaceRegex.exec(t);
+          if (m && m[0].length > 0) {
+            rawToken += m[0];
+            endNode = nextSib;
+            endOffset = m[0].length;
+            consumedTextOffsets.set(nextSib, m[0].length);
           }
         }
-
-        const isBlockWhollyVisible = (!isVertical && hasValidStageBounds)
-          ? (bRect.left >= stageLeft - 5 && bRect.right <= stageRight + 5 && bRect.top >= stageTop - 5 && bRect.bottom <= stageBottom + 5)
-          : (isVertical ? (bRect.left >= -5 && bRect.right <= viewW + 5 && bRect.top >= -5 && bRect.bottom <= viewH + 5) : true);
-
-        const isPdfEl = hasTextLayer && (this.isPdfMode || !!parent.closest('.textLayer'));
-        const textLayer = isPdfEl ? parent.closest('.textLayer') : null;
-        const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
-
-        // Streamlined Bionic fixation (<b class="bionic-fixation">Bo</b>ld) without wrapper spans:
-        // Combine the <b class="bionic-fixation"> node and its immediately following unbolded suffix text
-        // into a single Range so each word is measured once.
-        const isBionicFixationEl = parentTag === 'B' && (
-          parent.classList.contains('bionic-fixation') || parent.classList.contains('bionic-bold')
-        );
-        if (isBionicFixationEl && !parent.closest('.bionic-word')) {
-          if (visitedBionicSpans.has(parent)) continue;
-
-          // If the block straddles columns/pages in horizontal mode (or viewport in vertical mode),
-          // pre-filter using parent.offsetTop / offsetLeft and stride sampling so offscreen columns
-          // are skipped without calling getBoundingClientRect() or range.getClientRects() on every word.
-          if (!isBlockWhollyVisible) {
-            const curOffsetTop = parent.offsetTop;
-            const curOffsetLeft = parent.offsetLeft;
-            const curOffsetParent = parent.offsetParent;
-
-            if (
-              blockElement === lastBionicBlock &&
-              curOffsetParent === lastBionicOffsetParent &&
-              lastBionicOffsetTop !== null &&
-              Math.abs(curOffsetTop - lastBionicOffsetTop) <= 2 &&
-              curOffsetLeft >= lastBionicOffsetLeft - 4 &&
-              (curOffsetLeft - lastBionicLineFirstOffsetLeft) < maxColSpan
-            ) {
-              lastBionicOffsetLeft = curOffsetLeft;
-              if (lastBionicLineStatus !== 1) {
-                consumeBionicWordSiblings(parent);
-                continue;
-              }
-            } else if (
-              !isVertical &&
-              hasValidStageBounds &&
-              blockElement === lastBionicBlock &&
-              curOffsetParent === lastBionicOffsetParent &&
-              lastBionicLineStatus === -1 &&
-              curOffsetTop > lastBionicOffsetTop &&
-              Math.abs(curOffsetLeft - lastBionicColFirstOffsetLeft) < 60 &&
-              offscreenStrideCount < 15
-            ) {
-              lastBionicOffsetTop = curOffsetTop;
-              lastBionicOffsetLeft = curOffsetLeft;
-              lastBionicLineFirstOffsetLeft = curOffsetLeft;
-              offscreenStrideCount++;
-              consumeBionicWordSiblings(parent);
-              continue;
-            } else {
-              offscreenStrideCount = 0;
-              lastBionicBlock = blockElement;
-              lastBionicOffsetParent = curOffsetParent;
-              lastBionicOffsetTop = curOffsetTop;
-              lastBionicOffsetLeft = curOffsetLeft;
-              lastBionicLineFirstOffsetLeft = curOffsetLeft;
-
-              let pRect = parentRectCache.get(parent);
-              if (!pRect) {
-                pRect = parent.getBoundingClientRect();
-                parentRectCache.set(parent, pRect);
-              }
-
-              if (!isVertical && hasValidStageBounds) {
-                if (pRect.left > stageRight + 20) {
-                  lastBionicLineStatus = 2;
-                  if (blockElement.tagName === "P") {
-                    offscreenBlocks.add(blockElement);
-                  }
-                  consumeBionicWordSiblings(parent);
-                  continue;
-                }
-                if (
-                  pRect.right < stageLeft - 20 ||
-                  pRect.bottom < stageTop - 20 ||
-                  pRect.top > stageBottom + 20
-                ) {
-                  lastBionicLineStatus = -1;
-                  lastBionicColFirstOffsetLeft = pRect.right < stageLeft - 60 ? curOffsetLeft : -Infinity;
-                  consumeBionicWordSiblings(parent);
-                  continue;
-                }
-                lastBionicLineStatus = 1;
-              } else if (isVertical) {
-                if (pRect.top > viewH + 20) {
-                  lastBionicLineStatus = 2;
-                  if (blockElement.tagName === "P") {
-                    offscreenBlocks.add(blockElement);
-                  }
-                  consumeBionicWordSiblings(parent);
-                  continue;
-                }
-                if (
-                  pRect.bottom < -20 ||
-                  pRect.right < -20 ||
-                  pRect.left > viewW + 20
-                ) {
-                  lastBionicLineStatus = -1;
-                  consumeBionicWordSiblings(parent);
-                  continue;
-                }
-                lastBionicLineStatus = 1;
-              } else {
-                lastBionicLineStatus = 1;
-              }
-            }
-
-            // Even on a partially visible line, skip creating DOM Range objects if this specific word is outside stageLeft..stageRight
-            if (!isVertical && hasValidStageBounds) {
-              let wordParentRect = parentRectCache.get(parent);
-              if (!wordParentRect) {
-                wordParentRect = parent.getBoundingClientRect();
-                parentRectCache.set(parent, wordParentRect);
-              }
-              if (wordParentRect.right < stageLeft + 2 || wordParentRect.left > stageRight - 2) {
-                consumeBionicWordSiblings(parent);
-                continue;
-              }
-            }
-          }
-
-          visitedBionicSpans.add(parent);
-
-          let rawToken = parent.textContent || "";
-          let startNode = node;
-          let startOffset = 0;
-
-          // Include any leading non-whitespace punctuation immediately preceding <b class="bionic-fixation">
-          const prevSib = parent.previousSibling;
-          if (prevSib && prevSib.nodeType === Node.TEXT_NODE) {
-            const prevText = prevSib.textContent || "";
-            const prevConsumed = consumedTextOffsets.get(prevSib) || 0;
-            if (prevConsumed < prevText.length) {
-              const unconsumedPrev = prevText.slice(prevConsumed);
-              const leadMatch = trailingNonSpaceRegex.exec(unconsumedPrev);
-              if (leadMatch && leadMatch[0].length > 0) {
-                rawToken = leadMatch[0] + rawToken;
-                startNode = prevSib;
-                startOffset = prevText.length - leadMatch[0].length;
-              }
-            }
-          }
-
-          let endNode = node;
-          let endOffset = (node.textContent || "").length;
-          const nextSib = parent.nextSibling;
-
-          if (nextSib && nextSib.nodeType === Node.TEXT_NODE) {
-            const t = nextSib.textContent || "";
-            const m = leadingNonSpaceRegex.exec(t);
-            if (m && m[0].length > 0) {
-              const suffixLen = m[0].length;
-              rawToken += m[0];
-              endNode = nextSib;
-              endOffset = suffixLen;
-              consumedTextOffsets.set(nextSib, suffixLen);
-
-              if (
-                suffixLen === t.length &&
-                nextSib.nextSibling &&
-                nextSib.nextSibling.nodeType === Node.ELEMENT_NODE &&
-                nextSib.nextSibling.tagName === 'B' &&
-                (nextSib.nextSibling.classList.contains('bionic-fixation') || nextSib.nextSibling.classList.contains('bionic-bold'))
-              ) {
-                let cursor = nextSib.nextSibling;
-                while (cursor) {
-                  if (cursor.nodeType === Node.TEXT_NODE) {
-                    const ct = cursor.textContent || "";
-                    const cm = leadingNonSpaceRegex.exec(ct);
-                    if (cm && cm[0].length > 0) {
-                      rawToken += cm[0];
-                      endNode = cursor;
-                      endOffset = cm[0].length;
-                      consumedTextOffsets.set(cursor, cm[0].length);
-                      if (
-                        cm[0].length === ct.length &&
-                        cursor.nextSibling &&
-                        cursor.nextSibling.nodeType === Node.ELEMENT_NODE &&
-                        cursor.nextSibling.tagName === 'B' &&
-                        (cursor.nextSibling.classList.contains('bionic-fixation') || cursor.nextSibling.classList.contains('bionic-bold'))
-                      ) {
-                        cursor = cursor.nextSibling;
-                        continue;
-                      }
-                    }
-                    break;
-                  } else if (
-                    cursor.nodeType === Node.ELEMENT_NODE &&
-                    cursor.tagName === 'B' &&
-                    (cursor.classList.contains('bionic-fixation') || cursor.classList.contains('bionic-bold'))
-                  ) {
-                    visitedBionicSpans.add(cursor);
-                    const bText = cursor.textContent || "";
-                    rawToken += bText;
-                    endNode = cursor.firstChild || cursor;
-                    endOffset = cursor.firstChild ? bText.length : null;
-                    cursor = cursor.nextSibling;
-                  } else {
-                    break;
-                  }
-                }
-              }
-            }
-          }
-
-          const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
-          if (!cleanToken) continue;
-
+        const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
+        if (cleanToken) {
           try {
             range.setStart(startNode, startOffset);
-            if (endOffset !== null) {
-              range.setEnd(endNode, endOffset);
-            } else {
-              range.setEndAfter(endNode);
-            }
-            pushRangeRectsToWords(cleanToken, pdfTf);
+            range.setEnd(endNode, endOffset);
+            pushRangeRectsToWords(cleanToken);
           } catch (e) {}
-          continue;
         }
+        continue;
+      }
 
-        if (!isBlockWhollyVisible && parent !== blockElement) {
-          let pRect = parentRectCache.get(parent);
-          if (!pRect) {
-            pRect = parent.getBoundingClientRect();
-            parentRectCache.set(parent, pRect);
-          }
-          if (!isVertical && hasValidStageBounds) {
-            if (
-              pRect.right < stageLeft - 20 ||
-              pRect.left > stageRight + 20 ||
-              pRect.bottom < stageTop - 20 ||
-              pRect.top > stageBottom + 20
-            ) {
-              continue;
-            }
-          } else if (isVertical) {
-            if (
-              pRect.right < -20 ||
-              pRect.left > viewW + 20 ||
-              pRect.bottom < -20 ||
-              pRect.top > viewH + 20
-            ) {
-              continue;
-            }
-          }
-        }
+      const text = node.textContent;
+      if (!text || !text.trim()) continue;
+      const consumedStart = consumedTextOffsets.get(node) || 0;
+      if (consumedStart >= text.length) continue;
 
-        const bionicSpan = parent.closest('.bionic-word');
-        if (bionicSpan) {
-          if (visitedBionicSpans.has(bionicSpan)) continue;
-          visitedBionicSpans.add(bionicSpan);
+      let match;
+      wordRegex.lastIndex = consumedStart;
+      while ((match = wordRegex.exec(text)) !== null) {
+        const rawToken = match[0];
+        const start = match.index;
+        const end = start + rawToken.length;
+        const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
+        if (!cleanToken) continue;
+        try {
+          range.setStart(node, start);
+          range.setEnd(node, end);
+          pushRangeRectsToWords(cleanToken);
+        } catch (e) {}
+      }
+    }
 
-          const rawToken = bionicSpan.textContent;
-          const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
-          if (!cleanToken) continue;
+    try { range.detach(); } catch (e) {}
 
-          try {
-            range.selectNodeContents(bionicSpan);
-            pushRangeRectsToWords(cleanToken, pdfTf);
-          } catch (e) {
-            // Ignore range errors
-          }
-          continue;
-        }
-
-        const text = node.textContent;
-        if (!text || !text.trim()) continue;
-
-        const consumedStart = consumedTextOffsets.get(node) || 0;
-        if (consumedStart >= text.length) continue;
-
-        const nextSibIsBionic = !!(
-          node.nextSibling &&
-          node.nextSibling.nodeType === Node.ELEMENT_NODE &&
-          node.nextSibling.tagName === 'B' &&
-          (node.nextSibling.classList.contains('bionic-fixation') || node.nextSibling.classList.contains('bionic-bold'))
-        );
-
-        let match;
-        wordRegex.lastIndex = consumedStart;
-        while ((match = wordRegex.exec(text)) !== null) {
-          const rawToken = match[0];
-          const start = match.index;
-          const end = start + rawToken.length;
-
-          // If this token is leading punctuation attached directly to a following <b class="bionic-fixation">,
-          // let the <b class="bionic-fixation"> branch merge and measure it in a single Range.
-          if (nextSibIsBionic && end === text.length) {
+    const punctOnlyRegex = /^[-–—­‐.,;!?]+$/;
+    const mergedWords = [];
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      if (punctOnlyRegex.test(w.text)) {
+        if (mergedWords.length > 0) {
+          const prev = mergedWords[mergedWords.length - 1];
+          const sameLine = Math.abs(w.centerY - prev.centerY) <= 8 || Math.abs(w.top - prev.top) <= 6;
+          const isAdjacent = w.left >= prev.left - 2 && (w.left - prev.right) <= 5;
+          if (sameLine && isAdjacent) {
+            prev.right = Math.max(prev.right, w.right);
+            prev.left = Math.min(prev.left, w.left);
+            prev.top = Math.min(prev.top, w.top);
+            prev.bottom = Math.max(prev.bottom, w.bottom);
+            prev.width = prev.right - prev.left;
+            prev.height = prev.bottom - prev.top;
+            prev.centerX = prev.left + prev.width / 2;
+            prev.centerY = prev.top + prev.height / 2;
+            prev.text = prev.text + w.text;
             continue;
           }
-
-          const cleanToken = rawToken.replace(invisibleStripRegex, "").trim();
-          if (!cleanToken) continue;
-
-          try {
-            range.setStart(node, start);
-            range.setEnd(node, end);
-            const pushStatus = pushRangeRectsToWords(cleanToken, pdfTf);
-            if (pushStatus === 2 && !this.isTwoCol) {
-              break;
-            }
-          } catch (e) {}
         }
+        continue;
       }
-
-      // Sloučení bezprostředně navazujících spojovníků / pomlček a vyřazení samostatných interpunkčních cílů
-      const punctOnlyRegex = /^[-\u2010\u00AD—–.,;!?]+$/;
-      const mergedWords = [];
-
-      for (let i = 0; i < words.length; i++) {
-        const w = words[i];
-        const isPunctOnly = punctOnlyRegex.test(w.text);
-
-        if (isPunctOnly) {
-          if (mergedWords.length > 0) {
-            const prev = mergedWords[mergedWords.length - 1];
-            const sameLine = Math.abs(w.centerY - prev.centerY) <= 8 || Math.abs(w.top - prev.top) <= 6;
-            const maxGap = 5; // Bezprostředně navazující znak bez mezery
-            const isAdjacent = w.left >= prev.left - 2 && (w.left - prev.right) <= maxGap;
-            if (sameLine && isAdjacent) {
-              prev.right = Math.max(prev.right, w.right);
-              prev.left = Math.min(prev.left, w.left);
-              prev.top = Math.min(prev.top, w.top);
-              prev.bottom = Math.max(prev.bottom, w.bottom);
-              prev.width = prev.right - prev.left;
-              prev.height = prev.bottom - prev.top;
-              prev.centerX = prev.left + prev.width / 2;
-              prev.centerY = prev.top + prev.height / 2;
-              prev.text = prev.text + w.text;
-              continue;
-            }
-          }
-          // Samostatná interpunkce / spojovníky se zahodí
-          continue;
-        }
-
-        mergedWords.push(w);
-      }
-
-      const finalWords = mergedWords;
-
-      if (this.cachedLines.length === 0) {
-        this.detectLines();
-      }
-
-      if (this.cachedLines.length > 0) {
-        const stage = this.container || document.getElementById("paged-stage");
-        const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, width: window.innerWidth };
-        const stageCenterX = stageRect.left + stageRect.width / 2;
-        const isSpread = !this.isVerticalMode() && this.isSpreadActive();
-        const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
-        const isTwoCol = !this.isVerticalMode() && (this.isTwoCol || isSpread);
-        const splitX = (isSpread && spreadInfo) ? spreadInfo.midGap : (isTwoCol && this.gapMiddle ? this.gapMiddle : stageCenterX);
-
-        for (const w of finalWords) {
-          let bestIdx = 0;
-          let minDiff = Infinity;
-          const isWordCol1 = isTwoCol && (w.centerX >= splitX);
-          for (let j = 0; j < this.cachedLines.length; j++) {
-            const line = this.cachedLines[j];
-            if (line.isMedia) continue;
-            if (isTwoCol && (line.columnIndex === 1) !== isWordCol1) {
-              continue;
-            }
-            const dy = (w.centerY < line.top) ? (line.top - w.centerY) : (w.centerY > line.bottom) ? (w.centerY - line.bottom) : 0;
-            const diff = dy * 3 + Math.abs(w.centerY - line.centerY);
-            if (diff < minDiff) {
-              minDiff = diff;
-              bestIdx = j;
-            }
-          }
-          w.lineIndex = bestIdx;
-        }
-
-        finalWords.sort((a, b) => {
-          if (a.lineIndex !== b.lineIndex) {
-            return (a.lineIndex ?? 0) - (b.lineIndex ?? 0);
-          }
-          return a.left - b.left;
-        });
-      } else {
-        let currentLine = 0;
-        let lastCenterY = null;
-        for (const w of finalWords) {
-          if (lastCenterY !== null && Math.abs(w.centerY - lastCenterY) > 8) {
-            currentLine++;
-          }
-          w.lineIndex = currentLine;
-          lastCenterY = w.centerY;
-        }
-      }
-
-      if (this.cachedLines && this.cachedLines.length > 0) {
-        for (let j = 0; j < this.cachedLines.length; j++) {
-          this.cachedLines[j].wordIndices = [];
-        }
-        for (let i = 0; i < finalWords.length; i++) {
-          const lIdx = finalWords[i].lineIndex;
-          if (lIdx != null && lIdx >= 0 && lIdx < this.cachedLines.length) {
-            this.cachedLines[lIdx].wordIndices.push(i);
-          }
-        }
-      }
-
-      this.cachedWords = finalWords;
-      if (!this.cachedWords || this.cachedWords.length === 0) {
-        this._lastEmptyWordsDetectTime = performance.now();
-      } else {
-        this._lastEmptyWordsDetectTime = 0;
-      }
-      return this.cachedWords;
-    } catch (err) {
-      console.error("[ReadingRuler] Error in refreshWords:", err);
-      this.cachedWords = [];
-      this._lastEmptyWordsDetectTime = performance.now();
-      return [];
-    } finally {
-      try {
-        range.detach();
-      } catch (e) {}
-      visitedBionicSpans.clear();
+      mergedWords.push(w);
     }
+
+    for (const w of mergedWords) {
+      let bestCandIdx = candidateLines[0].index;
+      let minDiff = Infinity;
+      const isWordCol1 = isTwoCol && (w.centerX >= splitX);
+
+      for (let c = 0; c < candidateLines.length; c++) {
+        const cl = candidateLines[c].line;
+        const cIdx = candidateLines[c].index;
+        if (isTwoCol && (cl.columnIndex === 1) !== isWordCol1) continue;
+        const dy = (w.centerY < cl.top) ? (cl.top - w.centerY) : (w.centerY > cl.bottom) ? (w.centerY - cl.bottom) : 0;
+        const diff = dy * 3 + Math.abs(w.centerY - cl.centerY);
+        if (diff < minDiff) {
+          minDiff = diff;
+          bestCandIdx = cIdx;
+        }
+      }
+      w.lineIndex = bestCandIdx;
+    }
+
+    for (const cand of candidateLines) {
+      const clIdx = cand.index;
+      const cl = cand.line;
+      const lineWords = mergedWords.filter(w => w.lineIndex === clIdx);
+      lineWords.sort((a, b) => a.left - b.left);
+      cl.words = lineWords;
+      cl.wordIndices = lineWords.map((_, idx) => idx);
+      this._lineWordsCache.set(clIdx, lineWords);
+    }
+
+    return line.words || [];
+  }
+
+  /**
+   * Zajistí načtení slov pro aktivní řádek a nastaví je do this.cachedWords.
+   * Volitelně pre-fetchuje slova pro sousední řádky.
+   */
+  ensureActiveWords(lineIdx) {
+    if (lineIdx < 0 || !this.cachedLines || lineIdx >= this.cachedLines.length) {
+      this.cachedWords = [];
+      return [];
+    }
+    const words = this.getWordsForLine(lineIdx);
+    this.cachedWords = words;
+    if (lineIdx > 0) this.getWordsForLine(lineIdx - 1);
+    if (lineIdx + 1 < this.cachedLines.length) this.getWordsForLine(lineIdx + 1);
+    return words;
+  }
+
+  /**
+   * Zmapuje slova pro aktuální řádek a invaliduje mezipaměť (nahrazuje původní full-page scan).
+   */
+  refreshWords() {
+    this._clearWordCache();
+    if (!this.enabled || !this.wordTracking || this.isImageOnlyPdf) {
+      this.cachedWords = [];
+      return [];
+    }
+    const targetIdx = (this.activeLineIndex >= 0 && this.activeLineIndex < (this.cachedLines?.length || 0))
+      ? this.activeLineIndex
+      : 0;
+    return this.ensureActiveWords(targetIdx);
   }
 
   /**
@@ -5123,10 +4734,13 @@ export class ReadingRuler {
         targetY = Math.round(prevLine.bottom + 1);
       }
       if (nextLine && Number.isFinite(nextLine.top) && targetY + height >= nextLine.top) {
-        height = Math.max(10, Math.round(nextLine.top - 1 - targetY));
+        height = Math.max(mediaH, Math.round(nextLine.top - 1 - targetY));
       }
 
-      if (this.mode === "bottom-cover") {
+      let lineTop = Math.min(mediaT, targetY);
+      let lineBottom = Math.max(mediaT + mediaH, targetY + height);
+
+      if (this.mode === "bottom-cover" || this.style === "bottom-cover") {
         let hasNext = false;
         if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
           const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
@@ -5137,7 +4751,7 @@ export class ReadingRuler {
             }
           }
         }
-        const curBottom = Number.isFinite(line.bottom) ? line.bottom : Math.round(mediaT + mediaH + padding);
+        const curBottom = Number.isFinite(line.bottom) ? line.bottom : Math.round(mediaT + mediaH);
 
         // Strict constant offset from active line bottom across all lines
         let coverTargetY = Math.round(curBottom + COVER_LINE_OFFSET);
@@ -5152,6 +4766,7 @@ export class ReadingRuler {
 
         targetY = coverTargetY;
         height = 2;
+        lineBottom = Math.max(mediaT + mediaH, coverTargetY);
       }
 
       // Horizontální hranice kontejneru / sloupce
@@ -5195,8 +4810,8 @@ export class ReadingRuler {
       const mediaGeom = {
         height,
         targetY,
-        lineTop: Math.round(mediaT - padding),
-        lineBottom: targetY + height,
+        lineTop,
+        lineBottom,
         lineHeight: height,
         left: targetLeft,
         width: targetWidth,
@@ -5640,22 +5255,29 @@ export class ReadingRuler {
     const nextLine = activeInPool < pool.length - 1 ? pool[activeInPool + 1].line : null;
 
     // 1. Transition DOWN to nextLine:
-    // Trigger when pointer crosses the inter-line space and clearly moves into nextLine (60% into nextLine.height)
+    // Pro běžný text: 60 % výšky nextLine. Pro media (obrázky): citlivý přechod (max 14px / 20 % výšky)
+    const nextHyst = nextLine
+      ? (nextLine.isMedia ? Math.min(14, nextLine.height * 0.20) : (nextLine.height * 0.60))
+      : 0;
     const downThreshold = nextLine
-      ? (nextLine.top + nextLine.height * 0.60)
+      ? (nextLine.top + nextHyst)
       : Infinity;
 
     // 2. Transition UP to prevLine:
-    // Trigger as soon as stylus rises above the top 40% height mark of the currently active line (currentLine)
+    // Pro běžný text: horních 40 % výšky currentLine. Pro media (obrázky): citlivý přechod u horního okraje (max 12px / 15 % výšky)
+    const curHyst = currentLine.isMedia
+      ? Math.min(12, currentLine.height * 0.15)
+      : (currentLine.height * 0.40);
     const upThreshold = prevLine
-      ? (currentLine.top + currentLine.height * 0.40)
+      ? (currentLine.top + curHyst)
       : -Infinity;
 
     if (curY > downThreshold) {
       let newPoolIdx = activeInPool + 1;
       while (newPoolIdx < pool.length - 1) {
         const next = pool[newPoolIdx + 1]?.line;
-        if (next && curY > next.top + next.height * 0.60) {
+        const hOffset = next?.isMedia ? Math.min(14, next.height * 0.20) : (next ? next.height * 0.60 : 0);
+        if (next && curY > next.top + hOffset) {
           newPoolIdx++;
         } else {
           break;
@@ -5668,7 +5290,8 @@ export class ReadingRuler {
       let newPoolIdx = activeInPool - 1;
       while (newPoolIdx > 0) {
         const cur = pool[newPoolIdx]?.line;
-        if (cur && curY < cur.top + cur.height * 0.40) {
+        const hOffset = cur?.isMedia ? Math.min(12, cur.height * 0.15) : (cur ? cur.height * 0.40 : 0);
+        if (cur && curY < cur.top + hOffset) {
           newPoolIdx--;
         } else {
           break;
@@ -5683,6 +5306,7 @@ export class ReadingRuler {
    * Zpracuje pohyb ukazatele (myši nebo prstu)
    */
   handlePointerMove(clientX, clientY, pointerType = null) {
+    if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay) return;
     const isDocTurning = document.body.classList.contains("is-turning-page") ||
       document.body.classList.contains("is-chapter-loading") ||
       !!(this.app?.isNavigating) ||
@@ -5935,11 +5559,11 @@ export class ReadingRuler {
 
     // --- REŽIM SLEDOVÁNÍ SLOV (Word-level Tracking) ---
     if (this.wordTracking) {
-      if (this.cachedWords.length === 0) {
-        this.refreshWords();
+      if (this.cachedLines.length === 0) {
+        this.detectLines();
       }
 
-      if (this.cachedWords.length > 0) {
+      if (this.cachedLines.length > 0) {
         const targetLineIdx = this.getHysteresisLineIndex(curY, isPen, activeColumn);
         if (targetLineIdx < 0) {
           this.rulerEl.classList.remove("is-visible");
@@ -5957,54 +5581,91 @@ export class ReadingRuler {
           this.setCursorHidden(false);
           return;
         }
-        this.activeLineIndex = targetLineIdx;
 
         const isVertical = this.isVerticalMode();
         const vp = isVertical ? (this._cachedViewportEl || document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
         const vScrollTop = (isVertical && vp) ? vp.scrollTop : 0;
         const wordCurY = isVertical ? (curY + vScrollTop) : curY;
 
+        const targetLine = this.cachedLines[targetLineIdx];
+        const isMediaLine = !!(targetLine && (targetLine.isMedia || !targetLine.hasText));
+
+        // Word Mode Fallback: pokud ukazatel přejede přes obrázek / ornament, uzamknout pravítko na celém elementu
+        if (isMediaLine) {
+          this.activeLineIndex = targetLineIdx;
+          this.activeWordIndex = -1;
+          this.rulerEl.classList.remove("word-tracking-mode");
+          if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+
+          this.lastValidPointerX = curX;
+          this.lastValidPointerY = curY;
+          this.lastPointerX = curX;
+          this.lastPointerY = curY;
+
+          const geom = this.computeLineGeometry(targetLineIdx);
+          if (geom) {
+            this.height = geom.height;
+            this.targetY = geom.targetY;
+            this.currentY = this.targetY;
+          }
+          if (this.followMode === "mouse") {
+            this.rulerEl.classList.remove("is-snapped");
+            if (this.maskTopEl) this.maskTopEl.classList.remove("is-snapped");
+            if (this.maskBottomEl) this.maskBottomEl.classList.remove("is-snapped");
+            if (this.maskLeftEl) this.maskLeftEl.classList.remove("is-snapped");
+            if (this.maskRightEl) this.maskRightEl.classList.remove("is-snapped");
+          } else {
+            this.rulerEl.classList.add("is-snapped");
+            if (this.maskTopEl) this.maskTopEl.classList.add("is-snapped");
+            if (this.maskBottomEl) this.maskBottomEl.classList.add("is-snapped");
+            if (this.maskLeftEl) this.maskLeftEl.classList.add("is-snapped");
+            if (this.maskRightEl) this.maskRightEl.classList.add("is-snapped");
+          }
+          if (!this.isPageTransitioning) {
+            this.rulerEl.style.display = "block";
+            this.rulerEl.style.opacity = "1";
+            this.rulerEl.style.visibility = "visible";
+            this.rulerEl.classList.remove("is-hidden", "hidden");
+            this.rulerEl.classList.add("is-visible");
+          }
+          this.applyPosition();
+          return;
+        }
+
+        // Tier 2: Spočítat/získat slova pouze pro aktivní řádek (lazy cache)
+        const lineWords = this.ensureActiveWords(targetLineIdx);
+        this.activeLineIndex = targetLineIdx;
+
+        if (!lineWords || lineWords.length === 0) {
+          this.activeWordIndex = -1;
+          const geom = this.computeLineGeometry(targetLineIdx);
+          if (geom) {
+            this.height = geom.height;
+            this.targetY = geom.targetY;
+            this.currentY = this.targetY;
+          }
+          this.applyPosition();
+          return;
+        }
+
         let closestWord = null;
         let closestIdx = -1;
         let minDiff = Infinity;
 
-        const targetLine = (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) ? this.cachedLines[targetLineIdx] : null;
-        const candidateIndices = (targetLine && targetLine.wordIndices && targetLine.wordIndices.length > 0)
-          ? targetLine.wordIndices
-          : null;
-
-        if (candidateIndices) {
-          for (let k = 0; k < candidateIndices.length; k++) {
-            const i = candidateIndices[k];
-            const w = this.cachedWords[i];
-            const dy = wordCurY < w.top ? w.top - wordCurY : wordCurY > w.bottom ? wordCurY - w.bottom : 0;
-            const dx = curX < w.left ? w.left - curX : curX > w.right ? curX - w.right : 0;
-            const dist = dy * 3 + dx;
-            if (dist < minDiff) {
-              minDiff = dist;
-              closestWord = w;
-              closestIdx = i;
-            }
-          }
-        } else {
-          // Přednostně vyhledáme slovo na aktuálním hysterezním řádku
-          for (let i = 0; i < this.cachedWords.length; i++) {
-            const w = this.cachedWords[i];
-            const isLineMatch = (w.lineIndex != null && w.lineIndex === targetLineIdx);
-            const dy = wordCurY < w.top ? w.top - wordCurY : wordCurY > w.bottom ? wordCurY - w.bottom : 0;
-            const dx = curX < w.left ? w.left - curX : curX > w.right ? curX - w.right : 0;
-            const linePenalty = isLineMatch ? 0 : 100;
-            const dist = dy * 3 + dx + linePenalty;
-            if (dist < minDiff) {
-              minDiff = dist;
-              closestWord = w;
-              closestIdx = i;
-            }
+        for (let i = 0; i < lineWords.length; i++) {
+          const w = lineWords[i];
+          const dy = wordCurY < w.top ? w.top - wordCurY : wordCurY > w.bottom ? wordCurY - w.bottom : 0;
+          const dx = curX < w.left ? w.left - curX : curX > w.right ? curX - w.right : 0;
+          const dist = dy * 3 + dx;
+          if (dist < minDiff) {
+            minDiff = dist;
+            closestWord = w;
+            closestIdx = i;
           }
         }
 
-        if (!closestWord && this.cachedWords.length > 0) {
-          closestWord = this.cachedWords[0];
+        if (!closestWord && lineWords.length > 0) {
+          closestWord = lineWords[0];
           closestIdx = 0;
         }
 
@@ -6019,79 +5680,33 @@ export class ReadingRuler {
             this.currentY = this.targetY;
           }
           const padX = 3;
-          const activeLine = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length) ? this.cachedLines[this.activeLineIndex] : null;
-          const lineWords = [];
+          const activeLine = this.cachedLines[this.activeLineIndex];
 
-          if (activeLine && activeLine.wordIndices && activeLine.wordIndices.length > 0) {
-            for (let k = 0; k < activeLine.wordIndices.length; k++) {
-              const i = activeLine.wordIndices[k];
-              lineWords.push({ word: this.cachedWords[i], index: i });
-            }
-          } else {
-            // Primary pass: collect words by lineIndex
-            for (let i = 0; i < this.cachedWords.length; i++) {
-              if (this.cachedWords[i].lineIndex === this.activeLineIndex) {
-                lineWords.push({ word: this.cachedWords[i], index: i });
-              }
-            }
-          }
-
-          // Fallback: if lineWords is sparse (< 2 words) and activeLine has a known centerY,
-          // add words by Y-proximity (within ±10px of line centerY) that aren't already included.
-          // This recovers words whose lineIndex was misassigned due to sub-pixel Y differences.
-          if (lineWords.length < 2 && activeLine && activeLine.centerY != null) {
-            const lineCY = activeLine.centerY;
-            const includedIndices = new Set(lineWords.map(lw => lw.index));
-            for (let i = 0; i < this.cachedWords.length; i++) {
-              if (includedIndices.has(i)) continue;
-              const cw = this.cachedWords[i];
-              if (Math.abs(cw.centerY - lineCY) <= 10) {
-                lineWords.push({ word: cw, index: i });
-              }
-            }
-            lineWords.sort((a, b) => a.word.left - b.word.left);
-          }
-
-          // Compute true horizontal text bounds for this line from all matching words
           let textMinX = activeLine && activeLine.left != null ? Math.round(activeLine.left - padX) : 0;
           let textMaxX = activeLine && activeLine.right != null ? Math.round(activeLine.right + padX) : window.innerWidth;
           if (lineWords.length > 0) {
-            textMinX = Math.round(lineWords[0].word.left - padX);
-            textMaxX = Math.round(lineWords[lineWords.length - 1].word.right + padX);
+            textMinX = Math.round(lineWords[0].left - padX);
+            textMaxX = Math.round(lineWords[lineWords.length - 1].right + padX);
           }
 
           const computeWordPreview = (wIdx) => {
-            if (wIdx < 0 || wIdx >= this.cachedWords.length) return 0;
-            const w = this.cachedWords[wIdx];
+            if (wIdx < 0 || wIdx >= lineWords.length) return 0;
+            const w = lineWords[wIdx];
             const firstW = Math.round(w.width + padX * 2);
             let nextWLast = null;
-            // Compare each candidate's left against the PREVIOUS word (not always w.left),
-            // so rightward words on the same line are not cut off past the screen midpoint.
             let prevCandLeft = w.left;
             for (let offset = 1; offset <= 2; offset++) {
               const nextIdx = wIdx + offset;
-              if (nextIdx >= this.cachedWords.length) break;
-              const nw = this.cachedWords[nextIdx];
-              const isSameLine = (nw.lineIndex != null && w.lineIndex != null)
-                ? (nw.lineIndex === w.lineIndex)
-                : (Math.abs(nw.centerY - w.centerY) <= 10);
-              if (!isSameLine || nw.left <= prevCandLeft) break;
+              if (nextIdx >= lineWords.length) break;
+              const nw = lineWords[nextIdx];
+              if (nw.left <= prevCandLeft) break;
               prevCandLeft = nw.left;
               nextWLast = nw;
             }
             if (!nextWLast) return 0;
-            // Use the true right boundary of this word's line from cachedWords (not the outer
-            // textMaxX which is derived from lineWords and may be incomplete in 1-col mode).
             let trueLineRight = textMaxX;
-            if (w.lineIndex != null) {
-              for (let i = wIdx; i < this.cachedWords.length; i++) {
-                const cw = this.cachedWords[i];
-                const isSame = (cw.lineIndex != null)
-                  ? (cw.lineIndex === w.lineIndex)
-                  : (Math.abs(cw.centerY - w.centerY) <= 10);
-                if (!isSame) break;
-                trueLineRight = Math.max(trueLineRight, Math.round(cw.right + padX));
-              }
+            for (let i = wIdx; i < lineWords.length; i++) {
+              trueLineRight = Math.max(trueLineRight, Math.round(lineWords[i].right + padX));
             }
             const rawTargetRight = Math.round(nextWLast.right + padX);
             const clampedTargetRight = Math.min(rawTargetRight, trueLineRight);
@@ -6104,46 +5719,46 @@ export class ReadingRuler {
           let previewW = 0;
 
           if (lineWords.length > 0) {
-            if (curX <= lineWords[0].word.centerX) {
+            if (curX <= lineWords[0].centerX) {
               const firstItem = lineWords[0];
-              continuousLeft = Math.round(firstItem.word.left - padX + (curX - firstItem.word.centerX));
-              continuousWidth = Math.round(firstItem.word.width + padX * 2);
-              previewW = computeWordPreview(firstItem.index);
-              this.activeWordIndex = firstItem.index;
-            } else if (curX >= lineWords[lineWords.length - 1].word.centerX) {
-              const lastItem = lineWords[lineWords.length - 1];
-              continuousLeft = Math.round(lastItem.word.left - padX + (curX - lastItem.word.centerX));
-              continuousWidth = Math.round(lastItem.word.width + padX * 2);
-              previewW = computeWordPreview(lastItem.index);
-              this.activeWordIndex = lastItem.index;
+              continuousLeft = Math.round(firstItem.left - padX + (curX - firstItem.centerX));
+              continuousWidth = Math.round(firstItem.width + padX * 2);
+              previewW = computeWordPreview(0);
+              this.activeWordIndex = 0;
+            } else if (curX >= lineWords[lineWords.length - 1].centerX) {
+              const lastIdx = lineWords.length - 1;
+              const lastItem = lineWords[lastIdx];
+              continuousLeft = Math.round(lastItem.left - padX + (curX - lastItem.centerX));
+              continuousWidth = Math.round(lastItem.width + padX * 2);
+              previewW = computeWordPreview(lastIdx);
+              this.activeWordIndex = lastIdx;
             } else {
-              // Najdeme dvojici sousedních slov, mezi jejichž středy se curX nachází
               let segIdx = 0;
               for (let k = 0; k < lineWords.length - 1; k++) {
-                if (curX >= lineWords[k].word.centerX && curX <= lineWords[k + 1].word.centerX) {
+                if (curX >= lineWords[k].centerX && curX <= lineWords[k + 1].centerX) {
                   segIdx = k;
                   break;
                 }
               }
               const itemA = lineWords[segIdx];
               const itemB = lineWords[segIdx + 1];
-              const dx = itemB.word.centerX - itemA.word.centerX;
-              const t = dx > 0 ? (curX - itemA.word.centerX) / dx : 0;
+              const dx = itemB.centerX - itemA.centerX;
+              const t = dx > 0 ? (curX - itemA.centerX) / dx : 0;
               const clampedT = Math.max(0, Math.min(1, t));
 
-              const leftA = itemA.word.left - padX;
-              const leftB = itemB.word.left - padX;
+              const leftA = itemA.left - padX;
+              const leftB = itemB.left - padX;
               continuousLeft = Math.round(leftA + clampedT * (leftB - leftA));
 
-              const widthA = itemA.word.width + padX * 2;
-              const widthB = itemB.word.width + padX * 2;
+              const widthA = itemA.width + padX * 2;
+              const widthB = itemB.width + padX * 2;
               continuousWidth = Math.round(widthA + clampedT * (widthB - widthA));
 
-              const prevA = computeWordPreview(itemA.index);
-              const prevB = computeWordPreview(itemB.index);
+              const prevA = computeWordPreview(segIdx);
+              const prevB = computeWordPreview(segIdx + 1);
               previewW = Math.round(prevA + clampedT * (prevB - prevA));
 
-              this.activeWordIndex = (clampedT < 0.5) ? itemA.index : itemB.index;
+              this.activeWordIndex = (clampedT < 0.5) ? segIdx : segIdx + 1;
             }
           } else {
             continuousLeft = Math.round(curX - this.activeWordWidth / 2);
@@ -6155,7 +5770,6 @@ export class ReadingRuler {
           this.wordWidth = this.totalWidth;
           this.previewWidth = previewW;
 
-          // Omezení horizontální pozice striktně na hranice viditelného textu (zamezení plovutí do prázdného místa)
           const clampedMax = Math.max(textMinX, textMaxX - this.totalWidth);
           this.wordLeft = Math.round(Math.max(textMinX, Math.min(clampedMax, continuousLeft)));
           this.previewLeft = this.wordLeft + continuousWidth;
@@ -6230,35 +5844,6 @@ export class ReadingRuler {
         this._checkLineProgress(targetLineIdx);
       }
       const closestLine = this.cachedLines[targetLineIdx];
-
-      if (this.wordTracking && this.cachedWords.length > 0) {
-        let closestWordIdx = 0;
-        let minWordDiff = Infinity;
-        const candidateIndices = (closestLine && closestLine.wordIndices && closestLine.wordIndices.length > 0)
-          ? closestLine.wordIndices
-          : null;
-        if (candidateIndices) {
-          for (let k = 0; k < candidateIndices.length; k++) {
-            const j = candidateIndices[k];
-            const w = this.cachedWords[j];
-            const wDiff = Math.abs(closestLine.centerY - w.centerY) * 3 + Math.abs(curX - w.centerX);
-            if (wDiff < minWordDiff) {
-              minWordDiff = wDiff;
-              closestWordIdx = j;
-            }
-          }
-        } else {
-          for (let j = 0; j < this.cachedWords.length; j++) {
-            const w = this.cachedWords[j];
-            const wDiff = Math.abs(closestLine.centerY - w.centerY) * 3 + Math.abs(curX - w.centerX);
-            if (wDiff < minWordDiff) {
-              minWordDiff = wDiff;
-              closestWordIdx = j;
-            }
-          }
-        }
-        this.activeWordIndex = closestWordIdx;
-      }
 
       const geom = this.computeLineGeometry(targetLineIdx);
       if (geom) {
@@ -6660,25 +6245,21 @@ export class ReadingRuler {
           return;
         }
 
-        // Refresh lines and words for the active page:
+        // Refresh lines for the active page:
         this.refreshLines();
-        if (this.wordTracking) {
-          this.refreshWords();
-        }
 
         if (this.wordTracking) {
-          if (this.cachedWords && this.cachedWords.length > 0) {
-            const targetWordIdx = direction >= 0 ? 0 : this.cachedWords.length - 1;
+          const targetLineIdx = (this.cachedLines && this.cachedLines.length > 0)
+            ? (direction < 0 ? this.cachedLines.length - 1 : 0)
+            : 0;
+          this.activeLineIndex = targetLineIdx;
+          const words = this.ensureActiveWords(targetLineIdx);
+          if (words && words.length > 0) {
+            const targetWordIdx = direction >= 0 ? 0 : words.length - 1;
             this.activeWordIndex = targetWordIdx;
-            this.setWordWindow(this.activeWordIndex);
+            this.setWordWindow(targetWordIdx);
 
-            const targetWord = this.cachedWords[targetWordIdx];
-            if (targetWord && targetWord.lineIndex != null) {
-              this.activeLineIndex = targetWord.lineIndex;
-            } else {
-              this.activeLineIndex = direction >= 0 ? 0 : (this.cachedLines?.length ? this.cachedLines.length - 1 : 0);
-            }
-
+            const targetWord = words[targetWordIdx];
             const isVertical = this.isVerticalMode();
             const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
             const vScrollTop = vp ? vp.scrollTop : 0;
@@ -6900,10 +6481,13 @@ export class ReadingRuler {
           this.currentY = geom.targetY;
         }
       }
-      if (this.wordTracking && oldWordIdx >= 0 && this.cachedWords && this.cachedWords.length > 0) {
-        const wIdx = Math.min(this.cachedWords.length - 1, oldWordIdx);
-        this.activeWordIndex = wIdx;
-        this.setWordWindow(wIdx);
+      if (this.wordTracking && oldWordIdx >= 0) {
+        const words = this.ensureActiveWords(activeIdx);
+        if (words && words.length > 0) {
+          const wIdx = Math.min(words.length - 1, oldWordIdx);
+          this.activeWordIndex = wIdx;
+          this.setWordWindow(wIdx);
+        }
       }
 
       // Plynulá aktualizace pozice pravítka bez vizuálního probliknutí (využívá .is-snapped animaci)
@@ -7018,14 +6602,10 @@ export class ReadingRuler {
 
 
 
-        if (this.cachedWords.length === 0) {
-          this.refreshWords();
-        }
-
         const isVertical = this.isVerticalMode();
         const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
 
-        // Přechod ze samostatného obrázku/multimédií v režimu sledování slov
+        // Pokud je aktuální řádek samostatné médium/obrázek
         if (this.activeWordIndex < 0 && this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length && this.cachedLines[this.activeLineIndex].isMedia) {
           const targetLineIdx = this.activeLineIndex + direction;
           if (direction > 0 && targetLineIdx >= this.cachedLines.length) {
@@ -7067,38 +6647,63 @@ export class ReadingRuler {
               this.applyPosition();
               return;
             } else {
-              let targetWordIdx = -1;
-              if (direction > 0) {
-                for (let w = 0; w < this.cachedWords.length; w++) {
-                  if (this.cachedWords[w].lineIndex === targetLineIdx) {
-                    targetWordIdx = w;
-                    break;
-                  }
-                }
-              } else {
-                for (let w = this.cachedWords.length - 1; w >= 0; w--) {
-                  if (this.cachedWords[w].lineIndex === targetLineIdx) {
-                    targetWordIdx = w;
-                    break;
-                  }
-                }
+              const words = this.ensureActiveWords(targetLineIdx);
+              const targetWordIdx = direction > 0 ? 0 : Math.max(0, words.length - 1);
+              this.activeLineIndex = targetLineIdx;
+              this.activeWordIndex = targetWordIdx;
+              this.setWordWindow(targetWordIdx);
+              this.rulerEl.classList.add("word-tracking-mode");
+              const targetWord = words[targetWordIdx];
+              if (isVertical && this.followMode === "keyboard" && this.stationaryScreenY !== null && vp) {
+                const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
+                const maxScrollTop = Math.max(0, vp.scrollHeight - vp.clientHeight);
+                const idealScrollTop = Math.round(nextLine.centerY - (this.stationaryScreenY + h / 2));
+                const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
+                const scrollDelta = clampedScrollTop - vp.scrollTop;
+                this._applyVerticalScrollDelta(vp, scrollDelta);
               }
-              if (targetWordIdx >= 0) {
-                this.activeLineIndex = targetLineIdx;
-                this.activeWordIndex = targetWordIdx;
-                this.setWordWindow(targetWordIdx);
-                this.rulerEl.classList.add("word-tracking-mode");
-                const targetWord = this.cachedWords[targetWordIdx];
-                if (isVertical && this.followMode === "keyboard" && this.stationaryScreenY !== null && vp) {
-                  const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
-                  const maxScrollTop = Math.max(0, vp.scrollHeight - vp.clientHeight);
-                  const idealScrollTop = Math.round(nextLine.centerY - (this.stationaryScreenY + h / 2));
-                  const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
-                  const scrollDelta = clampedScrollTop - vp.scrollTop;
-                  this._applyVerticalScrollDelta(vp, scrollDelta);
+              this.lastPointerX = targetWord ? targetWord.centerX : 100;
+              this.lastPointerY = targetWord ? (isVertical ? Math.round(targetWord.centerY - (vp ? vp.scrollTop : 0)) : targetWord.centerY) : 150;
+              this.lastValidPointerX = this.lastPointerX;
+              this.lastValidPointerY = this.lastPointerY;
+              this._snapRulerInstantOrAnimated();
+              this.disableWordTransition();
+              this.applyPosition();
+              return;
+            }
+          }
+        }
+
+        // Běžné krokování po slovech na textových řádcích
+        const curLineIdx = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length) ? this.activeLineIndex : 0;
+        let lineWords = this.ensureActiveWords(curLineIdx);
+
+        if (direction > 0) {
+          if (this.activeWordIndex < lineWords.length - 1 && this.activeWordIndex >= 0) {
+            this.activeWordIndex++;
+          } else {
+            // Posun na další řádek
+            const nextLineIdx = curLineIdx + 1;
+            if (nextLineIdx >= this.cachedLines.length) {
+              if (this.onBoundary && !isVertical) {
+                this.lockAdvancement(350);
+                this.onBoundary(1);
+                return;
+              }
+            } else {
+              const nextLine = this.cachedLines[nextLineIdx];
+              if (nextLine && nextLine.isMedia) {
+                this.activeLineIndex = nextLineIdx;
+                this.activeWordIndex = -1;
+                this.rulerEl.classList.remove("word-tracking-mode");
+                const geom = this.computeLineGeometry(nextLineIdx);
+                if (geom) {
+                  this.height = geom.height;
+                  this.targetY = geom.targetY;
+                  this.currentY = this.targetY;
                 }
-                this.lastPointerX = targetWord ? targetWord.centerX : 100;
-                this.lastPointerY = targetWord ? (isVertical ? Math.round(targetWord.centerY - (vp ? vp.scrollTop : 0)) : targetWord.centerY) : 150;
+                this.lastPointerX = nextLine.left != null ? nextLine.left : 100;
+                this.lastPointerY = isVertical ? Math.round(nextLine.centerY - (vp ? vp.scrollTop : 0)) : nextLine.centerY;
                 this.lastValidPointerX = this.lastPointerX;
                 this.lastValidPointerY = this.lastPointerY;
                 this._snapRulerInstantOrAnimated();
@@ -7106,173 +6711,87 @@ export class ReadingRuler {
                 this.applyPosition();
                 return;
               }
-            }
-          }
-        }
-
-        // Přechod ze slova na bezprostředně sousedící obrázek/multimédia
-        if (this.activeWordIndex >= 0 && this.activeWordIndex < this.cachedWords.length) {
-          const curWord = this.cachedWords[this.activeWordIndex];
-          const curLineIdx = (curWord && curWord.lineIndex != null) ? curWord.lineIndex : this.activeLineIndex;
-          if (direction > 0) {
-            const isLastWordOnLine = (this.activeWordIndex === this.cachedWords.length - 1 || this.cachedWords[this.activeWordIndex + 1].lineIndex !== curLineIdx);
-            const nextLineIdx = curLineIdx + 1;
-            if (isLastWordOnLine && nextLineIdx < this.cachedLines.length && this.cachedLines[nextLineIdx].isMedia) {
-              const nextLine = this.cachedLines[nextLineIdx];
               this.activeLineIndex = nextLineIdx;
-              this.activeWordIndex = -1;
-              this.rulerEl.classList.remove("word-tracking-mode");
-              const geom = this.computeLineGeometry(nextLineIdx);
-              if (geom) {
-                this.height = geom.height;
-                this.targetY = geom.targetY;
-                this.currentY = this.targetY;
-              }
-              if (isVertical && this.followMode === "keyboard" && this.stationaryScreenY !== null && vp) {
-                const h = geom ? geom.height : (Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36));
-                const maxScrollTop = Math.max(0, vp.scrollHeight - vp.clientHeight);
-                const idealScrollTop = Math.round(nextLine.centerY - (this.stationaryScreenY + h / 2));
-                const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
-                const scrollDelta = clampedScrollTop - vp.scrollTop;
-                this._applyVerticalScrollDelta(vp, scrollDelta);
-              }
-              this.lastPointerX = nextLine.left != null ? nextLine.left : 100;
-              this.lastPointerY = isVertical ? Math.round(nextLine.centerY - (vp ? vp.scrollTop : 0)) : nextLine.centerY;
-              this.lastValidPointerX = this.lastPointerX;
-              this.lastValidPointerY = this.lastPointerY;
-              this._snapRulerInstantOrAnimated();
-              this.disableWordTransition();
-              this.applyPosition();
-              return;
-            }
-          } else if (direction < 0) {
-            const isFirstWordOnLine = (this.activeWordIndex === 0 || this.cachedWords[this.activeWordIndex - 1].lineIndex !== curLineIdx);
-            const prevLineIdx = curLineIdx - 1;
-            if (isFirstWordOnLine && prevLineIdx >= 0 && this.cachedLines[prevLineIdx].isMedia) {
-              const prevLine = this.cachedLines[prevLineIdx];
-              this.activeLineIndex = prevLineIdx;
-              this.activeWordIndex = -1;
-              this.rulerEl.classList.remove("word-tracking-mode");
-              const geom = this.computeLineGeometry(prevLineIdx);
-              if (geom) {
-                this.height = geom.height;
-                this.targetY = geom.targetY;
-                this.currentY = this.targetY;
-              }
-              if (isVertical && this.followMode === "keyboard" && this.stationaryScreenY !== null && vp) {
-                const h = geom ? geom.height : (Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36));
-                const maxScrollTop = Math.max(0, vp.scrollHeight - vp.clientHeight);
-                const idealScrollTop = Math.round(prevLine.centerY - (this.stationaryScreenY + h / 2));
-                const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
-                const scrollDelta = clampedScrollTop - vp.scrollTop;
-                this._applyVerticalScrollDelta(vp, scrollDelta);
-              }
-              this.lastPointerX = prevLine.left != null ? prevLine.left : 100;
-              this.lastPointerY = isVertical ? Math.round(prevLine.centerY - (vp ? vp.scrollTop : 0)) : prevLine.centerY;
-              this.lastValidPointerX = this.lastPointerX;
-              this.lastValidPointerY = this.lastPointerY;
-              this._snapRulerInstantOrAnimated();
-              this.disableWordTransition();
-              this.applyPosition();
-              return;
+              lineWords = this.ensureActiveWords(nextLineIdx);
+              this.activeWordIndex = 0;
             }
           }
-        }
-
-        if (this.cachedWords.length > 0) {
-          let newIdx;
-          if (this.activeWordIndex < 0) {
-            let lineFirstWordIdx = -1;
-            if (this.activeLineIndex >= 0) {
-              for (let w = 0; w < this.cachedWords.length; w++) {
-                if (this.cachedWords[w].lineIndex === this.activeLineIndex) {
-                  lineFirstWordIdx = w;
-                  break;
-                }
-              }
-            }
-            if (lineFirstWordIdx >= 0) {
-              newIdx = lineFirstWordIdx;
-            } else if (direction > 0) {
-              newIdx = 0;
-            } else if (direction < 0) {
-              newIdx = this.cachedWords.length - 1;
-            } else {
-              newIdx = 0;
-            }
+        } else if (direction < 0) {
+          if (this.activeWordIndex > 0) {
+            this.activeWordIndex--;
           } else {
-            const curIdx = this.activeWordIndex;
-            const curWord = this.cachedWords[curIdx];
-
-            if (direction > 0 && curIdx >= this.cachedWords.length - 1) {
-              if (this.onBoundary && !this.isVerticalMode()) {
-                this.lockAdvancement(350);
-                this.onBoundary(1);
-                return;
-              }
-            } else if (direction < 0 && curIdx <= 0) {
-              if (this.onBoundary && !this.isVerticalMode()) {
+            // Posun na předchozí řádek
+            const prevLineIdx = curLineIdx - 1;
+            if (prevLineIdx < 0) {
+              if (this.onBoundary && !isVertical) {
                 this.onBoundary(-1);
                 return;
               }
-            }
-            newIdx = curIdx + direction;
-          }
-
-          newIdx = Math.max(0, Math.min(this.cachedWords.length - 1, newIdx));
-
-          if (isVertical && this.followMode === "keyboard") {
-            if (this.stationaryScreenY === null) {
-              this.initDefaultStationaryAnchor();
-            }
-          }
-          if (isVertical && this.followMode === "keyboard" && this.stationaryScreenY !== null) {
-            const targetWord = this.cachedWords[newIdx];
-            const targetLineIdx = (targetWord && targetWord.lineIndex != null) ? targetWord.lineIndex : this.activeLineIndex;
-            const curWord = (this.activeWordIndex >= 0 && this.activeWordIndex < this.cachedWords.length) ? this.cachedWords[this.activeWordIndex] : null;
-            const curLineIdx = (curWord && curWord.lineIndex != null) ? curWord.lineIndex : this.activeLineIndex;
-
-            if (vp && targetLineIdx !== curLineIdx && targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) {
-              const nextLine = this.cachedLines[targetLineIdx];
-              if (nextLine) {
-                const geom = this.computeLineGeometry(targetLineIdx);
+            } else {
+              const prevLine = this.cachedLines[prevLineIdx];
+              if (prevLine && prevLine.isMedia) {
+                this.activeLineIndex = prevLineIdx;
+                this.activeWordIndex = -1;
+                this.rulerEl.classList.remove("word-tracking-mode");
+                const geom = this.computeLineGeometry(prevLineIdx);
                 if (geom) {
                   this.height = geom.height;
                   this.targetY = geom.targetY;
                   this.currentY = this.targetY;
                 }
-                const h = geom ? geom.height : (Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36));
-                const maxScrollTop = Math.max(0, vp.scrollHeight - vp.clientHeight);
-                const idealScrollTop = Math.round(nextLine.centerY - (this.stationaryScreenY + h / 2));
-                const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
-                const scrollDelta = clampedScrollTop - vp.scrollTop;
-                this._applyVerticalScrollDelta(vp, scrollDelta);
+                this.lastPointerX = prevLine.left != null ? prevLine.left : 100;
+                this.lastPointerY = isVertical ? Math.round(prevLine.centerY - (vp ? vp.scrollTop : 0)) : prevLine.centerY;
+                this.lastValidPointerX = this.lastPointerX;
+                this.lastValidPointerY = this.lastPointerY;
+                this._snapRulerInstantOrAnimated();
+                this.disableWordTransition();
+                this.applyPosition();
+                return;
               }
+              this.activeLineIndex = prevLineIdx;
+              lineWords = this.ensureActiveWords(prevLineIdx);
+              this.activeWordIndex = Math.max(0, lineWords.length - 1);
             }
+          }
+        }
 
-            this.activeLineIndex = targetLineIdx;
-            this.activeWordIndex = newIdx;
-            this.setWordWindow(newIdx);
+        const newIdx = this.activeWordIndex;
+        if (lineWords && lineWords.length > 0 && newIdx >= 0 && newIdx < lineWords.length) {
+          const targetWord = lineWords[newIdx];
+          const targetLineIdx = this.activeLineIndex;
+          const nextLine = this.cachedLines[targetLineIdx];
 
-            this.lastPointerX = targetWord ? targetWord.centerX : 100;
-            this.lastPointerY = targetWord ? (isVertical ? Math.round(targetWord.centerY - (vp ? vp.scrollTop : 0)) : targetWord.centerY) : 150;
-            this.lastValidPointerX = this.lastPointerX;
-            this.lastValidPointerY = this.lastPointerY;
-
-            this.rulerEl.classList.add("word-tracking-mode");
-            this._snapRulerInstantOrAnimated();
-            this.disableWordTransition();
-            this.applyPosition();
-            return;
+          if (isVertical && this.followMode === "keyboard") {
+            if (this.stationaryScreenY === null) {
+              this.initDefaultStationaryAnchor();
+            }
+            if (this.stationaryScreenY !== null && vp && nextLine) {
+              const geom = this.computeLineGeometry(targetLineIdx);
+              if (geom) {
+                this.height = geom.height;
+                this.targetY = geom.targetY;
+                this.currentY = this.targetY;
+              }
+              const h = geom ? geom.height : (Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36));
+              const maxScrollTop = Math.max(0, vp.scrollHeight - vp.clientHeight);
+              const idealScrollTop = Math.round(nextLine.centerY - (this.stationaryScreenY + h / 2));
+              const clampedScrollTop = Math.max(0, Math.min(maxScrollTop, idealScrollTop));
+              const scrollDelta = clampedScrollTop - vp.scrollTop;
+              this._applyVerticalScrollDelta(vp, scrollDelta);
+            }
           }
 
           this.setWordWindow(newIdx);
+          this.lastPointerX = targetWord ? targetWord.centerX : 100;
+          this.lastPointerY = targetWord ? (isVertical ? Math.round(targetWord.centerY - (vp ? vp.scrollTop : 0)) : targetWord.centerY) : 150;
+          this.lastValidPointerX = this.lastPointerX;
+          this.lastValidPointerY = this.lastPointerY;
 
           this.rulerEl.classList.add("word-tracking-mode");
           this._snapRulerInstantOrAnimated();
-
           this.disableWordTransition();
           this.applyPosition();
+
           if (this.isVerticalMode()) {
             if (vp && Number.isFinite(this.targetY)) {
               const screenY = this.targetY - vp.scrollTop;
@@ -7496,7 +7015,7 @@ export class ReadingRuler {
 
     if (this._lastFocusedMediaEl) {
       this._lastFocusedMediaEl.classList.remove("active-focus", "ruler-focused-image");
-      const parentFig = this._lastFocusedMediaEl.closest("figure, picture, .chapter-illustration");
+      const parentFig = this._lastFocusedMediaEl.closest("figure, picture, .chapter-illustration, [class*='ornament'], [class*='illustration']");
       if (parentFig && parentFig.classList) {
         parentFig.classList.remove("active-focus", "ruler-focused-image");
       }
@@ -7693,6 +7212,8 @@ export class ReadingRuler {
               this.maskTopEl.style.setProperty("display", "block", "important");
               this.maskTopEl.style.setProperty("background-color", themeBg, "important");
               this.maskTopEl.style.setProperty("opacity", String(dimOpacity), "important");
+              this.maskTopEl.style.setProperty("z-index", "15", "important");
+              this.maskTopEl.style.setProperty("pointer-events", "none", "important");
               this.maskTopEl.style.top = "0px";
               this.maskTopEl.style.left = "0px";
               this.maskTopEl.style.right = "auto";
@@ -7740,6 +7261,8 @@ export class ReadingRuler {
               this.maskLeftEl.style.setProperty("display", "block", "important");
               this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
               this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
+              this.maskLeftEl.style.setProperty("z-index", "15", "important");
+              this.maskLeftEl.style.setProperty("pointer-events", "none", "important");
               this.maskLeftEl.style.top = "0px";
               this.maskLeftEl.style.left = "0px";
               this.maskLeftEl.style.right = "auto";
@@ -7761,6 +7284,8 @@ export class ReadingRuler {
               this.maskRightEl.style.setProperty("display", "block", "important");
               this.maskRightEl.style.setProperty("background-color", themeBg, "important");
               this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
+              this.maskRightEl.style.setProperty("z-index", "15", "important");
+              this.maskRightEl.style.setProperty("pointer-events", "none", "important");
               this.maskRightEl.style.top = "0px";
               this.maskRightEl.style.left = "0px";
               this.maskRightEl.style.right = "auto";
@@ -7919,6 +7444,8 @@ export class ReadingRuler {
             this.maskTopEl.style.setProperty("display", "block", "important");
             this.maskTopEl.style.setProperty("background-color", themeBg, "important");
             this.maskTopEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskTopEl.style.setProperty("z-index", "15", "important");
+            this.maskTopEl.style.setProperty("pointer-events", "none", "important");
             this.maskTopEl.style.top = "0px";
             this.maskTopEl.style.left = "0px";
             this.maskTopEl.style.right = "auto";
@@ -7941,6 +7468,8 @@ export class ReadingRuler {
             this.maskBottomEl.style.setProperty("display", "block", "important");
             this.maskBottomEl.style.setProperty("background-color", themeBg, "important");
             this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskBottomEl.style.setProperty("z-index", "15", "important");
+            this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
             this.maskBottomEl.style.top = "0px";
             this.maskBottomEl.style.left = "0px";
             this.maskBottomEl.style.right = "auto";
@@ -7964,6 +7493,8 @@ export class ReadingRuler {
             this.maskLeftEl.style.setProperty("display", "block", "important");
             this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
             this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskLeftEl.style.setProperty("z-index", "15", "important");
+            this.maskLeftEl.style.setProperty("pointer-events", "none", "important");
             this.maskLeftEl.style.top = "0px";
             this.maskLeftEl.style.left = "0px";
             this.maskLeftEl.style.right = "auto";
@@ -7985,6 +7516,8 @@ export class ReadingRuler {
             this.maskRightEl.style.setProperty("display", "block", "important");
             this.maskRightEl.style.setProperty("background-color", themeBg, "important");
             this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
+            this.maskRightEl.style.setProperty("z-index", "15", "important");
+            this.maskRightEl.style.setProperty("pointer-events", "none", "important");
             this.maskRightEl.style.top = "0px";
             this.maskRightEl.style.left = "0px";
             this.maskRightEl.style.right = "auto";
@@ -8136,18 +7669,11 @@ export class ReadingRuler {
           this.activeLineIndex = closestIdx;
           if (!this.wordTracking) {
             this._checkLineProgress(closestIdx);
-          }
-          if (this.wordTracking && this.cachedWords.length > 0) {
-            let wIdx = -1;
-            for (let w = 0; w < this.cachedWords.length; w++) {
-              if (this.cachedWords[w].lineIndex === closestIdx) {
-                wIdx = w;
-                break;
-              }
-            }
-            if (wIdx >= 0 && wIdx !== this.activeWordIndex) {
-              this.activeWordIndex = wIdx;
-              this.setWordWindow(wIdx);
+          } else {
+            const words = this.ensureActiveWords(closestIdx);
+            if (words && words.length > 0) {
+              this.activeWordIndex = 0;
+              this.setWordWindow(0);
             }
           }
         }
@@ -8346,28 +7872,9 @@ export class ReadingRuler {
           ? this.cachedWords[this.activeWordIndex]
           : null;
 
-        if (curWord && curWord.lineIndex != null && curWord.lineIndex !== this.activeLineIndex) {
-          let foundWord = null;
-          for (let w = 0; w < this.cachedWords.length; w++) {
-            if (this.cachedWords[w].lineIndex === this.activeLineIndex) {
-              foundWord = this.cachedWords[w];
-              this.activeWordIndex = w;
-              break;
-            }
-          }
-          if (foundWord) curWord = foundWord;
-        } else if (!curWord && this.cachedWords.length > 0) {
-          for (let w = 0; w < this.cachedWords.length; w++) {
-            if (this.cachedWords[w].lineIndex === this.activeLineIndex) {
-              curWord = this.cachedWords[w];
-              this.activeWordIndex = w;
-              break;
-            }
-          }
-          if (!curWord) {
-            curWord = this.cachedWords[0];
-            this.activeWordIndex = 0;
-          }
+        if (!curWord && this.cachedWords.length > 0) {
+          curWord = this.cachedWords[0];
+          this.activeWordIndex = 0;
         }
 
         let currentPointerX;
@@ -8530,6 +8037,8 @@ export class ReadingRuler {
           this.maskTopEl.style.setProperty("display", "block", "important");
           this.maskTopEl.style.setProperty("background-color", themeBg, "important");
           this.maskTopEl.style.setProperty("opacity", String(dimOpacity), "important");
+          this.maskTopEl.style.setProperty("z-index", "15", "important");
+          this.maskTopEl.style.setProperty("pointer-events", "none", "important");
           this.maskTopEl.style.top = "0px";
           this.maskTopEl.style.left = "0px";
           this.maskTopEl.style.right = "auto";
@@ -8577,6 +8086,8 @@ export class ReadingRuler {
           this.maskLeftEl.style.setProperty("display", "block", "important");
           this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
           this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
+          this.maskLeftEl.style.setProperty("z-index", "15", "important");
+          this.maskLeftEl.style.setProperty("pointer-events", "none", "important");
           this.maskLeftEl.style.top = "0px";
           this.maskLeftEl.style.left = "0px";
           this.maskLeftEl.style.right = "auto";
@@ -8597,6 +8108,8 @@ export class ReadingRuler {
           this.maskRightEl.style.setProperty("display", "block", "important");
           this.maskRightEl.style.setProperty("background-color", themeBg, "important");
           this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
+          this.maskRightEl.style.setProperty("z-index", "15", "important");
+          this.maskRightEl.style.setProperty("pointer-events", "none", "important");
           this.maskRightEl.style.top = "0px";
           this.maskRightEl.style.left = "0px";
           this.maskRightEl.style.right = "auto";
@@ -8690,7 +8203,7 @@ export class ReadingRuler {
       const curMediaEl = currentLine.element || currentLine.el;
       if (curMediaEl && curMediaEl.classList) {
         curMediaEl.classList.add("active-focus", "ruler-focused-image");
-        const parentFig = curMediaEl.closest("figure, picture, .chapter-illustration");
+        const parentFig = curMediaEl.closest("figure, picture, .chapter-illustration, [class*='ornament'], [class*='illustration']");
         if (parentFig && parentFig.classList) {
           parentFig.classList.add("active-focus", "ruler-focused-image");
         }
@@ -8698,7 +8211,7 @@ export class ReadingRuler {
       this._lastFocusedMediaEl = curMediaEl;
     } else if (this._lastFocusedMediaEl) {
       this._lastFocusedMediaEl.classList.remove("active-focus", "ruler-focused-image");
-      const parentFig = this._lastFocusedMediaEl.closest("figure, picture, .chapter-illustration");
+      const parentFig = this._lastFocusedMediaEl.closest("figure, picture, .chapter-illustration, [class*='ornament'], [class*='illustration']");
       if (parentFig && parentFig.classList) {
         parentFig.classList.remove("active-focus", "ruler-focused-image");
       }
@@ -8714,9 +8227,6 @@ export class ReadingRuler {
       return;
     }
     this.refreshLines();
-    if (this.wordTracking) {
-      this.refreshWords();
-    }
 
     if (this.cachedLines.length === 0) {
       if (this.isPdfMode) {
@@ -8737,24 +8247,30 @@ export class ReadingRuler {
     const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
     const vScrollTop = vp ? vp.scrollTop : 0;
 
-    if (this.wordTracking && this.cachedWords.length > 0) {
-      const idx = Math.max(0, Math.min(this.cachedWords.length - 1, index));
-      this.activeWordIndex = idx;
-      const targetWord = this.cachedWords[idx];
-      if (targetWord && targetWord.lineIndex != null) {
-        this.activeLineIndex = targetWord.lineIndex;
+    const lineIdx = Math.max(0, Math.min(this.cachedLines.length - 1, index));
+    this.activeLineIndex = lineIdx;
+    const targetLine = this.cachedLines[lineIdx];
+    const isTargetMedia = !!(targetLine && (targetLine.isMedia || !targetLine.hasText));
+
+    if (this.wordTracking && !isTargetMedia) {
+      const words = this.ensureActiveWords(lineIdx);
+      if (words && words.length > 0) {
+        this.activeWordIndex = 0;
+        this.setWordWindow(0);
+        const targetWord = words[0];
+        this.lastPointerX = targetWord ? targetWord.centerX : 100;
+        this.lastPointerY = targetWord ? (isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY) : 150;
+        this.lastValidPointerX = this.lastPointerX;
+        this.lastValidPointerY = this.lastPointerY;
+        this.rulerEl.classList.add("word-tracking-mode");
+        this._snapRulerInstantOrAnimated();
       }
-      this.setWordWindow(idx);
-      this.lastPointerX = targetWord ? targetWord.centerX : 100;
-      this.lastPointerY = targetWord ? (isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY) : 150;
-      this.lastValidPointerX = this.lastPointerX;
-      this.lastValidPointerY = this.lastPointerY;
-      this.rulerEl.classList.add("word-tracking-mode");
-      this._snapRulerInstantOrAnimated();
     } else {
       const idx = Math.max(0, Math.min(this.cachedLines.length - 1, index));
       this.activeLineIndex = idx;
+      this.activeWordIndex = -1;
       this.rulerEl.classList.remove("word-tracking-mode");
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
       const geom = this.computeLineGeometry(idx);
       if (geom) {
         this.height = geom.height;
@@ -8788,18 +8304,25 @@ export class ReadingRuler {
     if (this.maskTopEl) {
       this.maskTopEl.style.willChange = "transform";
       this.maskTopEl.style.contain = "paint";
+      this.maskTopEl.style.pointerEvents = "none";
     }
     if (this.maskBottomEl) {
       this.maskBottomEl.style.willChange = "transform";
       this.maskBottomEl.style.contain = "paint";
+      this.maskBottomEl.style.pointerEvents = "none";
     }
     if (this.maskLeftEl) {
       this.maskLeftEl.style.willChange = "transform";
       this.maskLeftEl.style.contain = "paint";
+      this.maskLeftEl.style.pointerEvents = "none";
     }
     if (this.maskRightEl) {
       this.maskRightEl.style.willChange = "transform";
       this.maskRightEl.style.contain = "paint";
+      this.maskRightEl.style.pointerEvents = "none";
+    }
+    if (this.maskInactiveSpreadEl) {
+      this.maskInactiveSpreadEl.style.pointerEvents = "none";
     }
 
     const hasLines = this.isPdfMode || this.cachedLines.length > 0;
@@ -9130,9 +8653,6 @@ export class ReadingRuler {
     if (!this.isImageOnlyPdf && (!this.cachedLines || this.cachedLines.length === 0)) {
       this.detectLines();
     }
-    if (this.wordTracking && !this.isImageOnlyPdf && (!this.cachedWords || this.cachedWords.length === 0)) {
-      this.refreshWords();
-    }
     if (this.cachedLines && this.cachedLines.length > 0) {
       if (this.activeLineIndex < 0 || this.activeLineIndex >= this.cachedLines.length) {
         this.activeLineIndex = 0;
@@ -9144,12 +8664,16 @@ export class ReadingRuler {
         this.currentY = geom.targetY;
       }
     }
-    if (this.wordTracking && this.cachedWords && this.cachedWords.length > 0) {
-      if (this.activeWordIndex < 0 || this.activeWordIndex >= this.cachedWords.length) {
-        const lineWordIdx = this.cachedWords.findIndex(w => w.lineIndex === this.activeLineIndex);
-        this.activeWordIndex = lineWordIdx >= 0 ? lineWordIdx : 0;
+    if (this.wordTracking && !this.isImageOnlyPdf && this.cachedLines && this.cachedLines.length > 0) {
+      const lineIdx = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length) ? this.activeLineIndex : 0;
+      this.activeLineIndex = lineIdx;
+      const words = this.ensureActiveWords(lineIdx);
+      if (words && words.length > 0) {
+        if (this.activeWordIndex < 0 || this.activeWordIndex >= words.length) {
+          this.activeWordIndex = 0;
+        }
+        this.setWordWindow(this.activeWordIndex);
       }
-      this.setWordWindow(this.activeWordIndex);
     }
     this.updateStyles();
     this.applyPosition();
@@ -9496,20 +9020,19 @@ export class ReadingRuler {
     }
 
     if (this.wordTracking) {
-      this._forceRefreshWords = true;
-      this.refreshWords();
-      this._forceRefreshWords = false;
-
-      if (this.cachedWords && this.cachedWords.length > 0) {
-        const targetLine = this.activeLineIndex >= 0 ? this.activeLineIndex : 0;
-        let wordIdx = this.cachedWords.findIndex(w => w.lineIndex === targetLine);
-        if (wordIdx < 0) wordIdx = 0;
-        this.activeWordIndex = wordIdx;
-        this.setWordWindow(wordIdx);
+      const targetLine = (this.activeLineIndex >= 0 && this.activeLineIndex < (this.cachedLines?.length || 0)) ? this.activeLineIndex : 0;
+      this.activeLineIndex = targetLine;
+      const words = this.ensureActiveWords(targetLine);
+      if (words && words.length > 0) {
+        this.activeWordIndex = 0;
+        this.setWordWindow(0);
+      } else {
+        this.activeWordIndex = -1;
       }
       if (this.rulerEl) this.rulerEl.classList.add("word-tracking-mode");
     } else {
       this.activeWordIndex = -1;
+      this._clearWordCache();
       if (this.rulerEl) {
         this.rulerEl.classList.remove("word-tracking-mode", "no-preview");
       }

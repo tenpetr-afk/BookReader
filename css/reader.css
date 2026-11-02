@@ -1528,6 +1528,8 @@ body.is-turning-page .ruler-word-wave,
 .paged-stage.focus-active picture.active-focus,
 .paged-stage.focus-active canvas.active-focus,
 .paged-stage.focus-active .chapter-illustration.active-focus,
+.paged-stage.focus-active [class*="ornament"].active-focus,
+.paged-stage.focus-active [class*="illustration"].active-focus,
 .paged-stage.focus-active .ruler-focused-image,
 #reader-content.focus-active img.active-focus,
 #reader-content.focus-active svg.active-focus,
@@ -1535,6 +1537,8 @@ body.is-turning-page .ruler-word-wave,
 #reader-content.focus-active picture.active-focus,
 #reader-content.focus-active canvas.active-focus,
 #reader-content.focus-active .chapter-illustration.active-focus,
+#reader-content.focus-active [class*="ornament"].active-focus,
+#reader-content.focus-active [class*="illustration"].active-focus,
 #reader-content.focus-active .ruler-focused-image,
 img.ruler-focused-image,
 svg.ruler-focused-image,
@@ -1542,12 +1546,16 @@ figure.ruler-focused-image,
 picture.ruler-focused-image,
 canvas.ruler-focused-image,
 .chapter-illustration.ruler-focused-image,
+[class*="ornament"].ruler-focused-image,
+[class*="illustration"].ruler-focused-image,
 img.active-focus,
 svg.active-focus,
 figure.active-focus,
 picture.active-focus,
 canvas.active-focus,
-.chapter-illustration.active-focus {
+.chapter-illustration.active-focus,
+[class*="ornament"].active-focus,
+[class*="illustration"].active-focus {
   opacity: 1 !important;
   filter: none !important;
 }
@@ -1583,12 +1591,23 @@ canvas.active-focus,
   background-color: var(--bg-theme, var(--color-bg, #fbf0d9)) !important;
   opacity: var(--focus-dim-opacity, 0.65) !important;
   z-index: 15 !important;
+  pointer-events: none !important;
+}
+
+.ruler-mask.ruler-mask-top {
+  pointer-events: none !important;
 }
 
 .ruler-mask.ruler-mask-bottom {
   background-color: var(--bg-theme, var(--color-bg, #fbf0d9)) !important;
   transition: none !important;
   z-index: 15 !important;
+  pointer-events: none !important;
+}
+
+.ruler-mask.ruler-mask-left,
+.ruler-mask.ruler-mask-right {
+  pointer-events: none !important;
 }
 
 .ruler-mask.ruler-mask-inactive-spread,
@@ -1597,6 +1616,15 @@ canvas.active-focus,
   opacity: var(--focus-dim-opacity, 0.75);
   transition: none !important;
   z-index: 15 !important;
+  pointer-events: none !important;
+}
+
+.ruler-mask,
+.ruler-mask-top,
+.ruler-mask-bottom,
+.ruler-mask-left,
+.ruler-mask-right,
+.ruler-mask-inactive-spread {
   pointer-events: none !important;
 }
 
