@@ -1194,6 +1194,7 @@ export class StorageManager {
 
     const defaults = {
       theme: "warm", // light, warm, sepia, dark, oled
+      liquidGlassUi: false, // Liquid Glass theme toggle
       fontFamily: "georgia", // georgia, merriweather, lora, inter, atkinson, opendyslexic, verdana, arial, literata, comic-sans
       fontSize: 19, // px
       marginPercent: 8, // % velikost okrajů stránky
@@ -1243,6 +1244,9 @@ export class StorageManager {
         merged.letterSpacing = parsed.letterSpacing !== undefined ? Number(parsed.letterSpacing) : 0.75;
         merged.wordSpacing = parsed.wordSpacing !== undefined ? Number(parsed.wordSpacing) : 2;
         merged.fastReading = !!parsed.fastReading;
+        merged.liquidGlassUi = localStorage.getItem("liquidGlassUi") !== null
+          ? localStorage.getItem("liquidGlassUi") === "true"
+          : (parsed.liquidGlassUi !== undefined ? !!parsed.liquidGlassUi : false);
         merged.pencilDoubleTapNavigation = parsed.pencilDoubleTapNavigation !== false;
         merged.pencilFlickNavigation = parsed.pencilFlickNavigation !== false;
         merged.showRulerButton = parsed.showRulerButton !== false;
@@ -1395,6 +1399,9 @@ export class StorageManager {
       settings.showFooterBar = isVisible;
       settings.showProgressBar = isVisible;
       localStorage.setItem('showProgressBar', String(isVisible));
+      if (settings.liquidGlassUi !== undefined) {
+        localStorage.setItem("liquidGlassUi", String(!!settings.liquidGlassUi));
+      }
       localStorage.setItem("luminareader_settings", JSON.stringify(settings));
     } catch (e) {
       console.warn("Chyba při ukládání nastavení do localStorage:", e);

@@ -413,6 +413,7 @@ export class LuminaApp {
       valPdfRulerHeight: document.getElementById("val-pdf-ruler-height"),
 
       settingShowFooter: document.getElementById("setting-show-footer"),
+      settingLiquidGlass: document.getElementById("setting-liquid-glass"),
       readingModeControl: document.getElementById("reading-mode-control"),
       readingModeSelects: document.querySelectorAll("[data-reading-mode]"),
 
@@ -778,6 +779,14 @@ export class LuminaApp {
     document.body.classList.toggle("hide-footer-bar", !showProgressBar);
     if (this.dom.settingShowFooter) {
       this.setSwitchState(this.dom.settingShowFooter, showProgressBar);
+    }
+
+    // Režim tekutého skla (Liquid Glass UI)
+    const isLiquidGlass = !!s.liquidGlassUi;
+    document.body.classList.toggle("ui-liquid-glass", isLiquidGlass);
+    document.documentElement.classList.toggle("ui-liquid-glass", isLiquidGlass);
+    if (this.dom.settingLiquidGlass) {
+      this.setSwitchState(this.dom.settingLiquidGlass, isLiquidGlass);
     }
 
     // Synchronizace rychlého popoveru pravítka
@@ -2443,6 +2452,18 @@ export class LuminaApp {
             this.updateScrubberUI();
           });
         }
+      });
+    }
+
+    // Přepínač Vzhled tekutého skla (Liquid Glass)
+    if (this.dom.settingLiquidGlass) {
+      this.dom.settingLiquidGlass.addEventListener("click", () => {
+        const val = !this.settings.liquidGlassUi;
+        this.settings.liquidGlassUi = val;
+        this.setSwitchState(this.dom.settingLiquidGlass, val);
+        document.body.classList.toggle("ui-liquid-glass", val);
+        document.documentElement.classList.toggle("ui-liquid-glass", val);
+        storage.saveSettings(this.settings);
       });
     }
 

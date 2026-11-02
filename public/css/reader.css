@@ -3063,24 +3063,60 @@ body.is-pdf-mode:not(.mode-vertical) .paged-content {
   }
 }
 
-/* Odstranění náročného backdrop-filter na dotykových zařízeních (iPad A10 GPU optimalizace) */
+/* Odstranění náročného backdrop-filter na dotykových zařízeních pro výchozí motiv (iPad A10 GPU optimalizace) */
 @media (hover: none) and (pointer: coarse) {
-  .ruler-split-pill,
-  .btn-reader-menu-fab,
-  .dock-action-btn,
-  .dock-action-btn-wide,
-  .pill-scrubber-capsule,
-  .apple-books-capsule,
-  .pill-scrubber-tooltip,
-  .liquid-glass-badge,
-  .btn-back-library,
-  .header-title-wrapper,
-  #footer-remaining-chapter,
-  #footer-book-pages,
-  .footer-actions-group {
+  body:not(.ui-liquid-glass) .ruler-split-pill,
+  body:not(.ui-liquid-glass) .btn-reader-menu-fab,
+  body:not(.ui-liquid-glass) .dock-action-btn,
+  body:not(.ui-liquid-glass) .dock-action-btn-wide,
+  body:not(.ui-liquid-glass) .pill-scrubber-capsule,
+  body:not(.ui-liquid-glass) .apple-books-capsule,
+  body:not(.ui-liquid-glass) .pill-scrubber-tooltip,
+  body:not(.ui-liquid-glass) .liquid-glass-badge,
+  body:not(.ui-liquid-glass) .btn-back-library,
+  body:not(.ui-liquid-glass) .header-title-wrapper,
+  body:not(.ui-liquid-glass) #footer-remaining-chapter,
+  body:not(.ui-liquid-glass) #footer-book-pages,
+  body:not(.ui-liquid-glass) .footer-actions-group {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
+}
+
+/* ==========================================================================
+   Liquid Glass Reader Overrides (.ui-liquid-glass)
+   ========================================================================== */
+
+body.ui-liquid-glass #settings-drawer.drawer-panel,
+body.ui-liquid-glass #settings-drawer {
+  background: var(--lq-glass-bg) !important;
+  backdrop-filter: blur(28px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
+  border-top: 1px solid var(--lq-glass-border-top) !important;
+  border-left: 1px solid var(--lq-glass-border) !important;
+  border-right: 1px solid var(--lq-glass-border) !important;
+  box-shadow: var(--lq-glass-rim), 0 -16px 45px rgba(0, 0, 0, 0.25) !important;
+}
+
+body.ui-liquid-glass .ruler-quick-popover {
+  background: var(--lq-glass-bg) !important;
+  backdrop-filter: var(--lq-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  border-top-color: var(--lq-glass-border-top) !important;
+  box-shadow: var(--lq-glass-rim), var(--lq-glass-shadow) !important;
+}
+
+body.ui-liquid-glass .popover-segmented-control {
+  background: var(--lq-glass-track-bg) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+}
+
+body.ui-liquid-glass .popover-segmented-control .segment-btn.active {
+  background: var(--lq-glass-bg-hover) !important;
+  color: var(--color-primary) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  box-shadow: var(--lq-glass-rim-subtle), 0 3px 10px rgba(0, 0, 0, 0.10) !important;
 }
 
 
