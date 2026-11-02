@@ -26,10 +26,14 @@
   <!-- Supabase JS Client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Webová písma Google Fonts (Lora, Atkinson Hyperlegible, Merriweather, Inter) -->
+  <!-- Webová písma Google Fonts (Lora, Atkinson Hyperlegible, Merriweather, Inter, Literata) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@400;500;600;700&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+
+  <!-- OpenDyslexic Web Font -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.1.0/index.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.1.0/700.css" />
 
   <!-- Styly aplikace -->
   <link rel="stylesheet" href="./css/style.css?v=2.2.7" />
@@ -422,8 +426,32 @@
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
               </button>
+              <button type="button" class="font-dropdown-item" role="option" data-font="verdana" aria-selected="false">
+                <span class="font-dropdown-name">Verdana</span>
+                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+              <button type="button" class="font-dropdown-item" role="option" data-font="arial" aria-selected="false">
+                <span class="font-dropdown-name">Arial</span>
+                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+              <button type="button" class="font-dropdown-item" role="option" data-font="literata" aria-selected="false">
+                <span class="font-dropdown-name">Literata</span>
+                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
               <button type="button" class="font-dropdown-item" role="option" data-font="opendyslexic" aria-selected="false">
-                <span class="font-dropdown-name">Pro dyslexii</span>
+                <span class="font-dropdown-name">OpenDyslexic</span>
+                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+              <button type="button" class="font-dropdown-item" role="option" data-font="comic-sans" aria-selected="false">
+                <span class="font-dropdown-name">Comic Sans</span>
                 <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
@@ -467,18 +495,18 @@
         <div class="slider-setting">
           <div class="slider-label">
             <span>Mezery mezi písmeny</span>
-            <span id="val-letter-spacing">0px</span>
+            <span id="val-letter-spacing">0.75px</span>
           </div>
-          <input type="range" id="slider-letter-spacing" class="slider-input" min="0" max="4" step="0.25" value="0" />
+          <input type="range" id="slider-letter-spacing" class="slider-input" min="0" max="4" step="0.25" value="0.75" />
         </div>
 
         <!-- Mezery mezi slovy -->
         <div class="slider-setting">
           <div class="slider-label">
             <span>Mezery mezi slovy</span>
-            <span id="val-word-spacing">0px</span>
+            <span id="val-word-spacing">2px</span>
           </div>
-          <input type="range" id="slider-word-spacing" class="slider-input" min="0" max="8" step="0.5" value="0" />
+          <input type="range" id="slider-word-spacing" class="slider-input" min="0" max="8" step="0.5" value="2" />
         </div>
       </div>
 
@@ -500,9 +528,9 @@
         <div class="slider-setting">
           <div class="slider-label">
             <span>Velikost okrajů</span>
-            <span id="val-page-margin">20%</span>
+            <span id="val-page-margin">8%</span>
           </div>
-          <input type="range" id="slider-page-margin" class="slider-input" min="8" max="40" step="2" value="20" />
+          <input type="range" id="slider-page-margin" class="slider-input" min="8" max="40" step="2" value="8" />
         </div>
 
         <!-- Režim zobrazení stránek -->

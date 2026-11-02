@@ -6,9 +6,13 @@
 :root {
   --reader-font-size: 19px;
   --reader-line-height: 1.6;
-  --reader-letter-spacing: 0px;
-  --reader-word-spacing: 0px;
-  --reader-stage-width: 80vw;
+  --reader-letter-spacing: 0.75px;
+  --reader-word-spacing: 2px;
+  --reader-page-margin: 8%;
+  --page-margin: 8%;
+  --letter-spacing: 0.75px;
+  --word-spacing: 2px;
+  --reader-stage-width: 84vw;
   --reader-max-width: 760px;
   --reader-column-count: 1;
   --reader-text-align: justify;
@@ -57,10 +61,27 @@ body.columns-2 {
   --font-book: "Atkinson Hyperlegible", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+[data-font="verdana"] {
+  --font-book: "Verdana", Geneva, Tahoma, sans-serif;
+}
+
+[data-font="arial"] {
+  --font-book: Arial, "Helvetica Neue", Helvetica, sans-serif;
+}
+
+[data-font="literata"] {
+  --font-book: "Literata", Georgia, "Times New Roman", serif;
+}
+
 [data-font="opendyslexic"] {
   --font-book: "OpenDyslexic", "Comic Sans MS", "Arial Rounded MT Bold", sans-serif;
   letter-spacing: 0.05em;
   word-spacing: 0.12em;
+}
+
+[data-font="comic-sans"],
+[data-font="comicsans"] {
+  --font-book: "Comic Sans MS", "Comic Sans", "Chalkboard SE", "Comic Neue", cursive, sans-serif;
 }
 
 /* Rychlé čtení (Bionic reading) - Hardware-accelerated native bold */
@@ -189,8 +210,8 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 .paged-content,
 .paged-content * {
   line-height: var(--reader-line-height) !important;
-  letter-spacing: var(--reader-letter-spacing) !important;
-  word-spacing: var(--reader-word-spacing) !important;
+  letter-spacing: var(--reader-letter-spacing, var(--letter-spacing, 0.75px)) !important;
+  word-spacing: var(--reader-word-spacing, var(--word-spacing, 2px)) !important;
 }
 
 /* Typografické elementy uvnitř knihy v režimu stran */
@@ -2147,8 +2168,21 @@ body.ruler-holding * {
 .font-dropdown-item[data-font="atkinson"] .font-dropdown-name {
   font-family: "Atkinson Hyperlegible", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
+.font-dropdown-item[data-font="verdana"] .font-dropdown-name {
+  font-family: "Verdana", Geneva, Tahoma, sans-serif;
+}
+.font-dropdown-item[data-font="arial"] .font-dropdown-name {
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+}
+.font-dropdown-item[data-font="literata"] .font-dropdown-name {
+  font-family: "Literata", Georgia, "Times New Roman", serif;
+}
 .font-dropdown-item[data-font="opendyslexic"] .font-dropdown-name {
   font-family: "OpenDyslexic", "Comic Sans MS", "Arial Rounded MT Bold", sans-serif;
+}
+.font-dropdown-item[data-font="comic-sans"] .font-dropdown-name,
+.font-dropdown-item[data-font="comicsans"] .font-dropdown-name {
+  font-family: "Comic Sans MS", "Comic Sans", "Chalkboard SE", "Comic Neue", cursive, sans-serif;
 }
 
 /* ==========================================================================

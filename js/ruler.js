@@ -43,6 +43,9 @@ export class ReadingRuler {
     this.style = "highlight"; // "off" | "highlight" | "bottom-cover"
     this.mode = "highlight"; // mirrors style for backward compatibility
     this.focusMode = "off"; // "off" | "up" | "down" | "both"
+    this.lastActiveStyle = "highlight";
+    this.lastActiveFocus = "off";
+    this.lastActiveCombination = { style: "highlight", focusMode: "off" };
     this.rulerPadding = RULER_PADDING;
     this.manualHeight = 48; // px (při vypnutém autoHeight)
     this.height = 36; // aktuální efektivní výška
@@ -8984,6 +8987,27 @@ export class ReadingRuler {
 
   setEnabled(val) {
     this.disableWordTransition();
+    if (val) {
+      const isStyleOff = (!this.style || this.style === "off" || this.mode === "off");
+      const isFocusOff = (!this.focusMode || this.focusMode === "off");
+      if (isStyleOff && isFocusOff) {
+        const lastCombo = this.lastActiveCombination || this.app?.settings?.ruler?.lastActiveCombination;
+        let restoredStyle = lastCombo?.style || this.lastActiveStyle || this.app?.settings?.ruler?.lastActiveStyle || "highlight";
+        let restoredFocus = lastCombo?.focusMode || "off";
+        if (restoredStyle === "off" && restoredFocus === "off") {
+          restoredStyle = "highlight";
+          restoredFocus = "off";
+        }
+        this.style = restoredStyle;
+        this.mode = restoredStyle;
+        this.focusMode = restoredFocus;
+        if (this.app?.settings?.ruler) {
+          this.app.settings.ruler.style = restoredStyle;
+          this.app.settings.ruler.mode = restoredStyle;
+          this.app.settings.ruler.focusMode = restoredFocus;
+        }
+      }
+    }
     this.enabled = !!val;
     if (!this.enabled) {
       this.setCursorHidden(false);
@@ -9021,6 +9045,11 @@ export class ReadingRuler {
         this.rulerEl.classList.remove("is-visible");
         this.rulerEl.classList.add("is-hidden");
       }
+      if (this.maskTopEl) this.maskTopEl.style.display = "none";
+      if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
+      if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
+      if (this.maskRightEl) this.maskRightEl.style.display = "none";
+      if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
       this.clearFocusTextMask();
     } else {
       if (this.rulerEl && !document.body.contains(this.rulerEl)) {
@@ -9130,6 +9159,13 @@ export class ReadingRuler {
     if (["off", "highlight", "bottom-cover"].includes(style)) {
       this.style = style;
       this.mode = style;
+      if (style !== "off") {
+        this.lastActiveStyle = style;
+        this.lastActiveCombination = { style, focusMode: this.focusMode || "off" };
+      } else if (this.focusMode && this.focusMode !== "off") {
+        this.lastActiveCombination = { style: "off", focusMode: this.focusMode };
+      }
+
       this._lastComputedLineGeom = null;
       if (this.style === "bottom-cover" && (!this.cachedLines || this.cachedLines.length === 0)) {
         this.detectLines();
@@ -9148,6 +9184,20 @@ export class ReadingRuler {
       this.updateEffectiveHeight();
       this.updateBodyClasses();
       this.updateRulerSettingsVisibility(this.style, this.focusMode, this.isPdfMode);
+
+      // Pokud jsou obě volby (styl i zaostření) nastaveny na "off", automaticky deaktivovat master ruler
+      if (this.style === "off" && (!this.focusMode || this.focusMode === "off")) {
+        if (this.enabled) {
+          this.setEnabled(false);
+          if (this.app?.settings?.ruler) {
+            this.app.settings.ruler.enabled = false;
+          }
+          if (typeof this.app?.updateRulerToggleButtonUI === "function") {
+            this.app.updateRulerToggleButtonUI();
+          }
+        }
+      }
+
       this.refreshVisualState();
     }
   }
@@ -9157,6 +9207,13 @@ export class ReadingRuler {
     if (focusMode === "below") focusMode = "down";
     if (["off", "up", "down", "both"].includes(focusMode)) {
       this.focusMode = focusMode;
+      if (focusMode !== "off") {
+        this.lastActiveFocus = focusMode;
+        this.lastActiveCombination = { style: this.style || "off", focusMode };
+      } else if (this.style && this.style !== "off") {
+        this.lastActiveCombination = { style: this.style, focusMode: "off" };
+      }
+
       if (this.focusMode !== "off") {
         this._focusMaskDirty = true;
         if (!this.cachedLines || this.cachedLines.length === 0) {
@@ -9171,14 +9228,28 @@ export class ReadingRuler {
       }
       this.updateBodyClasses();
       this.updateRulerSettingsVisibility(this.style, this.focusMode, this.isPdfMode);
+
+      // Pokud jsou obě volby (styl i zaostření) nastaveny na "off", automaticky deaktivovat master ruler
+      if (this.focusMode === "off" && (!this.style || this.style === "off")) {
+        if (this.enabled) {
+          this.setEnabled(false);
+          if (this.app?.settings?.ruler) {
+            this.app.settings.ruler.enabled = false;
+          }
+          if (typeof this.app?.updateRulerToggleButtonUI === "function") {
+            this.app.updateRulerToggleButtonUI();
+          }
+        }
+      }
+
       this.refreshVisualState();
     }
   }
 
   setMode(mode) {
     if (mode === "focus") {
-      this.setStyle("off");
       this.setFocusMode("both");
+      this.setStyle("off");
     } else if (["off", "highlight", "bottom-cover"].includes(mode)) {
       this.setStyle(mode);
     }

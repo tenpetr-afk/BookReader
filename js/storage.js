@@ -1194,13 +1194,13 @@ export class StorageManager {
 
     const defaults = {
       theme: "warm", // light, warm, sepia, dark, oled
-      fontFamily: "georgia", // georgia, inter, merriweather, lora, atkinson, opendyslexic
+      fontFamily: "georgia", // georgia, merriweather, lora, inter, atkinson, opendyslexic, verdana, arial, literata, comic-sans
       fontSize: 19, // px
-      marginPercent: 20, // % velikost okrajů stránky
+      marginPercent: 8, // % velikost okrajů stránky
       columnsMode: "auto", // "auto" | "1" | "2" - rozvržení sloupců
       lineHeight: 1.6,
-      letterSpacing: 0, // px
-      wordSpacing: 0, // px
+      letterSpacing: 0.75, // px
+      wordSpacing: 2, // px
       contentWidth: 720, // px
       textAlign: "justify", // left, justify
       readingMode: "scroll", // scroll, paginated
@@ -1215,6 +1215,8 @@ export class StorageManager {
         mode: "highlight", // backward compat: highlight, bottom-cover, off
         style: "highlight", // off, highlight, bottom-cover
         focusMode: "off", // off, up, down, both
+        lastActiveStyle: "highlight",
+        lastActiveCombination: { style: "highlight", focusMode: "off" },
         height: 48, // px
         autoHeight: true, // Automatická výška podle velikosti řádku
         pdfAutoHeight: true, // Automatická výška pravítka pro PDF (výchozí zapnuto)
@@ -1235,11 +1237,11 @@ export class StorageManager {
           ...parsed,
           ruler: { ...defaults.ruler, ...(parsed.ruler || {}) }
         };
-        merged.marginPercent = parsed.marginPercent ?? 20;
+        merged.marginPercent = parsed.marginPercent ?? 8;
         merged.columnsMode = parsed.columnsMode ?? "auto";
         merged.lineHeight = parsed.lineHeight !== undefined ? Number(parsed.lineHeight) : 1.6;
-        merged.letterSpacing = parsed.letterSpacing !== undefined ? Number(parsed.letterSpacing) : 0;
-        merged.wordSpacing = parsed.wordSpacing !== undefined ? Number(parsed.wordSpacing) : 0;
+        merged.letterSpacing = parsed.letterSpacing !== undefined ? Number(parsed.letterSpacing) : 0.75;
+        merged.wordSpacing = parsed.wordSpacing !== undefined ? Number(parsed.wordSpacing) : 2;
         merged.fastReading = !!parsed.fastReading;
         merged.pencilDoubleTapNavigation = parsed.pencilDoubleTapNavigation !== false;
         merged.pencilFlickNavigation = parsed.pencilFlickNavigation !== false;
@@ -1278,6 +1280,22 @@ export class StorageManager {
           merged.ruler.focusMode = "off";
         }
         merged.ruler.mode = merged.ruler.style;
+        if (merged.ruler.style === "off" && merged.ruler.focusMode === "off") {
+          merged.ruler.enabled = false;
+        }
+        if (parsed.ruler?.lastActiveCombination && typeof parsed.ruler.lastActiveCombination === "object") {
+          merged.ruler.lastActiveCombination = parsed.ruler.lastActiveCombination;
+        } else if (merged.ruler.style !== "off" || merged.ruler.focusMode !== "off") {
+          merged.ruler.lastActiveCombination = {
+            style: merged.ruler.style,
+            focusMode: merged.ruler.focusMode
+          };
+        }
+        if (parsed.ruler?.lastActiveStyle) {
+          merged.ruler.lastActiveStyle = parsed.ruler.lastActiveStyle;
+        } else if (merged.ruler.style !== "off") {
+          merged.ruler.lastActiveStyle = merged.ruler.style;
+        }
         if (merged.ruler.followMode !== "keyboard") {
           merged.ruler.followMode = "mouse";
         }

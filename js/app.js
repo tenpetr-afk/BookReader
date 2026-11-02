@@ -332,7 +332,7 @@ export class LuminaApp {
       fontDropdownTrigger: document.getElementById("font-dropdown-trigger"),
       fontDropdownCurrent: document.getElementById("font-dropdown-current"),
       fontDropdownMenu: document.getElementById("font-dropdown-menu"),
-      fontSelects: document.querySelectorAll(".font-dropdown-item[data-font], [data-font]"),
+      fontSelects: document.querySelectorAll(".font-dropdown-item[data-font]"),
       settingFastReading: document.getElementById("setting-fast-reading"),
       sliderFontSize: document.getElementById("slider-font-size"),
       valFontSize: document.getElementById("val-font-size"),
@@ -507,11 +507,29 @@ export class LuminaApp {
 
     const isInReader = this.dom.viewReader ? !this.dom.viewReader.classList.contains("is-hidden") : true;
     const showRuler = this.settings.showRulerButton !== false;
-    this.ruler.setEnabled(isInReader && showRuler && this.settings.ruler.enabled);
     const rulerStyle = this.settings.ruler.style || this.settings.ruler.mode || "highlight";
-    const rulerFocus = this.settings.ruler.focusMode || "off";
+    let rulerFocus = this.settings.ruler.focusMode || "off";
+    if (rulerFocus === "above") rulerFocus = "up";
+    if (rulerFocus === "below") rulerFocus = "down";
+    const isBothOff = (rulerStyle === "off" && rulerFocus === "off");
+    if (isBothOff) {
+      this.settings.ruler.enabled = false;
+    }
     this.ruler.setStyle(rulerStyle);
     this.ruler.setFocusMode(rulerFocus);
+    if (rulerStyle !== "off") {
+      this.settings.ruler.lastActiveStyle = rulerStyle;
+      this.ruler.lastActiveStyle = rulerStyle;
+    }
+    if (rulerFocus !== "off") {
+      this.settings.ruler.lastActiveFocus = rulerFocus;
+      this.ruler.lastActiveFocus = rulerFocus;
+    }
+    if (!isBothOff) {
+      this.settings.ruler.lastActiveCombination = { style: rulerStyle, focusMode: rulerFocus };
+      this.ruler.lastActiveCombination = { style: rulerStyle, focusMode: rulerFocus };
+    }
+    this.ruler.setEnabled(isInReader && showRuler && this.settings.ruler.enabled && !isBothOff);
     this.ruler.setColor(this.settings.ruler.color);
     this.ruler.setHeight(this.settings.ruler.height);
     this.ruler.setAutoHeight(true);
@@ -597,9 +615,9 @@ export class LuminaApp {
 
     document.documentElement.style.setProperty("--reader-font-size", `${s.fontSize}px`);
     document.documentElement.style.setProperty("--reader-line-height", s.lineHeight || 1.6);
-    document.documentElement.style.setProperty("--reader-letter-spacing", `${s.letterSpacing ?? 0}px`);
-    document.documentElement.style.setProperty("--reader-word-spacing", `${s.wordSpacing ?? 0}px`);
-    const margin = Number(this.settings.marginPercent ?? 20);
+    document.documentElement.style.setProperty("--reader-letter-spacing", `${s.letterSpacing ?? 0.75}px`);
+    document.documentElement.style.setProperty("--reader-word-spacing", `${s.wordSpacing ?? 2}px`);
+    const margin = Number(this.settings.marginPercent ?? 8);
     const stageWidthVw = `${100 - (margin * 2)}vw`;
     document.documentElement.style.setProperty('--reader-stage-width', stageWidthVw);
     const colGapVw = `${(margin * 0.25).toFixed(2)}vw`;
@@ -635,17 +653,17 @@ export class LuminaApp {
       if (this.dom.valLineHeight) this.dom.valLineHeight.textContent = lh.toFixed(1);
     }
     if (this.dom.sliderLetterSpacing) {
-      const ls = Number(s.letterSpacing ?? 0);
+      const ls = Number(s.letterSpacing ?? 0.75);
       this.dom.sliderLetterSpacing.value = ls;
       if (this.dom.valLetterSpacing) this.dom.valLetterSpacing.textContent = `${ls}px`;
     }
     if (this.dom.sliderWordSpacing) {
-      const ws = Number(s.wordSpacing ?? 0);
+      const ws = Number(s.wordSpacing ?? 2);
       this.dom.sliderWordSpacing.value = ws;
       if (this.dom.valWordSpacing) this.dom.valWordSpacing.textContent = `${ws}px`;
     }
     if (this.dom.sliderPageMargin) {
-      const marginVal = this.settings.marginPercent ?? 20;
+      const marginVal = this.settings.marginPercent ?? 8;
       this.dom.sliderPageMargin.value = marginVal;
       if (this.dom.valPageMargin) this.dom.valPageMargin.textContent = `${marginVal}%`;
     }
@@ -702,7 +720,12 @@ export class LuminaApp {
       lora: "Lora",
       inter: "Inter (Sans)",
       atkinson: "Atkinson Hyperlegible",
-      opendyslexic: "Pro dyslexii"
+      verdana: "Verdana",
+      arial: "Arial",
+      literata: "Literata",
+      opendyslexic: "OpenDyslexic",
+      "comic-sans": "Comic Sans",
+      comicsans: "Comic Sans"
     };
     const activeFont = s.fontFamily || "georgia";
     if (this.dom.fontDropdownCurrent) {
@@ -721,14 +744,24 @@ export class LuminaApp {
       this.dom.readerContent.classList.toggle("bionic-active", !!s.fastReading);
     }
     // Režimy pravítka
+    const activeRulerStyle = s.ruler.style || s.ruler.mode || "highlight";
+    let activeRulerFocus = s.ruler.focusMode || "off";
+    if (activeRulerFocus === "above") activeRulerFocus = "up";
+    if (activeRulerFocus === "below") activeRulerFocus = "down";
+
     this.dom.rulerModeSelects.forEach(btn => {
-      btn.classList.toggle("active", (btn.dataset.rulerMode || btn.dataset.rulerStyle) === s.ruler.mode);
+      btn.classList.toggle("active", (btn.dataset.rulerMode || btn.dataset.rulerStyle) === activeRulerStyle);
     });
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
-        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === s.ruler.mode);
+        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === activeRulerStyle);
       });
     }
+    document.querySelectorAll("[data-ruler-focus]").forEach(btn => {
+      const f = btn.dataset.rulerFocus;
+      const normalized = (f === "above" ? "up" : (f === "below" ? "down" : f));
+      btn.classList.toggle("active", normalized === activeRulerFocus);
+    });
     // Barvy pravítka
     this.dom.rulerColorSelects.forEach(btn => {
       btn.classList.toggle("active", btn.dataset.rulerColor === s.ruler.color);
@@ -790,14 +823,29 @@ export class LuminaApp {
       return;
     }
 
-    // Pokud čteme knihu, přepočítat stránkování (pouze v horizontálním režimu pro EPUB)
+    // Pokud čteme knihu, přepočítat stránkování a zkalibrovat pravítko (pouze v horizontálním režimu pro EPUB)
     if (!this.isVerticalReadingMode() && this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
       requestAnimationFrame(() => {
         this.recomputeGlobalPagination();
         this.recalcPages();
-        this.goToPage(this.currentPageIndex);
+        this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
         this.renderScrubberTicks();
+        if (this.ruler && this.ruler.enabled) {
+          this.ruler.forceReleaseNavigationLocks?.();
+          this.ruler.updateStyles?.();
+          this.ruler.refreshLines();
+          if (this.ruler.wordTracking) this.ruler.refreshWords?.();
+          this.ruler.applyPosition();
+        }
       });
+    } else if (this.isVerticalReadingMode() && this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks?.();
+        this.ruler.updateStyles?.();
+        this.ruler.refreshLines();
+        if (this.ruler.wordTracking) this.ruler.refreshWords?.();
+        this.ruler.applyPosition();
+      }
     }
 
     this.updateTouchZonesUI();
@@ -1608,7 +1656,8 @@ export class LuminaApp {
           }
           this.dom.rulerQuickPopover.classList.remove("is-hidden");
           this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "true");
-          this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+          this.updateRulerToggleButtonUI();
+          this.updateRulerSettingsVisibility(this.settings?.ruler?.style || this.settings?.ruler?.mode, this.settings?.ruler?.focusMode, this.isPdfMode);
           this.setPdfRulerUIVisibility(this.isPdfMode);
           if (this.isPdfMode && this.currentBook?.pdfRulerConfig) {
             this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
@@ -1848,20 +1897,7 @@ export class LuminaApp {
           if (e) e.stopPropagation();
           const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-style]') || btn) : btn;
           const newStyle = targetBtn ? targetBtn.dataset.rulerStyle : null;
-          if (!newStyle || !["off", "highlight", "bottom-cover"].includes(newStyle)) return;
-          if (!this.settings.ruler) this.settings.ruler = {};
-          this.settings.ruler.style = newStyle;
-          this.settings.ruler.mode = newStyle;
-          if (newStyle !== "off" && !this.settings.ruler.enabled) {
-            this.settings.ruler.enabled = true;
-            if (this.ruler) this.ruler.setEnabled(true);
-          }
-          if (this.ruler) {
-            this.ruler.setStyle(newStyle);
-          }
-          this.updateRulerToggleButtonUI();
-          this.updateRulerSettingsVisibility(newStyle, this.settings.ruler.focusMode, this.isPdfMode);
-          storage.saveSettings(this.settings);
+          this.setRulerStyle(newStyle);
         });
       });
     }
@@ -1872,23 +1908,8 @@ export class LuminaApp {
           if (e && e.cancelable) e.preventDefault();
           if (e) e.stopPropagation();
           const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-focus]') || btn) : btn;
-          let newFocus = targetBtn ? targetBtn.dataset.rulerFocus : null;
-          if (!newFocus) return;
-          if (newFocus === "above") newFocus = "up";
-          if (newFocus === "below") newFocus = "down";
-          if (!["off", "up", "down", "both"].includes(newFocus)) return;
-          if (!this.settings.ruler) this.settings.ruler = {};
-          this.settings.ruler.focusMode = newFocus;
-          if (newFocus !== "off" && !this.settings.ruler.enabled) {
-            this.settings.ruler.enabled = true;
-            if (this.ruler) this.ruler.setEnabled(true);
-          }
-          if (this.ruler) {
-            this.ruler.setFocusMode(newFocus);
-          }
-          this.updateRulerToggleButtonUI();
-          this.updateRulerSettingsVisibility(this.settings.ruler.style || this.settings.ruler.mode, newFocus, this.isPdfMode);
-          storage.saveSettings(this.settings);
+          const newFocus = targetBtn ? targetBtn.dataset.rulerFocus : null;
+          this.setRulerFocusMode(newFocus);
         });
       });
     }
@@ -2012,9 +2033,10 @@ export class LuminaApp {
     }
 
     this.dom.fontSelects.forEach(btn => {
-      btn.addEventListener("click", (e) => {
+      btn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        this.settings.fontFamily = btn.dataset.font;
+        const fontKey = btn.dataset.font;
+        this.settings.fontFamily = fontKey;
         this.applySettings();
         storage.saveSettings(this.settings);
         if (this.dom.fontDropdownWrapper) {
@@ -2023,6 +2045,34 @@ export class LuminaApp {
         if (this.dom.fontDropdownTrigger) {
           this.dom.fontDropdownTrigger.setAttribute("aria-expanded", "false");
           this.dom.fontDropdownTrigger.focus();
+        }
+
+        const recalibrate = () => {
+          if (this.currentBook && !this.dom.viewReader?.classList.contains("is-hidden")) {
+            if (!this.isVerticalReadingMode() && !this.isPdfMode) {
+              this.recomputeGlobalPagination();
+              this.recalcPages();
+              this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
+              this.renderScrubberTicks();
+            }
+            if (this.ruler && this.ruler.enabled) {
+              this.ruler.forceReleaseNavigationLocks?.();
+              this.ruler.updateStyles?.();
+              this.ruler.refreshLines();
+              if (this.ruler.wordTracking) this.ruler.refreshWords?.();
+              this.ruler.applyPosition();
+            }
+          }
+        };
+
+        recalibrate();
+
+        // Kalibrace po finálním načtení webfontů (Literata, OpenDyslexic atd.)
+        if (document.fonts && document.fonts.ready) {
+          try {
+            await document.fonts.ready;
+          } catch (_) {}
+          recalibrate();
         }
       });
     });
@@ -2262,20 +2312,7 @@ export class LuminaApp {
           if (e) e.stopPropagation();
           const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn) : btn;
           const newStyle = targetBtn ? (targetBtn.dataset.rulerStyle || targetBtn.dataset.rulerMode) : null;
-          if (!newStyle || !["off", "highlight", "bottom-cover"].includes(newStyle)) return;
-          if (!this.settings.ruler) this.settings.ruler = {};
-          this.settings.ruler.style = newStyle;
-          this.settings.ruler.mode = newStyle;
-          if (newStyle !== "off" && !this.settings.ruler.enabled) {
-            this.settings.ruler.enabled = true;
-            if (this.ruler) this.ruler.setEnabled(true);
-          }
-          if (this.ruler) {
-            this.ruler.setStyle(newStyle);
-          }
-          this.updateRulerToggleButtonUI();
-          this.updateRulerSettingsVisibility(newStyle, this.settings.ruler.focusMode, this.isPdfMode);
-          storage.saveSettings(this.settings);
+          this.setRulerStyle(newStyle);
         });
       });
     }
@@ -2287,22 +2324,7 @@ export class LuminaApp {
           if (e) e.stopPropagation();
           const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-focus]') || btn) : btn;
           let newFocus = targetBtn ? targetBtn.dataset.rulerFocus : null;
-          if (!newFocus) return;
-          if (newFocus === "above") newFocus = "up";
-          if (newFocus === "below") newFocus = "down";
-          if (!["off", "up", "down", "both"].includes(newFocus)) return;
-          if (!this.settings.ruler) this.settings.ruler = {};
-          this.settings.ruler.focusMode = newFocus;
-          if (newFocus !== "off" && !this.settings.ruler.enabled) {
-            this.settings.ruler.enabled = true;
-            if (this.ruler) this.ruler.setEnabled(true);
-          }
-          if (this.ruler) {
-            this.ruler.setFocusMode(newFocus);
-          }
-          this.updateRulerToggleButtonUI();
-          this.updateRulerSettingsVisibility(this.settings.ruler.style || this.settings.ruler.mode, newFocus, this.isPdfMode);
-          storage.saveSettings(this.settings);
+          this.setRulerFocusMode(newFocus);
         });
       });
     }
@@ -2733,6 +2755,7 @@ export class LuminaApp {
           e.preventDefault();
           if (this.ruler) {
             if (!this.ruler.enabled) {
+              this.ensureActiveRulerVisualMode();
               this.settings.ruler.enabled = true;
               this.ruler.setEnabled(true);
               this.updateRulerToggleButtonUI();
@@ -2761,6 +2784,7 @@ export class LuminaApp {
           e.preventDefault();
           if (this.ruler) {
             if (!this.ruler.enabled) {
+              this.ensureActiveRulerVisualMode();
               this.settings.ruler.enabled = true;
               this.ruler.setEnabled(true);
               this.updateRulerToggleButtonUI();
@@ -2786,6 +2810,143 @@ export class LuminaApp {
     });
   }
 
+  ensureActiveRulerVisualMode() {
+    if (!this.settings.ruler) this.settings.ruler = {};
+    const currentStyle = this.settings.ruler.style || this.settings.ruler.mode || "off";
+    let currentFocus = this.settings.ruler.focusMode || "off";
+    if (currentFocus === "above") currentFocus = "up";
+    if (currentFocus === "below") currentFocus = "down";
+
+    if (currentStyle === "off" && currentFocus === "off") {
+      let targetStyle = "highlight";
+      let targetFocus = "off";
+
+      const lastCombo = this.settings.ruler.lastActiveCombination || this.ruler?.lastActiveCombination;
+      if (lastCombo && ((lastCombo.style && lastCombo.style !== "off") || (lastCombo.focusMode && lastCombo.focusMode !== "off"))) {
+        targetStyle = lastCombo.style || "off";
+        targetFocus = lastCombo.focusMode || "off";
+      } else if (this.settings.ruler.lastActiveStyle && this.settings.ruler.lastActiveStyle !== "off") {
+        targetStyle = this.settings.ruler.lastActiveStyle;
+        targetFocus = "off";
+      } else if (this.ruler?.lastActiveStyle && this.ruler.lastActiveStyle !== "off") {
+        targetStyle = this.ruler.lastActiveStyle;
+        targetFocus = "off";
+      }
+
+      if (targetStyle === "off" && targetFocus === "off") {
+        targetStyle = "highlight";
+        targetFocus = "off";
+      }
+
+      this.settings.ruler.style = targetStyle;
+      this.settings.ruler.mode = targetStyle;
+      this.settings.ruler.focusMode = targetFocus;
+
+      if (this.ruler) {
+        this.ruler.style = targetStyle;
+        this.ruler.mode = targetStyle;
+        this.ruler.focusMode = targetFocus;
+        this.ruler.setStyle(targetStyle);
+        this.ruler.setFocusMode(targetFocus);
+      }
+    }
+  }
+
+  setRulerStyle(newStyle) {
+    if (!newStyle || !["off", "highlight", "bottom-cover"].includes(newStyle)) return;
+    if (!this.settings.ruler) this.settings.ruler = {};
+
+    let currentFocus = this.settings.ruler.focusMode || "off";
+    if (currentFocus === "above") currentFocus = "up";
+    if (currentFocus === "below") currentFocus = "down";
+
+    this.settings.ruler.style = newStyle;
+    this.settings.ruler.mode = newStyle;
+
+    if (newStyle !== "off") {
+      this.settings.ruler.lastActiveStyle = newStyle;
+      this.settings.ruler.lastActiveCombination = { style: newStyle, focusMode: currentFocus };
+      if (this.ruler) {
+        this.ruler.lastActiveStyle = newStyle;
+        this.ruler.lastActiveCombination = { style: newStyle, focusMode: currentFocus };
+      }
+    } else if (currentFocus !== "off") {
+      this.settings.ruler.lastActiveCombination = { style: "off", focusMode: currentFocus };
+      if (this.ruler) {
+        this.ruler.lastActiveCombination = { style: "off", focusMode: currentFocus };
+      }
+    }
+
+    if (newStyle === "off" && currentFocus === "off") {
+      // Obě volby jsou vypnuty: automaticky přejít do deaktivovaného stavu
+      this.settings.ruler.enabled = false;
+      if (this.ruler) {
+        this.ruler.setStyle("off");
+        this.ruler.setEnabled(false);
+      }
+    } else {
+      // Alespoň jedna vizuální složka je aktivní
+      if (!this.settings.ruler.enabled) {
+        this.settings.ruler.enabled = true;
+      }
+      if (this.ruler) {
+        this.ruler.setStyle(newStyle);
+        this.ruler.setEnabled(true);
+      }
+    }
+
+    this.updateRulerToggleButtonUI();
+    this.updateRulerSettingsVisibility(newStyle, currentFocus, this.isPdfMode);
+    storage.saveSettings(this.settings);
+  }
+
+  setRulerFocusMode(newFocus) {
+    if (!newFocus) return;
+    if (newFocus === "above") newFocus = "up";
+    if (newFocus === "below") newFocus = "down";
+    if (!["off", "up", "down", "both"].includes(newFocus)) return;
+    if (!this.settings.ruler) this.settings.ruler = {};
+
+    const currentStyle = this.settings.ruler.style || this.settings.ruler.mode || "off";
+    this.settings.ruler.focusMode = newFocus;
+
+    if (newFocus !== "off") {
+      this.settings.ruler.lastActiveFocus = newFocus;
+      this.settings.ruler.lastActiveCombination = { style: currentStyle, focusMode: newFocus };
+      if (this.ruler) {
+        this.ruler.lastActiveFocus = newFocus;
+        this.ruler.lastActiveCombination = { style: currentStyle, focusMode: newFocus };
+      }
+    } else if (currentStyle !== "off") {
+      this.settings.ruler.lastActiveCombination = { style: currentStyle, focusMode: "off" };
+      if (this.ruler) {
+        this.ruler.lastActiveCombination = { style: currentStyle, focusMode: "off" };
+      }
+    }
+
+    if (newFocus === "off" && currentStyle === "off") {
+      // Obě volby jsou vypnuty: automaticky přejít do deaktivovaného stavu
+      this.settings.ruler.enabled = false;
+      if (this.ruler) {
+        this.ruler.setFocusMode("off");
+        this.ruler.setEnabled(false);
+      }
+    } else {
+      // Alespoň jedna vizuální složka je aktivní
+      if (!this.settings.ruler.enabled) {
+        this.settings.ruler.enabled = true;
+      }
+      if (this.ruler) {
+        this.ruler.setFocusMode(newFocus);
+        this.ruler.setEnabled(true);
+      }
+    }
+
+    this.updateRulerToggleButtonUI();
+    this.updateRulerSettingsVisibility(currentStyle, newFocus, this.isPdfMode);
+    storage.saveSettings(this.settings);
+  }
+
   toggleRuler() {
     const isInReader = !this.dom.viewReader.classList.contains("is-hidden");
     if (!isInReader) return;
@@ -2793,12 +2954,12 @@ export class LuminaApp {
 
     document.body.classList.add("in-reader-view");
     const willEnable = !this.ruler.enabled;
-    if (willEnable && (!this.settings.ruler.style || this.settings.ruler.style === "off") && (!this.settings.ruler.focusMode || this.settings.ruler.focusMode === "off")) {
-      this.settings.ruler.style = "highlight";
-      this.settings.ruler.mode = "highlight";
-      if (this.ruler) this.ruler.setStyle("highlight");
+    if (willEnable) {
+      this.ensureActiveRulerVisualMode();
+      this.ruler.setEnabled(true);
+    } else {
+      this.ruler.setEnabled(false);
     }
-    this.ruler.setEnabled(willEnable);
     this.settings.ruler.enabled = this.ruler.enabled;
     storage.saveSettings(this.settings);
     this.updateRulerToggleButtonUI();
@@ -6014,9 +6175,11 @@ export class LuminaApp {
       rulerContainer.classList?.toggle?.("is-hidden", !showRuler);
     }
     const hasReaderContent = !!(this.dom.readerContent && this.dom.readerContent.innerHTML.trim());
-    if (showRuler && this.settings.ruler.enabled && hasReaderContent) {
+    const isBothOff = (!this.settings.ruler.style || this.settings.ruler.style === "off") && (!this.settings.ruler.focusMode || this.settings.ruler.focusMode === "off");
+    if (showRuler && this.settings.ruler.enabled && !isBothOff && hasReaderContent) {
       this.ruler.setEnabled(true);
     } else {
+      if (isBothOff) this.settings.ruler.enabled = false;
       this.ruler.setEnabled(false);
     }
     this.updateTouchZonesUI();
@@ -6062,7 +6225,8 @@ export class LuminaApp {
       if (willOpen) {
         this.updateSettingsTabsVisibility(this.isPdfMode);
         this.setPdfRulerUIVisibility(this.isPdfMode);
-        this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+        this.updateRulerToggleButtonUI();
+        this.updateRulerSettingsVisibility(this.settings?.ruler?.style || this.settings?.ruler?.mode, this.settings?.ruler?.focusMode, this.isPdfMode);
         if (this.isPdfMode) {
           const cfg = this.currentBook?.pdfRulerConfig || {
             height: this.ruler?.getPdfRulerHeight?.() || 32,
@@ -6122,7 +6286,8 @@ export class LuminaApp {
         this.switchToSettingsTab(targetTab);
       }
       this.setPdfRulerUIVisibility(this.isPdfMode);
-      this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+      this.updateRulerToggleButtonUI();
+      this.updateRulerSettingsVisibility(this.settings?.ruler?.style || this.settings?.ruler?.mode, this.settings?.ruler?.focusMode, this.isPdfMode);
       if (this.isPdfMode) {
         const cfg = this.currentBook?.pdfRulerConfig || {
           height: this.ruler?.getPdfRulerHeight?.() || 32,
