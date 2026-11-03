@@ -3370,7 +3370,25 @@ body.ui-liquid-glass .popover-styles-grid .popover-style-btn.active {
    Liquid Glass Interactive Range Slider (.ui-liquid-glass)
    ========================================================================== */
 
-/* Track Alignment & Styling */
+/* Slider CSS Variables & Track Metrics */
+.ui-liquid-glass,
+body.ui-liquid-glass {
+  --lq-slider-blue: #067dff;
+  --lq-slider-track-h: 6px;
+  --lq-slider-track-r: 3px;
+  --lq-slider-thumb-w-resting: 24px;
+  --lq-slider-thumb-h-resting: 22px;
+  --lq-slider-thumb-w-active: 46px;
+  --lq-slider-thumb-h-active: 24px;
+  --lq-slider-spring: cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+
+/* Track Alignment & Styling:
+   - Flat, solid saturated electric blue fill on the left with zero gradient overlays or internal shadows
+   - Cleanly rounded capsule termination at the midpoint
+   - Muted, semi-translucent dark grey bar on the inactive right
+   - Both ends of the track are fully rounded capsules
+*/
 .ui-liquid-glass input[type="range"],
 .ui-liquid-glass .slider-input,
 body.ui-liquid-glass input[type="range"],
@@ -3379,44 +3397,63 @@ body.ui-liquid-glass .popover-slider-wrapper .slider-input {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 6px !important;
+  height: var(--lq-slider-track-h, 6px) !important;
   border-radius: 9999px !important;
-  outline: none;
-  background: linear-gradient(
-    to right,
-    var(--color-primary, #0a84ff) 0%,
-    var(--color-primary, #0a84ff) var(--slider-fill-pct, 0%),
-    var(--lq-glass-track-bg) var(--slider-fill-pct, 0%),
-    var(--lq-glass-track-bg) 100%
-  ) !important;
-  border: 1px solid var(--lq-glass-border) !important;
-  box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, 0.22), inset 0 0 1px rgba(255, 255, 255, 0.20) !important;
+  outline: none !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
   cursor: pointer;
   vertical-align: middle;
+  box-sizing: border-box !important;
+  --current-thumb-w: var(--lq-slider-thumb-w-resting, 24px);
+  --slider-cap-x: calc(var(--current-thumb-w) / 2 + (100% - var(--current-thumb-w)) * var(--slider-ratio, 0.5));
+  background-color: var(--lq-glass-track-bg, rgba(255, 255, 255, 0.14)) !important;
+  background-image:
+    radial-gradient(circle var(--lq-slider-track-r, 3px) at calc(var(--slider-cap-x) - var(--lq-slider-track-r, 3px)) 50%, var(--lq-slider-blue, #067dff) calc(100% - 0.5px), transparent 100%),
+    linear-gradient(to right, var(--lq-slider-blue, #067dff), var(--lq-slider-blue, #067dff)) !important;
+  background-repeat: no-repeat !important;
+  background-size:
+    100% 100%,
+    calc(var(--slider-cap-x) - var(--lq-slider-track-r, 3px)) 100% !important;
+  background-position: 0 0, 0 0 !important;
+  box-shadow: none !important;
 }
 
-/* WebKit Runnable Track Explicit Height for Calibrated Center Alignment */
+/* Dynamic Thumb Expansion on Interaction */
+.ui-liquid-glass input[type="range"]:active,
+.ui-liquid-glass input[type="range"].is-active,
+.ui-liquid-glass .slider-input:active,
+.ui-liquid-glass .slider-input.is-active,
+body.ui-liquid-glass input[type="range"]:active,
+body.ui-liquid-glass input[type="range"].is-active,
+body.ui-liquid-glass .slider-input:active,
+body.ui-liquid-glass .slider-input.is-active,
+body.ui-liquid-glass .popover-slider-wrapper .slider-input:active,
+body.ui-liquid-glass .popover-slider-wrapper .slider-input.is-active {
+  --current-thumb-w: var(--lq-slider-thumb-w-active, 46px);
+}
+
+/* WebKit Runnable Track Explicit Zero Styling */
 .ui-liquid-glass input[type="range"]::-webkit-slider-runnable-track,
 .ui-liquid-glass .slider-input::-webkit-slider-runnable-track,
 body.ui-liquid-glass input[type="range"]::-webkit-slider-runnable-track,
 body.ui-liquid-glass .slider-input::-webkit-slider-runnable-track,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input::-webkit-slider-runnable-track {
-  height: 6px !important;
+  height: var(--lq-slider-track-h, 6px) !important;
   background: transparent !important;
   border: none !important;
 }
 
-/* Firefox Track & Progress */
+/* Firefox Track & Progress Neutralization */
 .ui-liquid-glass input[type="range"]::-moz-range-track,
 .ui-liquid-glass .slider-input::-moz-range-track,
 body.ui-liquid-glass input[type="range"]::-moz-range-track,
 body.ui-liquid-glass .slider-input::-moz-range-track,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input::-moz-range-track {
-  height: 6px !important;
-  border-radius: 9999px;
-  background: var(--lq-glass-track-bg);
-  border: 1px solid var(--lq-glass-border);
-  box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, 0.22), inset 0 0 1px rgba(255, 255, 255, 0.20);
+  height: var(--lq-slider-track-h, 6px) !important;
+  background: transparent !important;
+  border: none !important;
 }
 
 .ui-liquid-glass input[type="range"]::-moz-range-progress,
@@ -3424,13 +3461,14 @@ body.ui-liquid-glass .popover-slider-wrapper .slider-input::-moz-range-track {
 body.ui-liquid-glass input[type="range"]::-moz-range-progress,
 body.ui-liquid-glass .slider-input::-moz-range-progress,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input::-moz-range-progress {
-  height: 6px !important;
-  border-radius: 9999px 0 0 9999px;
-  background: var(--color-primary, #0a84ff);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.40);
+  height: 0 !important;
+  background: transparent !important;
+  border: none !important;
 }
 
-/* WebKit Slider Thumb - Default / Resting State (Translucent Liquid Glass Pill) */
+/* ==========================================================================
+   Slider Thumb: Resting State (Solid Opaque Physical Knob, Perfect Axis Alignment)
+   ========================================================================== */
 .ui-liquid-glass input[type="range"]::-webkit-slider-thumb,
 .ui-liquid-glass .slider-input::-webkit-slider-thumb,
 body.ui-liquid-glass input[type="range"]::-webkit-slider-thumb,
@@ -3438,54 +3476,53 @@ body.ui-liquid-glass .slider-input::-webkit-slider-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 34px !important;
-  height: 22px !important;
-  margin-top: calc((6px - 22px) / 2) !important; /* -8px: calibrated precisely to (track_height - thumb_height) / 2 */
+  width: var(--lq-slider-thumb-w-resting, 24px) !important;
+  height: var(--lq-slider-thumb-h-resting, 22px) !important;
+  margin-top: calc((var(--lq-slider-track-h, 6px) - var(--lq-slider-thumb-h-resting, 22px)) / 2) !important;
   border-radius: 9999px !important;
-  background: var(--lq-slider-thumb-bg) !important;
-  backdrop-filter: blur(8px) saturate(180%);
-  -webkit-backdrop-filter: blur(8px) saturate(180%);
-  border: 1px solid var(--lq-slider-thumb-border) !important;
-  border-top-color: rgba(255, 255, 255, 0.95) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
-  box-shadow: var(--lq-slider-thumb-shadow) !important;
+  background: #e2e2e4 !important;
+  border: none !important;
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.40),
+    0 1px 3px rgba(0, 0, 0, 0.24) !important;
   cursor: grab;
   transform: translateZ(0) !important;
-  transition: width 0.25s cubic-bezier(0.2, 0.8, 0.2, 1.2),
-              height 0.2s ease,
-              margin-top 0.2s ease,
-              transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1.2),
-              background 0.2s ease,
-              box-shadow 0.2s ease,
-              border-color 0.2s ease !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transition:
+    width 0.35s var(--lq-slider-spring, cubic-bezier(0.34, 1.45, 0.64, 1)),
+    height 0.22s ease,
+    margin-top 0.22s ease,
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.25s ease,
+    backdrop-filter 0.2s ease,
+    -webkit-backdrop-filter 0.2s ease,
+    transform 0.2s ease !important;
 }
 
-/* Mozilla Range Thumb - Default / Resting State (Translucent Liquid Glass Pill) */
 .ui-liquid-glass input[type="range"]::-moz-range-thumb,
 .ui-liquid-glass .slider-input::-moz-range-thumb,
 body.ui-liquid-glass input[type="range"]::-moz-range-thumb,
 body.ui-liquid-glass .slider-input::-moz-range-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input::-moz-range-thumb {
   appearance: none;
-  width: 34px !important;
-  height: 22px !important;
-  margin-top: calc((6px - 22px) / 2) !important;
+  width: var(--lq-slider-thumb-w-resting, 24px) !important;
+  height: var(--lq-slider-thumb-h-resting, 22px) !important;
   border-radius: 9999px !important;
-  background: var(--lq-slider-thumb-bg) !important;
-  backdrop-filter: blur(8px) saturate(180%);
-  border: 1px solid var(--lq-slider-thumb-border) !important;
-  border-top-color: rgba(255, 255, 255, 0.95) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
-  box-shadow: var(--lq-slider-thumb-shadow) !important;
+  background: #e2e2e4 !important;
+  border: none !important;
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.40),
+    0 1px 3px rgba(0, 0, 0, 0.24) !important;
   cursor: grab;
   transform: translateZ(0) !important;
-  transition: width 0.25s cubic-bezier(0.2, 0.8, 0.2, 1.2),
-              height 0.2s ease,
-              margin-top 0.2s ease,
-              transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1.2),
-              background 0.2s ease,
-              box-shadow 0.2s ease,
-              border-color 0.2s ease !important;
+  transition:
+    width 0.35s var(--lq-slider-spring, cubic-bezier(0.34, 1.45, 0.64, 1)),
+    height 0.22s ease,
+    background 0.2s ease,
+    box-shadow 0.25s ease,
+    transform 0.2s ease !important;
 }
 
 /* Hover State */
@@ -3494,8 +3531,7 @@ body.ui-liquid-glass .popover-slider-wrapper .slider-input::-moz-range-thumb {
 body.ui-liquid-glass input[type="range"]:hover::-webkit-slider-thumb,
 body.ui-liquid-glass .slider-input:hover::-webkit-slider-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input:hover::-webkit-slider-thumb {
-  transform: scale(1.05) translateZ(0) !important;
-  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
+  transform: scale(1.04) translateZ(0) !important;
 }
 
 .ui-liquid-glass input[type="range"]:hover::-moz-range-thumb,
@@ -3503,11 +3539,12 @@ body.ui-liquid-glass .popover-slider-wrapper .slider-input:hover::-webkit-slider
 body.ui-liquid-glass input[type="range"]:hover::-moz-range-thumb,
 body.ui-liquid-glass .slider-input:hover::-moz-range-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input:hover::-moz-range-thumb {
-  transform: scale(1.05) translateZ(0) !important;
-  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
+  transform: scale(1.04) translateZ(0) !important;
 }
 
-/* WebKit Slider Thumb - Pressed / Dragging State (:active) - Elastic Fluid Stretch */
+/* ==========================================================================
+   Slider Thumb: Active / Dragging State (Fluid Glass Liquification & Expansion)
+   ========================================================================== */
 .ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
 .ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
 .ui-liquid-glass input[type="range"].is-active::-webkit-slider-thumb,
@@ -3518,21 +3555,31 @@ body.ui-liquid-glass input[type="range"].is-active::-webkit-slider-thumb,
 body.ui-liquid-glass .slider-input.is-active::-webkit-slider-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input:active::-webkit-slider-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input.is-active::-webkit-slider-thumb {
-  width: 44px !important;
-  height: 24px !important;
-  margin-top: calc((6px - 24px) / 2) !important; /* -9px: calibrated precisely for active expanded height */
-  background: var(--lq-slider-thumb-bg) !important;
-  border: 1px solid var(--lq-slider-thumb-border) !important;
-  border-top-color: rgba(255, 255, 255, 1) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
-  backdrop-filter: blur(10px) saturate(200%);
-  -webkit-backdrop-filter: blur(10px) saturate(200%);
-  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
+  width: var(--lq-slider-thumb-w-active, 46px) !important;
+  height: var(--lq-slider-thumb-h-active, 24px) !important;
+  margin-top: calc((var(--lq-slider-track-h, 6px) - var(--lq-slider-thumb-h-active, 24px)) / 2) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.04) 45%,
+    rgba(6, 125, 255, 0.12) 100%
+  ), rgba(32, 34, 38, 0.32) !important;
+  backdrop-filter: blur(10px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(190%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.32) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.95) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.40) !important;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.45),
+    0 1px 4px rgba(0, 0, 0, 0.30),
+    0 0 10px rgba(6, 125, 255, 0.35),
+    inset 0 1px 1px rgba(255, 255, 255, 0.85),
+    inset 0 -1px 1.5px rgba(6, 125, 255, 0.35),
+    inset 1px 0 1.5px rgba(6, 125, 255, 0.40) !important;
   cursor: grabbing !important;
   transform: scale(1) translateZ(0) !important;
 }
 
-/* Mozilla Range Thumb - Pressed / Dragging State (:active) */
 .ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
 .ui-liquid-glass .slider-input:active::-moz-range-thumb,
 .ui-liquid-glass input[type="range"].is-active::-moz-range-thumb,
@@ -3543,24 +3590,25 @@ body.ui-liquid-glass input[type="range"].is-active::-moz-range-thumb,
 body.ui-liquid-glass .slider-input.is-active::-moz-range-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input:active::-moz-range-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input.is-active::-moz-range-thumb {
-  width: 44px !important;
-  height: 24px !important;
-  margin-top: calc((6px - 24px) / 2) !important;
-  background: var(--lq-slider-thumb-bg) !important;
-  border: 1px solid var(--lq-slider-thumb-border) !important;
-  border-top-color: rgba(255, 255, 255, 1) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
-  backdrop-filter: blur(10px) saturate(200%);
-  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
-  cursor: grabbing !important;
-  transform: scale(1) translateZ(0) !important;
-}
-  background: var(--lq-slider-thumb-bg) !important;
-  border: 1px solid var(--lq-slider-thumb-border) !important;
-  border-top-color: rgba(255, 255, 255, 1) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
-  backdrop-filter: blur(10px) saturate(200%);
-  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
+  width: var(--lq-slider-thumb-w-active, 46px) !important;
+  height: var(--lq-slider-thumb-h-active, 24px) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.04) 45%,
+    rgba(6, 125, 255, 0.12) 100%
+  ), rgba(32, 34, 38, 0.32) !important;
+  backdrop-filter: blur(10px) saturate(190%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.32) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.95) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.40) !important;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.45),
+    0 1px 4px rgba(0, 0, 0, 0.30),
+    0 0 10px rgba(6, 125, 255, 0.35),
+    inset 0 1px 1px rgba(255, 255, 255, 0.85),
+    inset 0 -1px 1.5px rgba(6, 125, 255, 0.35),
+    inset 1px 0 1.5px rgba(6, 125, 255, 0.40) !important;
   cursor: grabbing !important;
   transform: scale(1) translateZ(0) !important;
 }

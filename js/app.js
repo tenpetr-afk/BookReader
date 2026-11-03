@@ -220,6 +220,23 @@ export class LuminaApp {
         this.updateRangeFill(e.target);
       }
     }, { passive: true });
+
+    // Interakční stavy Liquid Glass posuvníků (aktivní elastické roztažení na dotek / kliknutí)
+    document.addEventListener("pointerdown", (e) => {
+      const slider = e.target && e.target.closest && e.target.closest('input[type="range"]');
+      if (slider) {
+        slider.classList.add("is-active");
+      }
+    }, { passive: true });
+
+    const clearActiveSliders = () => {
+      document.querySelectorAll('input[type="range"].is-active').forEach(sl => {
+        sl.classList.remove("is-active");
+      });
+    };
+
+    document.addEventListener("pointerup", clearActiveSliders, { passive: true });
+    document.addEventListener("pointercancel", clearActiveSliders, { passive: true });
     this.syncAllRangeFills();
   }
 
@@ -650,8 +667,10 @@ export class LuminaApp {
     const max = parseFloat(input.max !== "" ? input.max : "100");
     const val = parseFloat(input.value !== "" ? input.value : "0");
     const range = max - min;
-    const pct = range > 0 ? Math.max(0, Math.min(100, ((val - min) / range) * 100)) : 0;
+    const ratio = range > 0 ? Math.max(0, Math.min(1, (val - min) / range)) : 0;
+    const pct = ratio * 100;
     input.style.setProperty("--slider-fill-pct", `${pct.toFixed(2)}%`);
+    input.style.setProperty("--slider-ratio", `${ratio.toFixed(4)}`);
   }
 
   syncAllRangeFills() {
