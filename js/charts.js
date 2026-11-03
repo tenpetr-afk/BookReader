@@ -408,7 +408,7 @@ export class StatsCharts {
 
       // 5. Výpočet špičkové rychlosti (Peak WPM) výhradně z vykreslených hodnot s.wpm
       const sampleSpeeds = dedupedSamples.map(s => s.wpm).filter(w => w > 0);
-      const peakWpm = Math.min(650, Math.max(...dedupedSamples.map(s => s.wpm), avgWpm));
+      const peakWpm = sampleSpeeds.length > 0 ? Math.min(650, Math.max(...sampleSpeeds)) : (avgWpm > 0 ? avgWpm : 0);
 
       // Synchronizujeme odznaky špičkového a průměrného tempa v UI
       const peakBadge = document.getElementById("session-badge-peak-wpm");
@@ -591,10 +591,10 @@ export class StatsCharts {
         if (pt.isAnchor) return; // Ukotvovací pomocné body nevykreslují kruhový bod
 
         const ptSpeed = Number(pt.wpm || 0);
-        const isPeak = peakPoint && pt === peakPoint && (peakWpm > avgWpm || points.filter(p => !p.isAnchor).length === 1);
-        const minNum = pt.minute || Math.max(1, Math.ceil(pt.sec / 60)) || idx;
-        const displayWpm = isPeak ? peakWpm : ptSpeed;
-        const wordsInMin = pt.words !== undefined ? pt.words : displayWpm;
+        const isPeak = peakPoint && pt === peakPoint && ptSpeed > 0;
+        const minNum = pt.minute || Math.max(1, Math.ceil(pt.sec / 60)) || (idx + 1);
+        const displayWpm = ptSpeed;
+        const wordsInMin = pt.words !== undefined ? Math.round(Number(pt.words)) : displayWpm;
         const tooltipLabel = `${minNum}. minuta: ${wordsInMin} slov (${displayWpm} WPM)`;
 
         if (isPeak) {

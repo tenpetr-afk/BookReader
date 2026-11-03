@@ -7289,7 +7289,7 @@ export class LuminaApp {
       ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
       : [];
     const speeds = samples.map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
-    const peakWpm = speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm;
+    const peakWpm = speeds.length > 0 ? Math.max(...speeds) : avgWpm;
 
     if (this.dom.sessionBadgeDuration) {
       this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(durationSec);

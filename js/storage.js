@@ -848,12 +848,12 @@ export class StorageManager {
       : [];
     const cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSeconds, wordsRead, avgWpm, timestamp);
 
-    // Výpočet udržené špičkové rychlosti: max z vyhlazených validních vzorků (>= 30–60s), nikdy nižší než avg_wpm
+    // Výpočet udržené špičkové rychlosti: max z validních vzorků (>= 30–60s)
     const validSpeeds = cleanedSamples
       .filter(s => !s.isPartial || (s.activeSeconds ?? 60) >= 30)
       .map(s => s.wpm)
       .filter(w => w > 0 && w <= 650);
-    const peakWpm = validSpeeds.length > 0 ? Math.min(650, Math.max(...validSpeeds, avgWpm)) : avgWpm;
+    const peakWpm = validSpeeds.length > 0 ? Math.min(650, Math.max(...validSpeeds)) : avgWpm;
 
     const updatedAt = sessionData.updatedAt || sessionData.updated_at || new Date().toISOString();
 
@@ -1491,79 +1491,26 @@ export class StorageManager {
       }
     }
 
-    if (deduped.length <= 1) {
-      if (deduped.length === 1) {
-        deduped[0].minute = 1;
-        deduped[0].elapsedSeconds = deduped[0].isPartial ? Math.min(60, deduped[0].elapsedSeconds) : 60;
-        deduped[0].t = deduped[0].elapsedSeconds;
-      }
-      return deduped;
-    }
-
-    // 4. Potlačení propadů (odstraněn destruktivní ořez špiček cur > neighborMax * 1.55) + Klouzavý průměr (Moving Average 3–5 vzorků)
-    const despiked = deduped.map((s, idx) => {
-      const cur = Math.min(650, Math.max(1, s.rawWpm || s.wpm));
-      const prev = idx > 0 ? (deduped[idx - 1].rawWpm || deduped[idx - 1].wpm) : (avgWpm > 0 ? avgWpm : (deduped[idx + 1].rawWpm || deduped[idx + 1].wpm));
-      const next = idx < deduped.length - 1 ? (deduped[idx + 1].rawWpm || deduped[idx + 1].wpm) : (avgWpm > 0 ? avgWpm : (deduped[idx - 1].rawWpm || deduped[idx - 1].wpm));
-      const neighborMean = (prev + next) / 2;
-      const neighborMin = Math.min(prev, next);
-      if (cur < neighborMin * 0.5 && neighborMean - cur > 35) {
-        return Math.round(neighborMean - (neighborMean - cur) * 0.4);
-      }
-      return cur;
-    });
-
-    const useFive = despiked.length >= 5;
-    const radius = useFive ? 2 : 1;
-    const weights = useFive ? [0.12, 0.23, 0.30, 0.23, 0.12] : [0.25, 0.50, 0.25];
-
-    const smoothed = deduped.map((s, i) => {
-      let wSum = 0;
-      let wTot = 0;
-      for (let offset = -radius; offset <= radius; offset++) {
-        const j = i + offset;
-        if (j >= 0 && j < despiked.length) {
-          const w = weights[offset + radius];
-          wSum += despiked[j] * w;
-          wTot += w;
-        }
-      }
-      const smoothWpm = wTot > 0 ? Math.min(650, Math.max(1, Math.round(wSum / wTot))) : despiked[i];
-      const minuteNum = i + 1;
-      const elapsedSec = (s.isPartial && i === deduped.length - 1 && durationSec > (minuteNum - 1) * 60 && durationSec < minuteNum * 60)
-        ? durationSec
-        : minuteNum * 60;
+    // 4. Zachování neměnných 1-minutových snímků tempa bez klouzavého průměru a škálování
+    return deduped.map((s, i) => {
+      const minuteNum = Number(s.minute) > 0 ? Number(s.minute) : (i + 1);
+      const isLastPartial = s.isPartial && i === deduped.length - 1 && durationSec > (minuteNum - 1) * 60 && durationSec < minuteNum * 60;
+      const elapsedSec = isLastPartial ? durationSec : (s.elapsedSeconds || minuteNum * 60);
+      const safeWpm = Math.min(650, Math.max(1, Math.round(Number(s.wpm ?? s.instantaneousWpm ?? s.rawWpm ?? 0))));
+      const safeWords = s.words !== undefined ? Math.round(Number(s.words)) : safeWpm;
+      const finalWpm = safeWpm > 0 ? safeWpm : safeWords;
       return {
         ...s,
         minute: minuteNum,
         elapsedSeconds: elapsedSec,
         t: elapsedSec,
-        wpm: smoothWpm,
-        rawWpm: smoothWpm,
-        instantaneousWpm: smoothWpm
+        words: safeWords,
+        wpm: finalWpm,
+        rawWpm: Math.round(Number(s.rawWpm ?? finalWpm)),
+        instantaneousWpm: finalWpm,
+        isPartial: !!s.isPartial
       };
     });
-
-    // 5. Škálování vyhlazených vzorků tak, aby jejich průměr odpovídal avgWpm = Math.round((wordsRead / durationSec) * 60)
-    const targetAvgWpm = (durationSec >= 10 && wordsRead > 0)
-      ? Math.round((wordsRead / durationSec) * 60)
-      : (avgWpm > 0 ? Math.round(avgWpm) : 0);
-
-    if (targetAvgWpm > 0 && smoothed.length > 0) {
-      const sumWpm = smoothed.reduce((acc, s) => acc + s.wpm, 0);
-      const meanSmoothedWpm = sumWpm / smoothed.length;
-      if (meanSmoothedWpm > 0) {
-        const scale = targetAvgWpm / meanSmoothedWpm;
-        smoothed.forEach(s => {
-          const scaledWpm = Math.min(650, Math.max(1, Math.round(s.wpm * scale)));
-          s.wpm = scaledWpm;
-          s.rawWpm = scaledWpm;
-          s.instantaneousWpm = scaledWpm;
-        });
-      }
-    }
-
-    return smoothed;
   }
 
   /**
@@ -1598,21 +1545,9 @@ export class StorageManager {
         }
 
         const speeds = samples.map(pt => Number(pt.wpm) || 0).filter(w => w > 0);
-        const expectedPeak = speeds.length > 0 ? Math.max(...speeds, expectedAvg) : expectedAvg;
+        const expectedPeak = speeds.length > 0 ? Math.max(...speeds) : expectedAvg;
         const storedPeak = s.peak_wpm ?? s.peakWpm ?? 0;
-        if (storedPeak < expectedAvg || storedPeak !== expectedPeak) {
-          hasAnomaly = true;
-          break;
-        }
-
-        const sumWpm = speeds.reduce((a, b) => a + b, 0);
-        const meanWpm = speeds.length > 0 ? Math.round(sumWpm / speeds.length) : expectedAvg;
-        if (expectedAvg > 0 && speeds.length > 0 && Math.abs(meanWpm - expectedAvg) > 2) {
-          hasAnomaly = true;
-          break;
-        }
-
-        if (samples.some(pt => pt.rawWpm !== undefined && pt.rawWpm !== pt.wpm)) {
+        if (storedPeak !== expectedPeak) {
           hasAnomaly = true;
           break;
         }
@@ -1716,7 +1651,7 @@ export class StorageManager {
       }
 
       const sampleSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
-      const peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds, avgWpm) : avgWpm;
+      const peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds) : avgWpm;
 
       const normalizedDate = this.getLocalDateString(session.date || session.startTime || session.start_time || session.timestamp);
       const prevAvg = session.avg_wpm ?? session.avgWpm ?? session.wpm;

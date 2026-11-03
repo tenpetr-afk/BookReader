@@ -899,107 +899,26 @@ export class ReadingTracker {
   }
 
   /**
-   * Vyhladí časovou řadu vzorků (Moving Average / Low-Pass Filter + Outlier Clamping):
-   * 1. Odfiltruje nulové (0 WPM) propady z nečinnosti.
-   * 2. Potlačí izolované jednobodové špičky (outlier despiking).
-   * 3. Aplikuje klouzavý vážený průměr (okno 3–5 vzorků) pro odstranění zubatého "zigzag" průběhu.
+   * Pomocná metoda pro normalizaci vzorků (zachovává přesné neměnné hodnoty každé minuty).
    */
   static smoothSamples(rawSamples, sessionAvgWpm = 0) {
     if (!Array.isArray(rawSamples) || rawSamples.length === 0) return [];
-
-    // 1. Filtrace neplatných záznamů
-    const valid = [];
-    for (let i = 0; i < rawSamples.length; i++) {
-      const s = rawSamples[i];
-      if (!s || typeof s !== "object") continue;
-      const rawWords = Math.max(0, Math.round(Number(s.words ?? s.wpm ?? 0)));
-      const rawRate = Math.max(0, Math.round(Number(s.rawWpm ?? s.wpm ?? s.words ?? 0)));
-      const effectiveRate = rawRate > 0 ? rawRate : rawWords;
-      const clampedRate = Math.min(MAX_VALID_WPM, Math.max(1, effectiveRate));
-      valid.push({
-        ...s,
-        words: rawWords,
-        rawWpm: clampedRate,
-        wpm: clampedRate
-      });
-    }
-
-    if (valid.length === 0) return [];
-    if (valid.length === 1) {
-      valid[0].minute = 1;
-      valid[0].elapsedSeconds = valid[0].elapsedSeconds || 60;
-      valid[0].t = valid[0].elapsedSeconds;
-      if (sessionAvgWpm > 0) {
-        valid[0].wpm = Math.min(MAX_VALID_WPM, Math.max(1, Math.round(sessionAvgWpm)));
-        valid[0].rawWpm = valid[0].wpm;
-      }
-      return valid;
-    }
-
-    // 2. Potlačení propadů (odstraněn destruktivní ořez špiček cur > neighborMax * 1.55)
-    const despikedRates = valid.map((s, idx) => {
-      const cur = s.rawWpm;
-      const prev = idx > 0 ? valid[idx - 1].rawWpm : (sessionAvgWpm > 0 ? sessionAvgWpm : valid[idx + 1].rawWpm);
-      const next = idx < valid.length - 1 ? valid[idx + 1].rawWpm : (sessionAvgWpm > 0 ? sessionAvgWpm : valid[idx - 1].rawWpm);
-      const neighborMean = (prev + next) / 2;
-      const neighborMin = Math.min(prev, next);
-
-      // Pokud jeden bod propadne o více než 50 % pod oba sousedy, vytáhneme jej k lokálnímu průměru
-      if (cur < neighborMin * 0.5 && neighborMean - cur > 35) {
-        return Math.round(neighborMean - (neighborMean - cur) * 0.4);
-      }
-      return cur;
-    });
-
-    // 3. Klouzavý průměr (Moving Average / Low-Pass Filter s oknem 3–5 vzorků)
-    const useFiveWindow = despikedRates.length >= 5;
-    const radius = useFiveWindow ? 2 : 1;
-    const weights = useFiveWindow ? [0.12, 0.23, 0.30, 0.23, 0.12] : [0.25, 0.50, 0.25];
-
-    const smoothed = valid.map((s, i) => {
-      let weightedSum = 0;
-      let weightTotal = 0;
-
-      for (let offset = -radius; offset <= radius; offset++) {
-        const j = i + offset;
-        if (j >= 0 && j < despikedRates.length) {
-          const w = weights[offset + radius];
-          weightedSum += despikedRates[j] * w;
-          weightTotal += w;
-        }
-      }
-
-      const smoothWpm = weightTotal > 0
-        ? Math.min(MAX_VALID_WPM, Math.max(1, Math.round(weightedSum / weightTotal)))
-        : despikedRates[i];
-
-      const minuteNum = i + 1;
-      const elapsedSec = s.isPartial && s.elapsedSeconds ? s.elapsedSeconds : minuteNum * 60;
+    return rawSamples.map((s, idx) => {
+      const minNum = Number(s.minute) || (idx + 1);
+      const elapsedSec = Number(s.elapsedSeconds ?? s.t ?? minNum * 60);
+      const words = s.words !== undefined ? Math.max(0, Math.round(Number(s.words))) : 0;
+      const rate = Number(s.rawWpm ?? s.wpm ?? words);
+      const wpm = Math.min(MAX_VALID_WPM, Math.max(1, Math.round(rate > 0 ? rate : (words > 0 ? words : (sessionAvgWpm > 0 ? sessionAvgWpm : 1)))));
       return {
         ...s,
-        minute: minuteNum,
+        minute: minNum,
         elapsedSeconds: elapsedSec,
         t: elapsedSec,
-        wpm: smoothWpm,
-        rawWpm: smoothWpm
+        words,
+        rawWpm: rate > 0 ? rate : wpm,
+        wpm: s.wpm !== undefined ? Number(s.wpm) : wpm
       };
     });
-
-    // 4. Škálování bodů koeficientem sessionAvgWpm / meanSmoothedWpm
-    if (sessionAvgWpm > 0 && smoothed.length > 0) {
-      const sumSmoothed = smoothed.reduce((sum, s) => sum + s.wpm, 0);
-      const meanSmoothedWpm = sumSmoothed / smoothed.length;
-      if (meanSmoothedWpm > 0) {
-        const scale = sessionAvgWpm / meanSmoothedWpm;
-        smoothed.forEach(s => {
-          const scaledWpm = Math.min(MAX_VALID_WPM, Math.max(1, Math.round(s.wpm * scale)));
-          s.wpm = scaledWpm;
-          s.rawWpm = scaledWpm;
-        });
-      }
-    }
-
-    return smoothed;
   }
 
   /**
@@ -1059,41 +978,35 @@ export class ReadingTracker {
       rawSamples = this.intra_session_samples.map(s => ({ ...s }));
 
       // Pokud neuzavřená poslední minuta trvá >= 30s (udržený interval) a obsahuje přečtená slova (> 0),
-      // připojíme dílčí vzorek s váženým vyhlazením podle předchozí minuty
+      // připojíme dílčí vzorek
       if (this.currentMinuteActiveSeconds >= 30 && partialWords > 0) {
         const rawPartialWpm = Math.round((this.currentMinuteWords / this.currentMinuteActiveSeconds) * 60);
-        let partialWpm = rawPartialWpm;
-        if (rawSamples.length > 0) {
-          const prevWpm = Number(rawSamples[rawSamples.length - 1].wpm || avgWpm || 0);
-          if (prevWpm > 0) {
-            const weight = Math.min(1, Math.max(0, this.currentMinuteActiveSeconds / 60));
-            partialWpm = Math.round(weight * rawPartialWpm + (1 - weight) * prevWpm);
-          }
-        }
-        partialWpm = Math.min(MAX_VALID_WPM, Math.max(1, partialWpm));
+        const clampedPartialWpm = Math.min(MAX_VALID_WPM, Math.max(1, rawPartialWpm));
         rawSamples.push({
           minute: this.completedMinutesCount,
           elapsedSeconds: effectiveActiveSeconds,
           t: effectiveActiveSeconds,
           words: partialWords,
           rawWpm: rawPartialWpm,
-          wpm: partialWpm,
+          wpm: clampedPartialWpm,
           activeSeconds: this.currentMinuteActiveSeconds,
           isPartial: true
         });
       }
     }
 
-    const samples = (!this.rulerEnabled) ? rawSamples : ReadingTracker.smoothSamples(rawSamples, avgWpm);
+    // Každý minutový vzorek je pevný a neměnný (immutable snapshot),
+    // nesmí být modifikován vyhlazováním, klouzavým průměrem ani škálováním!
+    const samples = rawSamples;
 
-    // Peak WPM se počítá výhradně z udržených intervalů (>= 30–60s aktivního čtení) po vyhlazení
+    // Peak WPM se počítá výhradně z udržených intervalů (>= 30–60s aktivního čtení)
     const sustainedWpms = samples
       .filter(s => !s.isPartial || (s.activeSeconds ?? 60) >= 30)
       .map(s => Number(s.wpm) || 0)
       .filter(w => w >= 1 && w <= MAX_VALID_WPM);
 
     const peakWpm = sustainedWpms.length > 0
-      ? Math.min(MAX_VALID_WPM, Math.max(...sustainedWpms, avgWpm))
+      ? Math.min(MAX_VALID_WPM, Math.max(...sustainedWpms))
       : avgWpm;
 
     return {
