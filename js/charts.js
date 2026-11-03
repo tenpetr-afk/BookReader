@@ -279,7 +279,7 @@ export class StatsCharts {
       ? [...(sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples)] 
       : [];
 
-    // 1. Extrakce a normalizace 1-minutových vzorků
+    // 1. Extrakce a normalizace 1-minutových vzorků (vyloučení nulových 0 WPM propadů z nečinnosti)
     let parsedSamples = rawSamples.map((s, idx) => {
       let sec = Number(s.elapsedSeconds ?? s.t ?? s.elapsedActiveSeconds ?? s.elapsedTime);
       const minuteFromProp = Number(s.minute);
@@ -290,6 +290,7 @@ export class StatsCharts {
           sec = (idx + 1) * 60;
         }
       }
+      const rawWpm = Math.max(0, Math.round(Number(s.rawWpm ?? s.wpm ?? s.instantaneousWpm ?? 0)));
       const wpm = Math.max(0, Math.round(Number(s.wpm ?? s.instantaneousWpm ?? 0)));
       const words = s.words !== undefined
         ? Math.max(0, Math.round(Number(s.words)))
@@ -301,10 +302,11 @@ export class StatsCharts {
         minute,
         sec: Math.max(1, Math.round(sec)),
         words,
-        wpm,
+        rawWpm: rawWpm > 0 ? rawWpm : wpm,
+        wpm: wpm > 0 ? wpm : words,
         isPartial: !!s.isPartial
       };
-    }).filter(s => s.wpm >= 0 && s.wpm <= 1000 && s.sec > 0);
+    }).filter(s => s.wpm > 0 && s.wpm <= 650 && s.sec > 0);
 
     // 2. Striktní vzestupné řazení podle času
     parsedSamples.sort((a, b) => a.sec - b.sec);
@@ -318,6 +320,7 @@ export class StatsCharts {
         const last = dedupedSamples[dedupedSamples.length - 1];
         if (sample.sec === last.sec) {
           last.wpm = sample.wpm;
+          last.rawWpm = sample.rawWpm;
           last.words = sample.words;
           last.minute = sample.minute;
           last.isPartial = sample.isPartial;
@@ -327,10 +330,55 @@ export class StatsCharts {
       }
     }
 
-    // Oříznutí počátečních nulových vzorků (pokud relace začala neaktivitou před zahájením čtení)
-    const firstActiveIdx = dedupedSamples.findIndex(s => s.wpm > 0 || s.words > 0);
-    if (firstActiveIdx > 0) {
-      dedupedSamples = dedupedSamples.slice(firstActiveIdx);
+    // 3b. Potlačení jednobodových špiček a klouzavý průměr (Moving Average 3–5 vzorků) pro hladkou křivku bez "zigzag" kmitání
+    if (dedupedSamples.length >= 2) {
+      const despiked = dedupedSamples.map((s, idx) => {
+        const cur = s.wpm;
+        const prev = idx > 0 ? dedupedSamples[idx - 1].wpm : (avgWpm > 0 ? avgWpm : dedupedSamples[idx + 1].wpm);
+        const next = idx < dedupedSamples.length - 1 ? dedupedSamples[idx + 1].wpm : (avgWpm > 0 ? avgWpm : dedupedSamples[idx - 1].wpm);
+        const neighborMean = (prev + next) / 2;
+        const neighborMax = Math.max(prev, next);
+        const neighborMin = Math.min(prev, next);
+        if (cur > neighborMax * 1.55 && cur - neighborMean > 45) {
+          return Math.round(neighborMean + (cur - neighborMean) * 0.35);
+        }
+        if (cur < neighborMin * 0.5 && neighborMean - cur > 35) {
+          return Math.round(neighborMean - (neighborMean - cur) * 0.4);
+        }
+        return cur;
+      });
+
+      const useFive = despiked.length >= 5;
+      const radius = useFive ? 2 : 1;
+      const weights = useFive ? [0.12, 0.23, 0.30, 0.23, 0.12] : [0.25, 0.50, 0.25];
+
+      dedupedSamples = dedupedSamples.map((s, i) => {
+        let wSum = 0;
+        let wTot = 0;
+        for (let offset = -radius; offset <= radius; offset++) {
+          const j = i + offset;
+          if (j >= 0 && j < despiked.length) {
+            const w = weights[offset + radius];
+            wSum += despiked[j] * w;
+            wTot += w;
+          }
+        }
+        const smoothWpm = wTot > 0 ? Math.min(650, Math.max(40, Math.round(wSum / wTot))) : despiked[i];
+        const minIdx = i + 1;
+        const normSec = s.isPartial && i === dedupedSamples.length - 1
+          ? Math.max(minIdx * 60 - 30, Math.min(minIdx * 60, s.sec))
+          : minIdx * 60;
+        return {
+          ...s,
+          minute: minIdx,
+          sec: normSec,
+          wpm: smoothWpm
+        };
+      });
+      durationSeconds = Math.max(dedupedSamples[dedupedSamples.length - 1].sec, Math.min(durationSeconds, dedupedSamples.length * 60));
+      if (durationSeconds >= 10 && wordsRead > 0) {
+        avgWpm = Math.min(650, Math.round((wordsRead / durationSeconds) * 60));
+      }
     }
 
     // Pokud relace nemá uložené vzorky, ale má trvání a slova, vytvoříme 1-minutové body
@@ -409,12 +457,11 @@ export class StatsCharts {
 
     const maxElapsed = Math.max(durationSeconds, curvePoints[curvePoints.length - 1].sec, 60);
 
-    // 5. Výpočet špičkové rychlosti (Peak WPM) - nikdy nesmí být nižší než avgWpm
+    // 5. Výpočet udržené špičkové rychlosti (Sustained Peak WPM za interval >= 30–60s) - nikdy nesmí být nižší než avgWpm
     const sampleSpeeds = dedupedSamples.map(s => s.wpm).filter(w => w > 0);
-    const rawPeak = sessionData.peak_wpm ?? sessionData.peakWpm;
-    const peakWpm = rawPeak 
-      ? Math.max(Math.round(rawPeak), avgWpm) 
-      : (sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds, avgWpm) : avgWpm);
+    const peakWpm = sampleSpeeds.length > 0
+      ? Math.min(650, Math.max(...sampleSpeeds, avgWpm))
+      : avgWpm;
 
     // Synchronizujeme odznaky špičkového a průměrného tempa v UI
     const peakBadge = document.getElementById("session-badge-peak-wpm");

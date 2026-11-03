@@ -842,15 +842,18 @@ export class StorageManager {
       return null;
     }
 
-    // Filtrace a normalizace 1-minutových vzorků intra_session_samples (bez umělých 220 WPM seed bodů na 0s)
+    // Filtrace a normalizace 1-minutových vzorků intra_session_samples (bez umělých 220 WPM seed bodů na 0s a bez 0 WPM idle propadů)
     const rawSamples = Array.isArray(sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples) 
       ? (sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples) 
       : [];
     const cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSeconds, wordsRead, avgWpm, timestamp);
 
-    // Výpočet špičkové rychlosti: max ze vzorků, nikdy nižší než avg_wpm
-    const validSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
-    const peakWpm = validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm;
+    // Výpočet udržené špičkové rychlosti: max z vyhlazených validních vzorků (>= 30–60s), nikdy nižší než avg_wpm
+    const validSpeeds = cleanedSamples
+      .filter(s => !s.isPartial || (s.activeSeconds ?? 60) >= 30)
+      .map(s => s.wpm)
+      .filter(w => w > 0 && w <= 650);
+    const peakWpm = validSpeeds.length > 0 ? Math.min(650, Math.max(...validSpeeds, avgWpm)) : avgWpm;
 
     const updatedAt = sessionData.updatedAt || sessionData.updated_at || new Date().toISOString();
 
@@ -1421,8 +1424,10 @@ export class StorageManager {
   }
 
   /**
-   * Pomocná metoda pro vyčištění intra_session_samples:
+   * Pomocná metoda pro vyčištění a vyhlazení intra_session_samples:
    * - Odstraní umělé počáteční 220 WPM seed body (body v čase 0s nebo počáteční plochou sérii 220 WPM).
+   * - Odfiltruje nulové (0 WPM) propady vzniklé při pauzách / nečinnosti.
+   * - Potlačí izolované špičky (outlier despiking) a aplikuje klouzavý průměr (Moving Average 3–5 vzorků).
    * - Normalizuje vzorky na čisté 1-minutové intervaly { minute, elapsedSeconds, t, words, wpm }.
    */
   _cleanIntraSessionSamples(rawSamples, durationSec, wordsRead, avgWpm, fallbackTimestamp = Date.now()) {
@@ -1430,23 +1435,27 @@ export class StorageManager {
       return [];
     }
 
-    // 1. Odstranit body s elapsedSeconds <= 0 (počáteční 0s seed) a neplatné hodnoty
+    // 1. Odstranit body s elapsedSeconds <= 0 (počáteční 0s seed), nulové (0 WPM) idle propady a neplatné hodnoty
     let list = rawSamples.map((s, idx) => {
       const sec = Math.round(Number(s.elapsedSeconds ?? s.t ?? (s.minute ? s.minute * 60 : (idx + 1) * 60)));
+      const rawRate = Math.round(Number(s.rawWpm ?? s.wpm ?? s.instantaneousWpm ?? 0));
       const wpm = Math.round(Number(s.wpm ?? s.instantaneousWpm ?? 0));
       const words = s.words !== undefined ? Math.round(Number(s.words)) : wpm;
+      const effectiveWpm = wpm > 0 ? wpm : words;
       const minute = Number(s.minute) > 0 ? Number(s.minute) : Math.max(1, Math.ceil(sec / 60));
       return {
         minute,
         elapsedSeconds: sec,
         t: sec,
-        words: Math.max(0, words),
-        wpm: Math.max(0, wpm),
-        instantaneousWpm: Math.max(0, wpm),
+        words: Math.max(0, words > 0 ? words : effectiveWpm),
+        rawWpm: Math.max(0, rawRate > 0 ? rawRate : effectiveWpm),
+        wpm: Math.max(0, effectiveWpm),
+        instantaneousWpm: Math.max(0, effectiveWpm),
         timestamp: s.timestamp || fallbackTimestamp,
+        activeSeconds: s.activeSeconds || 60,
         isPartial: !!s.isPartial
       };
-    }).filter(s => s.elapsedSeconds > 0 && s.wpm >= 0 && s.wpm <= 1000);
+    }).filter(s => s.elapsedSeconds > 0 && s.wpm > 0 && s.wpm <= 650);
 
     // 2. Odstranit počáteční umělé ploché 220 WPM seed body
     // (pokud na začátku relace leží sekvence bodů s přesně 220 WPM a průměr relace je odlišný nebo následují reálné body)
@@ -1473,7 +1482,61 @@ export class StorageManager {
       }
     }
 
-    return deduped;
+    if (deduped.length <= 1) {
+      if (deduped.length === 1) {
+        deduped[0].minute = 1;
+        deduped[0].elapsedSeconds = deduped[0].isPartial ? Math.min(60, deduped[0].elapsedSeconds) : 60;
+        deduped[0].t = deduped[0].elapsedSeconds;
+      }
+      return deduped;
+    }
+
+    // 4. Potlačení jednobodových špiček (Outlier Despiking) + Klouzavý průměr (Moving Average 3–5 vzorků)
+    const despiked = deduped.map((s, idx) => {
+      const cur = Math.min(650, Math.max(40, s.rawWpm || s.wpm));
+      const prev = idx > 0 ? (deduped[idx - 1].rawWpm || deduped[idx - 1].wpm) : (avgWpm > 0 ? avgWpm : (deduped[idx + 1].rawWpm || deduped[idx + 1].wpm));
+      const next = idx < deduped.length - 1 ? (deduped[idx + 1].rawWpm || deduped[idx + 1].wpm) : (avgWpm > 0 ? avgWpm : (deduped[idx - 1].rawWpm || deduped[idx - 1].wpm));
+      const neighborMean = (prev + next) / 2;
+      const neighborMax = Math.max(prev, next);
+      const neighborMin = Math.min(prev, next);
+      if (cur > neighborMax * 1.55 && cur - neighborMean > 45) {
+        return Math.round(neighborMean + (cur - neighborMean) * 0.35);
+      }
+      if (cur < neighborMin * 0.5 && neighborMean - cur > 35) {
+        return Math.round(neighborMean - (neighborMean - cur) * 0.4);
+      }
+      return cur;
+    });
+
+    const useFive = despiked.length >= 5;
+    const radius = useFive ? 2 : 1;
+    const weights = useFive ? [0.12, 0.23, 0.30, 0.23, 0.12] : [0.25, 0.50, 0.25];
+
+    return deduped.map((s, i) => {
+      let wSum = 0;
+      let wTot = 0;
+      for (let offset = -radius; offset <= radius; offset++) {
+        const j = i + offset;
+        if (j >= 0 && j < despiked.length) {
+          const w = weights[offset + radius];
+          wSum += despiked[j] * w;
+          wTot += w;
+        }
+      }
+      const smoothWpm = wTot > 0 ? Math.min(650, Math.max(40, Math.round(wSum / wTot))) : despiked[i];
+      const minuteNum = i + 1;
+      const elapsedSec = (s.isPartial && i === deduped.length - 1 && durationSec > (minuteNum - 1) * 60 && durationSec < minuteNum * 60)
+        ? durationSec
+        : minuteNum * 60;
+      return {
+        ...s,
+        minute: minuteNum,
+        elapsedSeconds: elapsedSec,
+        t: elapsedSec,
+        wpm: smoothWpm,
+        instantaneousWpm: smoothWpm
+      };
+    });
   }
 
   /**

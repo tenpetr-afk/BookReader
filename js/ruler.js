@@ -93,6 +93,7 @@ export class ReadingRuler {
     this._lastWordSolidRatio = null;
     this.onProgress = null; // Callback: (type: "line" | "word", count: number)
     this._maxLineIndexOnPage = -1;
+    this._maxWordLineIndexOnPage = -1;
     this._maxWordIndexOnPage = -1;
     this._lastLineProgressTime = 0;
     this._lastWordProgressTime = 0;
@@ -5760,6 +5761,7 @@ export class ReadingRuler {
 
               this.activeWordIndex = (clampedT < 0.5) ? segIdx : segIdx + 1;
             }
+            this._checkWordProgress(this.activeWordIndex);
           } else {
             continuousLeft = Math.round(curX - this.activeWordWidth / 2);
             continuousWidth = this.activeWordWidth;
@@ -5881,41 +5883,71 @@ export class ReadingRuler {
   _checkLineProgress(idx) {
     if (this.wordTracking || idx < 0) return;
 
+    const now = Date.now();
+
     // Prvotní umístění pravítka na stránce nikdy nezapočítává slova (line-search fix)
     if (this._maxLineIndexOnPage < 0) {
-      this._maxLineIndexOnPage = idx;
-      this._lastLineProgressTime = Date.now();
-      return;
-    }
-
-    if (idx <= this._maxLineIndexOnPage) return;
-
-    // 1. Rozlišení plynulého čtení a skoku pravítka (repositioning jump):
-    // Pokud uživatel přeskočil více než 2 řádky najednou (např. hledá, kde skončil),
-    // posuneme pouze ukazatel bez zápočtu slov pro přeskočené řádky.
-    if (idx - this._maxLineIndexOnPage > 2) {
-      this._maxLineIndexOnPage = idx;
-      this._lastLineProgressTime = Date.now();
-      return;
-    }
-
-    // 2. Ochrana proti rychlému přejetí kurzorem/stylusem shora dolů (min. 350 ms na řádek):
-    const now = Date.now();
-    const lineDelta = idx - this._maxLineIndexOnPage;
-    const minTimeMs = lineDelta * 350;
-    if (this._lastLineProgressTime > 0 && (now - this._lastLineProgressTime) < minTimeMs) {
       this._maxLineIndexOnPage = idx;
       this._lastLineProgressTime = now;
       return;
     }
 
+    if (idx <= this._maxLineIndexOnPage) return;
+
+    const lineDelta = idx - this._maxLineIndexOnPage;
+    const MIN_MS_PER_LINE = 280;
+    const MAX_BUDGET_MS = 8 * MIN_MS_PER_LINE; // max 8 řádků naakumulovaného čtecího času
+
+    // 1. Rozlišení plynulého čtení a velkého skoku pravítka (repositioning jump > 8 řádků):
+    if (lineDelta > 8) {
+      this._maxLineIndexOnPage = idx;
+      this._lastLineProgressTime = now;
+      return;
+    }
+
+    // 2. Časový rozpočet čtení (time-budget):
+    // Uživatel často přečte 2–5 řádků očima a poté posune pravítko dolů plynulým pohybem myši/stylusu.
+    // Místo zahození řádků 2..N při rychlém průjezdu čerpáme z reálně uplynulého času od posledního zápočtu.
+    const elapsedMs = this._lastLineProgressTime > 0
+      ? Math.min(MAX_BUDGET_MS, Math.max(0, now - this._lastLineProgressTime))
+      : MIN_MS_PER_LINE;
+    const affordableLines = Math.floor(elapsedMs / MIN_MS_PER_LINE);
+
+    if (affordableLines <= 0) {
+      // Pokud uživatel bleskově přetáhl pravítko přes > 3 řádky bez předchozího čtení, jde o přesun
+      if (lineDelta > 3) {
+        this._maxLineIndexOnPage = idx;
+        this._lastLineProgressTime = now;
+      }
+      return;
+    }
+
+    const creditedLineDelta = Math.min(lineDelta, affordableLines);
     const prevIdx = this._maxLineIndexOnPage;
+    const effectiveIdx = prevIdx + creditedLineDelta;
     this._maxLineIndexOnPage = idx;
-    this._lastLineProgressTime = now;
+    // Odečteme spotřebovaný čas z rozpočtu, aby při plynulém tahu přes 2–4 přečtené řádky zůstala rezerva pro zbylé řádky
+    this._lastLineProgressTime = Math.max(
+      now - MAX_BUDGET_MS,
+      (this._lastLineProgressTime > 0 ? Math.max(now - elapsedMs, this._lastLineProgressTime) : now - elapsedMs) + creditedLineDelta * MIN_MS_PER_LINE
+    );
+
     let words = 0;
 
-    if (this.cachedWords && this.cachedWords.length > 0) {
-      words = this.cachedWords.filter(w => w.lineIndex > prevIdx && w.lineIndex <= idx).length;
+    if (this._lineWordsCache && this._lineWordsCache.size > 0) {
+      let cachedLineWordsSum = 0;
+      let allCached = true;
+      for (let l = prevIdx; l < effectiveIdx; l++) {
+        if (this._lineWordsCache.has(l)) {
+          cachedLineWordsSum += (this._lineWordsCache.get(l)?.length || 0);
+        } else {
+          allCached = false;
+          break;
+        }
+      }
+      if (allCached && cachedLineWordsSum > 0) {
+        words = cachedLineWordsSum;
+      }
     }
 
     if (!words || words <= 0) {
@@ -5927,8 +5959,8 @@ export class ReadingRuler {
       for (let i = 0; i < lines.length; i++) {
         if (lines[i] && !lines[i].isMedia) {
           totalTextLines++;
-          if (i > 0 && i <= prevIdx) nonMediaBefore++;
-          if (i > 0 && i <= idx) nonMediaAfter++;
+          if (i < prevIdx) nonMediaBefore++;
+          if (i < effectiveIdx) nonMediaAfter++;
         }
       }
 
@@ -5951,34 +5983,76 @@ export class ReadingRuler {
 
   _checkWordProgress(idx) {
     if (idx < 0) return;
-    if (this._maxWordIndexOnPage < 0) {
-      this._maxWordIndexOnPage = idx;
-      this._lastWordProgressTime = Date.now();
-      return;
-    }
-    if (idx <= this._maxWordIndexOnPage) return;
-
-    const delta = idx - this._maxWordIndexOnPage;
-    // Skok přes více než 5 slov najednou = přemístění pravítka bez zápočtu
-    if (delta > 5) {
-      this._maxWordIndexOnPage = idx;
-      this._lastWordProgressTime = Date.now();
-      return;
-    }
-
-    // Minimální interval mezi slovy (min. 80 ms na slovo)
     const now = Date.now();
-    const minTimeMs = delta * 80;
-    if (this._lastWordProgressTime > 0 && (now - this._lastWordProgressTime) < minTimeMs) {
+    const curLineIdx = this.activeLineIndex >= 0 ? this.activeLineIndex : 0;
+
+    if (this._maxWordLineIndexOnPage < 0 || this._maxWordIndexOnPage < 0) {
+      this._maxWordLineIndexOnPage = curLineIdx;
       this._maxWordIndexOnPage = idx;
       this._lastWordProgressTime = now;
       return;
     }
 
+    // Uživatel se vrátil na předchozí řádek -> nezapočítávat znovu
+    if (curLineIdx < this._maxWordLineIndexOnPage) {
+      return;
+    }
+
+    // Přechod na nový řádek v režimu sledování slov
+    if (curLineIdx > this._maxWordLineIndexOnPage) {
+      const lineJump = curLineIdx - this._maxWordLineIndexOnPage;
+      let carryWords = 0;
+      if (lineJump === 1 && this._lineWordsCache?.has(this._maxWordLineIndexOnPage)) {
+        const prevLineWords = this._lineWordsCache.get(this._maxWordLineIndexOnPage) || [];
+        const remOnPrevLine = Math.max(0, prevLineWords.length - 1 - this._maxWordIndexOnPage);
+        if (remOnPrevLine > 0 && remOnPrevLine <= 4) {
+          carryWords = remOnPrevLine;
+        }
+      }
+      this._maxWordLineIndexOnPage = curLineIdx;
+      this._maxWordIndexOnPage = idx;
+      this._lastWordProgressTime = now;
+
+      if (lineJump === 1) {
+        const progressedOnNewLine = idx <= 3 ? (idx + 1) : 1;
+        const totalDelta = carryWords + progressedOnNewLine;
+        if (totalDelta > 0 && typeof this.onProgress === "function") {
+          this.onProgress("word", totalDelta);
+        }
+      }
+      return;
+    }
+
+    if (idx <= this._maxWordIndexOnPage) return;
+
+    const delta = idx - this._maxWordIndexOnPage;
+    // Skok přes více než 6 slov najednou = přemístění pravítka bez zápočtu
+    if (delta > 6) {
+      this._maxWordIndexOnPage = idx;
+      this._lastWordProgressTime = now;
+      return;
+    }
+
+    // Časový rozpočet mezi slovy (min. 70 ms na slovo, s akumulací až 10 slov)
+    const MIN_MS_PER_WORD = 70;
+    const MAX_WORD_BUDGET_MS = 10 * MIN_MS_PER_WORD;
+    const elapsedMs = this._lastWordProgressTime > 0
+      ? Math.min(MAX_WORD_BUDGET_MS, Math.max(0, now - this._lastWordProgressTime))
+      : MIN_MS_PER_WORD;
+    const affordableWords = Math.floor(elapsedMs / MIN_MS_PER_WORD);
+
+    if (affordableWords <= 0) {
+      return;
+    }
+
+    const creditedWords = Math.min(delta, affordableWords);
     this._maxWordIndexOnPage = idx;
-    this._lastWordProgressTime = now;
-    if (delta > 0 && typeof this.onProgress === "function") {
-      this.onProgress("word", delta);
+    this._lastWordProgressTime = Math.max(
+      now - MAX_WORD_BUDGET_MS,
+      (this._lastWordProgressTime > 0 ? Math.max(now - elapsedMs, this._lastWordProgressTime) : now - elapsedMs) + creditedWords * MIN_MS_PER_WORD
+    );
+    if (creditedWords > 0 && typeof this.onProgress === "function") {
+      this.onProgress("word", creditedWords);
     }
   }
 
@@ -6002,11 +6076,11 @@ export class ReadingRuler {
     }
 
     this.activeWordIndex = wordIndex;
-    this._checkWordProgress(wordIndex);
     const w0 = this.cachedWords[wordIndex];
     if (w0 && w0.lineIndex != null && w0.lineIndex >= 0 && w0.lineIndex < this.cachedLines.length) {
       this.activeLineIndex = w0.lineIndex;
     }
+    this._checkWordProgress(wordIndex);
     const padX = 3;
     const padY = 1.5;
 
@@ -6138,10 +6212,12 @@ export class ReadingRuler {
    */
   resetPositionForPage(direction = 1, isPageChanged = true) {
     this.clearPageTransitionTimersAndRAFs();
-    this._maxLineIndexOnPage = -1;
-    this._maxWordIndexOnPage = -1;
-    this._lastLineProgressTime = 0;
-    this._lastWordProgressTime = 0;
+    const initTime = Date.now();
+    this._maxLineIndexOnPage = direction >= 0 ? 0 : -1;
+    this._maxWordLineIndexOnPage = direction >= 0 ? 0 : -1;
+    this._maxWordIndexOnPage = direction >= 0 ? 0 : -1;
+    this._lastLineProgressTime = initTime;
+    this._lastWordProgressTime = initTime;
     this._lastActiveLineIndex = -1;
     this._lastActiveColumn = null;
     this._lastEmptyWordsDetectTime = 0;

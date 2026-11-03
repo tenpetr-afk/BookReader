@@ -821,6 +821,9 @@ export class PDFLoader {
         this.canvas = canvas;
         this.pageContainer = pageContainer;
         this.imageLayer = imageLayer;
+        if (this.app && typeof this.app.onPdfPageRendered === "function") {
+          this.app.onPdfPageRendered(this.currentPage, this.numPages, true, false);
+        }
       }
     } catch (err) {
       if (err?.name !== "RenderingCancelledException") {
@@ -1409,16 +1412,49 @@ export class PDFLoader {
   }
 
   /**
-   * Získá přesný počet slov pro danou stranu PDF
+   * Získá přesný počet slov pro danou stranu PDF, s inteligentním fallbackem
+   * na průměr dokumentu nebo 220 slov, pokud se vrstva ještě nevykreslila či jde o sken.
    */
   getWordsForPage(pageNumber) {
-    return this.pageWordCounts.get(pageNumber) ?? 0;
+    const cached = this.pageWordCounts.get(pageNumber);
+    if (cached !== undefined && cached > 0) {
+      return cached;
+    }
+
+    // Pokus o přečtení z již vykreslené DOM textové vrstvy dané strany
+    const pageEl = this.pageContainers?.get(pageNumber)
+      || document.querySelector(`#reader-content .pdf-page-container[data-page-number="${pageNumber}"]`);
+    const textLayer = pageEl?.querySelector(".textLayer");
+    if (textLayer) {
+      const text = textLayer.textContent || "";
+      const matches = text.match(/[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g);
+      if (matches && matches.length > 0) {
+        this.pageWordCounts.set(pageNumber, matches.length);
+        return matches.length;
+      }
+    }
+
+    // Fallback: průměr z dosud spočtených textových stran v tomto PDF nebo realistický odhad 220 slov/stranu
+    if (this.pageWordCounts.size > 0) {
+      let sum = 0;
+      let count = 0;
+      for (const w of this.pageWordCounts.values()) {
+        if (w > 0) {
+          sum += w;
+          count++;
+        }
+      }
+      if (count > 0) {
+        return Math.max(60, Math.min(600, Math.round(sum / count)));
+      }
+    }
+
+    return 220;
   }
 
   /**
-   * Získá přesný počet slov viditelných na aktuální obrazovce/sloupcích
+   * Získá přesný počet slov viditelných na aktuální obrazovce/sloupcích.
    * V režimu dvoustrany sčítá slova obou otevřených stran.
-   * U naskenovaného PDF bez textové vrstvy vrací 0.
    */
   getVisibleWords() {
     if (this.isSpreadActive()) {
@@ -1442,17 +1478,17 @@ export class PDFLoader {
     }
 
     const words = this.pageWordCounts.get(this.currentPage);
-    if (words !== undefined) return words;
+    if (words !== undefined && words > 0) return words;
 
-    // Fallback: zjištění z DOM textové vrstvy
+    // Fallback: zjištění z DOM textové vrstvy nebo odhad
     const activeSlot = this.pageContainer || document.querySelector("#reader-content .pdf-page-container");
     const textLayer = activeSlot?.querySelector(".textLayer");
     if (textLayer) {
       const text = textLayer.textContent || "";
       const matches = text.match(/[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g);
-      return matches ? matches.length : 0;
+      if (matches && matches.length > 0) return matches.length;
     }
-    return 0;
+    return this.getWordsForPage(this.currentPage);
   }
 
   /**

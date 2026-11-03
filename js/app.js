@@ -4854,6 +4854,8 @@ export class LuminaApp {
     try {
       const chapterData = await this.getOrLoadChapter(this.currentChapterIndex);
       this.currentRawChapterHtml = chapterData.html;
+      this.currentChapterWords = chapterData.wordCount || 0;
+      this._maxVScrollByChapter = new Map();
 
       const title = chapterData.title || this.getChapterTitle(this.currentChapterIndex);
       if (this.dom.chapterTitleEl) this.dom.chapterTitleEl.textContent = title;
@@ -5005,6 +5007,7 @@ export class LuminaApp {
     try {
       const chapter = await this.currentParser.loadChapter(this.currentChapterIndex);
       this.currentRawChapterHtml = chapter.html;
+      this.currentChapterWords = chapter.wordCount || 0;
       if (this.dom.chapterTitleEl) this.dom.chapterTitleEl.textContent = chapter.title;
       if (this.dom.pagedChapterName) this.dom.pagedChapterName.textContent = chapter.title;
       this.renderChapterHtml();
@@ -5410,17 +5413,21 @@ export class LuminaApp {
     }
 
     // Horizontální stránkovaný režim EPUB:
-    if (this.ruler && this.ruler.enabled && this.ruler.wordTracking && this.ruler.cachedWords && this.ruler.cachedWords.length > 0) {
-      return this.ruler.cachedWords.length;
-    }
-
-    const chapterWords = this.currentChapterWords || tracker.currentChapterWords || 1000;
+    // Pozn.: this.ruler.cachedWords obsahuje pouze slova jednoho aktivního řádku (~8-15 slov),
+    // proto jej nikdy nepoužíváme jako počet slov celé stránky!
+    const chapterWords = this.currentChapterWords
+      || (this.bookWordCounts?.chapterCounts?.[this.currentChapterIndex])
+      || tracker.currentChapterWords
+      || 1000;
     const pages = Math.max(1, this.totalPagesInChapter || 1);
+    if (pages === 1 && chapterWords > 0) {
+      return Math.max(15, Math.min(650, Math.round(chapterWords)));
+    }
     return Math.max(40, Math.min(650, Math.round(chapterWords / pages)));
   }
 
   goToPage(pageIndex, explicitDirection = null, immediateRuler = true, options = {}) {
-    if (options.isNavigationJump || options.isReflow) {
+    if (options.isNavigationJump) {
       tracker.cancelCurrentPageDwell();
     }
     if (this.isPdfMode && this.pdfLoader) {
@@ -6045,16 +6052,18 @@ export class LuminaApp {
           const maxSecScroll = Math.max(1, secHeight - vpHeight);
           const chapterScrollRatio = Math.max(0, Math.min(1, scrollIntoSec / maxSecScroll));
 
-          // Kontinuální akreditace slov při vertikálním skrolování (pokud není aktivní pravítko, které počítá přesně po řádcích/slovech)
+          // Kontinuální akreditace slov při vertikálním skrolování s automatickou deduplikací vůči pravítku
           this._maxVScrollByChapter = this._maxVScrollByChapter || new Map();
           const prevRatio = this._maxVScrollByChapter.get(activeIdx) || 0;
           if (chapterScrollRatio > prevRatio) {
             const deltaRatio = chapterScrollRatio - prevRatio;
             this._maxVScrollByChapter.set(activeIdx, chapterScrollRatio);
-            if (!(this.ruler && this.ruler.enabled)) {
-              const secWords = parseInt(activeSection.dataset.wordCount, 10) || 1000;
-              const wordsScrolled = Math.round(deltaRatio * secWords);
-              if (wordsScrolled > 0 && wordsScrolled <= 500) {
+            const secWords = parseInt(activeSection.dataset.wordCount, 10) || this.currentChapterWords || 1000;
+            const wordsScrolled = Math.round(deltaRatio * secWords);
+            if (wordsScrolled > 0 && wordsScrolled <= 650) {
+              if (typeof tracker.attributeScrollWords === "function") {
+                tracker.attributeScrollWords(wordsScrolled);
+              } else {
                 tracker.attributeWords(wordsScrolled);
               }
             }
