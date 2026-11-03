@@ -4250,12 +4250,14 @@ export class LuminaApp {
     }
   }
 
-  onPdfPageRendered(currentPage, numPages, isReflow = false, isInitial = false) {
+  onPdfPageRendered(currentPage, numPages, isReflow = false, isInitial = false, explicitDirection = null) {
     const prevPageIndex = this.currentPageIndex;
     this.currentPageIndex = currentPage - 1;
     this.totalPagesInChapter = numPages;
     const isPageChanged = !isReflow && !isInitial && this.currentPageIndex !== prevPageIndex;
-    const direction = isPageChanged ? (this.currentPageIndex > prevPageIndex ? 1 : -1) : 0;
+    const direction = explicitDirection !== null
+      ? explicitDirection
+      : (isPageChanged ? (this.currentPageIndex > prevPageIndex ? 1 : -1) : 0);
     if (isPageChanged || isInitial) {
       this.wordsCreditedOnCurrentPage = 0;
     }
@@ -4760,6 +4762,13 @@ export class LuminaApp {
 
     this._isLoadingNextChapter = true;
     try {
+      while (nextIdx < this.currentParser.spine.length) {
+        const candidate = await this.getOrLoadChapter(nextIdx);
+        if (candidate && !candidate.isBlank) break;
+        nextIdx++;
+      }
+      if (nextIdx >= this.currentParser.spine.length) return;
+
       const chapterData = await this.getOrLoadChapter(nextIdx);
       if (!this.isVerticalReadingMode() || !this.currentParser || this._isModeTransitioning) return;
 
@@ -4795,6 +4804,13 @@ export class LuminaApp {
     this._isLoadingPrevChapter = true;
     const vp = this.dom.pagedViewport;
     try {
+      while (prevIdx >= 0) {
+        const candidate = await this.getOrLoadChapter(prevIdx);
+        if (candidate && !candidate.isBlank) break;
+        prevIdx--;
+      }
+      if (prevIdx < 0) return;
+
       const chapterData = await this.getOrLoadChapter(prevIdx);
       if (!this.isVerticalReadingMode() || !this.currentParser || this._isModeTransitioning) return;
 
@@ -4844,7 +4860,7 @@ export class LuminaApp {
       this.dom.readerContent.style.transform = "none";
     }
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.hideForPageTransition();
+      this.ruler.prepareForPageTransition(targetPage === "last" ? -1 : 1);
     }
 
     this.isNavigating = true;
@@ -4956,7 +4972,7 @@ export class LuminaApp {
     }
 
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.hideForPageTransition();
+      this.ruler.prepareForPageTransition(targetPage === "last" ? -1 : 1);
     }
 
     // 1. Okamžitý reset indexu a transformace před načtením a vložením nového DOMu
@@ -5047,6 +5063,9 @@ export class LuminaApp {
 
       if (targetPage === "last") {
         finalPageIndex = Math.max(0, this.totalPagesInChapter - 1);
+        while (finalPageIndex > 0 && !this.hasVisibleContentOnPage(finalPageIndex)) {
+          finalPageIndex--;
+        }
         navDirection = -1;
       } else if (typeof targetPage === "object" && targetPage !== null) {
         if (typeof targetPage.pageIndex === "number" && targetPage.pageIndex >= 0) {
@@ -5062,7 +5081,15 @@ export class LuminaApp {
         navDirection = finalPageIndex > 0 ? 1 : 0;
       }
 
-      // Reveal: Nejprve odeber třídu is-chapter-loading a nastav opacity = "1" na stage i readerContent
+      // 1. Nejprve usadíme stránku i pravítko na cílovou pozici před odhalením obsahu
+      this.goToPage(finalPageIndex, navDirection, true, { isInitialLoad: true, skipRulerUpdate: true });
+
+      // 2. Synchronní refreshnutí a zamaskování pravítka pro cílovou stránku před zobrazením textu
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.resetPositionForPage(navDirection, true);
+      }
+
+      // 3. Reveal: Nyní bezpečně odebereme třídu is-chapter-loading a nastavíme opacity = "1"
       if (stage) {
         stage.classList.remove("is-chapter-loading");
         void stage.offsetWidth;
@@ -5081,13 +5108,6 @@ export class LuminaApp {
           this.dom.readerContent.style.transition = "";
         }
       });
-
-      this.goToPage(finalPageIndex, navDirection, true, { isInitialLoad: true, skipRulerUpdate: true });
-
-      // Pojistka synchronního refreshnutí a zamaskování pravítka pro cílovou stránku
-      if (this.ruler && this.ruler.enabled) {
-        this.ruler.resetPositionForPage(navDirection, true);
-      }
     } catch (e) {
       if (stage) {
         stage.classList.remove("is-chapter-loading");
@@ -5149,7 +5169,7 @@ export class LuminaApp {
   beginSliderDrag() {
     this._isSliderDragging = true;
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.hideForPageTransition();
+      this.ruler.prepareForPageTransition(1);
     }
     if (
       this.settings.fastReading &&
@@ -5238,6 +5258,58 @@ export class LuminaApp {
     });
   }
 
+  cleanTrailingEmptyNodes(root) {
+    if (!root) return;
+
+    const isNodeEmpty = (node) => {
+      if (!node) return false;
+      if (node.nodeType === Node.COMMENT_NODE) return true;
+      if (node.nodeType === Node.TEXT_NODE) {
+        return node.textContent.replace(/[\s\u00a0\u200b-\u200d\ufeff]+/g, "").length === 0;
+      }
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const tag = node.tagName.toLowerCase();
+        if (["img", "image", "svg", "canvas", "video", "audio", "table"].includes(tag)) {
+          return false;
+        }
+        if (tag === "br" || tag === "hr") {
+          return true;
+        }
+        const hasMedia = node.querySelector("img, image, svg, canvas, video, audio, table") !== null;
+        if (hasMedia) return false;
+        const text = node.textContent.replace(/[\s\u00a0\u200b-\u200d\ufeff]+/g, "");
+        return text.length === 0;
+      }
+      return false;
+    };
+
+    while (root.lastChild) {
+      if (isNodeEmpty(root.lastChild)) {
+        root.removeChild(root.lastChild);
+        continue;
+      }
+      if (root.lastChild.nodeType === Node.ELEMENT_NODE) {
+        let nested = root.lastChild;
+        while (nested.lastChild && isNodeEmpty(nested.lastChild)) {
+          nested.removeChild(nested.lastChild);
+        }
+        if (isNodeEmpty(nested)) {
+          root.removeChild(nested);
+          continue;
+        }
+      }
+      break;
+    }
+
+    // Vynulovat margin-bottom i padding-bottom na koncových potomcích pro zabránění přetečení
+    let current = root.lastElementChild;
+    while (current) {
+      current.style.marginBottom = "0px";
+      current.style.paddingBottom = "0px";
+      current = current.lastElementChild;
+    }
+  }
+
   renderChapterHtml() {
     if (!this.dom.readerContent) return;
     this.dom.readerContent.classList.toggle("bionic-active", !!this.settings.fastReading);
@@ -5245,6 +5317,7 @@ export class LuminaApp {
       ? this.toBionicReadingHtml(this.currentRawChapterHtml || "", this.currentChapterIndex)
       : (this.currentRawChapterHtml || "");
     this.dom.readerContent.innerHTML = htmlToRender;
+    this.cleanTrailingEmptyNodes(this.dom.readerContent);
     const imgs = this.dom.readerContent.querySelectorAll("img");
     imgs.forEach(img => {
       img.loading = "eager";
@@ -5349,6 +5422,78 @@ export class LuminaApp {
     }
   }
 
+  /**
+   * Zjistí, zda daná stránka kapitoly obsahuje skutečný viditelný obsah (text nebo média).
+   * Zabraňuje zobrazování a generování prázdných stran na konci kapitol.
+   */
+  hasVisibleContentOnPage(pageIndex) {
+    if (this.isPdfMode || this.isVerticalReadingMode()) return true;
+    if (!this.dom.pagedStage || !this.dom.readerContent) return true;
+    const { stageWidth, exactStep } = this.getExactColumnStep();
+    if (pageIndex < 0 || exactStep <= 0 || stageWidth <= 0) return false;
+
+    const pageStartRel = pageIndex * exactStep;
+    const pageEndRel = pageStartRel + stageWidth;
+
+    const stageRect = this.dom.pagedStage.getBoundingClientRect();
+    const stageLeft = stageRect.left;
+
+    let currentOffset = 0;
+    const transform = this.dom.readerContent.style.transform;
+    if (transform) {
+      const match = transform.match(/translate3d\(\s*(-?[\d.]+)\s*px/);
+      if (match) {
+        currentOffset = Math.abs(parseFloat(match[1])) || 0;
+      }
+    }
+
+    const elements = this.dom.readerContent.querySelectorAll(
+      "p, h1, h2, h3, h4, h5, h6, img, svg, canvas, table, blockquote, pre, code, ul, ol, li, div, section, article"
+    );
+    const range = document.createRange();
+
+    for (let i = elements.length - 1; i >= 0; i--) {
+      const el = elements[i];
+      const tag = el.tagName.toLowerCase();
+      const isMedia = ["img", "image", "svg", "canvas", "video", "audio", "table"].includes(tag);
+
+      if (!isMedia && el.textContent.trim().length === 0) continue;
+
+      if (isMedia) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          const rightRel = (r.right - stageLeft) + currentOffset;
+          const leftRel = (r.left - stageLeft) + currentOffset;
+          if (rightRel > pageStartRel + 3 && leftRel < pageEndRel - 3) {
+            return true;
+          }
+        }
+      } else {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let textNode;
+        while ((textNode = walker.nextNode())) {
+          if (textNode.textContent.trim().length > 0) {
+            try {
+              range.selectNodeContents(textNode);
+              const rects = range.getClientRects();
+              for (let j = 0; j < rects.length; j++) {
+                const r = rects[j];
+                if (r.width > 0 && r.height > 0) {
+                  const rightRel = (r.right - stageLeft) + currentOffset;
+                  const leftRel = (r.left - stageLeft) + currentOffset;
+                  if (rightRel > pageStartRel + 3 && leftRel < pageEndRel - 3) {
+                    return true;
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   recalcPages() {
     if (this.isPdfMode) {
       if (this.pdfLoader) {
@@ -5373,12 +5518,22 @@ export class LuminaApp {
     this.pageGap = gap;
     const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    // Bezpečnostní práh pro sub-pixelový přetisk a mezeru mezi sloupci
-    const safetyThreshold = Math.max(5, Math.min(gap * 0.5, 15));
+    const colWidth = (typeof this.resolveEffectiveColumnCount === "function" && this.resolveEffectiveColumnCount() === 2)
+      ? Math.max(50, (stageWidth - gap) / 2)
+      : stageWidth;
+    // Robustní bezpečnostní práh proti sub-pixelovému přetisku, mezerám a mikromarginům
+    const safetyThreshold = Math.max(30, Math.min(gap + 20, colWidth * 0.35));
+
     if (scrollWidth <= stageWidth + safetyThreshold) {
       this.totalPagesInChapter = 1;
     } else {
       this.totalPagesInChapter = 1 + Math.ceil((scrollWidth - stageWidth - safetyThreshold) / exactStep);
+    }
+
+    // Ověříme, zda poslední vypočtená strana skutečně obsahuje viditelný text nebo média
+    while (this.totalPagesInChapter > 1 && !this.hasVisibleContentOnPage(this.totalPagesInChapter - 1)) {
+      console.log(`[LuminaReader] recalcPages: Vyřazuji prázdnou stranu ${this.totalPagesInChapter}`);
+      this.totalPagesInChapter--;
     }
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
@@ -5466,16 +5621,21 @@ export class LuminaApp {
     this.pageGap = gap;
     const offset = this.currentPageIndex * exactStep;
 
+    const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
+    const direction = explicitDirection !== null
+      ? explicitDirection
+      : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
+
+    // Synchronní usazení masek zaostření na výchozí řádek PŘED transformací sloupce
+    if (this.ruler && this.ruler.enabled && isPageChanged && !options.skipRulerUpdate) {
+      this.ruler.prepareForPageTransition(direction);
+    }
+
     // Okamžitá hardwarově akcelerovaná CSS transformace stránky bez blokování snímku
     if (this.dom.readerContent) {
       this.dom.readerContent.style.transition = "none";
       this.dom.readerContent.style.transform = `translate3d(-${offset.toFixed(2)}px, 0, 0)`;
     }
-
-    const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
-    const direction = explicitDirection !== null
-      ? explicitDirection
-      : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
 
     const stage = this.dom.pagedStage;
     if (isPageChanged) {
@@ -5618,6 +5778,10 @@ export class LuminaApp {
             };
             content.addEventListener("transitionend", this._rulerTransitionEndHandler, { once: true });
             this._rulerPageChangeTimer = setTimeout(executeRulerPageChange, Math.round(transitionDuration + 50));
+          } else if (immediateRuler) {
+            requestAnimationFrame(() => {
+              executeRulerPageChange();
+            });
           } else {
             // Post-Transition Settle Verification: double requestAnimationFrame + debounced settle timeout (60ms)
             this._rulerPageChangeRafId = requestAnimationFrame(() => {
@@ -5681,6 +5845,9 @@ export class LuminaApp {
       if (this.isNavigating) return;
       if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
       this.lastPageTurnTime = now;
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.prepareForPageTransition(1);
+      }
       await this.pdfLoader.nextPage();
       return;
     }
@@ -5706,9 +5873,10 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(350);
+      this.ruler.lockAdvancement(350, 1);
       this.ruler.activeLineIndex = 0;
       this.ruler.activeWordIndex = 0;
+      this.ruler.prepareForPageTransition(1);
     }
 
     clearTimeout(this._navSafetyTimer);
@@ -5730,37 +5898,30 @@ export class LuminaApp {
     try {
       // 1. Pokud jsme ještě před koncem známých stran kapitoly, otočíme stranu v rámci kapitoly
       if (this.currentPageIndex < this.totalPagesInChapter - 1) {
-        this.goToPage(this.currentPageIndex + 1, 1);
-        console.log(`[LuminaReader] nextPage() resolved cleanly: page -> ${this.currentPageIndex + 1}`);
-        return;
+        if (this.hasVisibleContentOnPage(this.currentPageIndex + 1)) {
+          this.goToPage(this.currentPageIndex + 1, 1);
+          console.log(`[LuminaReader] nextPage() resolved cleanly: page -> ${this.currentPageIndex + 1}`);
+          return;
+        } else {
+          console.log(`[LuminaReader] nextPage(): detekována prázdná strana ${this.currentPageIndex + 2}, přesun na konec kapitoly`);
+          this.totalPagesInChapter = this.currentPageIndex + 1;
+        }
       }
 
       // 2. Zdánlivě jsme na konci kapitoly. Přepočítáme živý DOM rozměr,
       // abychom zabránili přeskočení nepřečteného textu kvůli donačteným obrázkům
       this.recalcPages();
       if (this.currentPageIndex < this.totalPagesInChapter - 1) {
-        this.goToPage(this.currentPageIndex + 1, 1);
-        console.log(`[LuminaReader] nextPage() advanced after recalc: page -> ${this.currentPageIndex + 1}`);
-        return;
+        if (this.hasVisibleContentOnPage(this.currentPageIndex + 1)) {
+          this.goToPage(this.currentPageIndex + 1, 1);
+          console.log(`[LuminaReader] nextPage() advanced after recalc: page -> ${this.currentPageIndex + 1}`);
+          return;
+        } else {
+          this.totalPagesInChapter = this.currentPageIndex + 1;
+        }
       }
 
-      // 3. Fyzická kontrola scrollWidth proti offsetu jako pojistka
-      const { stageWidth, gap, exactStep } = this.getExactColumnStep();
-      const safetyThreshold = Math.max(5, Math.min(gap * 0.5, 15));
-      const currentOffset = this.currentPageIndex * exactStep;
-      const scrollWidth = this.dom.readerContent?.scrollWidth || 0;
-      const remainingWidth = scrollWidth - (currentOffset + stageWidth);
-      if (remainingWidth > safetyThreshold) {
-        this.totalPagesInChapter = Math.max(
-          this.currentPageIndex + 2,
-          1 + Math.ceil((scrollWidth - stageWidth - safetyThreshold) / exactStep)
-        );
-        this.goToPage(this.currentPageIndex + 1, 1);
-        console.log(`[LuminaReader] nextPage() advanced via scrollWidth check: page -> ${this.currentPageIndex + 1}`);
-        return;
-      }
-
-      // 4. Kapitola je skutečně dočtena: přechod na další kapitolu
+      // 3. Kapitola je skutečně dočtena: přechod na další kapitolu
       if (this.currentChapterIndex < this.currentParser.spine.length - 1) {
         console.log(`[LuminaReader] nextPage() advancing to next chapter -> ${this.currentChapterIndex + 1}`);
         tracker.commitCurrentBlockDwell(1, this.getVisibleWordsOnCurrentPage());
@@ -5809,6 +5970,9 @@ export class LuminaApp {
       if (this.isNavigating) return;
       if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
       this.lastPageTurnTime = now;
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.prepareForPageTransition(-1);
+      }
       await this.pdfLoader.prevPage();
       return;
     }
@@ -5831,7 +5995,8 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(350);
+      this.ruler.lockAdvancement(350, -1);
+      this.ruler.prepareForPageTransition(-1);
     }
 
     clearTimeout(this._navSafetyTimer);
@@ -5876,7 +6041,24 @@ export class LuminaApp {
 
   async navigateChapter(delta, targetPage = 0) {
     if (!this.currentParser) return;
-    const newIdx = this.currentChapterIndex + delta;
+    let newIdx = this.currentChapterIndex + delta;
+
+    // Při sekvenčním listování (delta = 1 nebo -1) přeskočit zcela prázdné položky spine bez textu a médií
+    if (Math.abs(delta) === 1) {
+      while (newIdx >= 0 && newIdx < this.currentParser.spine.length) {
+        try {
+          const peekChapter = await this.getOrLoadChapter(newIdx);
+          if (peekChapter && !peekChapter.isBlank) {
+            break;
+          }
+          console.log(`[LuminaReader] Přeskakuji prázdnou položku spine na indexu ${newIdx}`);
+          newIdx += delta;
+        } catch (e) {
+          break;
+        }
+      }
+    }
+
     if (newIdx >= 0 && newIdx < this.currentParser.spine.length) {
       if (this.isVerticalReadingMode() && !this.isPdfMode) {
         const targetSec = this.dom.readerContent?.querySelector(`.epub-chapter-section[data-chapter-index="${newIdx}"]`);
@@ -5911,7 +6093,7 @@ export class LuminaApp {
         }
       }
       if (this.ruler && this.ruler.enabled) {
-        this.ruler.hideForPageTransition();
+        this.ruler.prepareForPageTransition(delta >= 0 ? 1 : -1);
       }
       if (targetPage !== "last") {
         this.currentPageIndex = (typeof targetPage === "number") ? targetPage : (targetPage?.pageIndex ?? 0);

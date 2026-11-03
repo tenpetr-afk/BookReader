@@ -18,6 +18,7 @@ export class ReadingRuler {
   constructor(containerElement, app = null) {
     this.container = containerElement;
     this.app = app;
+    this.overlayContainer = null;
     this.rulerEl = null;
     this.wordWaveEl = null;
     this.maskTopEl = null;
@@ -336,25 +337,61 @@ export class ReadingRuler {
   }
 
   /**
-   * Okamžitě skryje pravítko během přechodu na jinou stránku a výpočtu řádků.
+   * Příprava a synchronní pre-kalkulace pravítka pro přechod mezi stranami.
+   * V režimu Zaostření (Focus Mode) udržuje masky kontinuálně aktivní a okamžitě
+   * je synchronně usadí na cílový výchozí řádek (line 0) před zobrazením nové strany.
    */
-  hideForPageTransition() {
+  prepareForPageTransition(direction = 1) {
     this.isPageTransitioning = true;
     this.setCursorHidden(false);
+    this.disableWordTransition();
+    this.cancelHold(false);
+
     if (this.rulerEl) {
       this.rulerEl.classList.add("is-page-transitioning");
       this.rulerEl.style.transition = "none";
       this.rulerEl.style.setProperty("transition", "none", "important");
-      this.rulerEl.style.opacity = "0";
-      this.rulerEl.style.visibility = "hidden";
     }
-    if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
-    if (this.maskTopEl) this.maskTopEl.style.display = "none";
-    if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
-    if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
-    if (this.maskRightEl) this.maskRightEl.style.display = "none";
-    if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
-    this.clearFocusTextMask();
+
+    const isFocusActive = this.enabled && this.focusMode && this.focusMode !== "off";
+    if (!isFocusActive) {
+      if (this.rulerEl) {
+        this.rulerEl.style.opacity = "0";
+        this.rulerEl.style.visibility = "hidden";
+      }
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+      if (this.maskTopEl) this.maskTopEl.style.display = "none";
+      if (this.maskBottomEl) this.maskBottomEl.style.display = "none";
+      if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
+      if (this.maskRightEl) this.maskRightEl.style.display = "none";
+      if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
+      this.clearFocusTextMask();
+      return;
+    }
+
+    // FOCUS MODE IS ACTIVE: Keep masks persistently visible and default to target line immediately
+    const targetLineIdx = direction >= 0 ? 0 : Math.max(0, (this.cachedLines ? this.cachedLines.length - 1 : 0));
+    this.activeLineIndex = targetLineIdx;
+    this.activeWordIndex = direction >= 0 ? 0 : Math.max(0, (this.cachedWords ? this.cachedWords.length - 1 : 0));
+
+    // Disable all mask transitions so position update is instantaneous and flicker-free
+    if (this.maskTopEl) this.maskTopEl.style.setProperty("transition", "none", "important");
+    if (this.maskBottomEl) this.maskBottomEl.style.setProperty("transition", "none", "important");
+    if (this.maskLeftEl) this.maskLeftEl.style.setProperty("transition", "none", "important");
+    if (this.maskRightEl) this.maskRightEl.style.setProperty("transition", "none", "important");
+    if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.setProperty("transition", "none", "important");
+
+    // Apply the target starting position synchronously before the page becomes visible
+    this.prepareFocusMasksForTransition(direction);
+  }
+
+  /**
+   * Skryje pravítko během přechodu na jinou stránku a výpočtu řádků.
+   * V režimu Zaostření (Focus Mode) však masku neskrývá, ale okamžitě ji
+   * nastaví na cílovou výchozí pozici pro zamezení probliknutí čistého textu.
+   */
+  hideForPageTransition(direction = 1) {
+    this.prepareForPageTransition(direction);
   }
 
   clearPageTransitionTimersAndRAFs() {
@@ -444,14 +481,14 @@ export class ReadingRuler {
     if (content) content.classList.remove("is-turning-page");
   }
 
-  lockAdvancement(duration = 350) {
+  lockAdvancement(duration = 350, direction = 1) {
     const stage = this.getStageElement();
     if (stage) stage.classList.add("is-turning-page");
     document.body.classList.add("is-turning-page");
     const content = document.getElementById("reader-content");
     if (content) content.classList.add("is-turning-page");
 
-    this.hideForPageTransition();
+    this.hideForPageTransition(direction);
     this.pageTurnTimestamp = performance.now();
     this.suppressLineAdvancement = true;
     this.isLineLocked = true;
@@ -839,15 +876,262 @@ export class ReadingRuler {
     this.maskInactiveSpreadEl.style.contain = "paint";
     this.maskInactiveSpreadEl.style.pointerEvents = "none";
 
-    document.body.appendChild(this.maskTopEl);
-    document.body.appendChild(this.maskBottomEl);
-    document.body.appendChild(this.maskLeftEl);
-    document.body.appendChild(this.maskRightEl);
-    document.body.appendChild(this.maskInactiveSpreadEl);
-    document.body.appendChild(this.rulerEl);
+    this.ensureOverlayContainer();
 
     this.updateStyles();
     this.applyPosition();
+  }
+
+  /**
+   * Zajišťuje existenci dedikovaného persistentního kontejneru pro překryvnou masku a pravítko.
+   * Kontejner je umístěn přímo v document.body a je oddělen od přerenderovávaného DOMu knihy.
+   */
+  ensureOverlayContainer() {
+    if (!this.overlayContainer || !document.body.contains(this.overlayContainer)) {
+      let el = document.getElementById("ruler-overlay-container");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "ruler-overlay-container";
+        el.className = "ruler-overlay-container";
+        el.setAttribute("aria-hidden", "true");
+        document.body.appendChild(el);
+      }
+      this.overlayContainer = el;
+    }
+    if (this.maskTopEl && !this.overlayContainer.contains(this.maskTopEl)) this.overlayContainer.appendChild(this.maskTopEl);
+    if (this.maskBottomEl && !this.overlayContainer.contains(this.maskBottomEl)) this.overlayContainer.appendChild(this.maskBottomEl);
+    if (this.maskLeftEl && !this.overlayContainer.contains(this.maskLeftEl)) this.overlayContainer.appendChild(this.maskLeftEl);
+    if (this.maskRightEl && !this.overlayContainer.contains(this.maskRightEl)) this.overlayContainer.appendChild(this.maskRightEl);
+    if (this.maskInactiveSpreadEl && !this.overlayContainer.contains(this.maskInactiveSpreadEl)) this.overlayContainer.appendChild(this.maskInactiveSpreadEl);
+    if (this.rulerEl && !this.overlayContainer.contains(this.rulerEl)) this.overlayContainer.appendChild(this.rulerEl);
+    return this.overlayContainer;
+  }
+
+  /**
+   * Spočítá výchozí geometrii pro cílový řádek při přechodu na novou stranu před tím,
+   * než je nová strana vykreslena (synchronní neutralizace probliknutí čistého textu).
+   */
+  getDefaultStartingLineGeometry(direction = 1) {
+    const isVertical = this.isVerticalMode();
+    const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+    const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
+    const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
+    const padding = this.rulerPadding || 6;
+    const isForward = direction >= 0;
+
+    let lineTop, lineBottom, left, width;
+
+    if (this.isPdfMode) {
+      const canvas = document.querySelector("#reader-content canvas");
+      const cRect = canvas ? canvas.getBoundingClientRect() : (this._cachedCanvasRect || stageRect);
+      const topBound = cRect ? cRect.top : stageRect.top;
+      const bottomBound = cRect ? cRect.bottom : stageRect.bottom;
+      lineTop = isForward ? Math.round(topBound) : Math.max(Math.round(topBound), Math.round(bottomBound - h));
+      lineBottom = Math.round(lineTop + h);
+      left = cRect ? Math.round(cRect.left) : Math.round(stageRect.left);
+      width = cRect ? Math.round(cRect.width) : Math.round(stageRect.width);
+    } else {
+      const topBound = Math.round(stageRect.top + padding);
+      const bottomBound = Math.round(stageRect.bottom - padding);
+      lineTop = isForward ? topBound : Math.max(topBound, Math.round(bottomBound - h));
+      lineBottom = Math.round(lineTop + h);
+
+      if (this.isTwoCol && !isVertical) {
+        const colIdx = isForward ? 0 : 1;
+        left = colIdx === 1 ? (this.column1Left ?? Math.round(stageRect.left + stageRect.width / 2)) : (this.column0Left ?? Math.round(stageRect.left));
+        width = colIdx === 1 ? (this.column1Width ?? Math.round(stageRect.width / 2)) : (this.column0Width ?? Math.round(stageRect.width / 2));
+      } else {
+        left = this.column0Left ?? Math.round(stageRect.left);
+        width = this.column0Width ?? Math.round(stageRect.width);
+      }
+    }
+
+    return {
+      lineTop,
+      lineBottom,
+      height: Math.max(1, lineBottom - lineTop),
+      targetY: lineTop,
+      left: Math.round(left),
+      width: Math.round(width)
+    };
+  }
+
+  /**
+   * Synchronně usadí masky zaostření (Focus Mode) na cílovou výchozí pozici nové strany.
+   * Zajišťuje nepřetržité pokrytí obrazovky – uživatel nespatří nezakrytý text ani na jediný snímek.
+   */
+  prepareFocusMasksForTransition(direction = 1) {
+    if (!this.enabled || !this.focusMode || this.focusMode === "off") return;
+
+    this.isPageTransitioning = true;
+    const isForward = direction >= 0;
+    const isVertical = this.isVerticalMode();
+    const vh = window.innerHeight;
+    const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.65;
+    const themeBg = "var(--bg-theme, var(--color-bg, #fbf0d9))";
+
+    // 1. Zjištění geometrie výchozího řádku
+    let lineTop, lineBottom, colLeft, colWidth;
+    if (this.cachedLines && this.cachedLines.length > 0) {
+      const line = isForward ? this.cachedLines[0] : this.cachedLines[this.cachedLines.length - 1];
+      const geom = this.computeLineGeometry(isForward ? 0 : this.cachedLines.length - 1);
+      lineTop = (geom && Number.isFinite(geom.lineTop)) ? geom.lineTop : (line.lineTop ?? line.top);
+      lineBottom = (geom && Number.isFinite(geom.lineBottom)) ? geom.lineBottom : (line.lineBottom ?? line.bottom);
+      colLeft = (geom && Number.isFinite(geom.left)) ? geom.left : (line.columnLeft ?? line.left ?? this.column0Left);
+      colWidth = (geom && Number.isFinite(geom.width)) ? geom.width : (line.columnWidth ?? line.width ?? this.column0Width);
+    } else {
+      const defGeom = this.getDefaultStartingLineGeometry(direction);
+      lineTop = defGeom.lineTop;
+      lineBottom = defGeom.lineBottom;
+      colLeft = defGeom.left;
+      colWidth = defGeom.width;
+    }
+
+    const vp = isVertical ? (this._cachedViewportEl || document.getElementById("paged-viewport")) : null;
+    const vScrollTop = (isVertical && vp) ? vp.scrollTop : 0;
+    const lineScreenTop = isVertical ? Math.round(lineTop - vScrollTop) : Math.round(lineTop);
+    const lineScreenBottom = isVertical ? Math.round(lineBottom - vScrollTop) : Math.round(lineBottom);
+    const lineH = Math.max(1, lineScreenBottom - lineScreenTop);
+
+    // Kontrola dvoustrany / dvou sloupců
+    const isSpread = !isVertical && this.isSpreadActive();
+    const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
+    const isTwoCol = !isVertical && this.isTwoCol;
+
+    let coverLeft = 0;
+    let coverWidth = window.innerWidth;
+    if (spreadInfo) {
+      coverLeft = Math.round(spreadInfo.activeRect.left);
+      coverWidth = Math.round(spreadInfo.activeRect.width);
+    } else if (isTwoCol) {
+      const activeCol = isForward ? 0 : 1;
+      const c0Left = this.column0Left ?? 0;
+      const c0Width = this.column0Width ?? Math.round(window.innerWidth / 2);
+      const c1Left = this.column1Left ?? Math.round(c0Left + c0Width);
+      const c1Width = this.column1Width ?? c0Width;
+      coverLeft = activeCol === 1 ? c1Left : c0Left;
+      coverWidth = activeCol === 1 ? c1Width : c0Width;
+    }
+
+    const useFullWidth = isVertical || (!spreadInfo && !isTwoCol && !this.isPdfMode);
+    const maskLeft = useFullWidth ? 0 : coverLeft;
+    const maskWidth = useFullWidth ? "100%" : `${coverWidth}px`;
+
+    this.ensureOverlayContainer();
+
+    // 1. Horní maska: pro "up" a "both"
+    if (this.focusMode === "up" || this.focusMode === "both") {
+      if (this.maskTopEl) {
+        this.maskTopEl.className = "ruler-mask ruler-mask-top is-visible";
+        this.maskTopEl.style.setProperty("display", "block", "important");
+        this.maskTopEl.style.setProperty("visibility", "visible", "important");
+        this.maskTopEl.style.setProperty("transition", "none", "important");
+        this.maskTopEl.style.setProperty("background-color", themeBg, "important");
+        this.maskTopEl.style.setProperty("opacity", String(dimOpacity), "important");
+        this.maskTopEl.style.setProperty("z-index", "15", "important");
+        this.maskTopEl.style.setProperty("pointer-events", "none", "important");
+        this.maskTopEl.style.top = "0px";
+        this.maskTopEl.style.left = "0px";
+        this.maskTopEl.style.width = maskWidth;
+        this.maskTopEl.style.height = `${vh}px`;
+        this.maskTopEl.style.transform = `translate3d(${maskLeft}px, ${Math.round(lineScreenTop - vh)}px, 0)`;
+      }
+    } else if (this.maskTopEl) {
+      this.maskTopEl.style.display = "none";
+      this.maskTopEl.classList.remove("is-visible");
+      this.maskTopEl.classList.add("is-hidden");
+    }
+
+    // 2. Dolní maska: pro "down" a "both"
+    if (this.focusMode === "down" || this.focusMode === "both") {
+      if (this.maskBottomEl) {
+        this.maskBottomEl.className = "ruler-mask ruler-mask-bottom is-visible";
+        this.maskBottomEl.style.setProperty("display", "block", "important");
+        this.maskBottomEl.style.setProperty("visibility", "visible", "important");
+        this.maskBottomEl.style.setProperty("transition", "none", "important");
+        this.maskBottomEl.style.setProperty("background-color", themeBg, "important");
+        this.maskBottomEl.style.setProperty("opacity", String(dimOpacity), "important");
+        this.maskBottomEl.style.setProperty("z-index", "15", "important");
+        this.maskBottomEl.style.setProperty("pointer-events", "none", "important");
+        this.maskBottomEl.style.top = "0px";
+        this.maskBottomEl.style.left = "0px";
+        this.maskBottomEl.style.width = maskWidth;
+        this.maskBottomEl.style.height = `${Math.max(vh * 2, 2000)}px`;
+        this.maskBottomEl.style.transform = `translate3d(${maskLeft}px, ${lineScreenBottom}px, 0)`;
+      }
+    } else if (this.maskBottomEl) {
+      this.maskBottomEl.style.display = "none";
+      this.maskBottomEl.classList.remove("is-visible");
+      this.maskBottomEl.classList.add("is-hidden");
+    }
+
+    // 3. Postranní masky: pro režim "both"
+    const needSideMasks = this.focusMode === "both" && (isTwoCol || this.isPdfMode);
+    if (needSideMasks) {
+      const slitLeft = Math.max(0, Math.round(colLeft));
+      const slitRight = Math.min(window.innerWidth, Math.round(colLeft + colWidth));
+      if (this.maskLeftEl) {
+        this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
+        this.maskLeftEl.style.setProperty("display", "block", "important");
+        this.maskLeftEl.style.setProperty("visibility", "visible", "important");
+        this.maskLeftEl.style.setProperty("transition", "none", "important");
+        this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
+        this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
+        this.maskLeftEl.style.setProperty("z-index", "15", "important");
+        this.maskLeftEl.style.top = "0px";
+        this.maskLeftEl.style.left = "0px";
+        this.maskLeftEl.style.width = `${slitLeft}px`;
+        this.maskLeftEl.style.height = `${lineH}px`;
+        this.maskLeftEl.style.transform = `translate3d(0, ${lineScreenTop}px, 0)`;
+      }
+      if (this.maskRightEl) {
+        const rightWidth = Math.max(0, window.innerWidth - slitRight);
+        this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
+        this.maskRightEl.style.setProperty("display", "block", "important");
+        this.maskRightEl.style.setProperty("visibility", "visible", "important");
+        this.maskRightEl.style.setProperty("transition", "none", "important");
+        this.maskRightEl.style.setProperty("background-color", themeBg, "important");
+        this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
+        this.maskRightEl.style.setProperty("z-index", "15", "important");
+        this.maskRightEl.style.top = "0px";
+        this.maskRightEl.style.left = "0px";
+        this.maskRightEl.style.width = `${rightWidth}px`;
+        this.maskRightEl.style.height = `${lineH}px`;
+        this.maskRightEl.style.transform = `translate3d(${slitRight}px, ${lineScreenTop}px, 0)`;
+      }
+    } else {
+      if (this.maskLeftEl) { this.maskLeftEl.style.display = "none"; this.maskLeftEl.classList.remove("is-visible"); this.maskLeftEl.classList.add("is-hidden"); }
+      if (this.maskRightEl) { this.maskRightEl.style.display = "none"; this.maskRightEl.classList.remove("is-visible"); this.maskRightEl.classList.add("is-hidden"); }
+    }
+
+    // 4. Maska protilehlé neaktivní strany v režimu dvoustrany
+    if (spreadInfo || isTwoCol) {
+      const activeCol = isForward ? 0 : 1;
+      const inactiveRect = spreadInfo ? spreadInfo.inactiveRect : {
+        left: activeCol === 0 ? this.column1Left : this.column0Left,
+        top: 0,
+        width: activeCol === 0 ? this.column1Width : this.column0Width,
+        height: vh
+      };
+      if (inactiveRect && inactiveRect.width > 50 && this.maskInactiveSpreadEl) {
+        this.maskInactiveSpreadEl.className = "ruler-mask ruler-mask-bottom ruler-mask-inactive-spread is-visible";
+        this.maskInactiveSpreadEl.style.setProperty("display", "block", "important");
+        this.maskInactiveSpreadEl.style.setProperty("visibility", "visible", "important");
+        this.maskInactiveSpreadEl.style.setProperty("transition", "none", "important");
+        this.maskInactiveSpreadEl.style.setProperty("background-color", themeBg, "important");
+        this.maskInactiveSpreadEl.style.setProperty("opacity", String(dimOpacity), "important");
+        this.maskInactiveSpreadEl.style.setProperty("z-index", "15", "important");
+        this.maskInactiveSpreadEl.style.top = `${Math.round(inactiveRect.top)}px`;
+        this.maskInactiveSpreadEl.style.left = `${Math.round(inactiveRect.left)}px`;
+        this.maskInactiveSpreadEl.style.width = `${Math.round(inactiveRect.width)}px`;
+        this.maskInactiveSpreadEl.style.height = `${Math.round(inactiveRect.height)}px`;
+        this.maskInactiveSpreadEl.style.transform = "none";
+      }
+    } else if (this.maskInactiveSpreadEl) {
+      this.maskInactiveSpreadEl.style.display = "none";
+      this.maskInactiveSpreadEl.classList.remove("is-visible");
+      this.maskInactiveSpreadEl.classList.add("is-hidden");
+    }
   }
 
   /**
@@ -7271,7 +7555,7 @@ export class ReadingRuler {
         }
 
         // 2. Dimming masky ve vertikálním PDF módu dle focusMode
-        const isPdfFocus = this.enabled && !this.isPageTransitioning && this.focusMode && this.focusMode !== "off";
+        const isPdfFocus = this.enabled && this.focusMode && this.focusMode !== "off";
         if (isPdfFocus) {
           const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.65;
           const themeBg = "var(--bg-theme, var(--color-bg, #fbf0d9))";
@@ -7497,7 +7781,7 @@ export class ReadingRuler {
       }
 
       // 2. Dimming masky v horizontálním PDF módu dle focusMode
-      const isPdfFocus = this.enabled && !this.isPageTransitioning && this.focusMode && this.focusMode !== "off";
+      const isPdfFocus = this.enabled && this.focusMode && this.focusMode !== "off";
       if (isPdfFocus) {
         const dimOpacity = this.dimOpacity !== undefined ? this.dimOpacity : 0.65;
         const themeBg = "var(--bg-theme, var(--color-bg, #fbf0d9))";
@@ -8055,12 +8339,12 @@ export class ReadingRuler {
     }
 
     const stage = this.getStageElement();
-    const isFocus = this.enabled && !this.isPageTransitioning && this.focusMode && this.focusMode !== "off" && (this.isPdfMode || this.cachedLines.length > 0) && currentLine;
+    const isFocus = this.enabled && this.focusMode && this.focusMode !== "off";
 
     if (isFocus) {
       this._focusMaskDirty = true;
-      if (this.cachedLines.length === 0) {
-        this.clearFocusTextMask(stage);
+      if (!currentLine && this.cachedLines.length === 0 && !this.isPdfMode) {
+        this.prepareFocusMasksForTransition(1);
         return;
       }
 
@@ -8402,7 +8686,7 @@ export class ReadingRuler {
     }
 
     const hasLines = this.isPdfMode || this.cachedLines.length > 0;
-    const isFocus = this.enabled && this.focusMode && this.focusMode !== "off" && !this.isPageTransitioning && hasLines;
+    const isFocus = this.enabled && this.focusMode && this.focusMode !== "off";
     const isBottomCover = this.enabled && (this.style === "bottom-cover" || this.mode === "bottom-cover") && !this.isPageTransitioning && hasLines;
     const transitionClass = this.horizontalWordTransition ? "word-transition-active" : "word-transition-snap";
 
@@ -9259,6 +9543,12 @@ export class ReadingRuler {
       return;
     }
 
+    // Pokud je požadováno okamžité usazení pravítka (immediateRuler), provedeme reset přímo
+    if (immediateRuler) {
+      executePageReset();
+      return;
+    }
+
     // Pokud probíhá otáčení stránky v DOMu, počkáme na double requestAnimationFrame + debounced settle timeout (60ms)
     if (isDocTurning) {
       this.pageChangeRafId = requestAnimationFrame(() => {
@@ -9357,6 +9647,10 @@ export class ReadingRuler {
     if (this.maskLeftEl) this.maskLeftEl.remove();
     if (this.maskRightEl) this.maskRightEl.remove();
     if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.remove();
+    if (this.overlayContainer) {
+      this.overlayContainer.remove();
+      this.overlayContainer = null;
+    }
     document.querySelectorAll(".ruler-hold-indicator").forEach(el => el.remove());
     this.clearFocusTextMask();
     this.setCursorHidden(false);

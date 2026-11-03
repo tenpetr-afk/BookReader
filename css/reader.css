@@ -203,6 +203,14 @@ body:not(.mode-vertical) .paged-content.columns-2 {
   padding-right: 2px !important;
 }
 
+/* Zabránění vzniku prázdných sloupců přetečením spodního okraje posledního odstavce */
+.paged-content > *:last-child,
+.paged-content > *:last-child *:last-child,
+.paged-content > *:last-child *:last-child *:last-child {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
+}
+
 /* Hloubková dědičnost typografie pro přebití vložených EPUB stylů */
 #reader-stage,
 #reader-content,
@@ -1331,9 +1339,8 @@ body.ruler-vertical-mode .ruler-focused-image {
   -webkit-transition: none !important;
 }
 
-/* Okamžité skrytí pravítka během přechodu mezi stranami pro zamezení desynchronizace */
-.reading-ruler.is-page-transitioning,
-.ruler-mask.is-page-transitioning {
+/* Okamžité skrytí zvýrazňovací pásky během přechodu mezi stranami pro zamezení desynchronizace (pouze páska, nikdy masky v focus módu) */
+.reading-ruler.is-page-transitioning:not(.mode-focus) {
   opacity: 0 !important;
   visibility: hidden !important;
   display: none !important;
@@ -1571,6 +1578,22 @@ canvas.active-focus,
   filter: none !important;
 }
 
+/* Persistentní kontejner pro čtecí pravítko a zaostřovací masku (Focus Overlay Layer) */
+.ruler-overlay-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none !important;
+  z-index: 15;
+  overflow: hidden;
+  contain: strict;
+  transform: translate3d(0, 0, 0);
+  -webkit-transform: translate3d(0, 0, 0);
+  will-change: transform;
+}
+
 /* Masky ztmavující okolní text v režimu Zaostření (Focus Mode) - tématicky sladěné s pozadím */
 .ruler-mask {
   position: fixed;
@@ -1591,10 +1614,21 @@ canvas.active-focus,
 
 .ruler-mask.is-visible {
   display: block !important;
+  visibility: visible !important;
 }
 
 .ruler-mask.is-hidden {
   display: none !important;
+  visibility: hidden !important;
+}
+
+/* Masky zůstávají kontinuálně aktivní i během přechodu stran – zamezení probliknutí čistého textu */
+.ruler-mask.is-visible.is-page-transitioning,
+body.is-turning-page .ruler-mask.is-visible {
+  display: block !important;
+  visibility: visible !important;
+  opacity: var(--focus-dim-opacity, 0.70) !important;
+  transition: none !important;
 }
 
 /* Režim PDF: tématicky sladěný překryv pro režim Zaostření (Focus Mode), identický s EPUB */

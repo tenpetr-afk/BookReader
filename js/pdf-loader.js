@@ -264,12 +264,16 @@ export class PDFLoader {
    * Vykreslí zadanou stranu PDF do elementu <canvas>
    * V horizontálním režimu při aktivním isSpreadActive() vykreslí dvoustranu (Two-Page Spread)
    */
-  async renderPage(pageNumber) {
+  async renderPage(pageNumber, direction = 0) {
     if (!this.pdfDoc || pageNumber < 1 || pageNumber > this.numPages) return;
 
     if (this.isVerticalMode()) {
-      await this.goToPage(pageNumber);
+      await this.goToPage(pageNumber, direction);
       return;
+    }
+
+    if (this.app?.ruler?.enabled) {
+      this.app.ruler.prepareForPageTransition(direction);
     }
 
     if (this.isRendering) {
@@ -374,6 +378,8 @@ export class PDFLoader {
 
           const spreadContainer = document.createElement("div");
           spreadContainer.className = "pdf-spread-container";
+          spreadContainer.style.opacity = "0";
+          spreadContainer.style.transition = "none";
           this.spreadContainer = spreadContainer;
 
           const pageSlots = [];
@@ -445,6 +451,7 @@ export class PDFLoader {
             Promise.all(renderTasks.map(t => t.rTask.promise)),
             Promise.all(renderTasks.map(t => t.tTask))
           ]);
+          spreadContainer.style.opacity = "1";
           this.currentRenderTasks = [];
           this.currentRenderTask = null;
           this.currentTextLayerTasks = [];
@@ -506,6 +513,8 @@ export class PDFLoader {
           this.pageContainer = pageContainer;
 
           pageContainer.style.position = "relative";
+          pageContainer.style.opacity = "0";
+          pageContainer.style.transition = "none";
           pageContainer.style.width = `${floorW}px`;
           pageContainer.style.height = `${floorH}px`;
           pageContainer.style.maxWidth = "100vw";
@@ -555,6 +564,7 @@ export class PDFLoader {
           this.currentRenderTask = page.render(renderContext);
           const tTask = this._renderTextLayerForPage(page, viewport, pageContainer, pageNumber);
           await Promise.all([this.currentRenderTask.promise, tTask]);
+          pageContainer.style.opacity = "1";
           this.currentRenderTask = null;
           this.currentTextLayerTask = null;
 
@@ -582,7 +592,7 @@ export class PDFLoader {
       if (this._renderQueuePage !== null) {
         const next = this._renderQueuePage;
         this._renderQueuePage = null;
-        await this.renderPage(next);
+        await this.renderPage(next, direction);
       }
     }
 
@@ -590,7 +600,7 @@ export class PDFLoader {
 
     // Provázání do globálního stavu aplikace LuminaReader
     if (this.app && typeof this.app.onPdfPageRendered === "function") {
-      this.app.onPdfPageRendered(this.currentPage, this.numPages);
+      this.app.onPdfPageRendered(this.currentPage, this.numPages, false, false, direction);
     }
     if (typeof this.onPageChanged === "function") {
       this.onPageChanged(this.currentPage, this.numPages);
@@ -1039,7 +1049,7 @@ export class PDFLoader {
       }
 
       if (this.app && typeof this.app.onPdfPageRendered === "function") {
-        this.app.onPdfPageRendered(this.currentPage, this.numPages);
+        this.app.onPdfPageRendered(this.currentPage, this.numPages, false, false, direction);
       }
       if (typeof this.onPageChanged === "function") {
         this.onPageChanged(this.currentPage, this.numPages);
@@ -1047,7 +1057,7 @@ export class PDFLoader {
       return;
     }
 
-    await this.renderPage(target);
+    await this.renderPage(target, direction);
   }
 
   /**
