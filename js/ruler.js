@@ -87,9 +87,11 @@ export class ReadingRuler {
     this.activeWordIndex = -1;
     this._rulerMode = "line"; // "line" | "word"
     this._activeReadingLineIndex = -1;
+    this._activeLineStartTime = 0;
     this._completedLineIndices = new Set();
     this._lastWordLineIndex = -1;
     this._lastWordIndex = -1;
+    this._wordsReadOnPage = new Set();
     this._lastActiveLineIndex = -1;
     this._lastActiveColumn = null;
     this._focusMaskDirty = false;
@@ -350,6 +352,13 @@ export class ReadingRuler {
   prepareForPageTransition(direction = 1) {
     if (direction > 0) {
       this.finalizeCurrentPageProgress();
+    } else {
+      this._activeReadingLineIndex = -1;
+      this._activeLineStartTime = 0;
+      this._completedLineIndices = new Set();
+      this._lastWordLineIndex = -1;
+      this._lastWordIndex = -1;
+      this._wordsReadOnPage = new Set();
     }
     this.isPageTransitioning = true;
     this.setCursorHidden(false);
@@ -811,6 +820,9 @@ export class ReadingRuler {
 
   setRulerMode(mode) {
     const valid = ["line", "word"].includes(mode) ? mode : "line";
+    if (this._rulerMode !== valid) {
+      this.finalizeCurrentPageProgress();
+    }
     this._rulerMode = valid;
     this.wordTracking = (valid === "word");
 
@@ -5643,6 +5655,10 @@ export class ReadingRuler {
     const effectiveClientY = clientY;
     const pType = pointerType || this.activePointerType || (Date.now() - this.lastPenTime < 500 ? "pen" : "mouse");
 
+    const isMovingLeft = (this.lastValidPointerX !== null && clientX !== null)
+      ? (clientX < this.lastValidPointerX - 10)
+      : false;
+
     // Displacement / Delta Threshold Sanity Check:
     // Pokud probíhá aktivní tažení s předchozí platnou souřadnicí (mimo režim sledování myši), zachytíme anomální skok (např. dotyk dlaně).
     if (
@@ -5723,7 +5739,7 @@ export class ReadingRuler {
         }
         this.activeLineIndex = nearestLineIdx;
         if (!this.wordTracking) {
-          this._checkLineProgress(nearestLineIdx);
+          this._checkLineProgress(nearestLineIdx, false);
         }
       }
 
@@ -5830,7 +5846,7 @@ export class ReadingRuler {
           this.activeLineIndex = targetLineIdx;
           this._lastActiveLineIndex = targetLineIdx;
           this._lastActiveColumn = activeColumn;
-          this._checkLineProgress(targetLineIdx);
+          this._checkLineProgress(targetLineIdx, false);
           const geom = this.computeLineGeometry(targetLineIdx);
           if (geom) {
             this.height = geom.height;
@@ -5982,7 +5998,9 @@ export class ReadingRuler {
           closestIdx = 0;
         }
 
-        this.setWordWindow(closestIdx);
+        if (this.followMode !== "mouse") {
+          this.setWordWindow(closestIdx, isMovingLeft);
+        }
 
         // V režimu sledování myši (mouse-follow) zajistit plynulý spojitý horizontální pohyb bez magnetického přichytávání a bez trhání zpět
         if (this.followMode === "mouse") {
@@ -6073,7 +6091,7 @@ export class ReadingRuler {
 
               this.activeWordIndex = (clampedT < 0.5) ? segIdx : segIdx + 1;
             }
-            this._checkWordProgress(this.activeWordIndex);
+            this._checkWordProgress(this.activeWordIndex, isMovingLeft);
           } else {
             continuousLeft = Math.round(curX - this.activeWordWidth / 2);
             continuousWidth = this.activeWordWidth;
@@ -6156,7 +6174,7 @@ export class ReadingRuler {
       this._lastActiveColumn = activeColumn;
 
       if (!this.wordTracking) {
-        this._checkLineProgress(targetLineIdx);
+        this._checkLineProgress(targetLineIdx, false);
       }
       const closestLine = this.cachedLines[targetLineIdx];
 
@@ -6208,11 +6226,14 @@ export class ReadingRuler {
     return Math.max(1, Math.round(pageWords / totalLines));
   }
 
-  _checkLineProgress(idx) {
+  _checkLineProgress(idx, isKeyboard = false) {
     if (this.rulerMode !== "line" || idx < 0) return;
+
+    const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
 
     if (this._activeReadingLineIndex < 0) {
       this._activeReadingLineIndex = idx;
+      this._activeLineStartTime = now;
       if (!this._completedLineIndices) this._completedLineIndices = new Set();
       return;
     }
@@ -6220,39 +6241,44 @@ export class ReadingRuler {
     if (idx === this._activeReadingLineIndex) return;
 
     const prevLineIdx = this._activeReadingLineIndex;
+    const dwell = now - (this._activeLineStartTime || 0);
 
-    // Pokud uživatel postoupil vpřed (přepnul na další řádek / řádky):
-    // Započítá se předchozí řádek (případně přeskočené řádky),
-    // zatímco aktuální řádek (idx) je právě čten a započte se až v další minutě / při dalším přepnutí.
+    // Dwell time threshold:
+    // Pokud uživatel posunul kurzor myši příliš rychle (< 400ms) přes řádek,
+    // šlo o rychlý přelet kurzoru / chvění myši, nikoliv čtení.
+    // Klávesové šipky (isKeyboard = true) mají dwell ignorován (uživatel vědomě krokuje).
+    const isDwellSufficient = isKeyboard || dwell >= 400;
+
+    if (!this._completedLineIndices) this._completedLineIndices = new Set();
+
     if (idx > prevLineIdx) {
-      if (!this._completedLineIndices) this._completedLineIndices = new Set();
-
-      let wordsToAdd = 0;
-      for (let l = prevLineIdx; l < idx; l++) {
-        if (!this._completedLineIndices.has(l)) {
-          this._completedLineIndices.add(l);
-          const lineWords = this.getWordsForLine(l);
-          const count = Array.isArray(lineWords) && lineWords.length > 0
-            ? lineWords.length
-            : this._estimateLineWordsFallback(l);
-          if (count > 0) {
-            wordsToAdd += count;
-          }
+      // Uživatel postoupil vpřed na další řádek.
+      // Započítá se POUZE předchozí řádek (prevLineIdx), na kterém čtenář skutečně setrval.
+      // Přeskočené řádky se nezapočítávají, protože na nich čtenář nestrávil žádný čas.
+      if (isDwellSufficient && !this._completedLineIndices.has(prevLineIdx)) {
+        this._completedLineIndices.add(prevLineIdx);
+        const lineWords = this.getWordsForLine(prevLineIdx);
+        const count = Array.isArray(lineWords) && lineWords.length > 0
+          ? lineWords.length
+          : this._estimateLineWordsFallback(prevLineIdx);
+        if (count > 0 && typeof this.onProgress === "function") {
+          this.onProgress("line", count);
         }
-      }
-
-      if (wordsToAdd > 0 && typeof this.onProgress === "function") {
-        this.onProgress("line", wordsToAdd);
       }
     }
 
     this._activeReadingLineIndex = idx;
+    this._activeLineStartTime = now;
   }
 
   finalizeCurrentPageProgress() {
+    const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    const isKeyboard = this.followMode === "keyboard";
+
     if (this.rulerMode === "line" && this._activeReadingLineIndex >= 0) {
       if (!this._completedLineIndices) this._completedLineIndices = new Set();
-      if (!this._completedLineIndices.has(this._activeReadingLineIndex)) {
+      const dwell = now - (this._activeLineStartTime || 0);
+      if ((isKeyboard || dwell >= 400) && !this._completedLineIndices.has(this._activeReadingLineIndex)) {
         this._completedLineIndices.add(this._activeReadingLineIndex);
         const lineWords = this.getWordsForLine(this._activeReadingLineIndex);
         const count = Array.isArray(lineWords) && lineWords.length > 0
@@ -6263,16 +6289,20 @@ export class ReadingRuler {
         }
       }
     }
+
     this._activeReadingLineIndex = -1;
+    this._activeLineStartTime = 0;
     this._completedLineIndices = new Set();
     this._lastWordLineIndex = -1;
     this._lastWordIndex = -1;
+    this._wordsReadOnPage = new Set();
   }
 
-  _checkWordProgress(idx) {
+  _checkWordProgress(idx, isMovingLeft = false) {
     if (this.rulerMode !== "word" || idx < 0) return;
 
     const curLineIdx = this.activeLineIndex >= 0 ? this.activeLineIndex : 0;
+    if (!this._wordsReadOnPage) this._wordsReadOnPage = new Set();
 
     // Prvotní umístění pravítka na slovo
     if (this._lastWordLineIndex < 0 || this._lastWordIndex < 0) {
@@ -6284,33 +6314,46 @@ export class ReadingRuler {
     let wordsPassedOver = 0;
 
     if (curLineIdx > this._lastWordLineIndex) {
-      // 1. Dokončení předchozího řádku: slova od _lastWordIndex do konce řádku
-      const prevLineWords = this.getWordsForLine(this._lastWordLineIndex) || [];
-      const prevRemaining = Math.max(0, prevLineWords.length - 1 - this._lastWordIndex);
-      wordsPassedOver += prevRemaining;
-
-      // 2. Mezilehlé přeskočené řádky
-      for (let l = this._lastWordLineIndex + 1; l < curLineIdx; l++) {
-        const midWords = this.getWordsForLine(l) || [];
-        wordsPassedOver += midWords.length;
+      // 1. Dokončení předchozího řádku: pouze pokud jsme nestihli započíst při dopředném čtení (např. krok klávesnicí)
+      if (!isMovingLeft) {
+        const prevLineWords = this.getWordsForLine(this._lastWordLineIndex) || [];
+        for (let w = Math.max(0, this._lastWordIndex); w < prevLineWords.length; w++) {
+          const key = `${this._lastWordLineIndex}:${w}`;
+          if (!this._wordsReadOnPage.has(key)) {
+            this._wordsReadOnPage.add(key);
+            wordsPassedOver++;
+          }
+        }
+        for (let w = 0; w <= idx; w++) {
+          const key = `${curLineIdx}:${w}`;
+          if (!this._wordsReadOnPage.has(key)) {
+            this._wordsReadOnPage.add(key);
+            wordsPassedOver++;
+          }
+        }
       }
-
-      // 3. Slova na novém řádku od začátku (0) až po aktuální slovo idx
-      wordsPassedOver += (idx + 1);
 
       this._lastWordLineIndex = curLineIdx;
       this._lastWordIndex = idx;
     } else if (curLineIdx === this._lastWordLineIndex) {
-      // Na stejném řádku: spočítat přesně tolik slov, přes kolik pravítko přejelo dopředu
-      if (idx > this._lastWordIndex) {
-        wordsPassedOver = idx - this._lastWordIndex;
+      // Na stejném řádku:
+      if (!isMovingLeft && idx >= this._lastWordIndex) {
+        const startW = this._wordsReadOnPage.has(`${curLineIdx}:${this._lastWordIndex}`)
+          ? this._lastWordIndex + 1
+          : this._lastWordIndex;
+        for (let w = Math.max(0, startW); w <= idx; w++) {
+          const key = `${curLineIdx}:${w}`;
+          if (!this._wordsReadOnPage.has(key)) {
+            this._wordsReadOnPage.add(key);
+            wordsPassedOver++;
+          }
+        }
         this._lastWordIndex = idx;
-      } else if (idx < this._lastWordIndex) {
-        // Vrácení zpět: pouze posunout index bez zápočtu
+      } else {
         this._lastWordIndex = idx;
       }
     } else {
-      // Vrácení na předchozí řádek
+      // Návrat na předchozí řádek (nahoru): pouze aktualizujeme pozici bez zápočtu
       this._lastWordLineIndex = curLineIdx;
       this._lastWordIndex = idx;
     }
@@ -6326,7 +6369,7 @@ export class ReadingRuler {
    * - Dopředný náhled: plynulé lineární doznívání pokrývající 1.5–2 následující slova na témže řádku
    * - Celková šířka (totalWidth) ořezána striktně podle pravého okraje aktuálního řádku
    */
-  setWordWindow(wordIndex) {
+  setWordWindow(wordIndex, isMovingLeft = false) {
     if (wordIndex < 0 || wordIndex >= this.cachedWords.length) {
       this.activeWordIndex = -1;
       this.activeWordWidth = 0;
@@ -6344,7 +6387,7 @@ export class ReadingRuler {
     if (w0 && w0.lineIndex != null && w0.lineIndex >= 0 && w0.lineIndex < this.cachedLines.length) {
       this.activeLineIndex = w0.lineIndex;
     }
-    this._checkWordProgress(wordIndex);
+    this._checkWordProgress(wordIndex, isMovingLeft);
     const padX = 3;
     const padY = 1.5;
 
@@ -6485,6 +6528,14 @@ export class ReadingRuler {
     this._lastActiveLineIndex = -1;
     this._lastActiveColumn = null;
     this._lastEmptyWordsDetectTime = 0;
+    if (isPageChanged) {
+      this._activeReadingLineIndex = -1;
+      this._activeLineStartTime = 0;
+      this._completedLineIndices = new Set();
+      this._lastWordLineIndex = -1;
+      this._lastWordIndex = -1;
+      this._wordsReadOnPage = new Set();
+    }
 
     // Clear the transition lock:
     this.isPageTransitioning = false;
@@ -7198,7 +7249,7 @@ export class ReadingRuler {
 
           if (currentLine && nextLine && vp) {
             this.activeLineIndex = newIdx;
-            this._checkLineProgress(newIdx);
+            this._checkLineProgress(newIdx, true);
             this.rulerEl.classList.remove("word-tracking-mode");
             const geom = this.computeLineGeometry(newIdx);
             if (geom) {
@@ -7228,7 +7279,7 @@ export class ReadingRuler {
         }
 
         this.activeLineIndex = newIdx;
-        this._checkLineProgress(newIdx);
+        this._checkLineProgress(newIdx, true);
 
         this.rulerEl.classList.remove("word-tracking-mode");
         const geom = this.computeLineGeometry(newIdx);
@@ -8008,7 +8059,7 @@ export class ReadingRuler {
         if (closestIdx >= 0 && closestIdx !== this.activeLineIndex) {
           this.activeLineIndex = closestIdx;
           if (!this.wordTracking) {
-            this._checkLineProgress(closestIdx);
+            this._checkLineProgress(closestIdx, false);
           } else {
             const words = this.ensureActiveWords(closestIdx);
             if (words && words.length > 0) {
