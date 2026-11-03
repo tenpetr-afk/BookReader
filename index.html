@@ -207,14 +207,18 @@
               </div>
             </div>
 
-            <!-- Režim pravítka: Řádkové vs. Sledování slov -->
+            <!-- Režim pravítka: Řádky vs. Věty vs. Slova -->
             <div class="popover-section" id="popover-ruler-mode-section">
               <div class="popover-section-label">Režim zvýraznění</div>
-              <div class="popover-segmented-control" id="popover-mode-segmented">
+              <div class="popover-segmented-control columns-3" id="popover-mode-segmented">
                 <span class="segmented-bubble" aria-hidden="true"></span>
                 <button type="button" class="segment-btn active" id="popover-mode-line" data-ruler-mode-type="line">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                   <span>Řádky</span>
+                </button>
+                <button type="button" class="segment-btn" id="popover-mode-sentence" data-ruler-mode-type="sentence">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h16"/></svg>
+                  <span>Věty</span>
                 </button>
                 <button type="button" class="segment-btn" id="popover-mode-word" data-ruler-mode-type="word">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="10" rx="3"/></svg>
@@ -649,13 +653,14 @@
             </div>
           </div>
 
-          <!-- Funkce pravítka: Sledování slov -->
+          <!-- Funkce pravítka: Režim zvýraznění -->
           <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;" id="drawer-word-tracking-section">
-            <div class="toggle-row">
-              <span class="toggle-title">Sledování jednotlivých slov</span>
-              <button type="button" role="switch" id="ruler-word-tracking-setting" class="switch-control" aria-checked="false" aria-label="Sledování jednotlivých slov">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-              </button>
+            <div class="slider-label"><span>Režim pravítka</span></div>
+            <div class="popover-segmented-control columns-3" id="drawer-mode-segmented">
+              <span class="segmented-bubble" aria-hidden="true"></span>
+              <button type="button" class="segment-btn active" data-ruler-mode-type="line">Řádky</button>
+              <button type="button" class="segment-btn" data-ruler-mode-type="sentence">Věty</button>
+              <button type="button" class="segment-btn" data-ruler-mode-type="word">Slova</button>
             </div>
           </div>
 

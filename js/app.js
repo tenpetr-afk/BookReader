@@ -402,6 +402,7 @@ export class LuminaApp {
       btnRulerQuickMenu: document.getElementById("btn-ruler-quick-menu"),
       rulerQuickPopover: document.getElementById("ruler-quick-popover"),
       popoverModeLine: document.getElementById("popover-mode-line"),
+      popoverModeSentence: document.getElementById("popover-mode-sentence"),
       popoverModeWord: document.getElementById("popover-mode-word"),
       popoverStyleButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-style]"),
       popoverFocusButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-focus]"),
@@ -489,12 +490,35 @@ export class LuminaApp {
     this.ruler.app = this;
     this.ruler.readingMode = this.readingMode;
 
-    // Kontinuální akreditace slov při posunu pravítka po řádcích a slovech
+    const initialModeType = this.settings?.ruler?.rulerModeType || (this.settings?.ruler?.wordTracking ? "word" : "line");
+    this.ruler.setRulerMode(initialModeType);
+
+    this.ruler.onStateChange = (enabled, mode) => {
+      if (typeof tracker !== "undefined" && tracker.setRulerState) {
+        tracker.setRulerState(enabled, mode);
+      }
+    };
+
+    if (typeof tracker !== "undefined" && tracker.setRulerState) {
+      tracker.setRulerState(this.ruler.enabled, initialModeType);
+    }
+
+    // Kontinuální akreditace slov při posunu pravítka po řádcích, větách a slovech
     this.wordsCreditedOnCurrentPage = 0;
     this.ruler.onProgress = (type, count) => {
       if (count > 0) {
         this.wordsCreditedOnCurrentPage = (this.wordsCreditedOnCurrentPage || 0) + count;
-        tracker.attributeWords(count);
+        if (typeof tracker !== "undefined") {
+          if (type === "line") {
+            tracker.recordLineCompleted(count);
+          } else if (type === "sentence") {
+            tracker.recordSentenceCompleted(count);
+          } else if (type === "word") {
+            tracker.recordWordByWord(count);
+          } else {
+            tracker.attributeWords(count);
+          }
+        }
       }
     };
 
@@ -572,7 +596,11 @@ export class LuminaApp {
     const snapEnabled = typeof storage.getSetting === "function" ? storage.getSetting("rulerSnapToLines", true) : (this.settings.ruler.snapToLines !== false);
     this.settings.ruler.snapToLines = snapEnabled;
     this.ruler.setSnapToLines(snapEnabled);
-    this.ruler.setWordTracking(this.settings.ruler.wordTracking ?? false);
+    const rulerModeType = this.settings.ruler.rulerModeType || (this.settings.ruler.wordTracking ? "word" : "line");
+    this.ruler.setRulerMode(rulerModeType);
+    if (typeof tracker !== "undefined" && tracker.setRulerState) {
+      tracker.setRulerState(this.ruler.enabled, rulerModeType);
+    }
     this.ruler.setDimOpacity(this.settings.ruler.dimOpacity);
     this.ruler.setFollowMode(this.settings.ruler.followMode);
 
@@ -911,10 +939,13 @@ export class LuminaApp {
     }
 
     // Synchronizace rychlého popoveru pravítka
-    if (this.dom.popoverModeLine && this.dom.popoverModeWord) {
-      this.dom.popoverModeLine.classList.toggle("active", !s.ruler.wordTracking);
-      this.dom.popoverModeWord.classList.toggle("active", !!s.ruler.wordTracking);
-    }
+    const curRulerMode = s.ruler?.rulerModeType || (s.ruler?.wordTracking ? "word" : "line");
+    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", curRulerMode === "line");
+    if (this.dom.popoverModeSentence) this.dom.popoverModeSentence.classList.toggle("active", curRulerMode === "sentence");
+    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", curRulerMode === "word");
+    document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.rulerModeType === curRulerMode);
+    });
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
         btn.classList.toggle("active", btn.dataset.rulerStyle === s.ruler.mode);
@@ -2004,7 +2035,15 @@ export class LuminaApp {
       bindRulerSettingAction(this.dom.popoverModeLine, (e) => {
         if (e && e.cancelable) e.preventDefault();
         if (e) e.stopPropagation();
-        this.setWordTracking(false);
+        this.setRulerModeType("line");
+      });
+    }
+
+    if (this.dom.popoverModeSentence) {
+      bindRulerSettingAction(this.dom.popoverModeSentence, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
+        this.setRulerModeType("sentence");
       });
     }
 
@@ -2013,18 +2052,17 @@ export class LuminaApp {
         if (e && e.cancelable) e.preventDefault();
         if (e) e.stopPropagation();
         if (this.isPdfMode && this.isImageOnlyPdf) return;
-        this.setWordTracking(true);
+        this.setRulerModeType("word");
       });
     }
 
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
-      if (btn !== this.dom.popoverModeLine && btn !== this.dom.popoverModeWord) {
+      if (btn !== this.dom.popoverModeLine && btn !== this.dom.popoverModeSentence && btn !== this.dom.popoverModeWord) {
         bindRulerSettingAction(btn, (e) => {
           if (e && e.cancelable) e.preventDefault();
           if (e) e.stopPropagation();
-          if (this.isPdfMode && this.isImageOnlyPdf) return;
-          const isWord = btn.dataset.rulerModeType === "word";
-          this.setWordTracking(isWord);
+          if (this.isPdfMode && this.isImageOnlyPdf && btn.dataset.rulerModeType === "word") return;
+          this.setRulerModeType(btn.dataset.rulerModeType || "line");
         });
       }
     });
@@ -3117,6 +3155,9 @@ export class LuminaApp {
       this.ruler.setEnabled(false);
     }
     this.settings.ruler.enabled = this.ruler.enabled;
+    if (typeof tracker !== "undefined" && tracker.setRulerState) {
+      tracker.setRulerState(this.ruler.enabled, this.ruler.rulerMode);
+    }
     storage.saveSettings(this.settings);
     this.updateRulerToggleButtonUI();
     this.showToast(this.ruler.enabled ? "Pravítko zapnuto" : "Pravítko vypnuto", "info");
@@ -3160,41 +3201,41 @@ export class LuminaApp {
     }
   }
 
-  setWordTracking(isWordMode) {
+  setRulerModeType(mode) {
     if (this.isPdfMode && this.isImageOnlyPdf) {
-      isWordMode = false;
+      mode = "line";
     }
+    const validMode = ["line", "sentence", "word"].includes(mode) ? mode : "line";
     if (!this.settings.ruler) this.settings.ruler = {};
-    const enabled = !!isWordMode;
-    this.settings.ruler.wordTracking = enabled;
+    this.settings.ruler.rulerModeType = validMode;
+    this.settings.ruler.wordTracking = (validMode === "word");
 
     // 1. Okamžitá synchronní aktualizace UI stavu tlačítek a přepínačů
-    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", !enabled);
-    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", enabled);
+    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", validMode === "line");
+    if (this.dom.popoverModeSentence) this.dom.popoverModeSentence.classList.toggle("active", validMode === "sentence");
+    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", validMode === "word");
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
-      btn.classList.toggle("active", (btn.dataset.rulerModeType === "word") === enabled);
+      btn.classList.toggle("active", btn.dataset.rulerModeType === validMode);
     });
     if (this.dom.rulerWordTrackingSetting) {
-      this.setSwitchState(this.dom.rulerWordTrackingSetting, enabled);
+      this.setSwitchState(this.dom.rulerWordTrackingSetting, validMode === "word");
     }
 
     this.updateRulerToggleButtonUI();
     storage.saveSettings(this.settings);
 
-    // 2. Odložená aktivace sledování slov do dalšího cyklu event loopu (okamžité vykreslení UI bez záseku)
-    if (this._wordTrackingTimeout) {
-      clearTimeout(this._wordTrackingTimeout);
-      this._wordTrackingTimeout = null;
+    // 2. Aktivace režimu v pravítku a trackeru
+    if (this.ruler) {
+      this.ruler.setRulerMode(validMode);
+      if (typeof tracker !== "undefined" && tracker.setRulerState) {
+        tracker.setRulerState(this.ruler.enabled, validMode);
+      }
+      this.ruler.applyPosition();
     }
-    requestAnimationFrame(() => {
-      this._wordTrackingTimeout = setTimeout(() => {
-        this._wordTrackingTimeout = null;
-        if (this.ruler) {
-          this.ruler.setWordTracking(enabled);
-          this.ruler.applyPosition();
-        }
-      }, 0);
-    });
+  }
+
+  setWordTracking(isWordMode) {
+    this.setRulerModeType(isWordMode ? "word" : "line");
   }
 
   updateRulerToggleButtonUI() {
@@ -3223,11 +3264,12 @@ export class LuminaApp {
       rulerContainer.classList?.toggle?.("is-hidden", !showRuler);
     }
 
-    const isWordTrackingActive = !!this.settings.ruler.wordTracking;
-    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", !isWordTrackingActive);
-    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", isWordTrackingActive);
+    const curRulerMode = this.settings.ruler.rulerModeType || (this.settings.ruler.wordTracking ? "word" : "line");
+    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", curRulerMode === "line");
+    if (this.dom.popoverModeSentence) this.dom.popoverModeSentence.classList.toggle("active", curRulerMode === "sentence");
+    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", curRulerMode === "word");
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
-      btn.classList.toggle("active", (btn.dataset.rulerModeType === "word") === isWordTrackingActive);
+      btn.classList.toggle("active", btn.dataset.rulerModeType === curRulerMode);
     });
     const currentStyle = this.settings.ruler.style || this.settings.ruler.mode || "highlight";
     let currentFocus = this.settings.ruler.focusMode || "off";
@@ -3541,18 +3583,26 @@ export class LuminaApp {
     if (popoverModeSection) popoverModeSection.classList.toggle("is-hidden", isImageOnly);
 
     const popoverModeWord = this.dom.popoverModeWord || document.getElementById("popover-mode-word");
+    const popoverModeSentence = this.dom.popoverModeSentence || document.getElementById("popover-mode-sentence");
     const popoverModeLine = this.dom.popoverModeLine || document.getElementById("popover-mode-line");
     const popoverModeSegmented = this.dom.popoverModeSegmented || document.getElementById("popover-mode-segmented");
+    const curRulerMode = this.settings.ruler?.rulerModeType || (this.settings.ruler?.wordTracking ? "word" : "line");
     if (popoverModeWord) {
       popoverModeWord.classList.toggle("is-hidden", isImageOnly);
       popoverModeWord.disabled = isImageOnly;
-      if (isImageOnly) {
-        popoverModeWord.classList.remove("active");
-        if (popoverModeLine) popoverModeLine.classList.add("active");
-      } else {
-        popoverModeWord.classList.toggle("active", !!this.settings.ruler?.wordTracking);
-        if (popoverModeLine) popoverModeLine.classList.toggle("active", !this.settings.ruler?.wordTracking);
-      }
+    }
+    if (popoverModeSentence) {
+      popoverModeSentence.classList.toggle("is-hidden", isImageOnly);
+      popoverModeSentence.disabled = isImageOnly;
+    }
+    if (isImageOnly) {
+      if (popoverModeWord) popoverModeWord.classList.remove("active");
+      if (popoverModeSentence) popoverModeSentence.classList.remove("active");
+      if (popoverModeLine) popoverModeLine.classList.add("active");
+    } else {
+      if (popoverModeWord) popoverModeWord.classList.toggle("active", curRulerMode === "word");
+      if (popoverModeSentence) popoverModeSentence.classList.toggle("active", curRulerMode === "sentence");
+      if (popoverModeLine) popoverModeLine.classList.toggle("active", curRulerMode === "line");
     }
     if (popoverModeSegmented) {
       popoverModeSegmented.classList.toggle("is-single-segment", isImageOnly);
