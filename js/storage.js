@@ -246,13 +246,13 @@ export class StorageManager {
   }
 
   async uploadBook(book) {
-    const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
+    const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
     return await supabaseSync.uploadBook(book);
   }
 
   async syncWithCloud(options) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
       return await supabaseSync.syncAll(options);
     } catch (err) {
       console.warn("[StorageManager] syncWithCloud selhal:", err);
@@ -262,7 +262,7 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
       return await supabaseSync.pushSessionAndStats(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
@@ -272,7 +272,7 @@ export class StorageManager {
 
   async pushReadingSessionsToCloud(sessions) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
       return await supabaseSync.pushMultipleSessions(sessions);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
@@ -784,7 +784,7 @@ export class StorageManager {
    */
   async reconcileSessionsWithCloud() {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
       if (!supabaseSync || !supabaseSync.isOnline()) {
         return { success: false, reason: "offline", purged: 0, saved: 0 };
       }
@@ -1539,6 +1539,11 @@ export class StorageManager {
         const samples = Array.isArray(s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
           ? (s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
           : [];
+        const samplesWords = samples.reduce((sum, pt) => sum + Math.max(0, Math.round(pt.words || 0)), 0);
+        if (words === 0 && samplesWords > 0) {
+          hasAnomaly = true;
+          break;
+        }
         if (samples.some(pt => (Number(pt.elapsedSeconds ?? pt.t ?? 60) <= 0) || (Number(pt.wpm) === 220 && Math.abs(expectedAvg - 220) > 10))) {
           hasAnomaly = true;
           break;
@@ -1609,12 +1614,15 @@ export class StorageManager {
         continue;
       }
 
-      const words = Math.max(0, Math.round(session.words_read ?? session.wordsRead ?? 0));
-      const avgWpm = durationSec >= 10 ? Math.round((words / durationSec) * 60) : 0;
-
       const rawSamples = Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
         ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
         : [];
+      const samplesWords = rawSamples.reduce((sum, pt) => sum + Math.max(0, Math.round(pt.words || 0)), 0);
+      let words = Math.max(0, Math.round(session.words_read ?? session.wordsRead ?? 0));
+      if (words === 0 && samplesWords > 0) {
+        words = samplesWords;
+      }
+      const avgWpm = durationSec >= 10 ? Math.round((words / durationSec) * 60) : 0;
       const fallbackTs = session.timestamp || ((session.startTime || session.start_time) ? new Date(session.startTime || session.start_time).getTime() : Date.now());
       let cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSec, words, avgWpm, fallbackTs);
 

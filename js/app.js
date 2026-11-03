@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.3.4";
-import { EpubParser } from "./epub-parser.js?v=2.3.4";
-import { PDFLoader } from "./pdf-loader.js?v=2.3.4";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.3.4";
-import { ReadingRuler } from "./ruler.js?v=2.3.4";
-import { StatsCharts } from "./charts.js?v=2.3.4";
-import { supabaseSync } from "./supabase-sync.js?v=2.3.4";
-import { supabase } from "./supabase-client.js?v=2.3.4";
+import { storage, computeFileHash } from "./storage.js?v=2.4.4";
+import { EpubParser } from "./epub-parser.js?v=2.4.4";
+import { PDFLoader } from "./pdf-loader.js?v=2.4.4";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.4.4";
+import { ReadingRuler } from "./ruler.js?v=2.4.4";
+import { StatsCharts } from "./charts.js?v=2.4.4";
+import { supabaseSync } from "./supabase-sync.js?v=2.4.4";
+import { supabase } from "./supabase-client.js?v=2.4.4";
 
-export const APP_VERSION = "v2.3.4";
+export const APP_VERSION = "v2.4.4";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";

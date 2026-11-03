@@ -4468,6 +4468,12 @@ export class ReadingRuler {
     this._lastActiveLineIndex = -1;
     this._lastActiveColumn = null;
     this._clearWordCache();
+    this._activeReadingLineIndex = -1;
+    this._activeLineStartTime = 0;
+    this._completedLineIndices = new Set();
+    this._lastWordLineIndex = -1;
+    this._lastWordIndex = -1;
+    this._wordsReadOnPage = new Set();
     return this.detectLines(true);
   }
 
@@ -4607,23 +4613,55 @@ export class ReadingRuler {
       const clientRects = range.getClientRects();
       if (!clientRects || clientRects.length === 0) return;
 
+      // Seskupení fragmentů téhož slova (např. Bionic fixace <b class="bionic-fixation">wor</b>d)
+      // ležících na stejném řádku do jednoho kompaktního rámečku celého slova
+      const lineClusters = [];
       for (let rIdx = 0; rIdx < clientRects.length; rIdx++) {
         const rect = clientRects[rIdx];
-        let rTop = rect.top;
-        let rBottom = rect.bottom;
-        let rHeight = rect.height;
-        let rLeft = rect.left;
-        let rRight = rect.right;
+        if (!rect || rect.width <= 0.5 || rect.height <= 2) continue;
+        const cy = (rect.top + rect.bottom) / 2;
+        let matchedCluster = null;
+        for (const cl of lineClusters) {
+          if (Math.abs(cl.centerY - cy) <= 8 || Math.abs(cl.top - rect.top) <= 6) {
+            matchedCluster = cl;
+            break;
+          }
+        }
+        if (matchedCluster) {
+          matchedCluster.rects.push(rect);
+          matchedCluster.top = Math.min(matchedCluster.top, rect.top);
+          matchedCluster.bottom = Math.max(matchedCluster.bottom, rect.bottom);
+          matchedCluster.left = Math.min(matchedCluster.left, rect.left);
+          matchedCluster.right = Math.max(matchedCluster.right, rect.right);
+          matchedCluster.centerY = (matchedCluster.top + matchedCluster.bottom) / 2;
+        } else {
+          lineClusters.push({
+            top: rect.top,
+            bottom: rect.bottom,
+            left: rect.left,
+            right: rect.right,
+            centerY: cy,
+            rects: [rect]
+          });
+        }
+      }
+
+      for (const cl of lineClusters) {
+        let rTop = cl.top;
+        let rBottom = cl.bottom;
+        let rHeight = rBottom - rTop;
+        let rLeft = cl.left;
+        let rRight = cl.right;
 
         if (pdfTf) {
-          const relTop = rect.top - pdfTf.textLayerRect.top;
-          const relBottom = rect.bottom - pdfTf.textLayerRect.top;
+          const relTop = rTop - pdfTf.textLayerRect.top;
+          const relBottom = rBottom - pdfTf.textLayerRect.top;
           rTop = pdfTf.canvasRect.top + relTop * pdfTf.scaleY;
           rBottom = pdfTf.canvasRect.top + relBottom * pdfTf.scaleY;
           rHeight = rBottom - rTop;
 
-          const relLeft = rect.left - pdfTf.textLayerRect.left;
-          const relRight = rect.right - pdfTf.textLayerRect.left;
+          const relLeft = rLeft - pdfTf.textLayerRect.left;
+          const relRight = rRight - pdfTf.textLayerRect.left;
           rLeft = pdfTf.canvasRect.left + relLeft * pdfTf.scaleX;
           rRight = pdfTf.canvasRect.left + relRight * pdfTf.scaleX;
         }
@@ -6216,14 +6254,20 @@ export class ReadingRuler {
       ? this.cachedLines[lineIdx]
       : null;
     if (!l || l.isMedia) return 0;
-    const txt = l.element?.textContent || l.text || "";
-    const cleanTokens = txt.trim().split(/\s+/).filter(Boolean);
-    if (cleanTokens.length > 0) return cleanTokens.length;
+
     const pageWords = (this.app && typeof this.app.getVisibleWordsOnCurrentPage === "function")
       ? this.app.getVisibleWordsOnCurrentPage()
       : 250;
     const totalLines = (this.cachedLines && this.cachedLines.length > 0) ? this.cachedLines.length : 25;
-    return Math.max(1, Math.round(pageWords / totalLines));
+    const avgWordsPerLine = Math.max(1, Math.min(25, Math.round(pageWords / totalLines)));
+
+    // Pokud má řádek čistý text odpovídající jednomu řádku (nikoliv celému odstavci)
+    if (l.text && typeof l.text === "string") {
+      const cleanTokens = l.text.trim().split(/\s+/).filter(Boolean);
+      if (cleanTokens.length >= 1 && cleanTokens.length <= 25) return cleanTokens.length;
+    }
+
+    return avgWordsPerLine;
   }
 
   _checkLineProgress(idx, isKeyboard = false) {

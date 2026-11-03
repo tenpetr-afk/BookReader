@@ -4,7 +4,7 @@
  * odhaduje zbývající čas a ukládá detailní čtecí relace s časovou osou WPM.
  */
 
-import { storage } from "./storage.js?v=2.3.4";
+import { storage } from "./storage.js?v=2.4.4";
 
 export const MIN_VALID_WPM = 40;
 export const MAX_VALID_WPM = 650;
@@ -247,9 +247,26 @@ export class ReadingTracker {
    * Nastaví stav pravítka (zapnuto/vypnuto) a jeho režim (line, word)
    */
   setRulerState(enabled, mode = "line") {
+    const prevEnabled = this.rulerEnabled;
     this.rulerEnabled = !!enabled;
     if (["line", "word"].includes(mode)) {
       this.rulerMode = mode;
+    }
+    if (prevEnabled !== this.rulerEnabled) {
+      const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+      const currentRulerTotal = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
+      if (this.rulerEnabled) {
+        if (this.intra_session_samples.length === 0 && this.currentMinuteWords === 0 && this.noRulerTotalWords > 0) {
+          this.currentMinuteWords = this.noRulerTotalWords;
+        }
+      } else {
+        if (currentRulerTotal > this.noRulerTotalWords) {
+          this.noRulerTotalWords = currentRulerTotal;
+        }
+      }
+      this.sessionWordsRead = this.rulerEnabled
+        ? (completedWords + Math.max(0, Math.round(this.currentMinuteWords)))
+        : Math.max(this.noRulerTotalWords, currentRulerTotal);
     }
   }
 
@@ -756,10 +773,11 @@ export class ReadingTracker {
           this.wordsReadInCurrentMinute = 0;
           this.completedMinutesCount += 1;
 
+          const completedSoFar = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
           if (!this.rulerEnabled) {
-            this.sessionWordsRead = this.noRulerTotalWords;
+            this.sessionWordsRead = Math.max(0, Math.round(this.noRulerTotalWords));
           } else {
-            this.sessionWordsRead = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+            this.sessionWordsRead = completedSoFar + Math.max(0, Math.round(this.currentMinuteWords));
           }
         }
 
@@ -787,10 +805,10 @@ export class ReadingTracker {
 
         let displayWords = 0;
         if (!this.rulerEnabled) {
-          displayWords = this.noRulerTotalWords;
+          displayWords = Math.max(0, Math.round(this.noRulerTotalWords));
         } else {
-          // V režimu pravítka: slova započtená 1x za minutu
-          displayWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+          const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+          displayWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
         }
         this.sessionWordsRead = displayWords;
 
@@ -798,7 +816,7 @@ export class ReadingTracker {
           type: "tick",
           activeSeconds: totalActiveSeconds,
           wpm: this.getCurrentWpm(),
-          wordsRead: totalWords
+          wordsRead: displayWords
         });
       }
     }, 1000);
@@ -871,18 +889,12 @@ export class ReadingTracker {
     const totalActiveSeconds = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
     if (totalActiveSeconds < 10) return 0;
 
-    if (!this.rulerEnabled) {
-      if (this.noRulerTotalWords > 0) {
-        return Math.min(MAX_VALID_WPM, Math.round((this.noRulerTotalWords / totalActiveSeconds) * 60));
-      }
-      return 0;
-    }
-
     const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
-    const totalWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
+    const rulerWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
+    const effectiveWords = Math.max(rulerWords, Math.round(this.noRulerTotalWords || 0));
 
-    if (totalWords > 0) {
-      return Math.min(MAX_VALID_WPM, Math.round((totalWords / totalActiveSeconds) * 60));
+    if (effectiveWords > 0) {
+      return Math.min(MAX_VALID_WPM, Math.round((effectiveWords / totalActiveSeconds) * 60));
     }
     return 0;
   }
@@ -935,8 +947,12 @@ export class ReadingTracker {
     let avgWpm = 0;
     let rawSamples = [];
 
-    if (!this.rulerEnabled) {
-      // Když pravítko není zapnuté: spočítá průměr přečtených slov za celou čtecí relaci
+    const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+    const partialWords = Math.max(0, Math.round(this.currentMinuteWords));
+    const rulerWords = completedWords + partialWords;
+
+    if (!this.rulerEnabled && rulerWords === 0) {
+      // Když pravítko nebylo použito vůbec: spočítá průměr přečtených slov za celou čtecí relaci
       wordsRead = Math.max(0, Math.round(this.noRulerTotalWords));
       avgWpm = (effectiveActiveSeconds >= 10 && wordsRead > 0)
         ? Math.min(MAX_VALID_WPM, Math.round((wordsRead / effectiveActiveSeconds) * 60))
@@ -967,10 +983,7 @@ export class ReadingTracker {
         });
       }
     } else {
-      const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
-      const partialWords = Math.max(0, Math.round(this.currentMinuteWords));
-      wordsRead = completedWords + partialWords;
-
+      wordsRead = Math.max(rulerWords, Math.round(this.noRulerTotalWords || 0));
       avgWpm = (effectiveActiveSeconds >= 10 && wordsRead > 0)
         ? Math.min(MAX_VALID_WPM, Math.round((wordsRead / effectiveActiveSeconds) * 60))
         : 0;
