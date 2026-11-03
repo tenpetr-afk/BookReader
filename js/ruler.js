@@ -82,16 +82,12 @@ export class ReadingRuler {
     this.previewWidth = 0;
     this.cachedLines = []; // Seznam řádků na aktuální stránce [{ top, bottom, height, centerY }]
     this.cachedWords = []; // Seznam slov na aktuální stránce [{ text, left, right, top, bottom, width, height, centerX, centerY }]
-    this._cachedSentences = [];
     this.activeLineIndex = -1;
     this.previousActiveLineIndex = -1;
     this.activeWordIndex = -1;
-    this.activeSentenceIndex = -1;
-    this._rulerMode = "line"; // "line" | "sentence" | "word"
+    this._rulerMode = "line"; // "line" | "word"
     this._activeReadingLineIndex = -1;
     this._completedLineIndices = new Set();
-    this._activeReadingSentenceIndex = -1;
-    this._completedSentenceIndices = new Set();
     this._lastWordLineIndex = -1;
     this._lastWordIndex = -1;
     this._lastActiveLineIndex = -1;
@@ -101,7 +97,7 @@ export class ReadingRuler {
     this._forceRefreshWords = false;
     this._lastAppliedWordWidth = null;
     this._lastWordSolidRatio = null;
-    this.onProgress = null; // Callback: (type: "line" | "sentence" | "word", count: number)
+    this.onProgress = null; // Callback: (type: "line" | "word", count: number)
     this.onStateChange = null; // Callback: (enabled: boolean, mode: string)
     this._maxLineIndexOnPage = -1;
     this._maxWordLineIndexOnPage = -1;
@@ -814,20 +810,17 @@ export class ReadingRuler {
   }
 
   setRulerMode(mode) {
-    const valid = ["line", "sentence", "word"].includes(mode) ? mode : "line";
+    const valid = ["line", "word"].includes(mode) ? mode : "line";
     this._rulerMode = valid;
     this.wordTracking = (valid === "word");
 
     if (this.rulerEl) {
       this.rulerEl.classList.toggle("word-tracking-mode", valid === "word");
-      this.rulerEl.classList.toggle("sentence-mode", valid === "sentence");
       this.rulerEl.classList.toggle("line-mode", valid === "line");
     }
 
     if (valid === "word") {
       this.refreshWords();
-    } else if (valid === "sentence") {
-      this.getSentences();
     }
     if (typeof this.onStateChange === "function") {
       this.onStateChange(this.enabled, this.rulerMode);
@@ -6132,37 +6125,6 @@ export class ReadingRuler {
       }
     }
 
-    // --- REŽIM SLEDOVÁNÍ VĚT (Sentence-level Tracking) ---
-    if (this.rulerMode === "sentence") {
-      if (this.cachedLines.length === 0) {
-        this.detectLines();
-      }
-      const sentences = this.getSentences();
-      if (sentences && sentences.length > 0) {
-        const isVertical = this.isVerticalMode();
-        const vp = isVertical ? (this._cachedViewportEl || document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
-        const vScrollTop = (isVertical && vp) ? vp.scrollTop : 0;
-        const docY = isVertical ? (curY + vScrollTop) : curY;
-
-        const sentenceIdx = this.findSentenceAt(curX, docY);
-        if (sentenceIdx >= 0 && sentenceIdx < sentences.length) {
-          this.activeSentenceIndex = sentenceIdx;
-          const curSent = sentences[sentenceIdx];
-          if (curSent) {
-            this.activeLineIndex = curSent.startLineIndex;
-            this.targetY = curSent.top - vScrollTop;
-            this.currentY = this.targetY;
-            this.height = curSent.height;
-          }
-          this._checkSentenceProgress(sentenceIdx);
-          this.rulerEl.classList.remove("word-tracking-mode");
-          this.rulerEl.classList.add("sentence-mode");
-          if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
-          this.applyPosition();
-          return;
-        }
-      }
-    }
 
     // --- STANDARDNÍ ŘÁDKOVÝ REŽIM ---
     this.rulerEl.classList.remove("word-tracking-mode");
@@ -6287,147 +6249,6 @@ export class ReadingRuler {
     this._activeReadingLineIndex = idx;
   }
 
-  getSentences() {
-    if (this._cachedSentences && this._cachedSentences.length > 0) {
-      return this._cachedSentences;
-    }
-
-    if (!this.cachedLines || this.cachedLines.length === 0) {
-      return [];
-    }
-
-    const allWords = [];
-    for (let i = 0; i < this.cachedLines.length; i++) {
-      if (this.cachedLines[i].isMedia) continue;
-      const lWords = this.getWordsForLine(i);
-      if (Array.isArray(lWords)) {
-        for (const w of lWords) {
-          allWords.push({ ...w, lineIndex: i });
-        }
-      }
-    }
-
-    if (allWords.length === 0) {
-      return [];
-    }
-
-    const sentenceEndRegex = /[.!?…]+["'»”’)]*$/;
-    const sentences = [];
-    let currentSentenceWords = [];
-
-    for (let i = 0; i < allWords.length; i++) {
-      const w = allWords[i];
-      currentSentenceWords.push(w);
-
-      const isTerminal = sentenceEndRegex.test(w.text);
-      const isLastWord = (i === allWords.length - 1);
-      let isBlockBreak = false;
-      if (!isLastWord && w.lineIndex !== allWords[i + 1].lineIndex) {
-        const curLine = this.cachedLines[w.lineIndex];
-        const nextLine = this.cachedLines[allWords[i + 1].lineIndex];
-        if (curLine?.blockElement && nextLine?.blockElement && curLine.blockElement !== nextLine.blockElement) {
-          isBlockBreak = true;
-        }
-      }
-
-      if (isTerminal || isLastWord || isBlockBreak) {
-        if (currentSentenceWords.length > 0) {
-          const sIdx = sentences.length;
-          const firstWord = currentSentenceWords[0];
-          const lastWord = currentSentenceWords[currentSentenceWords.length - 1];
-          const minLeft = Math.min(...currentSentenceWords.map(sw => sw.left));
-          const maxRight = Math.max(...currentSentenceWords.map(sw => sw.right));
-          const minTop = Math.min(...currentSentenceWords.map(sw => sw.top));
-          const maxBottom = Math.max(...currentSentenceWords.map(sw => sw.bottom));
-          const lineIdxs = [...new Set(currentSentenceWords.map(sw => sw.lineIndex))];
-
-          sentences.push({
-            index: sIdx,
-            words: currentSentenceWords,
-            wordCount: currentSentenceWords.length,
-            text: currentSentenceWords.map(sw => sw.text).join(" "),
-            startLineIndex: firstWord.lineIndex,
-            endLineIndex: lastWord.lineIndex,
-            lineIndices: lineIdxs,
-            left: minLeft,
-            right: maxRight,
-            top: minTop,
-            bottom: maxBottom,
-            height: Math.max(20, maxBottom - minTop),
-            centerY: (minTop + maxBottom) / 2
-          });
-          currentSentenceWords = [];
-        }
-      }
-    }
-
-    this._cachedSentences = sentences;
-    return sentences;
-  }
-
-  findSentenceAt(x, y) {
-    const sentences = this.getSentences();
-    if (!sentences || sentences.length === 0) return -1;
-
-    for (let i = 0; i < sentences.length; i++) {
-      const s = sentences[i];
-      if (y >= s.top - 6 && y <= s.bottom + 6 && x >= s.left - 12 && x <= s.right + 12) {
-        return i;
-      }
-    }
-
-    let bestIdx = 0;
-    let minDist = Infinity;
-    for (let i = 0; i < sentences.length; i++) {
-      const s = sentences[i];
-      const dy = Math.max(0, s.top - y, y - s.bottom);
-      const dx = Math.max(0, s.left - x, x - s.right);
-      const dist = dy * 4 + dx;
-      if (dist < minDist) {
-        minDist = dist;
-        bestIdx = i;
-      }
-    }
-    return bestIdx;
-  }
-
-  _checkSentenceProgress(idx) {
-    if (this.rulerMode !== "sentence" || idx < 0) return;
-
-    if (this._activeReadingSentenceIndex < 0) {
-      this._activeReadingSentenceIndex = idx;
-      if (!this._completedSentenceIndices) this._completedSentenceIndices = new Set();
-      return;
-    }
-
-    if (idx === this._activeReadingSentenceIndex) return;
-
-    const prevSentIdx = this._activeReadingSentenceIndex;
-    const sentences = this.getSentences();
-
-    // Pokud uživatel postoupil na další větu: započítat předchozí větu
-    if (idx > prevSentIdx) {
-      if (!this._completedSentenceIndices) this._completedSentenceIndices = new Set();
-
-      let wordsToAdd = 0;
-      for (let s = prevSentIdx; s < idx; s++) {
-        if (!this._completedSentenceIndices.has(s) && sentences[s]) {
-          this._completedSentenceIndices.add(s);
-          const count = sentences[s].wordCount || sentences[s].words?.length || 0;
-          if (count > 0) {
-            wordsToAdd += count;
-          }
-        }
-      }
-
-      if (wordsToAdd > 0 && typeof this.onProgress === "function") {
-        this.onProgress("sentence", wordsToAdd);
-      }
-    }
-
-    this._activeReadingSentenceIndex = idx;
-  }
-
   finalizeCurrentPageProgress() {
     if (this.rulerMode === "line" && this._activeReadingLineIndex >= 0) {
       if (!this._completedLineIndices) this._completedLineIndices = new Set();
@@ -6441,24 +6262,11 @@ export class ReadingRuler {
           this.onProgress("line", count);
         }
       }
-    } else if (this.rulerMode === "sentence" && this._activeReadingSentenceIndex >= 0) {
-      const sentences = this.getSentences();
-      if (!this._completedSentenceIndices) this._completedSentenceIndices = new Set();
-      if (!this._completedSentenceIndices.has(this._activeReadingSentenceIndex) && sentences[this._activeReadingSentenceIndex]) {
-        this._completedSentenceIndices.add(this._activeReadingSentenceIndex);
-        const count = sentences[this._activeReadingSentenceIndex].wordCount || sentences[this._activeReadingSentenceIndex].words?.length || 0;
-        if (count > 0 && typeof this.onProgress === "function") {
-          this.onProgress("sentence", count);
-        }
-      }
     }
     this._activeReadingLineIndex = -1;
     this._completedLineIndices = new Set();
-    this._activeReadingSentenceIndex = -1;
-    this._completedSentenceIndices = new Set();
     this._lastWordLineIndex = -1;
     this._lastWordIndex = -1;
-    this._cachedSentences = null;
   }
 
   _checkWordProgress(idx) {
@@ -7339,48 +7147,6 @@ export class ReadingRuler {
       }
 
       this.disableWordTransition();
-
-      // --- REŽIM SLEDOVÁNÍ VĚT (Sentence-level mode) ---
-      if (this.rulerMode === "sentence") {
-        const sentences = this.getSentences();
-        if (sentences && sentences.length > 0) {
-          let newIdx;
-          if (this.activeSentenceIndex < 0) {
-            newIdx = direction > 0 ? 0 : sentences.length - 1;
-          } else {
-            const curIdx = this.activeSentenceIndex;
-            if (direction > 0 && curIdx >= sentences.length - 1) {
-              if (this.onBoundary && !this.isVerticalMode()) {
-                this.lockAdvancement(350);
-                this.onBoundary(1);
-                return;
-              }
-            } else if (direction < 0 && curIdx <= 0) {
-              if (this.onBoundary && !this.isVerticalMode()) {
-                this.onBoundary(-1);
-                return;
-              }
-            }
-            newIdx = curIdx + direction;
-          }
-          newIdx = Math.max(0, Math.min(sentences.length - 1, newIdx));
-          this.activeSentenceIndex = newIdx;
-          const curSent = sentences[newIdx];
-          if (curSent) {
-            this.activeLineIndex = curSent.startLineIndex;
-            this.targetY = curSent.top;
-            this.currentY = this.targetY;
-            this.height = curSent.height;
-          }
-          this._checkSentenceProgress(newIdx);
-          this.rulerEl.classList.remove("word-tracking-mode");
-          this.rulerEl.classList.add("sentence-mode");
-          if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
-          this.disableWordTransition();
-          this.applyPosition();
-          return;
-        }
-      }
 
       // --- STANDARDNÍ REŽIM ŘÁDKŮ (Line-level mode) ---
       if (this.cachedLines.length === 0) {
@@ -8288,37 +8054,7 @@ export class ReadingRuler {
 
     const isBottomCoverWordTracking = !this.isPdfMode && (this.style === "bottom-cover" || this.mode === "bottom-cover") && !!this.wordTracking;
 
-    if (this.rulerMode === "sentence" && !isCurrentMedia) {
-      const sentences = this.getSentences();
-      const curSent = (this.activeSentenceIndex >= 0 && this.activeSentenceIndex < sentences.length)
-        ? sentences[this.activeSentenceIndex]
-        : (sentences.length > 0 ? sentences[0] : null);
-
-      if (curSent) {
-        const sx = Math.round(curSent.left);
-        const sy = Math.round(curSent.top - vScrollTop);
-        const sw = Math.max(20, Math.round(curSent.right - curSent.left));
-        const sh = Math.max(Number.isFinite(this.height) && this.height > 0 ? this.height : 24, Math.round(curSent.height || (curSent.bottom - curSent.top)));
-
-        slitLeft = sx;
-        slitRight = sx + sw;
-        this._rulerLeft = sx;
-        this._rulerWidth = sw;
-
-        this.rulerEl.style.top = "0px";
-        this.rulerEl.style.left = "0px";
-        this.rulerEl.style.right = "auto";
-        this.rulerEl.style.width = `${sw}px`;
-        this.rulerEl.style.maxWidth = "100%";
-        this.rulerEl.style.height = `${sh}px`;
-        this.rulerEl.style.transform = `translate3d(${sx}px, ${sy}px, 0)`;
-        this.rulerEl.classList.remove("no-preview", "word-tracking-mode");
-        this.rulerEl.classList.add("sentence-mode");
-        if (this.wordWaveEl) {
-          this.wordWaveEl.style.display = "none";
-        }
-      }
-    } else if (this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia && !isBottomCoverWordTracking) {
+    if (this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia && !isBottomCoverWordTracking) {
       const x = Number.isFinite(this.wordLeft) ? Math.round(this.wordLeft) : 0;
       const w = Number.isFinite(this.totalWidth) && this.totalWidth > 0 ? Math.round(this.totalWidth) : 100;
       slitLeft = x;

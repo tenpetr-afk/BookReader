@@ -1170,19 +1170,6 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
   pointer-events: none !important;
 }
 
-/* Režim sledování vět (Sentence Ruler Mode) */
-.reading-ruler.sentence-mode {
-  border-radius: var(--radius-sm, 6px) !important;
-  transition: transform 0.12s cubic-bezier(0.2, 0.8, 0.35, 1),
-              width 0.12s ease-out,
-              height 0.12s ease-out !important;
-}
-
-.reading-ruler.mode-highlight.sentence-mode {
-  background: rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.24) !important;
-  box-shadow: 0 0 0 1px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.35),
-              0 2px 8px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.15) !important;
-}
 
 /* Režim sledování jednotlivých slov – přesné ohraničení slova s plynulým dozníváním dopředu (do ztracena) */
 .reading-ruler.word-tracking-mode {

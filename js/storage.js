@@ -1225,7 +1225,7 @@ export class StorageManager {
         autoHeight: true, // Automatická výška podle velikosti řádku
         pdfAutoHeight: true, // Automatická výška pravítka pro PDF (výchozí zapnuto)
         snapToLines: true, // Magnetická přilnavost k jednotlivým řádkům
-        rulerModeType: "line", // line, sentence, word
+        rulerModeType: "line", // line, word
         wordTracking: false, // Sledování jednotlivých slov
         color: "amber", // amber, cyan, emerald, lavender, slate
         dimOpacity: 0.65,
@@ -1321,7 +1321,7 @@ export class StorageManager {
         } else {
           merged.ruler.pdfAutoHeight = true;
         }
-        if (parsed.ruler?.rulerModeType && ["line", "sentence", "word"].includes(parsed.ruler.rulerModeType)) {
+        if (parsed.ruler?.rulerModeType && ["line", "word"].includes(parsed.ruler.rulerModeType)) {
           merged.ruler.rulerModeType = parsed.ruler.rulerModeType;
         } else if (parsed.ruler?.wordTracking) {
           merged.ruler.rulerModeType = "word";

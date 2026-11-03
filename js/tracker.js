@@ -244,11 +244,11 @@ export class ReadingTracker {
   }
 
   /**
-   * Nastaví stav pravítka (zapnuto/vypnuto) a jeho režim (line, sentence, word)
+   * Nastaví stav pravítka (zapnuto/vypnuto) a jeho režim (line, word)
    */
   setRulerState(enabled, mode = "line") {
     this.rulerEnabled = !!enabled;
-    if (["line", "sentence", "word"].includes(mode)) {
+    if (["line", "word"].includes(mode)) {
       this.rulerMode = mode;
     }
   }
@@ -273,18 +273,6 @@ export class ReadingTracker {
    * @param {number} count Počet slov na dokončeném řádku
    */
   recordLineCompleted(count) {
-    if (!this.isActive || !count || count <= 0) return;
-    this.recordActivity(true);
-    const n = Math.max(0, Math.round(count));
-    this.currentMinuteWords += n;
-  }
-
-  /**
-   * Větný režim (Sentence mode):
-   * Započítává slova větu po větě – při přepnutí na další větu se započítá předchozí věta.
-   * @param {number} count Počet slov v dokončené větě
-   */
-  recordSentenceCompleted(count) {
     if (!this.isActive || !count || count <= 0) return;
     this.recordActivity(true);
     const n = Math.max(0, Math.round(count));
@@ -323,7 +311,7 @@ export class ReadingTracker {
    * tickPageProgress zachován jako no-op pro zamezení umělého generování fiktivních slov
    */
   tickPageProgress(deltaSec) {
-    // Fiktivní slova již negenerujeme – počítání probíhá striktně podle reálně přečtených slov/řádků/vět
+    // Fiktivní slova již negenerujeme – počítání probíhá striktně podle reálně přečtených slov/řádků
   }
 
   /**
@@ -389,7 +377,7 @@ export class ReadingTracker {
 
     if (!blockId || !enterTime || wordsOnPage <= 0) return 0;
 
-    // Pokud je aktivní pravítko, slova se počítají výhradně podle zvoleného režimu pravítka (slovní, větný, řádkový)
+    // Pokud je aktivní pravítko, slova se počítají výhradně podle zvoleného režimu pravítka (slovní, řádkový)
     if (this.rulerEnabled) {
       return 0;
     }
@@ -746,7 +734,7 @@ export class ReadingTracker {
               s.wpm = Math.max(1, avgWpm);
             }
           } else {
-            // S pravítkem (slovní, větný, řádkový režim): přesný počet slov přečtených za tuto 1 minutu
+            // S pravítkem (slovní, řádkový režim): přesný počet slov přečtených za tuto 1 minutu
             wordsInThisMinute = Math.max(0, Math.round(this.currentMinuteWords));
           }
 

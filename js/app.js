@@ -402,7 +402,6 @@ export class LuminaApp {
       btnRulerQuickMenu: document.getElementById("btn-ruler-quick-menu"),
       rulerQuickPopover: document.getElementById("ruler-quick-popover"),
       popoverModeLine: document.getElementById("popover-mode-line"),
-      popoverModeSentence: document.getElementById("popover-mode-sentence"),
       popoverModeWord: document.getElementById("popover-mode-word"),
       popoverStyleButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-style]"),
       popoverFocusButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-focus]"),
@@ -503,7 +502,7 @@ export class LuminaApp {
       tracker.setRulerState(this.ruler.enabled, initialModeType);
     }
 
-    // Kontinuální akreditace slov při posunu pravítka po řádcích, větách a slovech
+    // Kontinuální akreditace slov při posunu pravítka po řádcích a slovech
     this.wordsCreditedOnCurrentPage = 0;
     this.ruler.onProgress = (type, count) => {
       if (count > 0) {
@@ -511,8 +510,6 @@ export class LuminaApp {
         if (typeof tracker !== "undefined") {
           if (type === "line") {
             tracker.recordLineCompleted(count);
-          } else if (type === "sentence") {
-            tracker.recordSentenceCompleted(count);
           } else if (type === "word") {
             tracker.recordWordByWord(count);
           } else {
@@ -941,7 +938,6 @@ export class LuminaApp {
     // Synchronizace rychlého popoveru pravítka
     const curRulerMode = s.ruler?.rulerModeType || (s.ruler?.wordTracking ? "word" : "line");
     if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", curRulerMode === "line");
-    if (this.dom.popoverModeSentence) this.dom.popoverModeSentence.classList.toggle("active", curRulerMode === "sentence");
     if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", curRulerMode === "word");
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
       btn.classList.toggle("active", btn.dataset.rulerModeType === curRulerMode);
@@ -2039,14 +2035,6 @@ export class LuminaApp {
       });
     }
 
-    if (this.dom.popoverModeSentence) {
-      bindRulerSettingAction(this.dom.popoverModeSentence, (e) => {
-        if (e && e.cancelable) e.preventDefault();
-        if (e) e.stopPropagation();
-        this.setRulerModeType("sentence");
-      });
-    }
-
     if (this.dom.popoverModeWord) {
       bindRulerSettingAction(this.dom.popoverModeWord, (e) => {
         if (e && e.cancelable) e.preventDefault();
@@ -2057,7 +2045,7 @@ export class LuminaApp {
     }
 
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
-      if (btn !== this.dom.popoverModeLine && btn !== this.dom.popoverModeSentence && btn !== this.dom.popoverModeWord) {
+      if (btn !== this.dom.popoverModeLine && btn !== this.dom.popoverModeWord) {
         bindRulerSettingAction(btn, (e) => {
           if (e && e.cancelable) e.preventDefault();
           if (e) e.stopPropagation();
@@ -3205,14 +3193,13 @@ export class LuminaApp {
     if (this.isPdfMode && this.isImageOnlyPdf) {
       mode = "line";
     }
-    const validMode = ["line", "sentence", "word"].includes(mode) ? mode : "line";
+    const validMode = ["line", "word"].includes(mode) ? mode : "line";
     if (!this.settings.ruler) this.settings.ruler = {};
     this.settings.ruler.rulerModeType = validMode;
     this.settings.ruler.wordTracking = (validMode === "word");
 
     // 1. Okamžitá synchronní aktualizace UI stavu tlačítek a přepínačů
     if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", validMode === "line");
-    if (this.dom.popoverModeSentence) this.dom.popoverModeSentence.classList.toggle("active", validMode === "sentence");
     if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", validMode === "word");
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
       btn.classList.toggle("active", btn.dataset.rulerModeType === validMode);
@@ -3266,7 +3253,6 @@ export class LuminaApp {
 
     const curRulerMode = this.settings.ruler.rulerModeType || (this.settings.ruler.wordTracking ? "word" : "line");
     if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", curRulerMode === "line");
-    if (this.dom.popoverModeSentence) this.dom.popoverModeSentence.classList.toggle("active", curRulerMode === "sentence");
     if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", curRulerMode === "word");
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
       btn.classList.toggle("active", btn.dataset.rulerModeType === curRulerMode);
@@ -3583,7 +3569,6 @@ export class LuminaApp {
     if (popoverModeSection) popoverModeSection.classList.toggle("is-hidden", isImageOnly);
 
     const popoverModeWord = this.dom.popoverModeWord || document.getElementById("popover-mode-word");
-    const popoverModeSentence = this.dom.popoverModeSentence || document.getElementById("popover-mode-sentence");
     const popoverModeLine = this.dom.popoverModeLine || document.getElementById("popover-mode-line");
     const popoverModeSegmented = this.dom.popoverModeSegmented || document.getElementById("popover-mode-segmented");
     const curRulerMode = this.settings.ruler?.rulerModeType || (this.settings.ruler?.wordTracking ? "word" : "line");
@@ -3591,17 +3576,11 @@ export class LuminaApp {
       popoverModeWord.classList.toggle("is-hidden", isImageOnly);
       popoverModeWord.disabled = isImageOnly;
     }
-    if (popoverModeSentence) {
-      popoverModeSentence.classList.toggle("is-hidden", isImageOnly);
-      popoverModeSentence.disabled = isImageOnly;
-    }
     if (isImageOnly) {
       if (popoverModeWord) popoverModeWord.classList.remove("active");
-      if (popoverModeSentence) popoverModeSentence.classList.remove("active");
       if (popoverModeLine) popoverModeLine.classList.add("active");
     } else {
       if (popoverModeWord) popoverModeWord.classList.toggle("active", curRulerMode === "word");
-      if (popoverModeSentence) popoverModeSentence.classList.toggle("active", curRulerMode === "sentence");
       if (popoverModeLine) popoverModeLine.classList.toggle("active", curRulerMode === "line");
     }
     if (popoverModeSegmented) {
