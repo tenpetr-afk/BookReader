@@ -597,28 +597,31 @@
 
           <div style="margin-bottom: 1rem;" id="settings-follow-section">
             <div class="slider-label"><span>Způsob pohybu</span></div>
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
-              <button type="button" class="font-btn" data-ruler-follow="mouse">Kurzor myši</button>
-              <button type="button" class="font-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
+            <div class="popover-segmented-control columns-2">
+              <span class="segmented-bubble" aria-hidden="true"></span>
+              <button type="button" class="segment-btn" data-ruler-follow="mouse">Kurzor myši</button>
+              <button type="button" class="segment-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
             </div>
           </div>
 
           <div style="margin-bottom: 1rem;" id="drawer-ruler-style-section">
             <div class="slider-label"><span>Styl pravítka</span></div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem;">
-              <button type="button" class="font-btn" data-ruler-mode="off" data-ruler-style="off">Vypnuto</button>
-              <button type="button" class="font-btn active" data-ruler-mode="highlight" data-ruler-style="highlight">Zvýrazňovač</button>
-              <button type="button" class="font-btn" data-ruler-mode="bottom-cover" data-ruler-style="bottom-cover">Spodní clona</button>
+            <div class="popover-segmented-control columns-3">
+              <span class="segmented-bubble" aria-hidden="true"></span>
+              <button type="button" class="segment-btn" data-ruler-mode="off" data-ruler-style="off">Vypnuto</button>
+              <button type="button" class="segment-btn active" data-ruler-mode="highlight" data-ruler-style="highlight">Zvýrazňovač</button>
+              <button type="button" class="segment-btn" data-ruler-mode="bottom-cover" data-ruler-style="bottom-cover">Spodní clona</button>
             </div>
           </div>
 
           <div style="margin-bottom: 1rem;" id="drawer-ruler-focus-section">
             <div class="slider-label"><span>Zaostření okolí</span></div>
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem;">
-              <button type="button" class="font-btn active" data-ruler-focus="off">Vypnuto</button>
-              <button type="button" class="font-btn" data-ruler-focus="up">Nahoře</button>
-              <button type="button" class="font-btn" data-ruler-focus="down">Dole</button>
-              <button type="button" class="font-btn" data-ruler-focus="both">Obojí</button>
+            <div class="popover-segmented-control columns-4">
+              <span class="segmented-bubble" aria-hidden="true"></span>
+              <button type="button" class="segment-btn active" data-ruler-focus="off">Vypnuto</button>
+              <button type="button" class="segment-btn" data-ruler-focus="up">Nahoře</button>
+              <button type="button" class="segment-btn" data-ruler-focus="down">Dole</button>
+              <button type="button" class="segment-btn" data-ruler-focus="both">Obojí</button>
             </div>
           </div>
 
