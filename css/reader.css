@@ -1791,13 +1791,25 @@ canvas.active-focus,
 }
 
 .popover-segmented-control {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  background: var(--bg-hover);
+  background: rgba(0, 0, 0, 0.28);
   padding: 3px;
-  border-radius: var(--radius-md);
-  gap: 3px;
-  border: 1px solid var(--border-color);
+  border-radius: 9999px;
+  gap: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, 0.25), inset 0 0 1px rgba(255, 255, 255, 0.12);
+  align-items: stretch;
+  isolation: isolate;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+[data-theme="light"] .popover-segmented-control {
+  background: rgba(0, 0, 0, 0.07);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 .popover-segmented-control.is-single-segment,
@@ -1810,6 +1822,8 @@ canvas.active-focus,
 }
 
 .popover-segmented-control .segment-btn {
+  position: relative;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1817,12 +1831,14 @@ canvas.active-focus,
   padding: 0.45rem 0.6rem;
   font-size: 0.85rem;
   font-weight: 600;
-  border: none;
-  border-radius: calc(var(--radius-md) - 2px);
-  background: transparent;
+  border: none !important;
+  border-radius: 9999px !important;
+  background: transparent !important;
+  box-shadow: none !important;
   color: var(--text-muted);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: color 0.2s ease;
+  white-space: nowrap;
 }
 
 .popover-segmented-control .segment-btn.is-hidden {
@@ -1831,12 +1847,15 @@ canvas.active-focus,
 
 .popover-segmented-control .segment-btn:hover:not(.active) {
   color: var(--text-main);
+  background: transparent !important;
 }
 
 .popover-segmented-control .segment-btn.active {
-  background: var(--bg-card, var(--bg-surface, #ffffff));
-  color: var(--color-primary);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  background: transparent !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: none !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 .popover-slider-wrapper {
@@ -1878,9 +1897,25 @@ canvas.active-focus,
 }
 
 .popover-styles-grid {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0.35rem;
+  gap: 0;
+  padding: 3px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, 0.25), inset 0 0 1px rgba(255, 255, 255, 0.12);
+  align-items: stretch;
+  isolation: isolate;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+[data-theme="light"] .popover-styles-grid {
+  background: rgba(0, 0, 0, 0.07);
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 #popover-follow-section.is-image-only .popover-styles-grid,
@@ -1904,36 +1939,62 @@ canvas.active-focus,
 
 .popover-styles-grid.columns-4 {
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.3rem;
 }
 
 .popover-styles-grid.columns-4 .popover-style-btn {
-  padding: 0.4rem 0.15rem;
-  font-size: 0.75rem;
+  padding: 0.45rem 0.15rem;
+  font-size: 0.74rem;
 }
 
 .popover-style-btn {
-  padding: 0.45rem 0.3rem;
-  font-size: 0.8rem;
+  position: relative;
+  z-index: 2;
+  padding: 0.45rem 0.4rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-color);
-  background: var(--bg-hover);
+  border-radius: 9999px !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
   color: var(--text-muted);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: color 0.2s ease;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .popover-style-btn:hover:not(.active) {
   color: var(--text-main);
+  background: transparent !important;
 }
 
 .popover-style-btn.active {
-  border-color: var(--color-primary);
-  background: var(--bg-card, var(--bg-surface, #ffffff));
-  color: var(--color-primary);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  background: transparent !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: none !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* Active sliding bubble indicator for segmented controls */
+.segmented-bubble {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  height: calc(100% - 6px);
+  border-radius: 9999px;
+  background: linear-gradient(135deg, rgba(30, 90, 220, 0.65), rgba(20, 110, 245, 0.82)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  border-top-color: rgba(255, 255, 255, 0.6) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.4), 0 2px 6px rgba(0, 0, 0, 0.28) !important;
+  pointer-events: none;
+  z-index: 1;
+  transform: translate3d(0, 0, 0);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1.2), width 0.2s ease, opacity 0.2s ease;
+  will-change: transform, width;
 }
 
 .popover-colors-row {
@@ -3146,7 +3207,7 @@ body.ui-liquid-glass .ruler-quick-popover {
   border: 1px solid var(--lq-glass-border) !important;
   border-top-color: var(--lq-glass-border-top) !important;
   border-bottom-color: var(--lq-glass-border-bottom, var(--lq-glass-border)) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.15), var(--lq-glass-rim), 0 20px 50px -8px rgba(0, 0, 0, 0.45), 0 8px 24px -4px rgba(0, 0, 0, 0.28) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.20), var(--lq-chromatic-rim), 0 20px 50px -8px rgba(0, 0, 0, 0.45), 0 8px 24px -4px rgba(0, 0, 0, 0.28) !important;
   border-radius: 20px !important;
   color: var(--lq-glass-text) !important;
   transform: none;
@@ -3157,34 +3218,47 @@ body.ui-liquid-glass .ruler-quick-popover {
 .ui-liquid-glass .ruler-quick-popover,
 body.ui-liquid-glass #ruler-quick-popover,
 body.ui-liquid-glass .ruler-quick-popover,
+body.theme-light.ui-liquid-glass #ruler-quick-popover,
+body.theme-light.ui-liquid-glass .ruler-quick-popover,
+html[data-theme="light"] body.ui-liquid-glass #ruler-quick-popover,
+html[data-theme="light"] body.ui-liquid-glass .ruler-quick-popover {
+  background: rgba(255, 255, 255, 0.78) !important;
+}
+
 body.theme-warm.ui-liquid-glass #ruler-quick-popover,
 body.theme-warm.ui-liquid-glass .ruler-quick-popover,
-body.theme-sepia.ui-liquid-glass #ruler-quick-popover,
-body.theme-sepia.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="warm"] body.ui-liquid-glass #ruler-quick-popover,
 html[data-theme="warm"] body.ui-liquid-glass .ruler-quick-popover,
+[data-theme="warm"] #ruler-quick-popover,
+[data-theme="warm"] .ruler-quick-popover {
+  background: rgba(255, 248, 235, 0.82) !important;
+}
+
+body.theme-sepia.ui-liquid-glass #ruler-quick-popover,
+body.theme-sepia.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="sepia"] body.ui-liquid-glass #ruler-quick-popover,
 html[data-theme="sepia"] body.ui-liquid-glass .ruler-quick-popover,
-[data-theme="warm"] #ruler-quick-popover,
-[data-theme="warm"] .ruler-quick-popover,
 [data-theme="sepia"] #ruler-quick-popover,
 [data-theme="sepia"] .ruler-quick-popover {
-  background: rgba(248, 249, 250, 0.95) !important;
+  background: rgba(250, 242, 226, 0.82) !important;
 }
 
 body.theme-dark.ui-liquid-glass #ruler-quick-popover,
 body.theme-dark.ui-liquid-glass .ruler-quick-popover,
-body.theme-oled.ui-liquid-glass #ruler-quick-popover,
-body.theme-oled.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover,
 html[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover,
+[data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover,
+[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover {
+  background: rgba(18, 24, 38, 0.76) !important;
+}
+
+body.theme-oled.ui-liquid-glass #ruler-quick-popover,
+body.theme-oled.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="oled"] body.ui-liquid-glass #ruler-quick-popover,
 html[data-theme="oled"] body.ui-liquid-glass .ruler-quick-popover,
-[data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover,
-[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover,
 [data-theme="oled"] body.ui-liquid-glass #ruler-quick-popover,
 [data-theme="oled"] body.ui-liquid-glass .ruler-quick-popover {
-  background: rgba(14, 18, 27, 0.95) !important;
+  background: rgba(14, 14, 16, 0.78) !important;
 }
 
 body.ui-liquid-glass .settings-modal .modal-content,
@@ -3236,20 +3310,64 @@ body.ui-liquid-glass .settings-drawer:active {
   transform: translate(-50%, 0) !important;
 }
 
-body.ui-liquid-glass .popover-segmented-control {
-  background: var(--lq-glass-track-bg) !important;
-  border: 1px solid var(--lq-glass-border) !important;
+body.ui-liquid-glass .popover-segmented-control,
+body.ui-liquid-glass .popover-styles-grid {
+  position: relative !important;
+  background: var(--lq-glass-track-bg, rgba(0, 0, 0, 0.28)) !important;
+  border: 1px solid var(--lq-glass-border, rgba(255, 255, 255, 0.08)) !important;
+  box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, 0.25), inset 0 0 1px rgba(255, 255, 255, 0.15) !important;
+  border-radius: 9999px !important;
+  padding: 3px !important;
+  gap: 0 !important;
+  isolation: isolate !important;
 }
 
-body.ui-liquid-glass .popover-segmented-control .segment-btn.active {
-  background: var(--lq-glass-bg-hover) !important;
-  color: var(--color-primary) !important;
-  border: 1px solid var(--lq-glass-border) !important;
-  box-shadow: var(--lq-glass-rim-subtle), 0 3px 10px rgba(0, 0, 0, 0.10) !important;
+[data-theme="light"] body.ui-liquid-glass .popover-segmented-control,
+[data-theme="light"] body.ui-liquid-glass .popover-styles-grid,
+html[data-theme="light"] body.ui-liquid-glass .popover-segmented-control,
+html[data-theme="light"] body.ui-liquid-glass .popover-styles-grid {
+  background: rgba(0, 0, 0, 0.07) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12) !important;
+}
+
+body.ui-liquid-glass .popover-segmented-control .segment-btn,
+body.ui-liquid-glass .popover-styles-grid .popover-style-btn {
+  position: relative !important;
+  z-index: 2 !important;
+  border-radius: 9999px !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--lq-glass-text, rgba(255, 255, 255, 0.7)) !important;
+  transition: color 0.2s ease, transform 0.15s ease !important;
+  white-space: nowrap;
+}
+
+body.ui-liquid-glass .popover-segmented-control .segment-btn:hover:not(.active),
+body.ui-liquid-glass .popover-styles-grid .popover-style-btn:hover:not(.active) {
+  color: #ffffff !important;
+  background: transparent !important;
+}
+
+body.ui-liquid-glass .popover-segmented-control .segment-btn:active,
+body.ui-liquid-glass .popover-styles-grid .popover-style-btn:active {
+  transform: scale(0.97) !important;
+}
+
+body.ui-liquid-glass .popover-segmented-control .segment-btn.active,
+body.ui-liquid-glass .popover-styles-grid .popover-style-btn.active {
+  background: transparent !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: none !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  transform: none !important;
+  font-weight: 600;
 }
 
 /* ==========================================================================
-   Liquid Glass Interactive Range Slider Thumb (.ui-liquid-glass)
+   Liquid Glass Interactive Range Slider (.ui-liquid-glass)
    ========================================================================== */
 
 /* Track Alignment & Styling */
@@ -3266,15 +3384,26 @@ body.ui-liquid-glass .popover-slider-wrapper .slider-input {
   outline: none;
   background: linear-gradient(
     to right,
-    var(--color-primary, #2563eb) 0%,
-    var(--color-primary, #2563eb) var(--slider-fill-pct, 0%),
+    var(--color-primary, #0a84ff) 0%,
+    var(--color-primary, #0a84ff) var(--slider-fill-pct, 0%),
     var(--lq-glass-track-bg) var(--slider-fill-pct, 0%),
     var(--lq-glass-track-bg) 100%
   ) !important;
   border: 1px solid var(--lq-glass-border) !important;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15) !important;
+  box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, 0.22), inset 0 0 1px rgba(255, 255, 255, 0.20) !important;
   cursor: pointer;
   vertical-align: middle;
+}
+
+/* WebKit Runnable Track Explicit Height for Calibrated Center Alignment */
+.ui-liquid-glass input[type="range"]::-webkit-slider-runnable-track,
+.ui-liquid-glass .slider-input::-webkit-slider-runnable-track,
+body.ui-liquid-glass input[type="range"]::-webkit-slider-runnable-track,
+body.ui-liquid-glass .slider-input::-webkit-slider-runnable-track,
+body.ui-liquid-glass .popover-slider-wrapper .slider-input::-webkit-slider-runnable-track {
+  height: 6px !important;
+  background: transparent !important;
+  border: none !important;
 }
 
 /* Firefox Track & Progress */
@@ -3283,11 +3412,11 @@ body.ui-liquid-glass .popover-slider-wrapper .slider-input {
 body.ui-liquid-glass input[type="range"]::-moz-range-track,
 body.ui-liquid-glass .slider-input::-moz-range-track,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input::-moz-range-track {
-  height: 6px;
+  height: 6px !important;
   border-radius: 9999px;
   background: var(--lq-glass-track-bg);
   border: 1px solid var(--lq-glass-border);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
+  box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, 0.22), inset 0 0 1px rgba(255, 255, 255, 0.20);
 }
 
 .ui-liquid-glass input[type="range"]::-moz-range-progress,
@@ -3295,12 +3424,13 @@ body.ui-liquid-glass .popover-slider-wrapper .slider-input::-moz-range-track {
 body.ui-liquid-glass input[type="range"]::-moz-range-progress,
 body.ui-liquid-glass .slider-input::-moz-range-progress,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input::-moz-range-progress {
-  height: 6px;
+  height: 6px !important;
   border-radius: 9999px 0 0 9999px;
-  background: var(--color-primary, #2563eb);
+  background: var(--color-primary, #0a84ff);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.40);
 }
 
-/* WebKit Slider Thumb - Default / Resting State (Solid White Pill) */
+/* WebKit Slider Thumb - Default / Resting State (Translucent Liquid Glass Pill) */
 .ui-liquid-glass input[type="range"]::-webkit-slider-thumb,
 .ui-liquid-glass .slider-input::-webkit-slider-thumb,
 body.ui-liquid-glass input[type="range"]::-webkit-slider-thumb,
@@ -3308,44 +3438,76 @@ body.ui-liquid-glass .slider-input::-webkit-slider-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 24px !important;
-  height: 20px !important;
+  width: 34px !important;
+  height: 22px !important;
+  margin-top: calc((6px - 22px) / 2) !important; /* -8px: calibrated precisely to (track_height - thumb_height) / 2 */
   border-radius: 9999px !important;
-  background: #ffffff !important;
-  border: none !important;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 1px rgba(0, 0, 0, 0.2) !important;
+  background: var(--lq-slider-thumb-bg) !important;
+  backdrop-filter: blur(8px) saturate(180%);
+  -webkit-backdrop-filter: blur(8px) saturate(180%);
+  border: 1px solid var(--lq-slider-thumb-border) !important;
+  border-top-color: rgba(255, 255, 255, 0.95) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow: var(--lq-slider-thumb-shadow) !important;
   cursor: grab;
-  transform: none !important;
-  transition: width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1.2),
+  transform: translateZ(0) !important;
+  transition: width 0.25s cubic-bezier(0.2, 0.8, 0.2, 1.2),
               height 0.2s ease,
-              background-color 0.2s ease,
+              margin-top 0.2s ease,
+              transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1.2),
+              background 0.2s ease,
               box-shadow 0.2s ease,
-              border 0.2s ease;
+              border-color 0.2s ease !important;
 }
 
-/* Mozilla Range Thumb - Default / Resting State (Solid White Pill) */
+/* Mozilla Range Thumb - Default / Resting State (Translucent Liquid Glass Pill) */
 .ui-liquid-glass input[type="range"]::-moz-range-thumb,
 .ui-liquid-glass .slider-input::-moz-range-thumb,
 body.ui-liquid-glass input[type="range"]::-moz-range-thumb,
 body.ui-liquid-glass .slider-input::-moz-range-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input::-moz-range-thumb {
   appearance: none;
-  width: 24px !important;
-  height: 20px !important;
+  width: 34px !important;
+  height: 22px !important;
+  margin-top: calc((6px - 22px) / 2) !important;
   border-radius: 9999px !important;
-  background: #ffffff !important;
-  border: none !important;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 1px rgba(0, 0, 0, 0.2) !important;
+  background: var(--lq-slider-thumb-bg) !important;
+  backdrop-filter: blur(8px) saturate(180%);
+  border: 1px solid var(--lq-slider-thumb-border) !important;
+  border-top-color: rgba(255, 255, 255, 0.95) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.35) !important;
+  box-shadow: var(--lq-slider-thumb-shadow) !important;
   cursor: grab;
-  transform: none !important;
-  transition: width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1.2),
+  transform: translateZ(0) !important;
+  transition: width 0.25s cubic-bezier(0.2, 0.8, 0.2, 1.2),
               height 0.2s ease,
-              background-color 0.2s ease,
+              margin-top 0.2s ease,
+              transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1.2),
+              background 0.2s ease,
               box-shadow 0.2s ease,
-              border 0.2s ease;
+              border-color 0.2s ease !important;
 }
 
-/* WebKit Slider Thumb - Pressed / Dragging State (:active) */
+/* Hover State */
+.ui-liquid-glass input[type="range"]:hover::-webkit-slider-thumb,
+.ui-liquid-glass .slider-input:hover::-webkit-slider-thumb,
+body.ui-liquid-glass input[type="range"]:hover::-webkit-slider-thumb,
+body.ui-liquid-glass .slider-input:hover::-webkit-slider-thumb,
+body.ui-liquid-glass .popover-slider-wrapper .slider-input:hover::-webkit-slider-thumb {
+  transform: scale(1.05) translateZ(0) !important;
+  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
+}
+
+.ui-liquid-glass input[type="range"]:hover::-moz-range-thumb,
+.ui-liquid-glass .slider-input:hover::-moz-range-thumb,
+body.ui-liquid-glass input[type="range"]:hover::-moz-range-thumb,
+body.ui-liquid-glass .slider-input:hover::-moz-range-thumb,
+body.ui-liquid-glass .popover-slider-wrapper .slider-input:hover::-moz-range-thumb {
+  transform: scale(1.05) translateZ(0) !important;
+  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
+}
+
+/* WebKit Slider Thumb - Pressed / Dragging State (:active) - Elastic Fluid Stretch */
 .ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
 .ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
 .ui-liquid-glass input[type="range"].is-active::-webkit-slider-thumb,
@@ -3356,15 +3518,18 @@ body.ui-liquid-glass input[type="range"].is-active::-webkit-slider-thumb,
 body.ui-liquid-glass .slider-input.is-active::-webkit-slider-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input:active::-webkit-slider-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input.is-active::-webkit-slider-thumb {
-  width: 40px !important;
-  height: 22px !important;
-  background: var(--lq-slider-thumb-active-bg, rgba(18, 22, 32, 0.72)) !important;
-  border: var(--lq-slider-thumb-active-border, 1px solid rgba(255, 255, 255, 0.28)) !important;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  box-shadow: var(--lq-slider-thumb-active-shadow, inset 0 1.5px 1.5px rgba(255, 255, 255, 0.5), inset 0 -1.5px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.45)) !important;
-  cursor: grabbing;
-  transform: none !important;
+  width: 44px !important;
+  height: 24px !important;
+  margin-top: calc((6px - 24px) / 2) !important; /* -9px: calibrated precisely for active expanded height */
+  background: var(--lq-slider-thumb-bg) !important;
+  border: 1px solid var(--lq-slider-thumb-border) !important;
+  border-top-color: rgba(255, 255, 255, 1) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
+  backdrop-filter: blur(10px) saturate(200%);
+  -webkit-backdrop-filter: blur(10px) saturate(200%);
+  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
+  cursor: grabbing !important;
+  transform: scale(1) translateZ(0) !important;
 }
 
 /* Mozilla Range Thumb - Pressed / Dragging State (:active) */
@@ -3378,129 +3543,166 @@ body.ui-liquid-glass input[type="range"].is-active::-moz-range-thumb,
 body.ui-liquid-glass .slider-input.is-active::-moz-range-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input:active::-moz-range-thumb,
 body.ui-liquid-glass .popover-slider-wrapper .slider-input.is-active::-moz-range-thumb {
-  width: 40px !important;
-  height: 22px !important;
-  background: var(--lq-slider-thumb-active-bg, rgba(18, 22, 32, 0.72)) !important;
-  border: var(--lq-slider-thumb-active-border, 1px solid rgba(255, 255, 255, 0.28)) !important;
-  backdrop-filter: blur(4px);
-  box-shadow: var(--lq-slider-thumb-active-shadow, inset 0 1.5px 1.5px rgba(255, 255, 255, 0.5), inset 0 -1.5px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.45)) !important;
-  cursor: grabbing;
-  transform: none !important;
+  width: 44px !important;
+  height: 24px !important;
+  margin-top: calc((6px - 24px) / 2) !important;
+  background: var(--lq-slider-thumb-bg) !important;
+  border: 1px solid var(--lq-slider-thumb-border) !important;
+  border-top-color: rgba(255, 255, 255, 1) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
+  backdrop-filter: blur(10px) saturate(200%);
+  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
+  cursor: grabbing !important;
+  transform: scale(1) translateZ(0) !important;
+}
+  background: var(--lq-slider-thumb-bg) !important;
+  border: 1px solid var(--lq-slider-thumb-border) !important;
+  border-top-color: rgba(255, 255, 255, 1) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.45) !important;
+  backdrop-filter: blur(10px) saturate(200%);
+  box-shadow: var(--lq-slider-thumb-shadow-active) !important;
+  cursor: grabbing !important;
+  transform: scale(1) translateZ(0) !important;
 }
 
-/* Theme Harmonization: Light Themes */
-html[data-theme="light"] .ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="light"].ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="light"] .ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-html[data-theme="light"].ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-body.theme-light.ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-body.theme-light.ui-liquid-glass .slider-input:active::-webkit-slider-thumb {
-  background: rgba(255, 255, 255, 0.55) !important;
-  border: 1px solid rgba(255, 255, 255, 0.75) !important;
-  box-shadow: inset 0 1.5px 1.5px rgba(255, 255, 255, 0.95),
-              inset 0 -1.5px 2px rgba(15, 23, 42, 0.12),
-              0 4px 12px rgba(15, 23, 42, 0.18) !important;
+/* Floating Action Menu Button (FAB) & Floating Dock */
+body.ui-liquid-glass .btn-reader-menu-fab {
+  background: var(--lq-glass-bg) !important;
+  backdrop-filter: var(--lq-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  border-top-color: var(--lq-glass-border-top) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow) !important;
+  border-radius: 12px !important;
+  color: var(--lq-glass-text) !important;
+  transition: transform var(--lq-spring-duration) var(--lq-spring-easing),
+              background 0.2s ease,
+              box-shadow 0.2s ease,
+              border-color 0.2s ease !important;
 }
 
-html[data-theme="light"] .ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="light"].ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="light"] .ui-liquid-glass .slider-input:active::-moz-range-thumb,
-html[data-theme="light"].ui-liquid-glass .slider-input:active::-moz-range-thumb,
-body.theme-light.ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-body.theme-light.ui-liquid-glass .slider-input:active::-moz-range-thumb {
-  background: rgba(255, 255, 255, 0.55) !important;
-  border: 1px solid rgba(255, 255, 255, 0.75) !important;
-  box-shadow: inset 0 1.5px 1.5px rgba(255, 255, 255, 0.95),
-              inset 0 -1.5px 2px rgba(15, 23, 42, 0.12),
-              0 4px 12px rgba(15, 23, 42, 0.18) !important;
+body.ui-liquid-glass .btn-reader-menu-fab svg {
+  stroke: var(--lq-glass-text) !important;
+  transition: transform var(--lq-spring-duration) var(--lq-spring-easing);
 }
 
-/* Theme Harmonization: Warm & Sepia Themes */
-html[data-theme="warm"] .ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="warm"].ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="warm"] .ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-html[data-theme="warm"].ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-html[data-theme="sepia"] .ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="sepia"].ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="sepia"] .ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-html[data-theme="sepia"].ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-body.theme-warm.ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-body.theme-sepia.ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb {
-  background: rgba(255, 253, 246, 0.60) !important;
-  border: 1px solid rgba(255, 255, 255, 0.85) !important;
-  box-shadow: inset 0 1.5px 1.5px rgba(255, 255, 255, 0.95),
-              inset 0 -1.5px 2px rgba(160, 110, 50, 0.16),
-              0 4px 12px rgba(70, 45, 20, 0.16) !important;
+body.ui-liquid-glass .btn-reader-menu-fab:hover {
+  background: var(--lq-glass-bg-hover) !important;
+  border-color: var(--lq-glass-border-hover) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow-hover) !important;
+  transform: translateY(-1px) scale(1.05) !important;
 }
 
-html[data-theme="warm"] .ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="warm"].ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="warm"] .ui-liquid-glass .slider-input:active::-moz-range-thumb,
-html[data-theme="warm"].ui-liquid-glass .slider-input:active::-moz-range-thumb,
-html[data-theme="sepia"] .ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="sepia"].ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="sepia"] .ui-liquid-glass .slider-input:active::-moz-range-thumb,
-html[data-theme="sepia"].ui-liquid-glass .slider-input:active::-moz-range-thumb,
-body.theme-warm.ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-body.theme-sepia.ui-liquid-glass input[type="range"]:active::-moz-range-thumb {
-  background: rgba(255, 253, 246, 0.60) !important;
-  border: 1px solid rgba(255, 255, 255, 0.85) !important;
-  box-shadow: inset 0 1.5px 1.5px rgba(255, 255, 255, 0.95),
-              inset 0 -1.5px 2px rgba(160, 110, 50, 0.16),
-              0 4px 12px rgba(70, 45, 20, 0.16) !important;
+body.ui-liquid-glass .btn-reader-menu-fab:active {
+  transform: scale(0.93) !important;
 }
 
-/* Theme Harmonization: Dark & OLED Themes */
-html[data-theme="dark"] .ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="dark"].ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="dark"] .ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-html[data-theme="dark"].ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-body.theme-dark.ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-body.theme-dark.ui-liquid-glass .slider-input:active::-webkit-slider-thumb {
-  background: rgba(18, 22, 32, 0.72) !important;
-  border: 1px solid rgba(255, 255, 255, 0.28) !important;
-  box-shadow: inset 0 1.5px 1.5px rgba(255, 255, 255, 0.5),
-              inset 0 -1.5px 2px rgba(0, 0, 0, 0.4),
-              0 4px 12px rgba(0, 0, 0, 0.45) !important;
+body.ui-liquid-glass .btn-reader-menu-fab.active,
+body.ui-liquid-glass .btn-reader-menu-fab[aria-expanded="true"] {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.90), rgba(29, 78, 216, 0.85)) !important;
+  border-color: rgba(255, 255, 255, 0.5) !important;
+  box-shadow: inset 0 1.5px 1.5px rgba(255, 255, 255, 0.65), 0 8px 26px rgba(37, 99, 235, 0.45) !important;
+  color: #ffffff !important;
 }
 
-html[data-theme="dark"] .ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="dark"].ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="dark"] .ui-liquid-glass .slider-input:active::-moz-range-thumb,
-html[data-theme="dark"].ui-liquid-glass .slider-input:active::-moz-range-thumb,
-body.theme-dark.ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-body.theme-dark.ui-liquid-glass .slider-input:active::-moz-range-thumb {
-  background: rgba(18, 22, 32, 0.72) !important;
-  border: 1px solid rgba(255, 255, 255, 0.28) !important;
-  box-shadow: inset 0 1.5px 1.5px rgba(255, 255, 255, 0.5),
-              inset 0 -1.5px 2px rgba(0, 0, 0, 0.4),
-              0 4px 12px rgba(0, 0, 0, 0.45) !important;
+body.ui-liquid-glass .btn-reader-menu-fab.active svg,
+body.ui-liquid-glass .btn-reader-menu-fab[aria-expanded="true"] svg {
+  stroke: #ffffff !important;
 }
 
-html[data-theme="oled"] .ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="oled"].ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-html[data-theme="oled"] .ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-html[data-theme="oled"].ui-liquid-glass .slider-input:active::-webkit-slider-thumb,
-body.theme-oled.ui-liquid-glass input[type="range"]:active::-webkit-slider-thumb,
-body.theme-oled.ui-liquid-glass .slider-input:active::-webkit-slider-thumb {
-  background: rgba(15, 18, 26, 0.75) !important;
-  border: 1px solid rgba(255, 255, 255, 0.32) !important;
-  box-shadow: inset 0 1.5px 1.5px rgba(255, 255, 255, 0.55),
-              inset 0 -1.5px 2px rgba(0, 0, 0, 0.6),
-              0 4px 14px rgba(0, 0, 0, 0.7) !important;
+body.ui-liquid-glass .dock-action-btn {
+  background: var(--lq-glass-bg) !important;
+  backdrop-filter: var(--lq-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  border-top-color: var(--lq-glass-border-top) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow) !important;
+  color: var(--lq-glass-text) !important;
+  border-radius: 50% !important;
+  transition: transform var(--lq-spring-duration) var(--lq-spring-easing),
+              background 0.2s ease,
+              box-shadow 0.2s ease,
+              border-color 0.2s ease !important;
 }
 
-html[data-theme="oled"] .ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="oled"].ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-html[data-theme="oled"] .ui-liquid-glass .slider-input:active::-moz-range-thumb,
-html[data-theme="oled"].ui-liquid-glass .slider-input:active::-moz-range-thumb,
-body.theme-oled.ui-liquid-glass input[type="range"]:active::-moz-range-thumb,
-body.theme-oled.ui-liquid-glass .slider-input:active::-moz-range-thumb {
-  background: rgba(15, 18, 26, 0.75) !important;
-  border: 1px solid rgba(255, 255, 255, 0.32) !important;
-  box-shadow: inset 0 1.5px 1.5px rgba(255, 255, 255, 0.55),
-              inset 0 -1.5px 2px rgba(0, 0, 0, 0.6),
-              0 4px 14px rgba(0, 0, 0, 0.7) !important;
+body.ui-liquid-glass .dock-action-btn svg {
+  stroke: var(--lq-glass-text) !important;
+  transition: transform var(--lq-spring-duration) var(--lq-spring-easing);
+}
+
+body.ui-liquid-glass .dock-action-btn:hover {
+  background: var(--lq-glass-bg-hover) !important;
+  border-color: var(--lq-glass-border-hover) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow-hover) !important;
+  transform: translateY(-2px) scale(1.12) !important;
+}
+
+body.ui-liquid-glass .dock-action-btn:active {
+  transform: scale(0.91) !important;
+}
+
+body.ui-liquid-glass .dock-action-btn-wide,
+body.ui-liquid-glass .pill-scrubber-capsule,
+body.ui-liquid-glass .apple-books-capsule {
+  background: var(--lq-glass-bg) !important;
+  backdrop-filter: var(--lq-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  border-top-color: var(--lq-glass-border-top) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow) !important;
+  border-radius: 9999px !important;
+  transition: transform var(--lq-spring-duration) var(--lq-spring-easing),
+              background 0.2s ease,
+              box-shadow 0.2s ease,
+              border-color 0.2s ease !important;
+}
+
+body.ui-liquid-glass .dock-action-btn-wide:hover,
+body.ui-liquid-glass .pill-scrubber-capsule:hover,
+body.ui-liquid-glass .apple-books-capsule:hover {
+  background: var(--lq-glass-bg-hover) !important;
+  border-color: var(--lq-glass-border-hover) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow-hover) !important;
+  transform: translateY(-1px) scale(1.03) !important;
+}
+
+body.ui-liquid-glass .pill-scrubber-capsule.is-scrubbing {
+  transform: scale(1.04) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow-hover) !important;
+}
+
+body.ui-liquid-glass .pill-scrubber-progress-fill {
+  background: var(--lq-glass-fill-bg) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  border-radius: 9999px 0 0 9999px;
+}
+
+body.ui-liquid-glass .pill-scrubber-label {
+  color: var(--lq-glass-text) !important;
+  text-shadow: var(--lq-glass-text-shadow);
+}
+
+body.ui-liquid-glass .pill-scrubber-menu-btn {
+  color: var(--lq-glass-text) !important;
+  transition: transform var(--lq-spring-duration) var(--lq-spring-easing),
+              background 0.2s ease !important;
+}
+
+body.ui-liquid-glass .pill-scrubber-menu-btn:hover {
+  background: var(--lq-glass-track-bg) !important;
+  transform: scale(1.1);
+}
+
+body.ui-liquid-glass .pill-scrubber-tooltip {
+  background: var(--lq-glass-bg) !important;
+  backdrop-filter: var(--lq-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  border-top-color: var(--lq-glass-border-top) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow) !important;
+  color: var(--lq-glass-text) !important;
+  text-shadow: var(--lq-glass-text-shadow);
+  border-radius: 9999px !important;
 }
 
 

@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.3.2";
-import { EpubParser } from "./epub-parser.js?v=2.3.2";
-import { PDFLoader } from "./pdf-loader.js?v=2.3.2";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.3.2";
-import { ReadingRuler } from "./ruler.js?v=2.3.2";
-import { StatsCharts } from "./charts.js?v=2.3.2";
-import { supabaseSync } from "./supabase-sync.js?v=2.3.2";
-import { supabase } from "./supabase-client.js?v=2.3.2";
+import { storage, computeFileHash } from "./storage.js?v=2.3.3";
+import { EpubParser } from "./epub-parser.js?v=2.3.3";
+import { PDFLoader } from "./pdf-loader.js?v=2.3.3";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.3.3";
+import { ReadingRuler } from "./ruler.js?v=2.3.3";
+import { StatsCharts } from "./charts.js?v=2.3.3";
+import { supabaseSync } from "./supabase-sync.js?v=2.3.3";
+import { supabase } from "./supabase-client.js?v=2.3.3";
 
-export const APP_VERSION = "v2.3.2";
+export const APP_VERSION = "v2.3.3";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -204,10 +204,23 @@ export class LuminaApp {
         }
       }, 600);
     } catch (_) {}
+
+    this._isAppReady = true;
+    requestAnimationFrame(() => {
+      this.syncAllSegmentedBubbles(true);
+    });
   }
 
   setupEventListeners() {
     this.bindEvents();
+    this.initSegmentedBubbles();
+    // Automatická synchronizace grafické výplně tekutého skla pro všechny posuvníky
+    document.addEventListener("input", (e) => {
+      if (e.target && e.target.type === "range") {
+        this.updateRangeFill(e.target);
+      }
+    }, { passive: true });
+    this.syncAllRangeFills();
   }
 
   cacheDom() {
@@ -554,10 +567,99 @@ export class LuminaApp {
   setSwitchState(el, checked) {
     if (!el) return;
     const isChecked = !!checked;
+    const wasChecked = el.classList.contains("is-checked") || el.getAttribute("aria-checked") === "true";
     el.checked = isChecked;
     el.setAttribute("aria-checked", String(isChecked));
     el.classList.toggle("is-checked", isChecked);
     el.classList.toggle("active", isChecked);
+
+    if (this._isAppReady && wasChecked !== isChecked) {
+      el.classList.remove("is-morphing", "morph-to-on", "morph-to-off");
+      void el.offsetWidth;
+      el.classList.add("is-morphing", isChecked ? "morph-to-on" : "morph-to-off");
+      clearTimeout(el._morphTimer);
+      el._morphTimer = setTimeout(() => {
+        el.classList.remove("is-morphing", "morph-to-on", "morph-to-off");
+      }, 300);
+    }
+  }
+
+  syncAllSegmentedBubbles(immediate = false) {
+    const containers = document.querySelectorAll(".popover-styles-grid, .popover-segmented-control");
+    containers.forEach((container) => {
+      let bubble = container.querySelector(".segmented-bubble");
+      if (!bubble) {
+        bubble = document.createElement("span");
+        bubble.className = "segmented-bubble";
+        bubble.setAttribute("aria-hidden", "true");
+        container.prepend(bubble);
+      }
+      const activeBtn = container.querySelector(
+        ".popover-style-btn.active:not(.is-hidden):not([disabled]), .segment-btn.active:not(.is-hidden):not([disabled])"
+      );
+      if (!activeBtn || container.offsetParent === null || activeBtn.offsetParent === null) {
+        return;
+      }
+      const left = activeBtn.offsetLeft;
+      const width = activeBtn.offsetWidth;
+      if (width === 0) return;
+
+      if (immediate) {
+        const prevTransition = bubble.style.transition;
+        bubble.style.transition = "none";
+        bubble.style.transform = `translate3d(${left}px, 0, 0)`;
+        bubble.style.width = `${width}px`;
+        bubble.style.opacity = "1";
+        void bubble.offsetWidth;
+        bubble.style.transition = prevTransition;
+      } else {
+        bubble.style.transform = `translate3d(${left}px, 0, 0)`;
+        bubble.style.width = `${width}px`;
+        bubble.style.opacity = "1";
+      }
+    });
+  }
+
+  initSegmentedBubbles() {
+    const containers = document.querySelectorAll(".popover-styles-grid, .popover-segmented-control");
+    if (window.MutationObserver) {
+      const observer = new MutationObserver((mutations) => {
+        let shouldUpdate = false;
+        for (const m of mutations) {
+          if (m.type === "attributes" && m.attributeName === "class") {
+            shouldUpdate = true;
+            break;
+          }
+        }
+        if (shouldUpdate) {
+          this.syncAllSegmentedBubbles(false);
+        }
+      });
+      containers.forEach((c) => {
+        observer.observe(c, { attributes: true, attributeFilter: ["class"], subtree: true });
+      });
+    }
+    window.addEventListener("resize", () => {
+      this.syncAllSegmentedBubbles(true);
+    }, { passive: true });
+  }
+
+  updateRangeFill(input) {
+    if (!input || input.type !== "range") return;
+    const min = parseFloat(input.min !== "" ? input.min : "0");
+    const max = parseFloat(input.max !== "" ? input.max : "100");
+    const val = parseFloat(input.value !== "" ? input.value : "0");
+    const range = max - min;
+    const pct = range > 0 ? Math.max(0, Math.min(100, ((val - min) / range) * 100)) : 0;
+    input.style.setProperty("--slider-fill-pct", `${pct.toFixed(2)}%`);
+  }
+
+  syncAllRangeFills() {
+    try {
+      document.querySelectorAll('input[type="range"]').forEach(input => {
+        this.updateRangeFill(input);
+      });
+    } catch (_) {}
   }
 
   resolveEffectiveColumnCount() {
@@ -813,6 +915,9 @@ export class LuminaApp {
     if (this.dom.popoverRulerFollowSelect) {
       this.dom.popoverRulerFollowSelect.value = s.ruler.followMode;
     }
+
+    // Aktualizace výplní všech liquid-glass posuvníků
+    this.syncAllRangeFills();
 
     // Aplikace režimu čtení (vodorovně vs svisle)
     this.applyReadingMode(this.readingMode);
@@ -1671,6 +1776,10 @@ export class LuminaApp {
           if (this.isPdfMode && this.currentBook?.pdfRulerConfig) {
             this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
           }
+          this.syncAllRangeFills();
+          requestAnimationFrame(() => {
+            this.syncAllSegmentedBubbles(true);
+          });
         } else {
           this.dom.rulerQuickPopover.classList.add("is-hidden");
           this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
@@ -2466,6 +2575,7 @@ export class LuminaApp {
         document.body.classList.toggle("ui-liquid-glass", val);
         document.documentElement.classList.toggle("ui-liquid-glass", val);
         storage.saveSettings(this.settings);
+        this.syncAllRangeFills();
       });
     }
 
@@ -3128,6 +3238,7 @@ export class LuminaApp {
     });
     this.updateTouchZonesUI();
     this.updateRulerSettingsVisibility(currentStyle, currentFocus, this.isPdfMode);
+    this.syncAllSegmentedBubbles(false);
   }
 
 
@@ -6271,6 +6382,9 @@ export class LuminaApp {
           };
           this.syncPdfRulerUI(cfg);
         }
+        requestAnimationFrame(() => {
+          this.syncAllSegmentedBubbles(true);
+        });
       }
     } else if (name === "search") {
       const willOpen = !this.dom.searchDrawer?.classList.contains("open");
@@ -6332,6 +6446,7 @@ export class LuminaApp {
         };
         this.syncPdfRulerUI(cfg);
       }
+      this.syncAllRangeFills();
     }
   }
 
@@ -6375,6 +6490,9 @@ export class LuminaApp {
     if (targetPane) {
       targetPane.classList.add("active");
     }
+    requestAnimationFrame(() => {
+      this.syncAllSegmentedBubbles(true);
+    });
   }
 
   updateSettingsTabsVisibility(isPdf = this.isPdfMode) {

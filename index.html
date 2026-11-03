@@ -36,8 +36,8 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.1.0/700.css" />
 
   <!-- Styly aplikace -->
-  <link rel="stylesheet" href="./css/style.css?v=2.3.2" />
-  <link rel="stylesheet" href="./css/reader.css?v=2.3.2" />
+  <link rel="stylesheet" href="./css/style.css?v=2.3.3" />
+  <link rel="stylesheet" href="./css/reader.css?v=2.3.3" />
 </head>
 <body class="show-footer-bar">
 
@@ -191,6 +191,7 @@
             <div class="popover-section" id="popover-follow-section">
               <div class="popover-section-label">Způsob pohybu</div>
               <div class="popover-styles-grid">
+                <span class="segmented-bubble" aria-hidden="true"></span>
                 <button type="button" class="popover-style-btn" data-ruler-follow="mouse">Kurzor myši</button>
                 <button type="button" class="popover-style-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
               </div>
@@ -210,6 +211,7 @@
             <div class="popover-section" id="popover-ruler-mode-section">
               <div class="popover-section-label">Režim zvýraznění</div>
               <div class="popover-segmented-control" id="popover-mode-segmented">
+                <span class="segmented-bubble" aria-hidden="true"></span>
                 <button type="button" class="segment-btn active" id="popover-mode-line" data-ruler-mode-type="line">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                   <span>Řádky</span>
@@ -225,6 +227,7 @@
             <div class="popover-section" id="popover-ruler-style-section">
               <div class="popover-section-label">Styl pravítka</div>
               <div class="popover-styles-grid columns-3">
+                <span class="segmented-bubble" aria-hidden="true"></span>
                 <button type="button" class="popover-style-btn" data-ruler-style="off">Vypnuto</button>
                 <button type="button" class="popover-style-btn active" data-ruler-style="highlight">Zvýrazňovač</button>
                 <button type="button" class="popover-style-btn" data-ruler-style="bottom-cover">Spodní clona</button>
@@ -235,6 +238,7 @@
             <div class="popover-section" id="popover-ruler-focus-section">
               <div class="popover-section-label">Zaostření okolí</div>
               <div class="popover-styles-grid columns-4">
+                <span class="segmented-bubble" aria-hidden="true"></span>
                 <button type="button" class="popover-style-btn active" data-ruler-focus="off">Vypnuto</button>
                 <button type="button" class="popover-style-btn" data-ruler-focus="up">Nahoře</button>
                 <button type="button" class="popover-style-btn" data-ruler-focus="down">Dole</button>
@@ -537,6 +541,7 @@
         <div class="settings-group" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
           <div class="settings-group-title">Režim zobrazení stránek</div>
           <div class="popover-segmented-control columns-2" id="reading-mode-control">
+            <span class="segmented-bubble" aria-hidden="true"></span>
             <button type="button" class="segment-btn active" data-reading-mode="horizontal">Vodorovně</button>
             <button type="button" class="segment-btn" data-reading-mode="vertical">Svisle (webový scroll)</button>
           </div>
@@ -546,6 +551,7 @@
         <div class="settings-group" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
           <div class="settings-group-title">Rozvržení sloupců</div>
           <div class="popover-segmented-control columns-3" id="columns-mode-control">
+            <span class="segmented-bubble" aria-hidden="true"></span>
             <button type="button" class="segment-btn" data-columns="auto">Automaticky</button>
             <button type="button" class="segment-btn" data-columns="1">1 sloupec</button>
             <button type="button" class="segment-btn" data-columns="2">2 sloupce</button>
@@ -841,6 +847,6 @@
   <div id="toast-notification" class="toast" role="status" aria-live="polite"></div>
 
   <!-- Hlavní aplikační skript -->
-  <script type="module" src="./js/app.js?v=2.3.2"></script>
+  <script type="module" src="./js/app.js?v=2.3.3"></script>
 </body>
 </html>
