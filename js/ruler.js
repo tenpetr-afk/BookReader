@@ -6209,7 +6209,7 @@ export class ReadingRuler {
     const creditedLineDelta = Math.min(lineDelta, affordableLines);
     const prevIdx = this._maxLineIndexOnPage;
     const effectiveIdx = prevIdx + creditedLineDelta;
-    this._maxLineIndexOnPage = idx;
+    this._maxLineIndexOnPage = effectiveIdx;
     // Odečteme spotřebovaný čas z rozpočtu, aby při plynulém tahu přes 2–4 přečtené řádky zůstala rezerva pro zbylé řádky
     this._lastLineProgressTime = Math.max(
       now - MAX_BUDGET_MS,

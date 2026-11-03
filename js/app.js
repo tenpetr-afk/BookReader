@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.3.3";
-import { EpubParser } from "./epub-parser.js?v=2.3.3";
-import { PDFLoader } from "./pdf-loader.js?v=2.3.3";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.3.3";
-import { ReadingRuler } from "./ruler.js?v=2.3.3";
-import { StatsCharts } from "./charts.js?v=2.3.3";
-import { supabaseSync } from "./supabase-sync.js?v=2.3.3";
-import { supabase } from "./supabase-client.js?v=2.3.3";
+import { storage, computeFileHash } from "./storage.js?v=2.3.4";
+import { EpubParser } from "./epub-parser.js?v=2.3.4";
+import { PDFLoader } from "./pdf-loader.js?v=2.3.4";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.3.4";
+import { ReadingRuler } from "./ruler.js?v=2.3.4";
+import { StatsCharts } from "./charts.js?v=2.3.4";
+import { supabaseSync } from "./supabase-sync.js?v=2.3.4";
+import { supabase } from "./supabase-client.js?v=2.3.4";
 
-export const APP_VERSION = "v2.3.3";
+export const APP_VERSION = "v2.3.4";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -2712,9 +2712,13 @@ export class LuminaApp {
     window.addEventListener("resize", () => {
       if (this.dom.statsModal && this.dom.statsModal.classList.contains("open")) {
         if (this._selectedSessionId && this._availableSessions) {
-          const session = this._availableSessions.find(s => s.sessionId === this._selectedSessionId);
+          const session = this._availableSessions.find(s => (s.sessionId === this._selectedSessionId || s.id === this._selectedSessionId));
           if (session && this.dom.sessionTimelineChartContainer) {
-            StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
+            try {
+              StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
+            } catch (err) {
+              console.error("[app] Chyba při resize grafu relace:", err);
+            }
           }
         }
       }
@@ -6239,14 +6243,16 @@ export class LuminaApp {
           const prevRatio = this._maxVScrollByChapter.get(activeIdx) || 0;
           if (chapterScrollRatio > prevRatio) {
             const deltaRatio = chapterScrollRatio - prevRatio;
-            this._maxVScrollByChapter.set(activeIdx, chapterScrollRatio);
             const secWords = parseInt(activeSection.dataset.wordCount, 10) || this.currentChapterWords || 1000;
             const wordsScrolled = Math.round(deltaRatio * secWords);
-            if (wordsScrolled > 0 && wordsScrolled <= 650) {
-              if (typeof tracker.attributeScrollWords === "function") {
-                tracker.attributeScrollWords(wordsScrolled);
-              } else {
-                tracker.attributeWords(wordsScrolled);
+            if (wordsScrolled >= 1) {
+              this._maxVScrollByChapter.set(activeIdx, chapterScrollRatio);
+              if (wordsScrolled <= 650) {
+                if (typeof tracker.attributeScrollWords === "function") {
+                  tracker.attributeScrollWords(wordsScrolled);
+                } else {
+                  tracker.attributeWords(wordsScrolled);
+                }
               }
             }
           }
@@ -7254,10 +7260,7 @@ export class LuminaApp {
       ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
       : [];
     const speeds = samples.map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
-    const rawPeak = session.peakWpm ?? session.peak_wpm;
-    const peakWpm = rawPeak 
-      ? Math.max(Math.round(rawPeak), avgWpm) 
-      : (speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm);
+    const peakWpm = speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm;
 
     if (this.dom.sessionBadgeDuration) {
       this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(durationSec);
@@ -7273,7 +7276,11 @@ export class LuminaApp {
     }
 
     if (this.dom.sessionTimelineChartContainer) {
-      StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
+      try {
+        StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
+      } catch (err) {
+        console.error("[app] Chyba při vykreslení grafu časové osy relace:", err);
+      }
     }
   }
 

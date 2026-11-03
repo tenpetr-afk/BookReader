@@ -246,13 +246,13 @@ export class StorageManager {
   }
 
   async uploadBook(book) {
-    const { supabaseSync } = await import("./supabase-sync.js?v=2.3.3");
+    const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
     return await supabaseSync.uploadBook(book);
   }
 
   async syncWithCloud(options) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.3");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
       return await supabaseSync.syncAll(options);
     } catch (err) {
       console.warn("[StorageManager] syncWithCloud selhal:", err);
@@ -262,7 +262,7 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.3");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
       return await supabaseSync.pushSessionAndStats(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
@@ -272,7 +272,7 @@ export class StorageManager {
 
   async pushReadingSessionsToCloud(sessions) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.3");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
       return await supabaseSync.pushMultipleSessions(sessions);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
@@ -784,7 +784,7 @@ export class StorageManager {
    */
   async reconcileSessionsWithCloud() {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.3");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.3.4");
       if (!supabaseSync || !supabaseSync.isOnline()) {
         return { success: false, reason: "offline", purged: 0, saved: 0 };
       }
@@ -1491,17 +1491,13 @@ export class StorageManager {
       return deduped;
     }
 
-    // 4. Potlačení jednobodových špiček (Outlier Despiking) + Klouzavý průměr (Moving Average 3–5 vzorků)
+    // 4. Potlačení propadů (odstraněn destruktivní ořez špiček cur > neighborMax * 1.55) + Klouzavý průměr (Moving Average 3–5 vzorků)
     const despiked = deduped.map((s, idx) => {
-      const cur = Math.min(650, Math.max(40, s.rawWpm || s.wpm));
+      const cur = Math.min(650, Math.max(1, s.rawWpm || s.wpm));
       const prev = idx > 0 ? (deduped[idx - 1].rawWpm || deduped[idx - 1].wpm) : (avgWpm > 0 ? avgWpm : (deduped[idx + 1].rawWpm || deduped[idx + 1].wpm));
       const next = idx < deduped.length - 1 ? (deduped[idx + 1].rawWpm || deduped[idx + 1].wpm) : (avgWpm > 0 ? avgWpm : (deduped[idx - 1].rawWpm || deduped[idx - 1].wpm));
       const neighborMean = (prev + next) / 2;
-      const neighborMax = Math.max(prev, next);
       const neighborMin = Math.min(prev, next);
-      if (cur > neighborMax * 1.55 && cur - neighborMean > 45) {
-        return Math.round(neighborMean + (cur - neighborMean) * 0.35);
-      }
       if (cur < neighborMin * 0.5 && neighborMean - cur > 35) {
         return Math.round(neighborMean - (neighborMean - cur) * 0.4);
       }
@@ -1512,7 +1508,7 @@ export class StorageManager {
     const radius = useFive ? 2 : 1;
     const weights = useFive ? [0.12, 0.23, 0.30, 0.23, 0.12] : [0.25, 0.50, 0.25];
 
-    return deduped.map((s, i) => {
+    const smoothed = deduped.map((s, i) => {
       let wSum = 0;
       let wTot = 0;
       for (let offset = -radius; offset <= radius; offset++) {
@@ -1523,7 +1519,7 @@ export class StorageManager {
           wTot += w;
         }
       }
-      const smoothWpm = wTot > 0 ? Math.min(650, Math.max(40, Math.round(wSum / wTot))) : despiked[i];
+      const smoothWpm = wTot > 0 ? Math.min(650, Math.max(1, Math.round(wSum / wTot))) : despiked[i];
       const minuteNum = i + 1;
       const elapsedSec = (s.isPartial && i === deduped.length - 1 && durationSec > (minuteNum - 1) * 60 && durationSec < minuteNum * 60)
         ? durationSec
@@ -1534,9 +1530,31 @@ export class StorageManager {
         elapsedSeconds: elapsedSec,
         t: elapsedSec,
         wpm: smoothWpm,
+        rawWpm: smoothWpm,
         instantaneousWpm: smoothWpm
       };
     });
+
+    // 5. Škálování vyhlazených vzorků tak, aby jejich průměr odpovídal avgWpm = Math.round((wordsRead / durationSec) * 60)
+    const targetAvgWpm = (durationSec >= 10 && wordsRead > 0)
+      ? Math.round((wordsRead / durationSec) * 60)
+      : (avgWpm > 0 ? Math.round(avgWpm) : 0);
+
+    if (targetAvgWpm > 0 && smoothed.length > 0) {
+      const sumWpm = smoothed.reduce((acc, s) => acc + s.wpm, 0);
+      const meanSmoothedWpm = sumWpm / smoothed.length;
+      if (meanSmoothedWpm > 0) {
+        const scale = targetAvgWpm / meanSmoothedWpm;
+        smoothed.forEach(s => {
+          const scaledWpm = Math.min(650, Math.max(1, Math.round(s.wpm * scale)));
+          s.wpm = scaledWpm;
+          s.rawWpm = scaledWpm;
+          s.instantaneousWpm = scaledWpm;
+        });
+      }
+    }
+
+    return smoothed;
   }
 
   /**
@@ -1574,6 +1592,18 @@ export class StorageManager {
         const expectedPeak = speeds.length > 0 ? Math.max(...speeds, expectedAvg) : expectedAvg;
         const storedPeak = s.peak_wpm ?? s.peakWpm ?? 0;
         if (storedPeak < expectedAvg || storedPeak !== expectedPeak) {
+          hasAnomaly = true;
+          break;
+        }
+
+        const sumWpm = speeds.reduce((a, b) => a + b, 0);
+        const meanWpm = speeds.length > 0 ? Math.round(sumWpm / speeds.length) : expectedAvg;
+        if (expectedAvg > 0 && speeds.length > 0 && Math.abs(meanWpm - expectedAvg) > 2) {
+          hasAnomaly = true;
+          break;
+        }
+
+        if (samples.some(pt => pt.rawWpm !== undefined && pt.rawWpm !== pt.wpm)) {
           hasAnomaly = true;
           break;
         }
@@ -1653,6 +1683,7 @@ export class StorageManager {
             elapsedSeconds: m * 60,
             t: m * 60,
             words: avgWpm,
+            rawWpm: avgWpm,
             wpm: avgWpm,
             instantaneousWpm: avgWpm,
             timestamp: fallbackTs,
@@ -1666,6 +1697,7 @@ export class StorageManager {
             elapsedSeconds: durationSec,
             t: durationSec,
             words: Math.round((avgWpm * remSec) / 60),
+            rawWpm: avgWpm,
             wpm: avgWpm,
             instantaneousWpm: avgWpm,
             timestamp: fallbackTs,
@@ -1687,7 +1719,8 @@ export class StorageManager {
         session.date !== normalizedDate ||
         cleanedSamples.length !== rawSamples.length ||
         session.words_read !== words ||
-        session.duration !== durationSec
+        session.duration !== durationSec ||
+        cleanedSamples.some((cs, i) => !rawSamples[i] || rawSamples[i].wpm !== cs.wpm || rawSamples[i].rawWpm !== cs.rawWpm)
       );
 
       session.wordsRead = words;

@@ -4,15 +4,15 @@
  * odhaduje zbývající čas a ukládá detailní čtecí relace s časovou osou WPM.
  */
 
-import { storage } from "./storage.js?v=2.3.3";
+import { storage } from "./storage.js?v=2.3.4";
 
 export const MIN_VALID_WPM = 40;
 export const MAX_VALID_WPM = 650;
 export const MAX_SUSTAINED_PAGE_WPM = 450;
 export const DEFAULT_NORMAL_WPM = 0;
 export const MIN_SESSION_DURATION_SEC = 300; // Minimální délka relace pro uložení (5 minut)
-export const DEFAULT_IDLE_TIMEOUT_MS = 30000; // 30 sekund bez interakce = pauza čtení (konfigurovatelné 30–60s)
-const IDLE_GRACE_READING_SEC = 10; // Po kolika sekundách ticha před idle pauzou se odečte mrtvý ocas nečinnosti
+export const DEFAULT_IDLE_TIMEOUT_MS = 90000; // 90 sekund bez interakce = pauza čtení (konfigurovatelné 30–60s)
+const IDLE_GRACE_READING_SEC = 30; // Po kolika sekundách ticha před idle pauzou se odečte mrtvý ocas nečinnosti
 const MIN_PAGE_DWELL_SEC = 3.0; // Minimální aktivní doba na stránce (ochrana proti rychlému přeskakování stran)
 
 /**
@@ -870,34 +870,25 @@ export class ReadingTracker {
         // 3. Pokaždé, když currentMinuteActiveSeconds dosáhne 60 (přesně 1 minuta aktivního čtení):
         if (this.currentMinuteActiveSeconds >= 60) {
           const wordsInThisMinute = Math.max(0, Math.round(this.currentMinuteWords));
+          const minuteNumber = this.completedMinutesCount;
+          const elapsedSecAtMinuteEnd = minuteNumber * 60;
+          const clampedMinuteWpm = Math.min(MAX_VALID_WPM, Math.max(1, wordsInThisMinute));
 
-          // Nikdy nezaznamenáváme 0 WPM intervaly způsobené nečinností či prodlevou:
-          // Pokud v minutě nebyla přečtena žádná slova, vyloučíme tento nečinný úsek z délky relace.
-          if (wordsInThisMinute <= 0) {
-            this.currentMinuteActiveSeconds = 0;
-            this.currentMinuteWords = 0;
-            this.wordsReadInCurrentMinute = 0;
-          } else {
-            const minuteNumber = this.completedMinutesCount;
-            const elapsedSecAtMinuteEnd = minuteNumber * 60;
-            const clampedMinuteWpm = Math.min(MAX_VALID_WPM, Math.max(MIN_VALID_WPM, wordsInThisMinute));
+          this.intra_session_samples.push({
+            minute: minuteNumber,
+            elapsedSeconds: elapsedSecAtMinuteEnd,
+            t: elapsedSecAtMinuteEnd,
+            words: wordsInThisMinute,
+            rawWpm: wordsInThisMinute,
+            wpm: clampedMinuteWpm,
+            activeSeconds: 60
+          });
 
-            this.intra_session_samples.push({
-              minute: minuteNumber,
-              elapsedSeconds: elapsedSecAtMinuteEnd,
-              t: elapsedSecAtMinuteEnd,
-              words: wordsInThisMinute,
-              rawWpm: wordsInThisMinute,
-              wpm: clampedMinuteWpm,
-              activeSeconds: 60
-            });
-
-            this.currentMinuteIndex = minuteNumber;
-            this.currentMinuteActiveSeconds = 0;
-            this.currentMinuteWords = 0;
-            this.wordsReadInCurrentMinute = 0;
-            this.completedMinutesCount += 1;
-          }
+          this.currentMinuteIndex = minuteNumber;
+          this.currentMinuteActiveSeconds = 0;
+          this.currentMinuteWords = 0;
+          this.wordsReadInCurrentMinute = 0;
+          this.completedMinutesCount += 1;
 
           // Udržujeme sessionWordsRead přesně rovné součtu uzavřených minutových bucketů
           this.sessionWordsRead = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
@@ -1033,18 +1024,18 @@ export class ReadingTracker {
   static smoothSamples(rawSamples, sessionAvgWpm = 0) {
     if (!Array.isArray(rawSamples) || rawSamples.length === 0) return [];
 
-    // 1. Filtrace nulových propadů a neplatných záznamů
+    // 1. Filtrace neplatných záznamů
     const valid = [];
     for (let i = 0; i < rawSamples.length; i++) {
       const s = rawSamples[i];
-      if (!s) continue;
-      const rawWords = Number(s.words ?? s.wpm ?? 0);
-      const rawRate = Number(s.rawWpm ?? s.wpm ?? s.words ?? 0);
-      if (rawWords <= 0 && rawRate <= 0) continue;
-      const clampedRate = Math.min(MAX_VALID_WPM, Math.max(MIN_VALID_WPM, Math.round(rawRate > 0 ? rawRate : rawWords)));
+      if (!s || typeof s !== "object") continue;
+      const rawWords = Math.max(0, Math.round(Number(s.words ?? s.wpm ?? 0)));
+      const rawRate = Math.max(0, Math.round(Number(s.rawWpm ?? s.wpm ?? s.words ?? 0)));
+      const effectiveRate = rawRate > 0 ? rawRate : rawWords;
+      const clampedRate = Math.min(MAX_VALID_WPM, Math.max(1, effectiveRate));
       valid.push({
         ...s,
-        words: Math.max(1, Math.round(rawWords > 0 ? rawWords : clampedRate)),
+        words: rawWords,
         rawWpm: clampedRate,
         wpm: clampedRate
       });
@@ -1055,22 +1046,21 @@ export class ReadingTracker {
       valid[0].minute = 1;
       valid[0].elapsedSeconds = valid[0].elapsedSeconds || 60;
       valid[0].t = valid[0].elapsedSeconds;
+      if (sessionAvgWpm > 0) {
+        valid[0].wpm = Math.min(MAX_VALID_WPM, Math.max(1, Math.round(sessionAvgWpm)));
+        valid[0].rawWpm = valid[0].wpm;
+      }
       return valid;
     }
 
-    // 2. Potlačení izolovaných špiček (Outlier Despiking)
+    // 2. Potlačení propadů (odstraněn destruktivní ořez špiček cur > neighborMax * 1.55)
     const despikedRates = valid.map((s, idx) => {
       const cur = s.rawWpm;
       const prev = idx > 0 ? valid[idx - 1].rawWpm : (sessionAvgWpm > 0 ? sessionAvgWpm : valid[idx + 1].rawWpm);
       const next = idx < valid.length - 1 ? valid[idx + 1].rawWpm : (sessionAvgWpm > 0 ? sessionAvgWpm : valid[idx - 1].rawWpm);
       const neighborMean = (prev + next) / 2;
-      const neighborMax = Math.max(prev, next);
       const neighborMin = Math.min(prev, next);
 
-      // Pokud jeden bod vyskočí o více než 55 % nad oba sousedy, ořízneme špičku k lokálnímu stropu
-      if (cur > neighborMax * 1.55 && cur - neighborMean > 45) {
-        return Math.round(neighborMean + (cur - neighborMean) * 0.35);
-      }
       // Pokud jeden bod propadne o více než 50 % pod oba sousedy, vytáhneme jej k lokálnímu průměru
       if (cur < neighborMin * 0.5 && neighborMean - cur > 35) {
         return Math.round(neighborMean - (neighborMean - cur) * 0.4);
@@ -1080,11 +1070,12 @@ export class ReadingTracker {
 
     // 3. Klouzavý průměr (Moving Average / Low-Pass Filter s oknem 3–5 vzorků)
     const useFiveWindow = despikedRates.length >= 5;
+    const radius = useFiveWindow ? 2 : 1;
+    const weights = useFiveWindow ? [0.12, 0.23, 0.30, 0.23, 0.12] : [0.25, 0.50, 0.25];
+
     const smoothed = valid.map((s, i) => {
       let weightedSum = 0;
       let weightTotal = 0;
-      const radius = useFiveWindow ? 2 : 1;
-      const weights = useFiveWindow ? [0.12, 0.23, 0.30, 0.23, 0.12] : [0.25, 0.50, 0.25];
 
       for (let offset = -radius; offset <= radius; offset++) {
         const j = i + offset;
@@ -1096,7 +1087,7 @@ export class ReadingTracker {
       }
 
       const smoothWpm = weightTotal > 0
-        ? Math.min(MAX_VALID_WPM, Math.max(MIN_VALID_WPM, Math.round(weightedSum / weightTotal)))
+        ? Math.min(MAX_VALID_WPM, Math.max(1, Math.round(weightedSum / weightTotal)))
         : despikedRates[i];
 
       const minuteNum = i + 1;
@@ -1106,9 +1097,24 @@ export class ReadingTracker {
         minute: minuteNum,
         elapsedSeconds: elapsedSec,
         t: elapsedSec,
-        wpm: smoothWpm
+        wpm: smoothWpm,
+        rawWpm: smoothWpm
       };
     });
+
+    // 4. Škálování bodů koeficientem sessionAvgWpm / meanSmoothedWpm
+    if (sessionAvgWpm > 0 && smoothed.length > 0) {
+      const sumSmoothed = smoothed.reduce((sum, s) => sum + s.wpm, 0);
+      const meanSmoothedWpm = sumSmoothed / smoothed.length;
+      if (meanSmoothedWpm > 0) {
+        const scale = sessionAvgWpm / meanSmoothedWpm;
+        smoothed.forEach(s => {
+          const scaledWpm = Math.min(MAX_VALID_WPM, Math.max(1, Math.round(s.wpm * scale)));
+          s.wpm = scaledWpm;
+          s.rawWpm = scaledWpm;
+        });
+      }
+    }
 
     return smoothed;
   }
@@ -1145,7 +1151,7 @@ export class ReadingTracker {
           partialWpm = Math.round(weight * rawPartialWpm + (1 - weight) * prevWpm);
         }
       }
-      partialWpm = Math.min(MAX_VALID_WPM, Math.max(MIN_VALID_WPM, partialWpm));
+      partialWpm = Math.min(MAX_VALID_WPM, Math.max(1, partialWpm));
       rawSamples.push({
         minute: this.completedMinutesCount,
         elapsedSeconds: effectiveActiveSeconds,
@@ -1164,7 +1170,7 @@ export class ReadingTracker {
     const sustainedWpms = samples
       .filter(s => !s.isPartial || (s.activeSeconds ?? 60) >= 30)
       .map(s => Number(s.wpm) || 0)
-      .filter(w => w >= MIN_VALID_WPM && w <= MAX_VALID_WPM);
+      .filter(w => w >= 1 && w <= MAX_VALID_WPM);
 
     const peakWpm = sustainedWpms.length > 0
       ? Math.min(MAX_VALID_WPM, Math.max(...sustainedWpms, avgWpm))
@@ -1412,26 +1418,20 @@ export class ReadingTracker {
       }
     }
 
-    // Sjednocení metrik každé relace, vyhlazení vzorků a přepočet sustained Peak WPM
+    // Sjednocení metrik každé relace bez opakovaného vyhlazování již uložených vzorků
     allSessions.forEach(s => {
-      const rawSamples = Array.isArray(s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
+      const samples = Array.isArray(s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
         ? (s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
         : [];
       const rawDur = Math.max(0, Math.round(s.duration ?? s.durationSeconds ?? s.activeSeconds ?? 0));
       const rawWords = Math.max(0, Math.round(s.words_read ?? s.wordsRead ?? 0));
 
-      // Odfiltrujeme případné historické 0 WPM propady z doby čtení
-      const activeSamples = rawSamples.filter(pt => Number(pt?.words ?? pt?.wpm ?? 0) > 0);
-      const effectiveDur = (rawSamples.length > activeSamples.length && activeSamples.length > 0)
-        ? Math.max(activeSamples.length * 60, rawDur - (rawSamples.length - activeSamples.length) * 60)
-        : rawDur;
-
+      const effectiveDur = rawDur;
       const trueAvgWpm = effectiveDur >= 10 ? Math.min(MAX_VALID_WPM, Math.round((rawWords / effectiveDur) * 60)) : 0;
-      const smoothedSamples = ReadingTracker.smoothSamples(activeSamples, trueAvgWpm);
-      const sampleWpms = smoothedSamples
+      const sampleWpms = samples
         .filter(pt => !pt.isPartial || (pt.activeSeconds ?? 60) >= 30)
         .map(pt => Number(pt.wpm ?? 0))
-        .filter(w => w >= MIN_VALID_WPM && w <= MAX_VALID_WPM);
+        .filter(w => w >= 1 && w <= MAX_VALID_WPM);
       const truePeakWpm = sampleWpms.length > 0 ? Math.min(MAX_VALID_WPM, Math.max(...sampleWpms, trueAvgWpm)) : trueAvgWpm;
 
       s.duration = effectiveDur;
@@ -1444,11 +1444,6 @@ export class ReadingTracker {
       s.wpm = trueAvgWpm;
       s.peak_wpm = truePeakWpm;
       s.peakWpm = truePeakWpm;
-      if (smoothedSamples.length > 0) {
-        s.intra_session_samples = smoothedSamples;
-        s.intraSessionSamples = smoothedSamples;
-        s.timelineSamples = smoothedSamples;
-      }
     });
 
     // Seskupení relací do denních souhrnů (dailyMap) podle lokálního data
