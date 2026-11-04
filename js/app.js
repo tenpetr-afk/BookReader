@@ -1375,6 +1375,10 @@ export class LuminaApp {
         // 1. Horizontální přejetí (relaxed finger swipe) pro okamžité, plynulé otáčení stránek:
         // Ergonomické prahy: |ΔX| >= 30 px, |ΔY| <= 65 px, trvání <= 450 ms, rychlost >= 0.3 px/ms
         if (absDeltaX >= 30 && absDeltaY <= 65 && duration <= 450 && velocity >= 0.3) {
+          if (e.cancelable) {
+            e.preventDefault();
+          }
+          e.stopPropagation();
           lastSwipeTime = Date.now();
           if (this.ruler) {
             this.ruler.lastSwipeTime = Date.now();

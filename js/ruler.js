@@ -1800,19 +1800,13 @@ export class ReadingRuler {
       return;
     }
 
+    const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 450);
     const isDocTurning = document.body.classList.contains("is-turning-page") ||
       document.body.classList.contains("is-chapter-loading") ||
       !!(this.app?.isNavigating) ||
       (Date.now() < this.navigatingPageLockoutEndTime);
-    if (!isDocTurning && (pointerType === "mouse" || this.followMode === "mouse")) {
-      this.isLineLocked = false;
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isPageTransitioning = false;
-      this.suppressLineAdvancement = false;
-    }
 
-    if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isPageTransitioning) {
+    if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || this.isPageTransitioning || isDocTurning || isRecentSwipe) {
       return;
     }
     this.pendingPointerX = clientX;
@@ -2169,21 +2163,13 @@ export class ReadingRuler {
         this.touchHistory = [{ x: e.clientX, y: e.clientY, time: now }];
       }
 
-      if (e.pointerType === "mouse" || this.followMode === "mouse") {
-        const isDocTurning = document.body.classList.contains("is-turning-page") ||
-          document.body.classList.contains("is-chapter-loading") ||
-          !!(this.app?.isNavigating) ||
-          (Date.now() < this.navigatingPageLockoutEndTime);
-        if (!isDocTurning) {
-          this.isLineLocked = false;
-          this.isNavigating = false;
-          this.isNavigatingPage = false;
-          this.isPageTransitioning = false;
-          this.suppressLineAdvancement = false;
-        }
-      }
+      const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 450);
+      const isDocTurning = document.body.classList.contains("is-turning-page") ||
+        document.body.classList.contains("is-chapter-loading") ||
+        !!(this.app?.isNavigating) ||
+        (Date.now() < this.navigatingPageLockoutEndTime);
 
-      if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+      if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || isDocTurning || isRecentSwipe) return;
       if (this._scrollEndTimer) {
         clearTimeout(this._scrollEndTimer);
         this._scrollEndTimer = null;
@@ -2292,21 +2278,13 @@ export class ReadingRuler {
         this.updateCursorVisibility(e.clientX, e.clientY, "mouse", e.target);
       }
 
-      if (e.pointerType === "mouse" || this.followMode === "mouse") {
-        const isDocTurning = document.body.classList.contains("is-turning-page") ||
-          document.body.classList.contains("is-chapter-loading") ||
-          !!(this.app?.isNavigating) ||
-          (Date.now() < this.navigatingPageLockoutEndTime);
-        if (!isDocTurning) {
-          this.isLineLocked = false;
-          this.isNavigating = false;
-          this.isNavigatingPage = false;
-          this.isPageTransitioning = false;
-          this.suppressLineAdvancement = false;
-        }
-      }
+      const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 450);
+      const isDocTurning = document.body.classList.contains("is-turning-page") ||
+        document.body.classList.contains("is-chapter-loading") ||
+        !!(this.app?.isNavigating) ||
+        (Date.now() < this.navigatingPageLockoutEndTime);
 
-      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || this.isPageTransitioning || Date.now() < this.navigatingPageLockoutEndTime || isDocTurning || isRecentSwipe) return;
 
       // Pokud běží aktivní držení, zkontrolujeme prahový posun (tolerance 8px)
       if (this.isHoldActive) {
@@ -2436,6 +2414,10 @@ export class ReadingRuler {
 
       // Pokud pohyb překročil prahovou hodnotu pro swipe (|deltaX| >= 30px, |deltaY| <= 65px, holdDuration <= 450ms, velocity >= 0.3 px/ms):
       if (absX >= 30 && absY <= 65 && holdDuration <= 450 && velocity >= 0.3) {
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+        e.stopPropagation();
         this.cancelHold(false);
         this.holdStartTime = 0;
         this.lastSwipeTime = Date.now();
@@ -2586,21 +2568,13 @@ export class ReadingRuler {
         return;
       }
 
-      if (e.pointerType === "mouse" || this.followMode === "mouse") {
-        const isDocTurning = document.body.classList.contains("is-turning-page") ||
-          document.body.classList.contains("is-chapter-loading") ||
-          !!(this.app?.isNavigating) ||
-          (Date.now() < this.navigatingPageLockoutEndTime);
-        if (!isDocTurning) {
-          this.isLineLocked = false;
-          this.isNavigating = false;
-          this.isNavigatingPage = false;
-          this.isPageTransitioning = false;
-          this.suppressLineAdvancement = false;
-        }
-      }
+      const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 450);
+      const isDocTurning = document.body.classList.contains("is-turning-page") ||
+        document.body.classList.contains("is-chapter-loading") ||
+        !!(this.app?.isNavigating) ||
+        (Date.now() < this.navigatingPageLockoutEndTime);
 
-      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+      if (!this.enabled || this.isLineLocked || this.isNavigating || this.isNavigatingPage || this.isPageTransitioning || Date.now() < this.navigatingPageLockoutEndTime || isDocTurning || isRecentSwipe) return;
       const isStylus = Array.from(e.touches).some(t => t.touchType === "stylus");
       if (isStylus) {
         this.lastPenTime = Date.now();
@@ -2678,6 +2652,10 @@ export class ReadingRuler {
 
       // Pokud pohyb překročil prahovou hodnotu pro swipe (|deltaX| >= 30px, |deltaY| <= 65px, holdDuration <= 450ms, velocity >= 0.3 px/ms):
       if (absX >= 30 && absY <= 65 && holdDuration <= 450 && velocity >= 0.3) {
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+        e.stopPropagation();
         this.cancelHold(false);
         this.holdStartTime = 0;
         this.lastSwipeTime = Date.now();
@@ -5753,19 +5731,13 @@ export class ReadingRuler {
    */
   handlePointerMove(clientX, clientY, pointerType = null) {
     if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay) return;
+    const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 450);
     const isDocTurning = document.body.classList.contains("is-turning-page") ||
       document.body.classList.contains("is-chapter-loading") ||
       !!(this.app?.isNavigating) ||
       (Date.now() < this.navigatingPageLockoutEndTime);
-    if (!isDocTurning && (pointerType === "mouse" || this.followMode === "mouse" || pointerType === null)) {
-      this.isLineLocked = false;
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isPageTransitioning = false;
-      this.suppressLineAdvancement = false;
-    }
 
-    if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (!this.enabled || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || isDocTurning || isRecentSwipe) return;
     this.disableWordTransition();
 
     // Pokud probíhá aktivní vertikální posun v režimu myši, zamknout řádek a neprovádět vzorkování pod kurzorem
