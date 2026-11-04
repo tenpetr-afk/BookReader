@@ -38,6 +38,8 @@ export class LuminaApp {
 
     // Ochrana proti přeskakování stránek při gestech (vždy jen 1 strana na jedno gesto)
     this.lastPageTurnTime = 0;
+    this.lastSwipeTime = 0;
+    this.lastSwipeHandledTime = 0;
     this.PAGE_TURN_COOLDOWN = 60; // ms
     this.saveProgressTimer = null;
 
@@ -536,10 +538,13 @@ export class LuminaApp {
 
     // Horizontální přejetí (swipe) zachycené pravítkem
     this.ruler.onSwipe = (dir) => {
-      this.lastSwipeTime = Date.now();
+      const now = Date.now();
+      this.lastSwipeTime = now;
+      this.lastSwipeHandledTime = now;
       if (this.ruler) {
-        this.ruler.lastSwipeTime = Date.now();
-        this.ruler.lastTouchEndTime = Date.now();
+        this.ruler.lastSwipeTime = now;
+        this.ruler.lastSwipeHandledTime = now;
+        this.ruler.lastTouchEndTime = now;
         this.ruler.isTouchActive = false;
         this.ruler.isTouchSwiping = false;
         this.ruler.isSwipePageTransition = true;
@@ -558,7 +563,7 @@ export class LuminaApp {
         this.ruler.pendingPointerX = null;
         this.ruler.pendingPointerY = null;
         this.ruler.pendingPointerType = null;
-        this.ruler.lockAdvancement(1200, dir > 0 ? 1 : -1);
+        this.ruler.lockAdvancement(200, dir > 0 ? 1 : -1);
       }
       if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
@@ -571,9 +576,12 @@ export class LuminaApp {
 
     // Rychlé švihnutí stylusu (Apple Pencil Flick Gesture) pro okamžité otočení strany
     this.ruler.onPenFlick = (dir) => {
-      this.lastSwipeTime = Date.now();
+      const now = Date.now();
+      this.lastSwipeTime = now;
+      this.lastSwipeHandledTime = now;
       if (this.ruler) {
-        this.ruler.lastSwipeTime = Date.now();
+        this.ruler.lastSwipeTime = now;
+        this.ruler.lastSwipeHandledTime = now;
         this.ruler.isTouchSwiping = false;
         this.ruler.isSwipePageTransition = true;
         this.ruler._postTransitionAnchorLineIndex = dir > 0 ? 0 : -1;
@@ -588,7 +596,7 @@ export class LuminaApp {
         this.ruler.pendingPointerX = null;
         this.ruler.pendingPointerY = null;
         this.ruler.pendingPointerType = null;
-        this.ruler.lockAdvancement(1200, dir > 0 ? 1 : -1);
+        this.ruler.lockAdvancement(200, dir > 0 ? 1 : -1);
       }
       if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
@@ -1263,7 +1271,7 @@ export class LuminaApp {
         this.ruler.lastSwipeTime = Date.now();
         this.ruler.flickResyncTopLine = true;
         this.ruler.isLineLocked = true;
-        this.ruler.lockAdvancement(450);
+        this.ruler.lockAdvancement(200);
       }
       this.prevPage();
     });
@@ -1273,7 +1281,7 @@ export class LuminaApp {
         this.ruler.lastSwipeTime = Date.now();
         this.ruler.flickResyncTopLine = true;
         this.ruler.isLineLocked = true;
-        this.ruler.lockAdvancement(450);
+        this.ruler.lockAdvancement(200);
       }
       this.nextPage();
     });
@@ -1300,11 +1308,11 @@ export class LuminaApp {
 
         // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
         const now = Date.now();
-        const isRecentSwipe = (now - lastSwipeTime < 650) ||
-          (now - (this.lastSwipeTime || 0) < 650) ||
-          (now - (this.ruler?.lastSwipeTime || 0) < 650);
-        const isRecentTap = (now - lastTapTime < 650) ||
-          (now - (this.ruler?.lastTouchTapTime || 0) < 650);
+        const isRecentSwipe = (now - lastSwipeTime < 200) ||
+          (now - (this.lastSwipeTime || 0) < 200) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 200);
+        const isRecentTap = (now - lastTapTime < 350) ||
+          (now - (this.ruler?.lastTouchTapTime || 0) < 350);
 
         if (isRecentSwipe || isRecentTap) {
           e.preventDefault();
@@ -1340,7 +1348,7 @@ export class LuminaApp {
               this.ruler.pendingPointerX = null;
               this.ruler.pendingPointerY = null;
               this.ruler.pendingPointerType = null;
-              this.ruler.lockAdvancement(650);
+              this.ruler.lockAdvancement(200);
             }
             this.prevPage();
             return;
@@ -1371,11 +1379,11 @@ export class LuminaApp {
 
       // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
       const now = Date.now();
-      const isRecentSwipe = (now - lastSwipeTime < 650) ||
-        (now - (this.lastSwipeTime || 0) < 650) ||
-        (now - (this.ruler?.lastSwipeTime || 0) < 650);
-      const isRecentTap = (now - lastTapTime < 650) ||
-        (now - (this.ruler?.lastTouchTapTime || 0) < 650);
+      const isRecentSwipe = (now - lastSwipeTime < 200) ||
+        (now - (this.lastSwipeTime || 0) < 200) ||
+        (now - (this.ruler?.lastSwipeTime || 0) < 200);
+      const isRecentTap = (now - lastTapTime < 350) ||
+        (now - (this.ruler?.lastTouchTapTime || 0) < 350);
 
       if (isRecentSwipe || isRecentTap) {
         e.preventDefault();
@@ -1411,7 +1419,7 @@ export class LuminaApp {
             this.ruler.pendingPointerX = null;
             this.ruler.pendingPointerY = null;
             this.ruler.pendingPointerType = null;
-            this.ruler.lockAdvancement(650);
+            this.ruler.lockAdvancement(200);
           }
           this.nextPage();
           return;
@@ -1485,10 +1493,13 @@ export class LuminaApp {
           this.ruler.lastTouchEndTime = Date.now();
         }
         const now = Date.now();
-        const isRecentSwipe = (now - lastSwipeTime < 1200) ||
-          (now - (this.lastSwipeTime || 0) < 1200) ||
-          (now - (this.ruler?.lastSwipeTime || 0) < 1200);
-        if (this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0)) || isRecentSwipe) {
+        const handledRecently = (now - (this.lastSwipeHandledTime || 0) < 220) ||
+          (now - (this.ruler?.lastSwipeHandledTime || 0) < 220) ||
+          (now - (this.ruler?.lastFlickNavigationTime || 0) < 220);
+        const isRecentSwipe = (now - lastSwipeTime < 200) ||
+          (now - (this.lastSwipeTime || 0) < 200) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 200);
+        if (handledRecently || isRecentSwipe || this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
           isSwiping = false;
           if (this.ruler) this.ruler.isTouchSwiping = false;
           if (e.cancelable) e.preventDefault();
@@ -1519,17 +1530,21 @@ export class LuminaApp {
         const velocity = duration > 0 ? absDeltaX / duration : 0;
 
         // 1. Horizontální přejetí (relaxed finger swipe) pro okamžité, plynulé otáčení stránek:
-        // Ergonomické prahy: |ΔX| >= 30 px, |ΔY| <= 65 px, trvání <= 450 ms, rychlost >= 0.3 px/ms
-        if (absDeltaX >= 30 && absDeltaY <= 65 && duration <= 450 && velocity >= 0.3) {
+        // Ergonomické prahy: |ΔX| >= 28 px, |ΔY| <= 80 px, trvání <= 600 ms, rychlost >= 0.18 px/ms
+        if (absDeltaX >= 28 && absDeltaY <= 80 && duration <= 600 && velocity >= 0.18) {
           if (e.cancelable) {
             e.preventDefault();
           }
           e.stopPropagation();
-          lastSwipeTime = Date.now();
-          this.lastSwipeTime = Date.now();
+          const nowMs = Date.now();
+          lastSwipeTime = nowMs;
+          this.lastSwipeTime = nowMs;
+          this.lastSwipeHandledTime = nowMs;
           if (this.ruler) {
-            this.ruler.lastSwipeTime = Date.now();
-            this.ruler.lastTouchEndTime = Date.now();
+            this.ruler.lastSwipeTime = nowMs;
+            this.ruler.lastSwipeHandledTime = nowMs;
+            this.ruler.lastFlickNavigationTime = nowMs;
+            this.ruler.lastTouchEndTime = nowMs;
             this.ruler.isTouchActive = false;
             this.ruler.isTouchSwiping = false;
             this.ruler.isSwipePageTransition = true;
@@ -1548,7 +1563,10 @@ export class LuminaApp {
             this.ruler.pendingPointerX = null;
             this.ruler.pendingPointerY = null;
             this.ruler.pendingPointerType = null;
-            this.ruler.lockAdvancement(1200, deltaX < 0 ? 1 : -1);
+            this.ruler.touchHistory = [];
+            this.ruler.touchStrokeStartTime = 0;
+            this.ruler.flickHandledInStroke = true;
+            this.ruler.lockAdvancement(200, deltaX < 0 ? 1 : -1);
           }
           if (deltaX < 0) {
             this.nextPage();
@@ -1588,7 +1606,7 @@ export class LuminaApp {
                 this.ruler.pendingPointerX = null;
                 this.ruler.pendingPointerY = null;
                 this.ruler.pendingPointerType = null;
-                this.ruler.lockAdvancement(1200, -1);
+                this.ruler.lockAdvancement(200, -1);
               }
               if (e.cancelable) e.preventDefault();
               this.prevPage();
@@ -1613,7 +1631,7 @@ export class LuminaApp {
                 this.ruler.pendingPointerX = null;
                 this.ruler.pendingPointerY = null;
                 this.ruler.pendingPointerType = null;
-                this.ruler.lockAdvancement(1200, 1);
+                this.ruler.lockAdvancement(200, 1);
               }
               if (e.cancelable) e.preventDefault();
               this.nextPage();
@@ -1679,9 +1697,9 @@ export class LuminaApp {
           const now = Date.now();
           const isSwipeTransition = (
             (this.ruler && (this.ruler.isTouchSwiping || this.ruler.isSwipePageTransition)) ||
-            (now - (this.lastSwipeTime || 0) < 1200) ||
-            (now - (this.ruler?.lastSwipeTime || 0) < 1200) ||
-            (now - (lastSwipeTime || 0) < 1200) ||
+            (now - (this.lastSwipeTime || 0) < 200) ||
+            (now - (this.ruler?.lastSwipeTime || 0) < 200) ||
+            (now - (lastSwipeTime || 0) < 200) ||
             (this.ruler && now < (this.ruler.navigatingPageLockoutEndTime || 0))
           );
           if (isSwipeTransition) {
@@ -1706,14 +1724,14 @@ export class LuminaApp {
         if (this.isUiOrOverlayEvent(e)) return;
 
         const now = Date.now();
-        const isRecentSwipe = (now - lastSwipeTime < 1200) ||
-          (now - (this.lastSwipeTime || 0) < 1200) ||
-          (now - (this.ruler?.lastSwipeTime || 0) < 1200) ||
+        const isRecentSwipe = (now - lastSwipeTime < 200) ||
+          (now - (this.lastSwipeTime || 0) < 200) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 200) ||
           (this.ruler?.isTouchSwiping) ||
           (this.ruler?.isSwipePageTransition);
-        const isRecentTouch = (now - lastTapTime < 1200) ||
-          (now - (this.ruler?.lastTouchTapTime || 0) < 1200) ||
-          (now - (this.ruler?.lastTouchEndTime || 0) < 1200);
+        const isRecentTouch = (now - lastTapTime < 350) ||
+          (now - (this.ruler?.lastTouchTapTime || 0) < 350) ||
+          (now - (this.ruler?.lastTouchEndTime || 0) < 200);
 
         if (isRecentSwipe || isRecentTouch || this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
           return;
@@ -5971,7 +5989,11 @@ export class LuminaApp {
 
     // Okamžitá hardwarově akcelerovaná CSS transformace stránky bez blokování snímku
     if (this.dom.readerContent) {
-      this.dom.readerContent.style.transition = "none";
+      if (options.isReflow || options.skipAnimation) {
+        this.dom.readerContent.style.transition = "none";
+      } else {
+        this.dom.readerContent.style.transition = "";
+      }
       this.dom.readerContent.style.transform = `translate3d(-${offset.toFixed(2)}px, 0, 0)`;
     }
 
@@ -5995,7 +6017,7 @@ export class LuminaApp {
       this.ruler.isLineLocked = true;
       this.ruler.isNavigating = true;
       this.ruler.isNavigatingPage = true;
-      this.ruler.lockAdvancement(1200, direction >= 0 ? 1 : -1);
+      this.ruler.lockAdvancement(200, direction >= 0 ? 1 : -1);
       if (direction >= 0) {
         this.ruler.activeLineIndex = 0;
         this.ruler.activeWordIndex = 0;
@@ -6009,35 +6031,15 @@ export class LuminaApp {
     this._navSafetyTimer = setTimeout(() => {
       if (this.isNavigating || this.isLineLocked || (this.ruler?.enabled && this.ruler?.isLineLocked)) {
         console.warn('Navigation lock timed out. Forcing release.');
-        this.isNavigating = false;
-        this.isNavigatingPage = false;
-        this.isLineLocked = false;
-        if (stage) stage.classList.remove("is-turning-page");
-        if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-        document.body.classList.remove("is-turning-page");
-        if (this.ruler && this.ruler.enabled) {
-          this.ruler.forceReleaseNavigationLocks();
-        }
+        this.releaseNavigationLocks();
       }
-    }, 1200); // 1200ms safety fallback lock lifetime
+    }, 450); // 450ms safety fallback lock lifetime
 
-    // Failsafe timeout pro zaručené odemčení navigačního zámku po ustálení gest a WebKit syntetických eventů
+    // Odemčení navigačního zámku ihned po doběhnutí CSS transformace (200 ms)
     if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
     this.navigatingPageTimer = setTimeout(() => {
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isLineLocked = false;
-      if (stage) stage.classList.remove("is-turning-page");
-      if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-      document.body.classList.remove("is-turning-page");
-      if (this.ruler && this.ruler.enabled) {
-        this.ruler.isNavigating = false;
-        this.ruler.isNavigatingPage = false;
-        this.ruler.isLineLocked = false;
-        this.ruler.suppressLineAdvancement = false;
-      }
-      this.navigatingPageTimer = null;
-    }, 1200);
+      this.releaseNavigationLocks();
+    }, 200);
 
     try {
       // Zaznamenání přechodu stránky do trackeru s přesným počtem viditelných slov a dwell time
@@ -6128,6 +6130,8 @@ export class LuminaApp {
               }
             } catch (rulerErr) {
               console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
+            } finally {
+              this.releaseNavigationLocks();
             }
           };
 
@@ -6137,7 +6141,7 @@ export class LuminaApp {
               executeRulerPageChange();
             };
             content.addEventListener("transitionend", this._rulerTransitionEndHandler, { once: true });
-            this._rulerPageChangeTimer = setTimeout(executeRulerPageChange, Math.round(transitionDuration + 50));
+            this._rulerPageChangeTimer = setTimeout(executeRulerPageChange, Math.min(200, Math.round(transitionDuration + 10)));
           } else if (immediateRuler) {
             this._rulerPageChangeRafId = requestAnimationFrame(() => {
               this._rulerPageChangeRafId = null;
@@ -6220,7 +6224,7 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(1200, 1);
+      this.ruler.lockAdvancement(200, 1);
       this.ruler.activeLineIndex = 0;
       this.ruler.activeWordIndex = 0;
       this.ruler.prepareForPageTransition(1);
@@ -6230,17 +6234,9 @@ export class LuminaApp {
     this._navSafetyTimer = setTimeout(() => {
       if (this.isNavigating || this.isLineLocked || this.ruler?.isLineLocked) {
         console.warn('Navigation lock timed out. Forcing release.');
-        this.isNavigating = false;
-        this.isNavigatingPage = false;
-        this.isLineLocked = false;
-        if (stage) stage.classList.remove("is-turning-page");
-        if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-        document.body.classList.remove("is-turning-page");
-        if (this.ruler) {
-          this.ruler.forceReleaseNavigationLocks();
-        }
+        this.releaseNavigationLocks();
       }
-    }, 1200); // 1200ms safety fallback lock lifetime
+    }, 450); // 450ms safety fallback lock lifetime
 
     try {
       // 1. Pokud jsme ještě před koncem známých stran kapitoly, otočíme stranu v rámci kapitoly
@@ -6333,7 +6329,7 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(1200, -1);
+      this.ruler.lockAdvancement(200, -1);
       this.ruler.prepareForPageTransition(-1);
     }
 
@@ -6341,17 +6337,9 @@ export class LuminaApp {
     this._navSafetyTimer = setTimeout(() => {
       if (this.isNavigating || this.isLineLocked || this.ruler?.isLineLocked) {
         console.warn('Navigation lock timed out. Forcing release.');
-        this.isNavigating = false;
-        this.isNavigatingPage = false;
-        this.isLineLocked = false;
-        if (stage) stage.classList.remove("is-turning-page");
-        if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-        document.body.classList.remove("is-turning-page");
-        if (this.ruler) {
-          this.ruler.forceReleaseNavigationLocks();
-        }
+        this.releaseNavigationLocks();
       }
-    }, 1200); // 1200ms safety fallback lock lifetime
+    }, 450); // 450ms safety fallback lock lifetime
 
     try {
       if (this.currentPageIndex > 0) {
