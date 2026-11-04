@@ -145,6 +145,7 @@ export class ReadingRuler {
     this.lastTapStepTime = 0;
     this.lastTouchTapTime = 0;
     this.lastSwipeTime = 0;
+    this.lastTouchEndTime = 0;
     this.onBoundary = null;
     this.onSwipe = null;
     // Apple Pencil Flick Gestures (Listování švihnutím stylusu bez opuštění toku textu)
@@ -457,6 +458,7 @@ export class ReadingRuler {
       cancelAnimationFrame(this.pointerRafId);
       this.pointerRafId = null;
     }
+    this.rafPointerPending = false;
     if (this._calibrationTimer) {
       clearTimeout(this._calibrationTimer);
       this._calibrationTimer = null;
@@ -507,7 +509,7 @@ export class ReadingRuler {
     if (content) content.classList.remove("is-turning-page");
   }
 
-  lockAdvancement(duration = 350, direction = 1) {
+  lockAdvancement(duration = 450, direction = 1) {
     const stage = this.getStageElement();
     if (stage) stage.classList.add("is-turning-page");
     document.body.classList.add("is-turning-page");
@@ -518,12 +520,15 @@ export class ReadingRuler {
     this.pageTurnTimestamp = performance.now();
     this.suppressLineAdvancement = true;
     this.isLineLocked = true;
+    this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + duration);
     if (this.suppressTimer) clearTimeout(this.suppressTimer);
     this.suppressTimer = setTimeout(() => {
       this.suppressLineAdvancement = false;
       this.isLineLocked = false;
       this.suppressTimer = null;
-      this.forceReleaseNavigationLocks();
+      if (stage) stage.classList.remove("is-turning-page");
+      document.body.classList.remove("is-turning-page");
+      if (content) content.classList.remove("is-turning-page");
       if (this.enabled) {
         this.applyPosition();
       }
@@ -1534,8 +1539,13 @@ export class ReadingRuler {
   isPenEvent(e) {
     if (!e) return false;
     if (e.pointerType === "pen") return true;
-    if (e.touches && e.touches.length > 0 && Array.from(e.touches).some(t => t.touchType === "stylus")) return true;
-    if (e.changedTouches && e.changedTouches.length > 0 && Array.from(e.changedTouches).some(t => t.touchType === "stylus")) return true;
+    if (e.pointerType === "touch") return false;
+    if (e.touches && e.touches.length > 0) {
+      return Array.from(e.touches).some(t => t.touchType === "stylus");
+    }
+    if (e.changedTouches && e.changedTouches.length > 0) {
+      return Array.from(e.changedTouches).some(t => t.touchType === "stylus");
+    }
     if (Date.now() - this.lastPenTime < 500) return true;
     return false;
   }
@@ -1800,7 +1810,17 @@ export class ReadingRuler {
       return;
     }
 
-    const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 450);
+    // Potlačení opožděných syntetických událostí myši generovaných WebKitem po dotyku prstem
+    const isSyntheticMouse = (pointerType === "mouse") && (
+      (Date.now() - (this.lastTouchEndTime || 0) < 550) ||
+      (Date.now() - (this.lastSwipeTime || 0) < 550) ||
+      (Date.now() - (this.lastTouchTapTime || 0) < 550)
+    );
+    if (isSyntheticMouse) {
+      return;
+    }
+
+    const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 500);
     const isDocTurning = document.body.classList.contains("is-turning-page") ||
       document.body.classList.contains("is-chapter-loading") ||
       !!(this.app?.isNavigating) ||
@@ -1830,13 +1850,16 @@ export class ReadingRuler {
         document.body.classList.contains("is-chapter-loading") ||
         !!(this.app?.isNavigating) ||
         (Date.now() < this.navigatingPageLockoutEndTime);
-      if (!turning && (this.pendingPointerType === "mouse" || this.followMode === "mouse")) {
-        this.isLineLocked = false;
-        this.isPageTransitioning = false;
+      if (this.isLineLocked || this.isPageTransitioning || turning) {
+        return;
       }
-      if (!this.isLineLocked && !this.isPageTransitioning) {
-        this.handlePointerMove(this.pendingPointerX, this.pendingPointerY, this.pendingPointerType);
+      if (this.pendingPointerType === "mouse" && (
+        (Date.now() - (this.lastTouchEndTime || 0) < 550) ||
+        (Date.now() - (this.lastSwipeTime || 0) < 550)
+      )) {
+        return;
       }
+      this.handlePointerMove(this.pendingPointerX, this.pendingPointerY, this.pendingPointerType);
     });
   }
 
@@ -2275,6 +2298,14 @@ export class ReadingRuler {
       }
 
       if (e.pointerType === "mouse") {
+        const isSyntheticMouse = (
+          (Date.now() - (this.lastTouchEndTime || 0) < 550) ||
+          (Date.now() - (this.lastSwipeTime || 0) < 550) ||
+          (Date.now() - (this.lastTouchTapTime || 0) < 550)
+        );
+        if (isSyntheticMouse) {
+          return;
+        }
         this.updateCursorVisibility(e.clientX, e.clientY, "mouse", e.target);
       }
 
@@ -2352,6 +2383,7 @@ export class ReadingRuler {
         this.penStrokeStartTime = 0;
         this.flickHandledInStroke = false;
       } else if (e.pointerType === "touch") {
+        this.lastTouchEndTime = Date.now();
         if (!this.isNavigating && !this.isNavigatingPage && Date.now() >= this.navigatingPageLockoutEndTime) {
           const now = performance.now();
           const swipe = this.detectPenFlick(e.clientX, e.clientY, now, "touch");
@@ -2470,6 +2502,7 @@ export class ReadingRuler {
     };
 
     const onPointerCancel = () => {
+      this.lastTouchEndTime = Date.now();
       this.isPenTouching = false;
       this.penHistory = [];
       this.penStrokeStartTime = 0;
@@ -2612,6 +2645,7 @@ export class ReadingRuler {
     };
 
     const onTouchEnd = (e) => {
+      this.lastTouchEndTime = Date.now();
       if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
         this.isDraggingRuler = false;
         this.isPenTouching = false;
@@ -2693,6 +2727,7 @@ export class ReadingRuler {
     };
 
     const onTouchCancel = () => {
+      this.lastTouchEndTime = Date.now();
       if (this.isHoldActive) {
         this.cancelHold(false);
       }
@@ -2730,7 +2765,7 @@ export class ReadingRuler {
       if (!this.enabled || this.followMode !== "mouse") return;
       if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay || this.isUiControl(e.target)) return;
       const touches = e.touches ? Array.from(e.touches) : [];
-      const stylusTouch = touches.find(t => t.touchType === "stylus") || ((Date.now() - this.lastPenTime < 500) ? touches[0] : null);
+      const stylusTouch = touches.find(t => t.touchType === "stylus");
       if (stylusTouch && this.isPointerInStage(stylusTouch.clientX, stylusTouch.clientY)) {
         if (e.cancelable) e.preventDefault();
         this.lastPenTime = Date.now();
@@ -2782,6 +2817,21 @@ export class ReadingRuler {
 
       // Pokud klik proběhl krátce po swipu nebo krokování tapem, zamezíme opětovnému spuštění a probublání
       if (Date.now() - this.lastSwipeTime < 500 || Date.now() - this.lastTapStepTime < 350) {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        return;
+      }
+
+      const isSyntheticClickAfterTouch = (
+        (Date.now() - (this.lastTouchEndTime || 0) < 550) ||
+        (Date.now() - (this.lastSwipeTime || 0) < 550) ||
+        (Date.now() - (this.lastTouchTapTime || 0) < 550) ||
+        (Date.now() < this.navigatingPageLockoutEndTime) ||
+        this.isLineLocked ||
+        this.isNavigating ||
+        this.isNavigatingPage
+      );
+      if (isSyntheticClickAfterTouch) {
         e.stopPropagation();
         e.stopImmediatePropagation();
         return;
@@ -5551,19 +5601,7 @@ export class ReadingRuler {
    * - Pro ostatní ukazatele mimo režim sledování: standardní přímé přichytávání bez hystereze.
    */
   getHysteresisLineIndex(curY, isPen = false, activeColumn = null) {
-    if (!isPen || this.followMode === "mouse") {
-      const isDocTurning = document.body.classList.contains("is-turning-page") ||
-        document.body.classList.contains("is-chapter-loading") ||
-        !!(this.app?.isNavigating) ||
-        (Date.now() < this.navigatingPageLockoutEndTime);
-      if (!isDocTurning) {
-        this.isNavigating = false;
-        this.isNavigatingPage = false;
-        this.isLineLocked = false;
-        this.isPageTransitioning = false;
-      }
-    }
-    if (this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
+    if (this.isLineLocked || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) {
       return this.activeLineIndex >= 0 ? this.activeLineIndex : -1;
     }
     this._ensureLinesFreshForCurrentLayout();
@@ -6641,13 +6679,14 @@ export class ReadingRuler {
     }
     this._lastComputedLineGeom = null;
 
-    // Clear the transition lock:
+    const effectiveDirection = this.flickResyncTopLine ? (direction >= 0 ? 1 : -1) : direction;
+    this.flickResyncTopLine = false;
+
+    // Transition lock chránící pravítko na cílovém řádku nové strany
     this.isPageTransitioning = false;
-    this.isNavigating = false;
-    this.isNavigatingPage = false;
-    this.isLineLocked = false;
-    this.suppressLineAdvancement = false;
-    this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + 200);
+    this.isLineLocked = true;
+    this.suppressLineAdvancement = true;
+    this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + 450);
 
     const stage = this.getStageElement();
     const content = document.getElementById("reader-content");
@@ -6659,7 +6698,7 @@ export class ReadingRuler {
       this.rulerEl.style.transition = "none";
     }
 
-    const isBackward = direction < 0;
+    const isBackward = effectiveDirection < 0;
 
     const performReset = () => {
       if (!this.enabled) {
@@ -6669,11 +6708,9 @@ export class ReadingRuler {
       }
 
       this.isPageTransitioning = false;
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isLineLocked = false;
-      this.suppressLineAdvancement = false;
-      this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + 200);
+      this.isLineLocked = true;
+      this.suppressLineAdvancement = true;
+      this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + 450);
 
       try {
         // Clear cached line geometry before recalculating line 0
@@ -6771,6 +6808,14 @@ export class ReadingRuler {
               this.lastPointerY = isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY;
               this.lastValidPointerX = this.lastPointerX;
               this.lastValidPointerY = this.lastPointerY;
+              this.pendingPointerX = this.lastPointerX;
+              this.pendingPointerY = this.lastPointerY;
+              this.pendingPointerType = null;
+              if (this.pointerRafId) {
+                cancelAnimationFrame(this.pointerRafId);
+                this.pointerRafId = null;
+              }
+              this.rafPointerPending = false;
             }
 
             const shouldSnapClass = this.followMode !== "mouse" && !this.isVerticalMode();
@@ -6847,6 +6892,14 @@ export class ReadingRuler {
           this.lastPointerY = line ? (isVertical ? Math.round(line.centerY - vScrollTop) : line.centerY) : 150;
           this.lastValidPointerX = this.lastPointerX;
           this.lastValidPointerY = this.lastPointerY;
+          this.pendingPointerX = this.lastPointerX;
+          this.pendingPointerY = this.lastPointerY;
+          this.pendingPointerType = null;
+          if (this.pointerRafId) {
+            cancelAnimationFrame(this.pointerRafId);
+            this.pointerRafId = null;
+          }
+          this.rafPointerPending = false;
 
           const shouldSnapClass = this.followMode !== "mouse" && !this.isVerticalMode();
           if (shouldSnapClass) {
@@ -7150,12 +7203,14 @@ export class ReadingRuler {
           const targetLineIdx = this.activeLineIndex + direction;
           if (direction > 0 && targetLineIdx >= this.cachedLines.length) {
             if (this.onBoundary && !isVertical) {
-              this.lockAdvancement(350);
+              this.flickResyncTopLine = true;
+              this.lockAdvancement(450);
               this.onBoundary(1);
               return;
             }
           } else if (direction < 0 && targetLineIdx < 0) {
             if (this.onBoundary && !isVertical) {
+              this.lockAdvancement(450);
               this.onBoundary(-1);
               return;
             }
@@ -7226,7 +7281,8 @@ export class ReadingRuler {
             const nextLineIdx = curLineIdx + 1;
             if (nextLineIdx >= this.cachedLines.length) {
               if (this.onBoundary && !isVertical) {
-                this.lockAdvancement(350);
+                this.flickResyncTopLine = true;
+                this.lockAdvancement(450);
                 this.onBoundary(1);
                 return;
               }
@@ -7367,12 +7423,14 @@ export class ReadingRuler {
           const curIdx = this.activeLineIndex;
           if (direction > 0 && curIdx >= this.cachedLines.length - 1) {
             if (this.onBoundary && !this.isVerticalMode()) {
-              this.lockAdvancement(350);
+              this.flickResyncTopLine = true;
+              this.lockAdvancement(450);
               this.onBoundary(1);
               return;
             }
           } else if (direction < 0 && curIdx <= 0) {
             if (this.onBoundary && !this.isVerticalMode()) {
+              this.lockAdvancement(450);
               this.onBoundary(-1);
               return;
             }
@@ -9817,6 +9875,7 @@ export class ReadingRuler {
       cancelAnimationFrame(this.pointerRafId);
       this.pointerRafId = null;
     }
+    this.rafPointerPending = false;
     if (this._navSafetyTimer) {
       clearTimeout(this._navSafetyTimer);
       this._navSafetyTimer = null;
