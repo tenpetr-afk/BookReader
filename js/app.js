@@ -541,6 +541,9 @@ export class LuminaApp {
         this.ruler.lastSwipeTime = Date.now();
         this.ruler.lastTouchEndTime = Date.now();
         this.ruler.isTouchActive = false;
+        this.ruler.isTouchSwiping = false;
+        this.ruler.isSwipePageTransition = true;
+        this.ruler._postTransitionAnchorLineIndex = dir > 0 ? 0 : -1;
         this.ruler.cancelHold(false);
         this.ruler.isHoldTriggered = false;
         this.ruler.isDraggingRuler = false;
@@ -555,7 +558,7 @@ export class LuminaApp {
         this.ruler.pendingPointerX = null;
         this.ruler.pendingPointerY = null;
         this.ruler.pendingPointerType = null;
-        this.ruler.lockAdvancement(650);
+        this.ruler.lockAdvancement(1200, dir > 0 ? 1 : -1);
       }
       if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
@@ -571,6 +574,9 @@ export class LuminaApp {
       this.lastSwipeTime = Date.now();
       if (this.ruler) {
         this.ruler.lastSwipeTime = Date.now();
+        this.ruler.isTouchSwiping = false;
+        this.ruler.isSwipePageTransition = true;
+        this.ruler._postTransitionAnchorLineIndex = dir > 0 ? 0 : -1;
         this.ruler.flickResyncTopLine = true;
         this.ruler.isLineLocked = true;
         this.ruler.suppressLineAdvancement = true;
@@ -582,7 +588,7 @@ export class LuminaApp {
         this.ruler.pendingPointerX = null;
         this.ruler.pendingPointerY = null;
         this.ruler.pendingPointerType = null;
-        this.ruler.lockAdvancement(650);
+        this.ruler.lockAdvancement(1200, dir > 0 ? 1 : -1);
       }
       if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
@@ -1444,36 +1450,58 @@ export class LuminaApp {
           isSwiping = false;
           return;
         }
+        if (this.ruler) {
+          this.ruler.isTouchSwiping = true;
+          this.ruler.pendingPointerX = null;
+          this.ruler.pendingPointerY = null;
+          this.ruler.pendingPointerType = null;
+          if (this.ruler.pointerRafId) {
+            cancelAnimationFrame(this.ruler.pointerRafId);
+            this.ruler.pointerRafId = null;
+          }
+          this.ruler.rafPointerPending = false;
+        }
         touchStartX = e.touches[0].clientX;
         touchStartY = e.touches[0].clientY;
         touchStartTime = Date.now();
         isSwiping = true;
       }, { passive: true });
 
+      this.dom.pagedViewport.addEventListener("touchcancel", () => {
+        isSwiping = false;
+        if (this.ruler) {
+          this.ruler.isTouchSwiping = false;
+        }
+      }, { passive: true });
+
       this.dom.pagedViewport.addEventListener("touchend", (e) => {
         if (this.isVerticalReadingMode()) return;
         if (this.isUiOrOverlayEvent(e)) {
           isSwiping = false;
+          if (this.ruler) this.ruler.isTouchSwiping = false;
           return;
         }
         if (this.ruler) {
           this.ruler.lastTouchEndTime = Date.now();
         }
         const now = Date.now();
-        const isRecentSwipe = (now - lastSwipeTime < 650) ||
-          (now - (this.lastSwipeTime || 0) < 650) ||
-          (now - (this.ruler?.lastSwipeTime || 0) < 650);
+        const isRecentSwipe = (now - lastSwipeTime < 1200) ||
+          (now - (this.lastSwipeTime || 0) < 1200) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 1200);
         if (this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0)) || isRecentSwipe) {
           isSwiping = false;
+          if (this.ruler) this.ruler.isTouchSwiping = false;
           if (e.cancelable) e.preventDefault();
           e.stopPropagation();
           return;
         }
         if (!isSwiping || e.changedTouches.length !== 1) {
           isSwiping = false;
+          if (this.ruler) this.ruler.isTouchSwiping = false;
           return;
         }
         isSwiping = false;
+        if (this.ruler) this.ruler.isTouchSwiping = false;
 
         // Stylus v režimu sledování myši nesmí otáčet stránky ani krokovat
         if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
@@ -1503,6 +1531,9 @@ export class LuminaApp {
             this.ruler.lastSwipeTime = Date.now();
             this.ruler.lastTouchEndTime = Date.now();
             this.ruler.isTouchActive = false;
+            this.ruler.isTouchSwiping = false;
+            this.ruler.isSwipePageTransition = true;
+            this.ruler._postTransitionAnchorLineIndex = deltaX < 0 ? 0 : -1;
             this.ruler.cancelHold(false);
             this.ruler.isHoldTriggered = false;
             this.ruler.isDraggingRuler = false;
@@ -1517,7 +1548,7 @@ export class LuminaApp {
             this.ruler.pendingPointerX = null;
             this.ruler.pendingPointerY = null;
             this.ruler.pendingPointerType = null;
-            this.ruler.lockAdvancement(650);
+            this.ruler.lockAdvancement(1200, deltaX < 0 ? 1 : -1);
           }
           if (deltaX < 0) {
             this.nextPage();
@@ -1543,6 +1574,9 @@ export class LuminaApp {
                 this.ruler.lastSwipeTime = Date.now();
                 this.ruler.lastTouchEndTime = Date.now();
                 this.ruler.isTouchActive = false;
+                this.ruler.isTouchSwiping = false;
+                this.ruler.isSwipePageTransition = true;
+                this.ruler._postTransitionAnchorLineIndex = -1;
                 this.ruler.flickResyncTopLine = true;
                 this.ruler.isLineLocked = true;
                 this.ruler.suppressLineAdvancement = true;
@@ -1554,7 +1588,7 @@ export class LuminaApp {
                 this.ruler.pendingPointerX = null;
                 this.ruler.pendingPointerY = null;
                 this.ruler.pendingPointerType = null;
-                this.ruler.lockAdvancement(650);
+                this.ruler.lockAdvancement(1200, -1);
               }
               if (e.cancelable) e.preventDefault();
               this.prevPage();
@@ -1565,6 +1599,9 @@ export class LuminaApp {
                 this.ruler.lastSwipeTime = Date.now();
                 this.ruler.lastTouchEndTime = Date.now();
                 this.ruler.isTouchActive = false;
+                this.ruler.isTouchSwiping = false;
+                this.ruler.isSwipePageTransition = true;
+                this.ruler._postTransitionAnchorLineIndex = 0;
                 this.ruler.flickResyncTopLine = true;
                 this.ruler.isLineLocked = true;
                 this.ruler.suppressLineAdvancement = true;
@@ -1576,7 +1613,7 @@ export class LuminaApp {
                 this.ruler.pendingPointerX = null;
                 this.ruler.pendingPointerY = null;
                 this.ruler.pendingPointerType = null;
-                this.ruler.lockAdvancement(650);
+                this.ruler.lockAdvancement(1200, 1);
               }
               if (e.cancelable) e.preventDefault();
               this.nextPage();
@@ -1631,6 +1668,35 @@ export class LuminaApp {
         }
       }, { passive: false });
 
+      // Ochranný zachytávací štít (capture-phase event shield) proti syntetickým mouse/pointer eventům na iPadOS po swipu
+      const syntheticShieldEvents = ["pointermove", "pointerdown", "pointerup", "mousemove", "mousedown", "mouseup", "click"];
+      syntheticShieldEvents.forEach((eventType) => {
+        this.dom.pagedViewport.addEventListener(eventType, (e) => {
+          // Nikdy neblokujeme nativní události Apple Pencil
+          if (e.pointerType === "pen" || (this.ruler && typeof this.ruler.isPenEvent === "function" && this.ruler.isPenEvent(e))) {
+            return;
+          }
+          const now = Date.now();
+          const isSwipeTransition = (
+            (this.ruler && (this.ruler.isTouchSwiping || this.ruler.isSwipePageTransition)) ||
+            (now - (this.lastSwipeTime || 0) < 1200) ||
+            (now - (this.ruler?.lastSwipeTime || 0) < 1200) ||
+            (now - (lastSwipeTime || 0) < 1200) ||
+            (this.ruler && now < (this.ruler.navigatingPageLockoutEndTime || 0))
+          );
+          if (isSwipeTransition) {
+            // Zachytíme a zrušíme syntetické události emulované WebKitem dříve, než zasáhnou reader-content nebo window
+            if (e.pointerType === "mouse" || !e.pointerType) {
+              e.stopPropagation();
+              e.stopImmediatePropagation();
+              if (e.cancelable && (e.type === "click" || e.type === "pointerdown" || e.type === "mousedown")) {
+                e.preventDefault();
+              }
+            }
+          }
+        }, { capture: true, passive: false });
+      });
+
       // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
       this.dom.pagedViewport.addEventListener("click", (e) => {
         if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
@@ -1640,12 +1706,14 @@ export class LuminaApp {
         if (this.isUiOrOverlayEvent(e)) return;
 
         const now = Date.now();
-        const isRecentSwipe = (now - lastSwipeTime < 650) ||
-          (now - (this.lastSwipeTime || 0) < 650) ||
-          (now - (this.ruler?.lastSwipeTime || 0) < 650);
-        const isRecentTouch = (now - lastTapTime < 650) ||
-          (now - (this.ruler?.lastTouchTapTime || 0) < 650) ||
-          (now - (this.ruler?.lastTouchEndTime || 0) < 650);
+        const isRecentSwipe = (now - lastSwipeTime < 1200) ||
+          (now - (this.lastSwipeTime || 0) < 1200) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 1200) ||
+          (this.ruler?.isTouchSwiping) ||
+          (this.ruler?.isSwipePageTransition);
+        const isRecentTouch = (now - lastTapTime < 1200) ||
+          (now - (this.ruler?.lastTouchTapTime || 0) < 1200) ||
+          (now - (this.ruler?.lastTouchEndTime || 0) < 1200);
 
         if (isRecentSwipe || isRecentTouch || this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
           return;
@@ -5927,9 +5995,13 @@ export class LuminaApp {
       this.ruler.isLineLocked = true;
       this.ruler.isNavigating = true;
       this.ruler.isNavigatingPage = true;
+      this.ruler.lockAdvancement(1200, direction >= 0 ? 1 : -1);
       if (direction >= 0) {
         this.ruler.activeLineIndex = 0;
         this.ruler.activeWordIndex = 0;
+        this.ruler._postTransitionAnchorLineIndex = 0;
+      } else {
+        this.ruler._postTransitionAnchorLineIndex = -1;
       }
     }
 
@@ -5947,7 +6019,7 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
         }
       }
-    }, 650); // 650ms safety fallback lock lifetime
+    }, 1200); // 1200ms safety fallback lock lifetime
 
     // Failsafe timeout pro zaručené odemčení navigačního zámku po ustálení gest a WebKit syntetických eventů
     if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
@@ -5965,7 +6037,7 @@ export class LuminaApp {
         this.ruler.suppressLineAdvancement = false;
       }
       this.navigatingPageTimer = null;
-    }, 650);
+    }, 1200);
 
     try {
       // Zaznamenání přechodu stránky do trackeru s přesným počtem viditelných slov a dwell time
@@ -6043,6 +6115,14 @@ export class LuminaApp {
             try {
               if (this.ruler && this.ruler.enabled) {
                 if (content) void content.offsetWidth;
+                this.ruler.pendingPointerX = null;
+                this.ruler.pendingPointerY = null;
+                this.ruler.pendingPointerType = null;
+                if (this.ruler.pointerRafId) {
+                  cancelAnimationFrame(this.ruler.pointerRafId);
+                  this.ruler.pointerRafId = null;
+                }
+                this.ruler.rafPointerPending = false;
                 this.ruler.refreshLines();
                 this.ruler.resetPositionForPage(direction, isPageChanged);
               }
@@ -6140,7 +6220,7 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(650, 1);
+      this.ruler.lockAdvancement(1200, 1);
       this.ruler.activeLineIndex = 0;
       this.ruler.activeWordIndex = 0;
       this.ruler.prepareForPageTransition(1);
@@ -6160,7 +6240,7 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
         }
       }
-    }, 650); // 650ms safety fallback lock lifetime
+    }, 1200); // 1200ms safety fallback lock lifetime
 
     try {
       // 1. Pokud jsme ještě před koncem známých stran kapitoly, otočíme stranu v rámci kapitoly
@@ -6253,7 +6333,7 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(650, -1);
+      this.ruler.lockAdvancement(1200, -1);
       this.ruler.prepareForPageTransition(-1);
     }
 
@@ -6271,7 +6351,7 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
         }
       }
-    }, 650); // 650ms safety fallback lock lifetime
+    }, 1200); // 1200ms safety fallback lock lifetime
 
     try {
       if (this.currentPageIndex > 0) {
