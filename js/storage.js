@@ -246,13 +246,13 @@ export class StorageManager {
   }
 
   async uploadBook(book) {
-    const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
+    const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
     return await supabaseSync.uploadBook(book);
   }
 
   async syncWithCloud(options) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
       return await supabaseSync.syncAll(options);
     } catch (err) {
       console.warn("[StorageManager] syncWithCloud selhal:", err);
@@ -262,7 +262,7 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
       return await supabaseSync.pushSessionAndStats(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
@@ -272,7 +272,7 @@ export class StorageManager {
 
   async pushReadingSessionsToCloud(sessions) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
       return await supabaseSync.pushMultipleSessions(sessions);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
@@ -818,7 +818,7 @@ export class StorageManager {
    */
   async reconcileSessionsWithCloud() {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
       if (!supabaseSync || !supabaseSync.isOnline()) {
         return { success: false, reason: "offline", purged: 0, saved: 0 };
       }

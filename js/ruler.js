@@ -1012,28 +1012,30 @@ export class ReadingRuler {
     const stageTop = Math.round(stageRect.top);
     const isTwoCol = !this.isVerticalMode() && this.isTwoCol;
     const isBottomCover = this.style === "bottom-cover" || this.mode === "bottom-cover";
-    const h = this.uniformLineHeight || this.height || (this.manualHeight || 36);
 
     if (this._canonicalColTopOffsets && this._canonicalColTopOffsets.size > 0) {
-      for (const [key, relBaseY] of this._canonicalColTopOffsets.entries()) {
+      for (const [key, data] of this._canonicalColTopOffsets.entries()) {
         const parts = key.split("_");
-        if (parts.length >= 5) {
-          const keyStageTop = parseInt(parts[2], 10);
-          const keyColIdx = parseInt(parts[3], 10);
-          const keyTwoCol = parseInt(parts[4], 10);
+        if (parts.length >= 4) {
+          const keyDomFs = parseInt(parts[0], 10) || 16;
+          const keyStageTop = parseInt(parts[1], 10);
+          const keyColIdx = parseInt(parts[2], 10);
+          const keyTwoCol = parseInt(parts[3], 10);
           if (Math.abs(keyStageTop - stageTop) <= 2 && keyColIdx === colIdx && keyTwoCol === (isTwoCol ? 2 : 1)) {
-            const visualCenterY = (stageTop + relBaseY) - 1;
-            const domFs = parseInt(parts[0], 10) || 16;
-            const domGlyphH = this.glyphHeightByFontSize?.get(domFs) || (domFs * 1.15);
+            const relCenterY = typeof data === "object" ? data.relCenterY : data;
+            const domGlyphH = (typeof data === "object" && data.glyphH) ? data.glyphH : (this.glyphHeightByFontSize?.get(keyDomFs) || (keyDomFs * 1.15));
+            const visualCenterY = (stageTop + relCenterY) - 1;
             const lineTop = Math.round(visualCenterY - domGlyphH / 2);
-            const lineBottom = Math.round(visualCenterY + domGlyphH / 2 + 1);
+            const curBottom = (stageTop + relCenterY) + domGlyphH / 2;
+            const coverTargetY = Math.round(curBottom + 1);
+            const lineBottom = coverTargetY;
             const left = colIdx === 1 ? (this.column1Left ?? Math.round(stageRect.left + stageRect.width / 2)) : (this.column0Left ?? Math.round(stageRect.left));
             const width = colIdx === 1 ? (this.column1Width ?? Math.round(stageRect.width / 2)) : (this.column0Width ?? Math.round(stageRect.width));
             return {
               lineTop,
               lineBottom,
               height: isBottomCover ? 2 : Math.max(1, lineBottom - lineTop),
-              targetY: isBottomCover ? lineBottom : lineTop,
+              targetY: isBottomCover ? coverTargetY : lineTop,
               left: Math.round(left),
               width: Math.round(width)
             };
@@ -3482,6 +3484,10 @@ export class ReadingRuler {
       // Ensure we capture whatever typography container the reader engine actually uses:
       const content = document.querySelector('#reader-content, .page-content, .reader-text, article') || document.body;
 
+      if (force && content) {
+        void content.offsetWidth;
+      }
+
       const stage = document.getElementById("paged-stage") || document.getElementById("paged-viewport") || this.container || document.body;
       const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
       this.stageLeft = Math.round(stageRect.left);
@@ -4532,103 +4538,45 @@ export class ReadingRuler {
         this.uniformLineHeight = this.isPdfMode ? 20 : (this.manualHeight || 36);
       }
 
-      // Step C (EPUB Line Grid Regularization & Canonical Top-of-Column Anchoring):
-      // Snap consecutive lines within paragraphs to strict regular pitch (Y_0 + k * pitch)
-      // and anchor column-top body text lines to a canonical offset across pages.
-      if (!this.isPdfMode && this.cachedLines.length > 0) {
+      // Step C (EPUB Canonical Top-of-Column Anchoring):
+      // Anchor column-top body text lines to a canonical offset across pages so Line 0
+      // sits at the exact invariant distance from the column top without jitter or drift.
+      if (!this.isPdfMode && !isVertical && this.cachedLines.length > 0) {
         const domFs = dominantFontSize || Math.round(this.cachedLines[0]?.fontSize || 16);
-        const domPitch = this.pitchByFontSize.get(domFs) || (domFs * 1.45);
         const domGlyphH = this.glyphHeightByFontSize.get(domFs) || (domFs * 1.15);
 
-        // Group consecutive lines into intra-block runs per column
-        const runs = [];
-        let currentRun = [];
+        for (let colIdx = 0; colIdx < (isTwoCol ? 2 : 1); colIdx++) {
+          const colLines = this.cachedLines.filter(l => (l.columnIndex ?? 0) === colIdx && !l.isMedia && l.hasText);
+          if (colLines.length === 0) continue;
 
-        for (let i = 0; i < this.cachedLines.length; i++) {
-          const line = this.cachedLines[i];
-          if (line.isMedia || !line.hasText) {
-            if (currentRun.length > 0) {
-              runs.push(currentRun);
-              currentRun = [];
-            }
-            continue;
-          }
-
-          if (currentRun.length === 0) {
-            currentRun.push(line);
-          } else {
-            const prev = currentRun[currentRun.length - 1];
-            const sameCol = (line.columnIndex ?? 0) === (prev.columnIndex ?? 0);
-            const blockA = getBlockElement(prev);
-            const blockB = getBlockElement(line);
-            const sameBlock = (blockA && blockB && blockA === blockB);
-            const curFs = Math.round(line.fontSize || 16);
-            const prevFs = Math.round(prev.fontSize || 16);
-            const sameFs = Math.abs(curFs - prevFs) <= 1;
-
-            const effectivePitch = this.pitchByFontSize.get(curFs) || domPitch;
-            const distY = line.centerY - prev.centerY;
-            const isConsecutivePitch = distY >= effectivePitch * 0.72 && distY <= effectivePitch * 1.38;
-
-            if (sameCol && sameBlock && sameFs && isConsecutivePitch) {
-              currentRun.push(line);
-            } else {
-              runs.push(currentRun);
-              currentRun = [line];
-            }
-          }
-        }
-        if (currentRun.length > 0) {
-          runs.push(currentRun);
-        }
-
-        // Regularize each run against pitch and column-top canonical grid
-        for (const run of runs) {
-          if (run.length === 0) continue;
-          const runFs = Math.round(run[0].fontSize || 16);
-          const P = this.pitchByFontSize.get(runFs) || domPitch;
-          const medianGlyphH = this.glyphHeightByFontSize.get(runFs) || domGlyphH;
-          const colIdx = run[0].columnIndex ?? 0;
-
-          // Estimate base center Y using median across all lines in the block
-          const baseEstimates = run.map((l, k) => l.centerY - k * P).sort((a, b) => a - b);
-          let regularizedBaseY = baseEstimates[Math.floor(baseEstimates.length / 2)];
-
-          // Canonical column-top anchor check for standard body text in horizontal paged mode
-          const firstTextLineInCol = this.cachedLines.find(l => (l.columnIndex ?? 0) === colIdx && !l.isMedia && l.hasText);
-          const isFirstLineInCol = (firstTextLineInCol === run[0]);
-          const isStandardBody = (runFs === domFs);
-          const blockEl = getBlockElement(run[0]);
+          const firstLine = colLines[0];
+          const lineFs = Math.round(firstLine.fontSize || 16);
+          const isStandardBody = (lineFs === domFs);
+          const blockEl = getBlockElement(firstLine);
           const isStandardParagraph = blockEl && blockEl.tagName === "P";
           const isHeading = !!(blockEl && /^(H[1-6]|HEADER)$/i.test(blockEl.tagName));
-          const relativeTop = run[0].top - stageTop;
-          const isNearColTop = relativeTop >= -10 && relativeTop <= Math.max(25, P * 0.85);
+          const relativeTop = firstLine.top - stageTop;
+          const isNearColTop = relativeTop >= -10 && relativeTop <= Math.max(30, domFs * 2);
 
-          if (!isVertical && isFirstLineInCol && isStandardBody && !isHeading && isNearColTop && this._canonicalColTopOffsets) {
-            const layoutKey = `${domFs}_${Math.round(P * 10)}_${Math.round(stageTop)}_${colIdx}_${isTwoCol ? 2 : 1}`;
-            const relBaseY = regularizedBaseY - stageTop;
+          if (isStandardBody && !isHeading && isNearColTop && this._canonicalColTopOffsets) {
+            const layoutKey = `${domFs}_${Math.round(stageTop)}_${colIdx}_${isTwoCol ? 2 : 1}`;
+            const relCenterY = firstLine.centerY - stageTop;
 
             if (this._canonicalColTopOffsets.has(layoutKey)) {
-              const canonicalRelY = this._canonicalColTopOffsets.get(layoutKey);
-              const maxTolerance = Math.max(3.5, domFs * 0.25);
-              if (Math.abs(relBaseY - canonicalRelY) <= maxTolerance) {
-                regularizedBaseY = stageTop + canonicalRelY;
-              } else if (isStandardParagraph && relBaseY < canonicalRelY) {
-                this._canonicalColTopOffsets.set(layoutKey, relBaseY);
+              const cached = this._canonicalColTopOffsets.get(layoutKey);
+              const canonicalRelY = typeof cached === "object" ? cached.relCenterY : cached;
+              const canonicalGlyphH = (typeof cached === "object" && cached.glyphH) ? cached.glyphH : domGlyphH;
+              const maxTolerance = Math.max(4, domFs * 0.25);
+
+              if (Math.abs(relCenterY - canonicalRelY) <= maxTolerance) {
+                firstLine.centerY = stageTop + canonicalRelY;
+                firstLine.height = canonicalGlyphH;
+                firstLine.top = firstLine.centerY - canonicalGlyphH / 2;
+                firstLine.bottom = firstLine.centerY + canonicalGlyphH / 2;
               }
             } else if (isStandardParagraph) {
-              this._canonicalColTopOffsets.set(layoutKey, relBaseY);
+              this._canonicalColTopOffsets.set(layoutKey, { relCenterY, glyphH: domGlyphH });
             }
-          }
-
-          // Apply strictly regularized coordinates to each line in the run
-          for (let k = 0; k < run.length; k++) {
-            const l = run[k];
-            l.centerY = regularizedBaseY + k * P;
-            l.height = medianGlyphH;
-            l.top = l.centerY - medianGlyphH / 2;
-            l.bottom = l.centerY + medianGlyphH / 2;
-            l.linePitch = P;
           }
         }
       }
@@ -6805,7 +6753,7 @@ export class ReadingRuler {
     this.isNavigatingPage = false;
     this.isLineLocked = false;
     this.suppressLineAdvancement = false;
-    this.navigatingPageLockoutEndTime = 0;
+    this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + 200);
 
     const stage = this.getStageElement();
     const content = document.getElementById("reader-content");
@@ -6831,7 +6779,7 @@ export class ReadingRuler {
       this.isNavigatingPage = false;
       this.isLineLocked = false;
       this.suppressLineAdvancement = false;
-      this.navigatingPageLockoutEndTime = 0;
+      this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + 200);
 
       try {
         // Refresh lines for the active page:
@@ -7035,7 +6983,6 @@ export class ReadingRuler {
         this.applyPosition();
       } catch (err) {
         console.error("[ReadingRuler] Error in resetPositionForPage:", err);
-      } finally {
         this.forceReleaseNavigationLocks();
       }
 
@@ -7047,8 +6994,6 @@ export class ReadingRuler {
           this.setNoTransition(false);
         }
       });
-
-      this.scheduleBackgroundCalibration(220);
     };
 
     performReset();
@@ -7150,8 +7095,8 @@ export class ReadingRuler {
 
     this.cachedLines = newLines;
 
-    // Pokud je rozdíl zanedbatelný (< 0.75px), není třeba hýbat pravítkem
-    if (effectiveDiff < 0.75) {
+    // Pokud je rozdíl zanedbatelný (< 4px), není třeba hýbat pravítkem
+    if (effectiveDiff < 4.0) {
       return;
     }
 

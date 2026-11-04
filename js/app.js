@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.4.5";
-import { EpubParser } from "./epub-parser.js?v=2.4.5";
-import { PDFLoader } from "./pdf-loader.js?v=2.4.5";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.4.5";
-import { ReadingRuler } from "./ruler.js?v=2.4.5";
-import { StatsCharts } from "./charts.js?v=2.4.5";
-import { supabaseSync } from "./supabase-sync.js?v=2.4.5";
-import { supabase } from "./supabase-client.js?v=2.4.5";
+import { storage, computeFileHash } from "./storage.js?v=2.4.8";
+import { EpubParser } from "./epub-parser.js?v=2.4.8";
+import { PDFLoader } from "./pdf-loader.js?v=2.4.8";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.4.8";
+import { ReadingRuler } from "./ruler.js?v=2.4.8";
+import { StatsCharts } from "./charts.js?v=2.4.8";
+import { supabaseSync } from "./supabase-sync.js?v=2.4.8";
+import { supabase } from "./supabase-client.js?v=2.4.8";
 
-export const APP_VERSION = "v2.4.5";
+export const APP_VERSION = "v2.4.8";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -5638,6 +5638,24 @@ export class LuminaApp {
     return Math.max(40, Math.min(650, Math.round(chapterWords / pages)));
   }
 
+  releaseNavigationLocks() {
+    clearTimeout(this._navSafetyTimer);
+    if (this.navigatingPageTimer) {
+      clearTimeout(this.navigatingPageTimer);
+      this.navigatingPageTimer = null;
+    }
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
+    this.isLineLocked = false;
+    const stage = this.dom.pagedStage;
+    if (stage) stage.classList.remove("is-turning-page");
+    if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
+    document.body.classList.remove("is-turning-page");
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.forceReleaseNavigationLocks();
+    }
+  }
+
   goToPage(pageIndex, explicitDirection = null, immediateRuler = true, options = {}) {
     if (options.isNavigationJump) {
       tracker.cancelCurrentPageDwell();
@@ -5742,7 +5760,6 @@ export class LuminaApp {
       document.body.classList.remove("is-turning-page");
       if (this.ruler && this.ruler.enabled) {
         this.ruler.forceReleaseNavigationLocks();
-        this.ruler.scheduleBackgroundCalibration(20);
       }
       this.navigatingPageTimer = null;
     }, 200);
@@ -5837,7 +5854,9 @@ export class LuminaApp {
             content.addEventListener("transitionend", this._rulerTransitionEndHandler, { once: true });
             this._rulerPageChangeTimer = setTimeout(executeRulerPageChange, Math.round(transitionDuration + 50));
           } else if (immediateRuler) {
-            requestAnimationFrame(() => {
+            this._rulerPageChangeRafId = requestAnimationFrame(() => {
+              this._rulerPageChangeRafId = null;
+              if (content) void content.offsetWidth;
               executeRulerPageChange();
             });
           } else {
@@ -5859,22 +5878,7 @@ export class LuminaApp {
       });
     } catch (err) {
       console.error('Page navigation error:', err);
-    } finally {
-      // Synchronní uvolnění navigačního zámku ihned po vykreslení DOMu
-      clearTimeout(this._navSafetyTimer);
-      if (this.navigatingPageTimer) {
-        clearTimeout(this.navigatingPageTimer);
-        this.navigatingPageTimer = null;
-      }
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isLineLocked = false;
-      if (stage) stage.classList.remove("is-turning-page");
-      if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-      document.body.classList.remove("is-turning-page");
-      if (this.ruler && this.ruler.enabled && !this._rulerPageChangeRafId && !this._rulerPageChangeTimer) {
-        this.ruler.forceReleaseNavigationLocks();
-      }
+      this.releaseNavigationLocks();
     }
   }
 
@@ -5990,20 +5994,11 @@ export class LuminaApp {
         this.wordsCreditedOnCurrentPage = 0;
         this.showToast("Dočetli jste knihu až do konce! 🎉", "success");
         console.log("[LuminaReader] nextPage() reached end of book");
+        this.releaseNavigationLocks();
       }
     } catch (err) {
       console.error('Page navigation error:', err);
-    } finally {
-      clearTimeout(this._navSafetyTimer);
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isLineLocked = false;
-      if (stage) stage.classList.remove("is-turning-page");
-      if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-      document.body.classList.remove("is-turning-page");
-      if (this.ruler) {
-        this.ruler.forceReleaseNavigationLocks();
-      }
+      this.releaseNavigationLocks();
     }
   }
 
@@ -6080,20 +6075,12 @@ export class LuminaApp {
       } else if (this.currentChapterIndex > 0) {
         console.log(`[LuminaReader] prevPage() moving to prev chapter -> ${this.currentChapterIndex - 1}`);
         await this.navigateChapter(-1, "last");
+      } else {
+        this.releaseNavigationLocks();
       }
     } catch (err) {
       console.error('Page navigation error:', err);
-    } finally {
-      clearTimeout(this._navSafetyTimer);
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isLineLocked = false;
-      if (stage) stage.classList.remove("is-turning-page");
-      if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-      document.body.classList.remove("is-turning-page");
-      if (this.ruler) {
-        this.ruler.forceReleaseNavigationLocks();
-      }
+      this.releaseNavigationLocks();
     }
   }
 

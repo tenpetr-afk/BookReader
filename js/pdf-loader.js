@@ -1709,7 +1709,7 @@ export class PDFLoader {
           document.body.classList.add("is-scanned-pdf");
         }
         try {
-          const { storage } = await import("./storage.js?v=2.4.5");
+          const { storage } = await import("./storage.js?v=2.4.8");
           const storedBook = await storage.getBook(bookId);
           if (storedBook) {
             storedBook.totalWords = this.app.currentBook.totalWords;
