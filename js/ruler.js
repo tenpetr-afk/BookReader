@@ -54,6 +54,7 @@ export class ReadingRuler {
     this.lineHeightByFontSize = new Map(); // Mapa výšek pravítka podle velikosti písma
     this.glyphHeightByFontSize = new Map(); // Mapa mediánových výšek glyfů podle velikosti písma
     this.pitchByFontSize = new Map(); // Mapa intra-odstavcových roztečí (pitch) podle velikosti písma
+    this._canonicalColTopOffsets = new Map(); // Mapa kanonických vertikálních odsazení prvního řádku sloupce pro zamezení posunu pravítka mezi stranami
     this.autoHeight = true; // Automatická výška podle velikosti řádku
     this.snapToLines = true; // Magnetická přilnavost k řádkům
     this.wordTracking = false; // Sledování jednotlivých slov
@@ -317,6 +318,9 @@ export class ReadingRuler {
 
   setReadingMode(mode) {
     this.readingMode = mode;
+    if (this._canonicalColTopOffsets) {
+      this._canonicalColTopOffsets.clear();
+    }
     if (mode !== "vertical") {
       this.stationaryScreenY = null;
       this._verticalScrollAnchorPending = false;
@@ -996,6 +1000,48 @@ export class ReadingRuler {
   }
 
   /**
+   * Vrátí kanonickou geometrii horního řádku těla textu ve sloupci (line 0)
+   * pro bezchybnou synchronizaci pravítka a clon zaostření před přechodem strany.
+   */
+  getCanonicalTopLineGeometry(colIdx = 0) {
+    if (this.isPdfMode || this.isVerticalMode()) return null;
+    const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+    const stageRect = stage ? stage.getBoundingClientRect() : null;
+    if (!stageRect || stageRect.width <= 50 || stageRect.height <= 50) return null;
+
+    const stageTop = Math.round(stageRect.top);
+    const isTwoCol = !this.isVerticalMode() && this.isTwoCol;
+    const h = this.uniformLineHeight || this.height || (this.manualHeight || 36);
+
+    if (this._canonicalColTopOffsets && this._canonicalColTopOffsets.size > 0) {
+      for (const [key, relBaseY] of this._canonicalColTopOffsets.entries()) {
+        const parts = key.split("_");
+        if (parts.length >= 5) {
+          const keyStageTop = parseInt(parts[2], 10);
+          const keyColIdx = parseInt(parts[3], 10);
+          const keyTwoCol = parseInt(parts[4], 10);
+          if (Math.abs(keyStageTop - stageTop) <= 2 && keyColIdx === colIdx && keyTwoCol === (isTwoCol ? 2 : 1)) {
+            const visualCenterY = (stageTop + relBaseY) - 1;
+            const lineTop = Math.round(visualCenterY - h / 2);
+            const lineBottom = lineTop + h;
+            const left = colIdx === 1 ? (this.column1Left ?? Math.round(stageRect.left + stageRect.width / 2)) : (this.column0Left ?? Math.round(stageRect.left));
+            const width = colIdx === 1 ? (this.column1Width ?? Math.round(stageRect.width / 2)) : (this.column0Width ?? Math.round(stageRect.width));
+            return {
+              lineTop,
+              lineBottom,
+              height: h,
+              targetY: lineTop,
+              left: Math.round(left),
+              width: Math.round(width)
+            };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
    * Spočítá výchozí geometrii pro cílový řádek při přechodu na novou stranu před tím,
    * než je nová strana vykreslena (synchronní neutralizace probliknutí čistého textu).
    */
@@ -1006,6 +1052,13 @@ export class ReadingRuler {
     const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
     const padding = this.rulerPadding || 6;
     const isForward = direction >= 0;
+
+    if (!this.isPdfMode && !isVertical && isForward) {
+      const canonGeom = this.getCanonicalTopLineGeometry(0);
+      if (canonGeom) {
+        return canonGeom;
+      }
+    }
 
     let lineTop, lineBottom, left, width;
 
@@ -1060,7 +1113,16 @@ export class ReadingRuler {
 
     // 1. Zjištění geometrie výchozího řádku
     let lineTop, lineBottom, colLeft, colWidth;
-    if (this.cachedLines && this.cachedLines.length > 0) {
+    let canonGeom = null;
+    if (isForward && !this.isPdfMode && !isVertical) {
+      canonGeom = this.getCanonicalTopLineGeometry(0);
+    }
+    if (canonGeom) {
+      lineTop = canonGeom.lineTop;
+      lineBottom = canonGeom.lineBottom;
+      colLeft = canonGeom.left;
+      colWidth = canonGeom.width;
+    } else if (this.cachedLines && this.cachedLines.length > 0) {
       const line = isForward ? this.cachedLines[0] : this.cachedLines[this.cachedLines.length - 1];
       const geom = this.computeLineGeometry(isForward ? 0 : this.cachedLines.length - 1);
       lineTop = (geom && Number.isFinite(geom.lineTop)) ? geom.lineTop : (line.lineTop ?? line.top);
@@ -2832,6 +2894,9 @@ export class ReadingRuler {
         resizeDebounceTimer = setTimeout(() => {
           resizeDebounceTimer = null;
           if (!this.enabled) return;
+          if (this._canonicalColTopOffsets) {
+            this._canonicalColTopOffsets.clear();
+          }
           this.refreshLines();
           if (this.wordTracking) this.refreshWords();
           this.applyPosition();
@@ -4461,6 +4526,107 @@ export class ReadingRuler {
         this.uniformLineHeight = this.lineHeightByFontSize.get(dominantFontSize);
       } else {
         this.uniformLineHeight = this.isPdfMode ? 20 : (this.manualHeight || 36);
+      }
+
+      // Step C (EPUB Line Grid Regularization & Canonical Top-of-Column Anchoring):
+      // Snap consecutive lines within paragraphs to strict regular pitch (Y_0 + k * pitch)
+      // and anchor column-top body text lines to a canonical offset across pages.
+      if (!this.isPdfMode && this.cachedLines.length > 0) {
+        const domFs = dominantFontSize || Math.round(this.cachedLines[0]?.fontSize || 16);
+        const domPitch = this.pitchByFontSize.get(domFs) || (domFs * 1.45);
+        const domGlyphH = this.glyphHeightByFontSize.get(domFs) || (domFs * 1.15);
+
+        // Group consecutive lines into intra-block runs per column
+        const runs = [];
+        let currentRun = [];
+
+        for (let i = 0; i < this.cachedLines.length; i++) {
+          const line = this.cachedLines[i];
+          if (line.isMedia || !line.hasText) {
+            if (currentRun.length > 0) {
+              runs.push(currentRun);
+              currentRun = [];
+            }
+            continue;
+          }
+
+          if (currentRun.length === 0) {
+            currentRun.push(line);
+          } else {
+            const prev = currentRun[currentRun.length - 1];
+            const sameCol = (line.columnIndex ?? 0) === (prev.columnIndex ?? 0);
+            const blockA = getBlockElement(prev);
+            const blockB = getBlockElement(line);
+            const sameBlock = (blockA && blockB && blockA === blockB);
+            const curFs = Math.round(line.fontSize || 16);
+            const prevFs = Math.round(prev.fontSize || 16);
+            const sameFs = Math.abs(curFs - prevFs) <= 1;
+
+            const effectivePitch = this.pitchByFontSize.get(curFs) || domPitch;
+            const distY = line.centerY - prev.centerY;
+            const isConsecutivePitch = distY >= effectivePitch * 0.72 && distY <= effectivePitch * 1.38;
+
+            if (sameCol && sameBlock && sameFs && isConsecutivePitch) {
+              currentRun.push(line);
+            } else {
+              runs.push(currentRun);
+              currentRun = [line];
+            }
+          }
+        }
+        if (currentRun.length > 0) {
+          runs.push(currentRun);
+        }
+
+        // Regularize each run against pitch and column-top canonical grid
+        for (const run of runs) {
+          if (run.length === 0) continue;
+          const runFs = Math.round(run[0].fontSize || 16);
+          const P = this.pitchByFontSize.get(runFs) || domPitch;
+          const medianGlyphH = this.glyphHeightByFontSize.get(runFs) || domGlyphH;
+          const colIdx = run[0].columnIndex ?? 0;
+
+          // Estimate base center Y using median across all lines in the block
+          const baseEstimates = run.map((l, k) => l.centerY - k * P).sort((a, b) => a - b);
+          let regularizedBaseY = baseEstimates[Math.floor(baseEstimates.length / 2)];
+
+          // Canonical column-top anchor check for standard body text in horizontal paged mode
+          const firstTextLineInCol = this.cachedLines.find(l => (l.columnIndex ?? 0) === colIdx && !l.isMedia && l.hasText);
+          const isFirstLineInCol = (firstTextLineInCol === run[0]);
+          const isStandardBody = (runFs === domFs);
+          const blockEl = getBlockElement(run[0]);
+          const isStandardParagraph = blockEl && blockEl.tagName === "P";
+          const isHeading = !!(blockEl && /^(H[1-6]|HEADER)$/i.test(blockEl.tagName));
+          const relativeTop = run[0].top - stageTop;
+          const isNearColTop = relativeTop >= -10 && relativeTop <= P * 1.5;
+
+          if (!isVertical && isFirstLineInCol && isStandardBody && !isHeading && isNearColTop && this._canonicalColTopOffsets) {
+            const layoutKey = `${domFs}_${Math.round(P * 10)}_${Math.round(stageTop)}_${colIdx}_${isTwoCol ? 2 : 1}`;
+            const relBaseY = regularizedBaseY - stageTop;
+
+            if (this._canonicalColTopOffsets.has(layoutKey)) {
+              const canonicalRelY = this._canonicalColTopOffsets.get(layoutKey);
+              const maxTolerance = Math.max(3.5, domFs * 0.25);
+              if (Math.abs(relBaseY - canonicalRelY) <= maxTolerance) {
+                regularizedBaseY = stageTop + canonicalRelY;
+              } else if (isStandardParagraph) {
+                this._canonicalColTopOffsets.set(layoutKey, relBaseY);
+              }
+            } else if (isStandardParagraph) {
+              this._canonicalColTopOffsets.set(layoutKey, relBaseY);
+            }
+          }
+
+          // Apply strictly regularized coordinates to each line in the run
+          for (let k = 0; k < run.length; k++) {
+            const l = run[k];
+            l.centerY = regularizedBaseY + k * P;
+            l.height = medianGlyphH;
+            l.top = l.centerY - medianGlyphH / 2;
+            l.bottom = l.centerY + medianGlyphH / 2;
+            l.linePitch = P;
+          }
+        }
       }
 
       // Clear cached line geometry after Step B normalization & grid regularization
@@ -6950,33 +7116,43 @@ export class ReadingRuler {
 
     const effectiveDiff = Math.max(maxDiffY, activeDiffY);
 
-    // Pokud je rozdíl větší než 1–2px (např. >= 1.2px), došlo ke zkreslení in-flight měření
-    if (effectiveDiff >= 1.2) {
-      if (this.wordTracking) {
-        this.refreshWords();
-      }
-      this.activeLineIndex = activeIdx;
-      const geom = this.computeLineGeometry(activeIdx);
-      if (geom) {
-        this.height = geom.height;
-        this.targetY = geom.targetY;
-        if (!this.isDragging && !this.isDraggingRuler) {
-          this.currentY = geom.targetY;
-        }
-      }
-      if (this.wordTracking && oldWordIdx >= 0) {
-        const words = this.ensureActiveWords(activeIdx);
-        if (words && words.length > 0) {
-          const wIdx = Math.min(words.length - 1, oldWordIdx);
-          this.activeWordIndex = wIdx;
-          this.setWordWindow(wIdx);
-        }
-      }
-
-      // Plynulá aktualizace pozice pravítka bez vizuálního probliknutí (využívá .is-snapped animaci)
-      this._snapRulerInstantOrAnimated();
-      this.applyPosition();
+    // Pokud je rozdíl zanedbatelný (< 2.5px), jedná se o nevýznamné subpixelové zaokrouhlení.
+    // Tiché převzetí usazených cachedLines bez hýbání pravítkem.
+    if (effectiveDiff < 2.5) {
+      this.cachedLines = newLines;
+      return;
     }
+
+    // Skutečný posun layoutu (>= 2.5px) např. po dočtení obrázku či fontu
+    if (this.wordTracking) {
+      this.refreshWords();
+    }
+    this.activeLineIndex = activeIdx;
+    const geom = this.computeLineGeometry(activeIdx);
+    if (geom) {
+      this.height = geom.height;
+      this.targetY = geom.targetY;
+      if (!this.isDragging && !this.isDraggingRuler) {
+        this.currentY = geom.targetY;
+      }
+    }
+    if (this.wordTracking && oldWordIdx >= 0) {
+      const words = this.ensureActiveWords(activeIdx);
+      if (words && words.length > 0) {
+        const wIdx = Math.min(words.length - 1, oldWordIdx);
+        this.activeWordIndex = wIdx;
+        this.setWordWindow(wIdx);
+      }
+    }
+
+    // Tiché usazení bez vizuálního škubnutí (dočasně vypneme CSS transition)
+    this.setNoTransition(true);
+    this.applyPosition();
+    requestAnimationFrame(() => {
+      if (this.followMode !== "mouse" && !this.isVerticalMode()) {
+        this.setNoTransition(false);
+      }
+    });
   }
 
   getReaderContainer() {
@@ -9721,6 +9897,9 @@ export class ReadingRuler {
   destroy() {
     this.clearPageTransitionTimersAndRAFs();
     this.forceReleaseNavigationLocks();
+    if (this._canonicalColTopOffsets) {
+      this._canonicalColTopOffsets.clear();
+    }
     if (this._onScroll) {
       window.removeEventListener("scroll", this._onScroll, { passive: true, capture: true });
       const vp = document.getElementById("paged-viewport") || document.querySelector(".paged-viewport");
