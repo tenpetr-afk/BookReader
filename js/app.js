@@ -5742,6 +5742,7 @@ export class LuminaApp {
       document.body.classList.remove("is-turning-page");
       if (this.ruler && this.ruler.enabled) {
         this.ruler.forceReleaseNavigationLocks();
+        this.ruler.scheduleBackgroundCalibration(20);
       }
       this.navigatingPageTimer = null;
     }, 200);

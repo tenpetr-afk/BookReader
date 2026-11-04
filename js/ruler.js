@@ -1011,6 +1011,7 @@ export class ReadingRuler {
 
     const stageTop = Math.round(stageRect.top);
     const isTwoCol = !this.isVerticalMode() && this.isTwoCol;
+    const isBottomCover = this.style === "bottom-cover" || this.mode === "bottom-cover";
     const h = this.uniformLineHeight || this.height || (this.manualHeight || 36);
 
     if (this._canonicalColTopOffsets && this._canonicalColTopOffsets.size > 0) {
@@ -1022,15 +1023,17 @@ export class ReadingRuler {
           const keyTwoCol = parseInt(parts[4], 10);
           if (Math.abs(keyStageTop - stageTop) <= 2 && keyColIdx === colIdx && keyTwoCol === (isTwoCol ? 2 : 1)) {
             const visualCenterY = (stageTop + relBaseY) - 1;
-            const lineTop = Math.round(visualCenterY - h / 2);
-            const lineBottom = lineTop + h;
+            const domFs = parseInt(parts[0], 10) || 16;
+            const domGlyphH = this.glyphHeightByFontSize?.get(domFs) || (domFs * 1.15);
+            const lineTop = Math.round(visualCenterY - domGlyphH / 2);
+            const lineBottom = Math.round(visualCenterY + domGlyphH / 2 + 1);
             const left = colIdx === 1 ? (this.column1Left ?? Math.round(stageRect.left + stageRect.width / 2)) : (this.column0Left ?? Math.round(stageRect.left));
             const width = colIdx === 1 ? (this.column1Width ?? Math.round(stageRect.width / 2)) : (this.column0Width ?? Math.round(stageRect.width));
             return {
               lineTop,
               lineBottom,
-              height: h,
-              targetY: lineTop,
+              height: isBottomCover ? 2 : Math.max(1, lineBottom - lineTop),
+              targetY: isBottomCover ? lineBottom : lineTop,
               left: Math.round(left),
               width: Math.round(width)
             };
@@ -1049,6 +1052,7 @@ export class ReadingRuler {
     const isVertical = this.isVerticalMode();
     const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
     const stageRect = stage ? stage.getBoundingClientRect() : { left: 0, right: window.innerWidth, top: 0, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
+    const isBottomCover = this.style === "bottom-cover" || this.mode === "bottom-cover";
     const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
     const padding = this.rulerPadding || 6;
     const isForward = direction >= 0;
@@ -1090,8 +1094,8 @@ export class ReadingRuler {
     return {
       lineTop,
       lineBottom,
-      height: Math.max(1, lineBottom - lineTop),
-      targetY: lineTop,
+      height: isBottomCover ? 2 : Math.max(1, lineBottom - lineTop),
+      targetY: isBottomCover ? lineBottom : lineTop,
       left: Math.round(left),
       width: Math.round(width)
     };
@@ -4598,7 +4602,7 @@ export class ReadingRuler {
           const isStandardParagraph = blockEl && blockEl.tagName === "P";
           const isHeading = !!(blockEl && /^(H[1-6]|HEADER)$/i.test(blockEl.tagName));
           const relativeTop = run[0].top - stageTop;
-          const isNearColTop = relativeTop >= -10 && relativeTop <= P * 1.5;
+          const isNearColTop = relativeTop >= -10 && relativeTop <= Math.max(25, P * 0.85);
 
           if (!isVertical && isFirstLineInCol && isStandardBody && !isHeading && isNearColTop && this._canonicalColTopOffsets) {
             const layoutKey = `${domFs}_${Math.round(P * 10)}_${Math.round(stageTop)}_${colIdx}_${isTwoCol ? 2 : 1}`;
@@ -4609,7 +4613,7 @@ export class ReadingRuler {
               const maxTolerance = Math.max(3.5, domFs * 0.25);
               if (Math.abs(relBaseY - canonicalRelY) <= maxTolerance) {
                 regularizedBaseY = stageTop + canonicalRelY;
-              } else if (isStandardParagraph) {
+              } else if (isStandardParagraph && relBaseY < canonicalRelY) {
                 this._canonicalColTopOffsets.set(layoutKey, relBaseY);
               }
             } else if (isStandardParagraph) {
@@ -6973,7 +6977,12 @@ export class ReadingRuler {
           }
 
           if (this.rulerEl) this.rulerEl.classList.remove("word-tracking-mode");
-          const geom = this.computeLineGeometry(targetLineIdx);
+          let geom = this.computeLineGeometry(targetLineIdx);
+          if (!geom && (!this.cachedLines || this.cachedLines.length === 0)) {
+            geom = (direction >= 0 && !this.isPdfMode && !this.isVerticalMode())
+              ? (this.getCanonicalTopLineGeometry(0) || this.getDefaultStartingLineGeometry(direction))
+              : this.getDefaultStartingLineGeometry(direction);
+          }
           if (geom) {
             this.height = geom.height;
             this.targetY = geom.targetY;
@@ -7039,7 +7048,7 @@ export class ReadingRuler {
         }
       });
 
-      this.scheduleBackgroundCalibration(100);
+      this.scheduleBackgroundCalibration(220);
     };
 
     performReset();
@@ -7047,11 +7056,11 @@ export class ReadingRuler {
 
   /**
    * Naplánuje tichou kalibrační kontrolu geometrie řádků na pozadí (Two-Pass Calibration).
-   * Spouští se 100ms po úvodním přichycení pravítka na nové stránce.
-   * Pokud se plně ustálené souřadnice liší od původního měření o více než 1–2 px,
+   * Spouští se po ustálení navigačního zámku (220 ms) po úvodním přichycení pravítka na nové stránce.
+   * Pokud se plně ustálené souřadnice liší od původního měření o více než 0.75 px,
    * hladce aktualizuje cachedLines a re-aplikuje pozici bez probliknutí či blokování navigace.
    */
-  scheduleBackgroundCalibration(delay = 100) {
+  scheduleBackgroundCalibration(delay = 220) {
     if (this._calibrationTimer) {
       clearTimeout(this._calibrationTimer);
       this._calibrationTimer = null;
@@ -7069,22 +7078,45 @@ export class ReadingRuler {
     if (!this.enabled || this.isImageOnlyPdf) {
       return;
     }
-    // Pokud uživatel aktivně manipuluje s pravítkem, probíhá listování nebo je načítána kapitola, kontrolu přeskočíme
-    if (
-      this.isDragging ||
-      this.isDraggingRuler ||
-      this.isHoldActive ||
+    // Pokud uživatel aktivně manipuluje s pravítkem, kalibraci neprovádíme
+    if (this.isDragging || this.isDraggingRuler || this.isHoldActive) {
+      return;
+    }
+
+    // Pokud ještě dobíhá animace přechodu strany nebo navigační zámek, odložíme kontrolu
+    const isNavigatingLocked = (
       this.isPageTransitioning ||
       this.isNavigating ||
       this.isNavigatingPage ||
       document.body.classList.contains("is-turning-page") ||
       document.body.classList.contains("is-chapter-loading") ||
       !!(this.app?.isNavigating)
-    ) {
+    );
+    if (isNavigatingLocked) {
+      this.scheduleBackgroundCalibration(80);
       return;
     }
 
     if (!this.cachedLines || this.cachedLines.length === 0) {
+      const newLines = this.detectLines(true);
+      if (newLines && newLines.length > 0) {
+        this.cachedLines = newLines;
+        const activeIdx = 0;
+        this.activeLineIndex = activeIdx;
+        const geom = this.computeLineGeometry(activeIdx);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+          this.currentY = geom.targetY;
+          this.setNoTransition(true);
+          this.applyPosition();
+          requestAnimationFrame(() => {
+            if (this.followMode !== "mouse" && !this.isVerticalMode()) {
+              this.setNoTransition(false);
+            }
+          });
+        }
+      }
       return;
     }
 
@@ -7116,14 +7148,14 @@ export class ReadingRuler {
 
     const effectiveDiff = Math.max(maxDiffY, activeDiffY);
 
-    // Pokud je rozdíl zanedbatelný (< 2.5px), jedná se o nevýznamné subpixelové zaokrouhlení.
-    // Tiché převzetí usazených cachedLines bez hýbání pravítkem.
-    if (effectiveDiff < 2.5) {
-      this.cachedLines = newLines;
+    this.cachedLines = newLines;
+
+    // Pokud je rozdíl zanedbatelný (< 0.75px), není třeba hýbat pravítkem
+    if (effectiveDiff < 0.75) {
       return;
     }
 
-    // Skutečný posun layoutu (>= 2.5px) např. po dočtení obrázku či fontu
+    // Skutečný posun layoutu po ustálení
     if (this.wordTracking) {
       this.refreshWords();
     }
