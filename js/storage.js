@@ -87,7 +87,13 @@ export class StorageManager {
 
   async getDB() {
     if (this.db) return this.db;
-    return await this.initPromise;
+    try {
+      this.db = await this.initPromise;
+      return this.db;
+    } catch (err) {
+      console.warn("[storage] IndexedDB nedostupná nebo selhala:", err);
+      return null;
+    }
   }
 
   // --- KNIHY (BOOKS) ---
@@ -186,13 +192,18 @@ export class StorageManager {
       }
     }
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readwrite");
-      const store = tx.objectStore("books");
-      const request = store.put(bookData);
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("books", "readwrite");
+        const store = tx.objectStore("books");
+        const request = store.put(bookData);
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
     });
   }
 
@@ -235,13 +246,13 @@ export class StorageManager {
   }
 
   async uploadBook(book) {
-    const { supabaseSync } = await import("./supabase-sync.js");
+    const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
     return await supabaseSync.uploadBook(book);
   }
 
   async syncWithCloud(options) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
       return await supabaseSync.syncAll(options);
     } catch (err) {
       console.warn("[StorageManager] syncWithCloud selhal:", err);
@@ -251,7 +262,7 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
       return await supabaseSync.pushSessionAndStats(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
@@ -261,7 +272,7 @@ export class StorageManager {
 
   async pushReadingSessionsToCloud(sessions) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
       return await supabaseSync.pushMultipleSessions(sessions);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
@@ -298,84 +309,127 @@ export class StorageManager {
   }
 
   async getBook(id) {
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readonly");
-      const store = tx.objectStore("books");
-      const request = store.get(id);
+    if (!id) return null;
+    try {
+      const db = await this.getDB();
+      if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return null;
+      return await new Promise((resolve) => {
+        try {
+          const tx = db.transaction("books", "readonly");
+          const store = tx.objectStore("books");
+          const request = store.get(id);
 
-      request.onsuccess = () => {
-        const book = request.result;
-        if (book) {
-          this.normalizeBookProgress(book);
+          request.onsuccess = () => {
+            const book = request.result;
+            if (book) {
+              this.normalizeBookProgress(book);
+            }
+            resolve(book || null);
+          };
+          request.onerror = () => resolve(null);
+        } catch (_) {
+          resolve(null);
         }
-        resolve(book);
-      };
-      request.onerror = () => reject(request.error);
-    });
+      });
+    } catch (_) {
+      return null;
+    }
   }
 
   async getAllBooks() {
-    const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readonly");
-      const store = tx.objectStore("books");
-      const request = store.getAll();
+    try {
+      const db = await this.getDB();
+      if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return [];
+      return await new Promise((resolve) => {
+        try {
+          const tx = db.transaction("books", "readonly");
+          const store = tx.objectStore("books");
+          const request = store.getAll();
 
-      request.onsuccess = () => {
-        const books = request.result || [];
-        for (const book of books) {
-          this.normalizeBookProgress(book);
+          request.onsuccess = () => {
+            const books = request.result || [];
+            for (const book of books) {
+              if (book) {
+                this.normalizeBookProgress(book);
+              }
+            }
+            // Seřadit podle naposledy čtených
+            books.sort((a, b) => (b.lastReadAt || b.addedAt || 0) - (a.lastReadAt || a.addedAt || 0));
+            resolve(books);
+          };
+          request.onerror = () => resolve([]);
+        } catch (txErr) {
+          console.warn("[storage] getAllBooks tx error:", txErr);
+          resolve([]);
         }
-        // Seřadit podle naposledy čtených
-        books.sort((a, b) => (b.lastReadAt || b.addedAt || 0) - (a.lastReadAt || a.addedAt || 0));
-        resolve(books);
-      };
-      request.onerror = () => reject(request.error);
-    });
+      });
+    } catch (err) {
+      console.warn("[storage] getAllBooks error:", err);
+      return [];
+    }
   }
 
   async deleteBook(id) {
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const storeNames = ["books"];
-      if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
-      if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
+    if (!db || !db.objectStoreNames) return false;
+    return new Promise((resolve) => {
+      try {
+        const storeNames = ["books"];
+        if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
+        if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
 
-      const tx = db.transaction(storeNames, "readwrite");
-      const bookStore = tx.objectStore("books");
-      bookStore.delete(id);
+        const tx = db.transaction(storeNames, "readwrite");
+        const bookStore = tx.objectStore("books");
+        try { bookStore.delete(id); } catch (_) {}
 
-      // Smazat i přidružené relace ze sessions
-      if (db.objectStoreNames.contains("sessions")) {
-        const sessionStore = tx.objectStore("sessions");
-        const index = sessionStore.index("bookId");
-        const request = index.openCursor(IDBKeyRange.only(id));
-        request.onsuccess = (e) => {
-          const cursor = e.target.result;
-          if (cursor) {
-            cursor.delete();
-            cursor.continue();
-          }
-        };
+        // Smazat i přidružené relace ze sessions
+        if (db.objectStoreNames.contains("sessions")) {
+          try {
+            const sessionStore = tx.objectStore("sessions");
+            const index = sessionStore.index("bookId");
+            const request = index.openCursor(IDBKeyRange.only(id));
+            request.onsuccess = (e) => {
+              try {
+                const cursor = e.target.result;
+                if (cursor) {
+                  try { cursor.delete(); } catch (_) {}
+                  cursor.continue();
+                }
+              } catch (_) {}
+            };
+          } catch (_) {}
+        }
+
+        // Smazat i přidružené relace z reading_sessions
+        if (db.objectStoreNames.contains("reading_sessions")) {
+          try {
+            const readingStore = tx.objectStore("reading_sessions");
+            const index = readingStore.index("bookId");
+            const request = index.openCursor(IDBKeyRange.only(id));
+            request.onsuccess = (e) => {
+              try {
+                const cursor = e.target.result;
+                if (cursor) {
+                  const sid = cursor.value?.sessionId || cursor.value?.id;
+                  if (sid) {
+                    this.addDeletedSessionId(sid);
+                    this._removeSessionFromLocalStorage(sid);
+                  }
+                  try { cursor.delete(); } catch (_) {}
+                  cursor.continue();
+                }
+              } catch (_) {}
+            };
+          } catch (_) {}
+        }
+
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (txErr) {
+        console.warn("[storage] deleteBook error:", txErr);
+        resolve(false);
       }
-
-      // Smazat i přidružené relace z reading_sessions
-      if (db.objectStoreNames.contains("reading_sessions")) {
-        const readingStore = tx.objectStore("reading_sessions");
-        const index = readingStore.index("bookId");
-        const request = index.openCursor(IDBKeyRange.only(id));
-        request.onsuccess = (e) => {
-          const cursor = e.target.result;
-          if (cursor) {
-            cursor.delete();
-            cursor.continue();
-          }
-        };
-      }
-
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => reject(tx.error);
     });
   }
 
@@ -453,12 +507,351 @@ export class StorageManager {
   // --- ČTECÍ RELACE A STATISTIKY (SESSIONS & READING_SESSIONS) ---
 
   /**
+   * Vrátí seznam ID smazaných čtecích relací (tombstones) z localStorage
+   * @returns {string[]}
+   */
+  getDeletedSessionIds() {
+    try {
+      const raw = localStorage.getItem("lumina_deleted_session_ids");
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.map(id => String(id ?? "").trim()).filter(Boolean)
+        : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
+   * Přidá ID relace do seznamu smazaných relací v localStorage
+   * @param {string|number} sessionId
+   */
+  addDeletedSessionId(sessionId) {
+    const cleanId = String(sessionId ?? "").trim();
+    if (!cleanId) return;
+    try {
+      const current = new Set(this.getDeletedSessionIds());
+      current.add(cleanId);
+      localStorage.setItem("lumina_deleted_session_ids", JSON.stringify(Array.from(current)));
+    } catch (_) {}
+  }
+
+  /**
+   * Odstraní ID relace ze seznamu smazaných relací v localStorage
+   * @param {string|number} sessionId
+   */
+  removeDeletedSessionId(sessionId) {
+    const cleanId = String(sessionId ?? "").trim();
+    if (!cleanId) return;
+    try {
+      const filtered = this.getDeletedSessionIds().filter(id => id !== cleanId);
+      localStorage.setItem("lumina_deleted_session_ids", JSON.stringify(filtered));
+    } catch (_) {}
+  }
+
+  /**
+   * Pročistí sirotčí / zombie relace čtení z lokální IndexedDB i localStorage během cloudové synchronizace.
+   * Supabase slouží jako autorita pro smazání relací:
+   * Jakákoliv lokální relace v IndexedDB, která v Supabase neexistuje (nebo má is_deleted === true),
+   * je trvale smazána z IndexedDB přes store.delete(sessionId).
+   *
+   * @param {Iterable<string|number>} remoteValidSessionIds - Množina / pole platných ID relací v cloudu
+   * @param {Iterable<string|number>} [remoteDeletedSessionIds=[]] - Množina / pole smazaných ID relací v cloudu
+   * @returns {Promise<{ purgedCount: number, purgedIds: string[] }>}
+   */
+  async purgeOrphanReadingSessions(remoteValidSessionIds, remoteDeletedSessionIds = []) {
+    if (!remoteValidSessionIds && !remoteDeletedSessionIds) {
+      return { purgedCount: 0, purgedIds: [] };
+    }
+
+    const validRemoteSet = new Set(
+      Array.from(remoteValidSessionIds || [])
+        .map(id => String(id ?? "").trim())
+        .filter(Boolean)
+    );
+    const remoteDeletedSet = new Set(
+      Array.from(remoteDeletedSessionIds || [])
+        .map(id => String(id ?? "").trim())
+        .filter(Boolean)
+    );
+
+    const purgedIds = new Set();
+
+    try {
+      const db = await this.getDB();
+      if (db && db.objectStoreNames) {
+        const storeNames = [];
+        if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
+        if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
+
+        if (storeNames.length > 0) {
+          await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(storeNames, "readwrite");
+
+              // Kompletní kurzorový průchod a odstranění sirotčích i smazaných relací
+              for (const sName of storeNames) {
+                const store = tx.objectStore(sName);
+                const req = store.openCursor();
+
+                req.onsuccess = (e) => {
+                  try {
+                    const cursor = e.target.result;
+                    if (cursor) {
+                      const val = cursor.value || {};
+                      const sid = String(val.sessionId || val.id || cursor.key || "").trim();
+                      const isLocalPending = Boolean(val.syncedToCloud === false || val.isPendingSync === true);
+
+                      // Relace je sirotek (orphan), pokud:
+                      // 1. Je v Supabase označena jako is_deleted === true
+                      // 2. V Supabase vůbec neexistuje a není to nově vytvořená nesynchronizovaná lokální relace
+                      const isRemoteDeleted = Boolean(sid && remoteDeletedSet.has(sid));
+                      const isMissingFromRemote = Boolean(sid && !validRemoteSet.has(sid) && !isLocalPending);
+
+                      if (isRemoteDeleted || isMissingFromRemote) {
+                        try { cursor.delete(); } catch (_) {}
+                        try { store.delete(cursor.key); } catch (_) {}
+                        if (sid) {
+                          try { store.delete(sid); } catch (_) {}
+                          purgedIds.add(sid);
+                          this.addDeletedSessionId(sid);
+                        }
+                      }
+                      cursor.continue();
+                    }
+                  } catch (_) {}
+                };
+
+                req.onerror = () => resolve();
+              }
+
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => resolve();
+              tx.onabort = () => resolve();
+            } catch (txErr) {
+              console.warn("[storage] purgeOrphanReadingSessions tx error:", txErr);
+              resolve();
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("[storage] purgeOrphanReadingSessions error:", err);
+    }
+
+    // Dodatečné explicitní volání store.delete pro identifikované sirotky
+    if (purgedIds.size > 0) {
+      try {
+        const db = await this.getDB();
+        if (db && db.objectStoreNames && db.objectStoreNames.contains("reading_sessions")) {
+          await new Promise((resolve) => {
+            try {
+              const tx = db.transaction("reading_sessions", "readwrite");
+              const rsStore = tx.objectStore("reading_sessions");
+              for (const pId of purgedIds) {
+                try { rsStore.delete(pId); } catch (_) {}
+              }
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => resolve();
+              tx.onabort = () => resolve();
+            } catch (_) { resolve(); }
+          });
+        }
+      } catch (_) {}
+    }
+
+    // Vyčištění lokální paměti / cache v localStorage
+    try {
+      const raw = localStorage.getItem("lumina_reading_sessions");
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          const filtered = list.filter(s => {
+            if (!s || typeof s !== "object") return false;
+            const sid = String(s.sessionId || s.id || "").trim();
+            if (!sid) return false;
+            if (purgedIds.has(sid) || remoteDeletedSet.has(sid)) return false;
+            if (!validRemoteSet.has(sid) && s.syncedToCloud !== false && s.isPendingSync !== true) {
+              purgedIds.add(sid);
+              this.addDeletedSessionId(sid);
+              return false;
+            }
+            return true;
+          });
+          localStorage.setItem("lumina_reading_sessions", JSON.stringify(filtered));
+        }
+      }
+    } catch (_) {}
+
+    // Přepočet a normalizace odvozených statistik ihned po promazání
+    if (purgedIds.size > 0) {
+      try {
+        await this.recalculateAndNormalizeStats();
+      } catch (recalcErr) {
+        console.warn("[storage] Chyba při přepočtu statistik po promazání sirotčích relací:", recalcErr);
+      }
+    }
+
+    return { purgedCount: purgedIds.size, purgedIds: Array.from(purgedIds) };
+  }
+
+  /**
+   * Kompletní rekonsiliace relací čtení ze Supabase do IndexedDB:
+   * 1. Rozdělí vzdálené relace na platné vs is_deleted
+   * 2. Promaže všechny lokální sirotčí relace z IndexedDB (purge orphans)
+   * 3. Uloží/aktualizuje všechny platné vzdálené relace do IndexedDB (s příznakem syncedToCloud = true)
+   * 4. Přepočítá agregované metriky a statistiky
+   *
+   * @param {Array<Object>} remoteSessions
+   * @returns {Promise<{ saved: number, purged: number, purgedIds: string[] }>}
+   */
+  async reconcileReadingSessions(remoteSessions) {
+    if (!Array.isArray(remoteSessions)) {
+      return { saved: 0, purged: 0, purgedIds: [] };
+    }
+
+    const validRemoteMap = new Map();
+    const remoteDeletedIds = new Set();
+
+    for (const session of remoteSessions) {
+      if (!session) continue;
+      const rowId = String(session.id ?? session.sessionId ?? "").trim();
+      if (!rowId) continue;
+
+      const isDeleted = Boolean(session.is_deleted === true || session.is_deleted === "true");
+      if (isDeleted) {
+        remoteDeletedIds.add(rowId);
+      } else {
+        validRemoteMap.set(rowId, session);
+      }
+    }
+
+    // 1. Krok: Promazání sirotčích relací z lokálního úložiště
+    const purgeResult = await this.purgeOrphanReadingSessions(
+      Array.from(validRemoteMap.keys()),
+      Array.from(remoteDeletedIds)
+    );
+
+    // 2. Krok: Uložení/aktualizace platných vzdálených relací
+    const deletedTombstones = new Set(this.getDeletedSessionIds());
+    let savedCount = 0;
+
+    let booksMap = null;
+    let localSessionsMap = new Map();
+    try {
+      const [localBooks, localSessions] = await Promise.all([
+        this.getAllBooks(),
+        this.getAllReadingSessions()
+      ]);
+      booksMap = new Map((localBooks || []).map(b => [b.id, b]));
+      for (const ls of (localSessions || [])) {
+        if (!ls) continue;
+        const sid = String(ls.sessionId || ls.id || "").trim();
+        if (sid) localSessionsMap.set(sid, ls);
+      }
+    } catch (_) {}
+
+    for (const [rowId, session] of validRemoteMap.entries()) {
+      if (deletedTombstones.has(rowId)) continue;
+
+      const existingLocal = localSessionsMap.get(rowId);
+      if (existingLocal) {
+        if (!session.bookTitle && !session.book_title && existingLocal.bookTitle) {
+          session.bookTitle = existingLocal.bookTitle;
+        }
+
+        // Zachovat bohaté lokální vzorky intra_session_samples, pokud cloud vrátil prázdné pole nebo null
+        let remoteSamples = session.intra_session_samples || session.intraSessionSamples || session.timelineSamples;
+        if (typeof remoteSamples === "string") {
+          try { remoteSamples = JSON.parse(remoteSamples); } catch (_) { remoteSamples = []; }
+          session.intra_session_samples = remoteSamples;
+        }
+        const localSamples = Array.isArray(existingLocal.intra_session_samples) && existingLocal.intra_session_samples.length > 0
+          ? existingLocal.intra_session_samples
+          : (Array.isArray(existingLocal.intraSessionSamples) && existingLocal.intraSessionSamples.length > 0
+            ? existingLocal.intraSessionSamples
+            : (Array.isArray(existingLocal.timelineSamples) ? existingLocal.timelineSamples : []));
+
+        if ((!Array.isArray(remoteSamples) || remoteSamples.length === 0) && localSamples.length > 0) {
+          session.intra_session_samples = localSamples;
+          session.intraSessionSamples = localSamples;
+          session.timelineSamples = localSamples;
+        }
+      }
+
+      if (!session.bookTitle && !session.book_title && session.book_id && booksMap) {
+        const b = booksMap.get(session.book_id);
+        if (b?.title) session.bookTitle = b.title;
+      }
+      if (!session.startTime && session.start_time) {
+        session.startTime = session.start_time;
+      }
+      if (!session.timestamp && session.startTime) {
+        session.timestamp = new Date(session.startTime).getTime();
+      }
+      if (!session.bookId && session.book_id) {
+        session.bookId = session.book_id;
+      }
+      session.syncedToCloud = true;
+
+      try {
+        await this.saveReadingSession(session);
+        savedCount++;
+      } catch (saveErr) {
+        console.warn("[storage] Chyba při ukládání rekonsiliované relace:", saveErr);
+      }
+    }
+
+    // 3. Krok: Přepočet a normalizace odvozených statistik
+    await this.recalculateAndNormalizeStats();
+
+    return {
+      saved: savedCount,
+      purged: purgeResult.purgedCount,
+      purgedIds: purgeResult.purgedIds
+    };
+  }
+
+  /**
+   * Rekonsiliuje čtecí relace přímo se Supabase cloudem
+   */
+  async reconcileSessionsWithCloud() {
+    try {
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.8");
+      if (!supabaseSync || !supabaseSync.isOnline()) {
+        return { success: false, reason: "offline", purged: 0, saved: 0 };
+      }
+      const remoteSessions = await supabaseSync.fetchCloudReadingSessions();
+      if (!Array.isArray(remoteSessions)) {
+        return { success: false, reason: "fetch_failed", purged: 0, saved: 0 };
+      }
+      const res = await this.reconcileReadingSessions(remoteSessions);
+      return { success: true, ...res };
+    } catch (err) {
+      console.warn("[StorageManager] reconcileSessionsWithCloud selhal:", err);
+      return { success: false, error: err, purged: 0, saved: 0 };
+    }
+  }
+
+  /**
    * Uloží detailní relaci čtení do reading_sessions a synchronizuje i do sessions (legacy)
    * Ukládá POUZE validní relace s délkou alespoň 5 minut (>= 300 sekund).
    * @param {Object} sessionData
    */
   async saveReadingSession(sessionData) {
     if (!sessionData) return null;
+
+    // Ignorovat relace označené jako smazané (tombstones a is_deleted flag)
+    if (sessionData.is_deleted === true || sessionData.is_deleted === "true") {
+      return null;
+    }
+    const deletedSet = new Set(this.getDeletedSessionIds());
+    const rawSid = String(sessionData.sessionId ?? "").trim();
+    const rawId = String(sessionData.id ?? "").trim();
+    if ((rawSid && deletedSet.has(rawSid)) || (rawId && deletedSet.has(rawId))) {
+      return null;
+    }
 
     const durationSeconds = Math.max(0, Math.round(sessionData.durationSeconds ?? sessionData.activeSeconds ?? sessionData.duration ?? 0));
     // Striktní vynucení minimálního prahu 5 minut pro uložení do historie relací
@@ -477,17 +870,33 @@ export class StorageManager {
     const avgWpm = durationSeconds >= 10 ? Math.round((wordsRead / durationSeconds) * 60) : 0;
 
     const localDate = this.getLocalDateString(sessionData.date || startTime || timestamp);
-    const sessionId = sessionData.sessionId || sessionData.id || `session_${timestamp}_${Math.random().toString(36).substring(2, 9)}`;
+    const sessionId = String(sessionData.sessionId || sessionData.id || `session_${timestamp}_${Math.random().toString(36).substring(2, 9)}`).trim();
 
-    // Filtrace a normalizace 1-minutových vzorků intra_session_samples (bez umělých 220 WPM seed bodů na 0s)
-    const rawSamples = Array.isArray(sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples) 
-      ? (sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples) 
-      : [];
+    if (deletedSet.has(sessionId)) {
+      return null;
+    }
+
+    // Filtrace a normalizace 1-minutových vzorků intra_session_samples (bez umělých 220 WPM seed bodů na 0s a bez 0 WPM idle propadů)
+    let rawSamples = sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples;
+    if (typeof rawSamples === "string") {
+      try {
+        rawSamples = JSON.parse(rawSamples);
+      } catch (_) {
+        rawSamples = [];
+      }
+    }
+    rawSamples = Array.isArray(rawSamples) ? rawSamples : [];
     const cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSeconds, wordsRead, avgWpm, timestamp);
 
-    // Výpočet špičkové rychlosti: max ze vzorků, nikdy nižší než avg_wpm
-    const validSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
-    const peakWpm = validSpeeds.length > 0 ? Math.max(...validSpeeds, avgWpm) : avgWpm;
+    // Výpočet udržené špičkové rychlosti: max z validních vzorků (>= 30–60s)
+    const validSpeeds = cleanedSamples
+      .filter(s => !s.isPartial || (s.activeSeconds ?? 60) >= 30)
+      .map(s => s.wpm)
+      .filter(w => w > 0 && w <= 650);
+    let peakWpm = validSpeeds.length > 0 ? Math.min(650, Math.max(...validSpeeds)) : avgWpm;
+    if (peakWpm < avgWpm && avgWpm > 0) {
+      peakWpm = avgWpm;
+    }
 
     const updatedAt = sessionData.updatedAt || sessionData.updated_at || new Date().toISOString();
 
@@ -514,38 +923,59 @@ export class StorageManager {
       intra_session_samples: cleanedSamples,
       date: localDate,
       timestamp,
-      updatedAt
+      is_deleted: false,
+      isDeleted: false,
+      updatedAt,
+      syncedToCloud: sessionData.syncedToCloud !== undefined ? Boolean(sessionData.syncedToCloud) : (sessionData.synced_to_cloud !== undefined ? Boolean(sessionData.synced_to_cloud) : true)
     };
 
-    return new Promise((resolve, reject) => {
-      const stores = [];
-      if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
-      if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
+    if (!db || !db.objectStoreNames) {
+      this._cacheSessionToLocalStorage(normalizedSession);
+      return normalizedSession;
+    }
 
-      if (stores.length === 0) {
-        this._cacheSessionToLocalStorage(normalizedSession);
-        return resolve(normalizedSession);
-      }
+    return new Promise((resolve) => {
+      try {
+        const stores = [];
+        if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
+        if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
 
-      const tx = db.transaction(stores, "readwrite");
-      if (db.objectStoreNames.contains("reading_sessions")) {
-        tx.objectStore("reading_sessions").put(normalizedSession);
-      }
-      if (db.objectStoreNames.contains("sessions")) {
-        tx.objectStore("sessions").put({
-          ...normalizedSession,
-          id: undefined
-        });
-      }
+        if (stores.length === 0) {
+          this._cacheSessionToLocalStorage(normalizedSession);
+          return resolve(normalizedSession);
+        }
 
-      tx.oncomplete = () => {
+        const tx = db.transaction(stores, "readwrite");
+        if (db.objectStoreNames.contains("reading_sessions")) {
+          tx.objectStore("reading_sessions").put(normalizedSession);
+        }
+        if (db.objectStoreNames.contains("sessions")) {
+          try {
+            const legacyCopy = { ...normalizedSession };
+            delete legacyCopy.id;
+            tx.objectStore("sessions").put(legacyCopy);
+          } catch (legacyErr) {
+            console.warn("[storage] Zápis do legacy úložiště sessions přeskočen:", legacyErr);
+          }
+        }
+
+        tx.oncomplete = () => {
+          this._cacheSessionToLocalStorage(normalizedSession);
+          resolve(normalizedSession);
+        };
+        tx.onerror = () => {
+          this._cacheSessionToLocalStorage(normalizedSession);
+          resolve(normalizedSession);
+        };
+        tx.onabort = () => {
+          this._cacheSessionToLocalStorage(normalizedSession);
+          resolve(normalizedSession);
+        };
+      } catch (err) {
+        console.warn("[storage] saveReadingSession IndexedDB error:", err);
         this._cacheSessionToLocalStorage(normalizedSession);
         resolve(normalizedSession);
-      };
-      tx.onerror = () => {
-        this._cacheSessionToLocalStorage(normalizedSession);
-        reject(tx.error);
-      };
+      }
     });
   }
 
@@ -558,56 +988,82 @@ export class StorageManager {
   async deleteReadingSession(sessionId, skipRecalculate = false) {
     if (!sessionId) return { success: false, error: "Missing sessionId" };
     const targetIdStr = String(sessionId).trim();
-    const db = await this.getDB();
+    if (!targetIdStr) return { success: false, error: "Missing sessionId" };
 
-    const storeNames = [];
-    if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
-    if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
+    // 0. Trvale zaznamenat ID smazané relace (tombstone)
+    try {
+      this.addDeletedSessionId(targetIdStr);
+    } catch (_) {}
+    try {
+      localStorage.setItem("lumina_sessions_migrated", "true");
+    } catch (_) {}
 
-    if (storeNames.length > 0) {
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction(storeNames, "readwrite");
+    try {
+      const db = await this.getDB();
+      if (db && db.objectStoreNames) {
+        const storeNames = [];
+        if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
+        if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
 
-        for (const sName of storeNames) {
-          const store = tx.objectStore(sName);
+        if (storeNames.length > 0) {
+          await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(storeNames, "readwrite");
 
-          // 1. Direct key delete attempts
-          try { store.delete(sessionId); } catch (_) {}
-          try { store.delete(targetIdStr); } catch (_) {}
-          if (!isNaN(Number(sessionId))) {
-            try { store.delete(Number(sessionId)); } catch (_) {}
-          }
+              for (const sName of storeNames) {
+                const store = tx.objectStore(sName);
 
-          // 2. Comprehensive cursor scan matching id, sessionId, or cursor keys
-          const cursorReq = store.openCursor();
-          cursorReq.onsuccess = (e) => {
-            const cursor = e.target.result;
-            if (cursor) {
-              const val = cursor.value || {};
-              const matches = (
-                val.id === sessionId ||
-                val.sessionId === sessionId ||
-                String(val.id) === targetIdStr ||
-                String(val.sessionId) === targetIdStr ||
-                String(cursor.key) === targetIdStr ||
-                String(cursor.primaryKey) === targetIdStr
-              );
-              if (matches) {
-                try { cursor.delete(); } catch (_) {}
+                // 1. Direct key delete attempts
+                try { store.delete(sessionId); } catch (_) {}
+                try { store.delete(targetIdStr); } catch (_) {}
+                if (!isNaN(Number(sessionId))) {
+                  try { store.delete(Number(sessionId)); } catch (_) {}
+                }
+
+                // 2. Comprehensive cursor scan matching id, sessionId, or cursor keys
+                try {
+                  const cursorReq = store.openCursor();
+                  cursorReq.onsuccess = (e) => {
+                    try {
+                      const cursor = e.target.result;
+                      if (cursor) {
+                        const val = cursor.value || {};
+                        const matches = (
+                          val.id === sessionId ||
+                          val.sessionId === sessionId ||
+                          String(val.id ?? "").trim() === targetIdStr ||
+                          String(val.sessionId ?? "").trim() === targetIdStr ||
+                          String(cursor.key ?? "").trim() === targetIdStr ||
+                          String(cursor.primaryKey ?? "").trim() === targetIdStr
+                        );
+                        if (matches) {
+                          try { cursor.delete(); } catch (_) {}
+                        }
+                        cursor.continue();
+                      }
+                    } catch (_) {}
+                  };
+                  cursorReq.onerror = () => resolve();
+                } catch (_) {}
               }
-              cursor.continue();
-            }
-          };
-          cursorReq.onerror = () => reject(cursorReq.error);
-        }
 
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-        tx.onabort = () => reject(tx.error);
-      });
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => resolve();
+              tx.onabort = () => resolve();
+            } catch (txErr) {
+              console.warn("[storage] deleteReadingSession tx error:", txErr);
+              resolve();
+            }
+          });
+        }
+      }
+    } catch (dbErr) {
+      console.warn("[storage] deleteReadingSession error:", dbErr);
     }
 
-    this._removeSessionFromLocalStorage(sessionId);
+    try {
+      this._removeSessionFromLocalStorage(targetIdStr);
+    } catch (_) {}
 
     // 3. Recalculate global cumulative stats, words, time, and streak
     if (!skipRecalculate && typeof this.recalculateAndNormalizeStats === "function") {
@@ -623,28 +1079,44 @@ export class StorageManager {
 
   _removeSessionFromLocalStorage(sessionId) {
     try {
-      const targetIdStr = String(sessionId).trim();
+      const targetIdStr = String(sessionId ?? "").trim();
+      if (!targetIdStr) return;
       const raw = localStorage.getItem("lumina_reading_sessions");
       if (raw) {
         const list = JSON.parse(raw);
-        const filtered = list.filter(s => {
-          const sId = String(s.sessionId ?? "").trim();
-          const id = String(s.id ?? "").trim();
-          return s.sessionId !== sessionId &&
-                 s.id !== sessionId &&
-                 sId !== targetIdStr &&
-                 id !== targetIdStr;
-        });
-        localStorage.setItem("lumina_reading_sessions", JSON.stringify(filtered));
+        if (Array.isArray(list)) {
+          const filtered = list.filter(s => {
+            if (!s || typeof s !== "object") return false;
+            const sId = String(s.sessionId ?? "").trim();
+            const id = String(s.id ?? "").trim();
+            return s.sessionId !== sessionId &&
+                   s.id !== sessionId &&
+                   sId !== targetIdStr &&
+                   id !== targetIdStr;
+          });
+          localStorage.setItem("lumina_reading_sessions", JSON.stringify(filtered));
+        }
       }
     } catch (_) {}
   }
 
   _cacheSessionToLocalStorage(session) {
     try {
+      if (!session || typeof session !== "object") return;
+      if (session.is_deleted === true || session.is_deleted === "true") return;
+      const deletedSet = new Set(this.getDeletedSessionIds());
+      const sid = String(session.sessionId ?? session.id ?? "").trim();
+      if (sid && deletedSet.has(sid)) return;
+
       const raw = localStorage.getItem("lumina_reading_sessions");
       const list = raw ? JSON.parse(raw) : [];
-      const filtered = list.filter(s => s.sessionId !== session.sessionId);
+      const safeList = Array.isArray(list) ? list : [];
+      const filtered = safeList.filter(s => {
+        if (!s || typeof s !== "object") return false;
+        if (s.is_deleted === true || s.is_deleted === "true") return false;
+        const existingId = String(s.sessionId ?? s.id ?? "").trim();
+        return existingId !== sid && !deletedSet.has(existingId);
+      });
       filtered.unshift(session);
       localStorage.setItem("lumina_reading_sessions", JSON.stringify(filtered.slice(0, 100)));
     } catch (_) {
@@ -657,61 +1129,76 @@ export class StorageManager {
   }
 
   async getAllReadingSessions() {
-    const db = await this.getDB();
-    return new Promise((resolve) => {
-      if (!db.objectStoreNames.contains("reading_sessions")) {
-        return this._getOldSessions().then(oldList => {
-          const filtered = (oldList || []).filter(s => {
-            const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
-            return dur >= 300;
-          });
-          filtered.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
-          resolve(filtered);
-        });
-      }
+    const deletedSet = new Set(this.getDeletedSessionIds());
+    const isNotDeleted = (s) => {
+      if (!s || typeof s !== "object") return false;
+      if (s.is_deleted === true || s.is_deleted === "true") return false;
+      const sid = String(s.sessionId ?? "").trim();
+      const id = String(s.id ?? "").trim();
+      return !(sid && deletedSet.has(sid)) && !(id && deletedSet.has(id));
+    };
 
-      const tx = db.transaction("reading_sessions", "readonly");
-      const store = tx.objectStore("reading_sessions");
-      const request = store.getAll();
-
-      request.onsuccess = async () => {
-        let results = request.result || [];
-        // Pokud je reading_sessions prázdné, ale staré sessions existují, bezpečně a jednorázově migrujeme
-        if (results.length === 0 && !this._sessionsMigrated && db.objectStoreNames.contains("sessions")) {
-          this._sessionsMigrated = true;
-          const oldSessions = await this._getOldSessions();
-          const validOld = (oldSessions || []).filter(s => {
-            const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
-            return dur >= 300;
-          });
-          if (validOld.length > 0) {
-            for (const oldS of validOld) {
-              await this.saveReadingSession(oldS);
-            }
-            results = validOld;
+    const getLocalStorageFallback = () => {
+      try {
+        const raw = localStorage.getItem("lumina_reading_sessions");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return parsed.filter(s => isNotDeleted(s) && Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0)) >= 300);
           }
         }
-        // Filtrovat pouze relace s aktivní dobou alespoň 5 minut (>= 300 sekund)
-        results = results.filter(s => {
-          const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
-          return dur >= 300;
-        });
-        // Seřadit sestupně (nejnovější nahoře)
-        results.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
-        resolve(results);
-      };
+      } catch (_) {}
+      return [];
+    };
 
-      request.onerror = () => {
+    try {
+      const db = await this.getDB();
+      if (!db || !db.objectStoreNames) {
+        return getLocalStorageFallback();
+      }
+
+      return await new Promise((resolve) => {
         try {
-          const raw = localStorage.getItem("lumina_reading_sessions");
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            return resolve(parsed.filter(s => (s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0) >= 300));
+          if (!db.objectStoreNames.contains("reading_sessions")) {
+            return this._getOldSessions().then(oldList => {
+              const filtered = (oldList || []).filter(s => {
+                if (!isNotDeleted(s)) return false;
+                const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
+                return dur >= 300;
+              });
+              filtered.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
+              resolve(filtered);
+            }).catch(() => resolve(getLocalStorageFallback()));
           }
-        } catch (_) {}
-        resolve([]);
-      };
-    });
+
+          const tx = db.transaction("reading_sessions", "readonly");
+          const store = tx.objectStore("reading_sessions");
+          const request = store.getAll();
+
+          request.onsuccess = async () => {
+            let results = (request.result || []).filter(isNotDeleted);
+
+            // Odfiltrujeme relace kratší než 5 minut (>= 300 sekund)
+            results = results.filter(s => {
+              const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
+              return dur >= 300;
+            });
+
+            // Seřadit sestupně (nejnovější nahoře)
+            results.sort((a, b) => (b.timestamp || new Date(b.startTime || 0).getTime() || 0) - (a.timestamp || new Date(a.startTime || 0).getTime() || 0));
+            resolve(results);
+          };
+
+          request.onerror = () => resolve(getLocalStorageFallback());
+        } catch (txErr) {
+          console.warn("[storage] getAllReadingSessions tx error:", txErr);
+          resolve(getLocalStorageFallback());
+        }
+      });
+    } catch (err) {
+      console.warn("[storage] getAllReadingSessions error:", err);
+      return getLocalStorageFallback();
+    }
   }
 
   async _getOldSessions() {
@@ -753,13 +1240,14 @@ export class StorageManager {
 
     const defaults = {
       theme: "warm", // light, warm, sepia, dark, oled
-      fontFamily: "georgia", // georgia, inter, merriweather, lora, atkinson, opendyslexic
+      liquidGlassUi: false, // Liquid Glass theme toggle
+      fontFamily: "georgia", // georgia, merriweather, lora, inter, atkinson, opendyslexic, verdana, arial, literata, comic-sans
       fontSize: 19, // px
-      marginPercent: 20, // % velikost okrajů stránky
+      marginPercent: 8, // % velikost okrajů stránky
       columnsMode: "auto", // "auto" | "1" | "2" - rozvržení sloupců
       lineHeight: 1.6,
-      letterSpacing: 0, // px
-      wordSpacing: 0, // px
+      letterSpacing: 0.75, // px
+      wordSpacing: 2, // px
       contentWidth: 720, // px
       textAlign: "justify", // left, justify
       readingMode: "scroll", // scroll, paginated
@@ -771,11 +1259,16 @@ export class StorageManager {
       showRulerButton: true, // zobrazení tlačítka pravítka v dolní liště
       ruler: {
         enabled: false,
-        mode: "highlight", // highlight, focus
+        mode: "highlight", // backward compat: highlight, bottom-cover, off
+        style: "highlight", // off, highlight, bottom-cover
+        focusMode: "off", // off, up, down, both
+        lastActiveStyle: "highlight",
+        lastActiveCombination: { style: "highlight", focusMode: "off" },
         height: 48, // px
         autoHeight: true, // Automatická výška podle velikosti řádku
         pdfAutoHeight: true, // Automatická výška pravítka pro PDF (výchozí zapnuto)
         snapToLines: true, // Magnetická přilnavost k jednotlivým řádkům
+        rulerModeType: "line", // line, word
         wordTracking: false, // Sledování jednotlivých slov
         color: "amber", // amber, cyan, emerald, lavender, slate
         dimOpacity: 0.65,
@@ -792,12 +1285,15 @@ export class StorageManager {
           ...parsed,
           ruler: { ...defaults.ruler, ...(parsed.ruler || {}) }
         };
-        merged.marginPercent = parsed.marginPercent ?? 20;
+        merged.marginPercent = parsed.marginPercent ?? 8;
         merged.columnsMode = parsed.columnsMode ?? "auto";
         merged.lineHeight = parsed.lineHeight !== undefined ? Number(parsed.lineHeight) : 1.6;
-        merged.letterSpacing = parsed.letterSpacing !== undefined ? Number(parsed.letterSpacing) : 0;
-        merged.wordSpacing = parsed.wordSpacing !== undefined ? Number(parsed.wordSpacing) : 0;
+        merged.letterSpacing = parsed.letterSpacing !== undefined ? Number(parsed.letterSpacing) : 0.75;
+        merged.wordSpacing = parsed.wordSpacing !== undefined ? Number(parsed.wordSpacing) : 2;
         merged.fastReading = !!parsed.fastReading;
+        merged.liquidGlassUi = localStorage.getItem("liquidGlassUi") !== null
+          ? localStorage.getItem("liquidGlassUi") === "true"
+          : (parsed.liquidGlassUi !== undefined ? !!parsed.liquidGlassUi : false);
         merged.pencilDoubleTapNavigation = parsed.pencilDoubleTapNavigation !== false;
         merged.pencilFlickNavigation = parsed.pencilFlickNavigation !== false;
         merged.showRulerButton = parsed.showRulerButton !== false;
@@ -813,6 +1309,43 @@ export class StorageManager {
         merged.showProgressBar = merged.showFooterBar;
         if (merged.ruler.mode === "underline") {
           merged.ruler.mode = "highlight";
+        }
+        if (merged.ruler.mode === "focus") {
+          merged.ruler.style = "off";
+          merged.ruler.focusMode = "both";
+          merged.ruler.mode = "off";
+        } else {
+          if (parsed.ruler && parsed.ruler.style !== undefined) {
+            merged.ruler.style = parsed.ruler.style;
+          } else if (parsed.ruler && parsed.ruler.mode !== undefined) {
+            merged.ruler.style = parsed.ruler.mode;
+          }
+          if (parsed.ruler && parsed.ruler.focusMode !== undefined) {
+            merged.ruler.focusMode = parsed.ruler.focusMode;
+          }
+        }
+        if (!["off", "highlight", "bottom-cover"].includes(merged.ruler.style)) {
+          merged.ruler.style = "highlight";
+        }
+        if (!["off", "up", "down", "both"].includes(merged.ruler.focusMode)) {
+          merged.ruler.focusMode = "off";
+        }
+        merged.ruler.mode = merged.ruler.style;
+        if (merged.ruler.style === "off" && merged.ruler.focusMode === "off") {
+          merged.ruler.enabled = false;
+        }
+        if (parsed.ruler?.lastActiveCombination && typeof parsed.ruler.lastActiveCombination === "object") {
+          merged.ruler.lastActiveCombination = parsed.ruler.lastActiveCombination;
+        } else if (merged.ruler.style !== "off" || merged.ruler.focusMode !== "off") {
+          merged.ruler.lastActiveCombination = {
+            style: merged.ruler.style,
+            focusMode: merged.ruler.focusMode
+          };
+        }
+        if (parsed.ruler?.lastActiveStyle) {
+          merged.ruler.lastActiveStyle = parsed.ruler.lastActiveStyle;
+        } else if (merged.ruler.style !== "off") {
+          merged.ruler.lastActiveStyle = merged.ruler.style;
         }
         if (merged.ruler.followMode !== "keyboard") {
           merged.ruler.followMode = "mouse";
@@ -831,6 +1364,14 @@ export class StorageManager {
         } else {
           merged.ruler.pdfAutoHeight = true;
         }
+        if (parsed.ruler?.rulerModeType && ["line", "word"].includes(parsed.ruler.rulerModeType)) {
+          merged.ruler.rulerModeType = parsed.ruler.rulerModeType;
+        } else if (parsed.ruler?.wordTracking) {
+          merged.ruler.rulerModeType = "word";
+        } else {
+          merged.ruler.rulerModeType = "line";
+        }
+        merged.ruler.wordTracking = (merged.ruler.rulerModeType === "word");
         merged.ruler.autoHeight = true;
         return merged;
       }
@@ -913,6 +1454,9 @@ export class StorageManager {
       settings.showFooterBar = isVisible;
       settings.showProgressBar = isVisible;
       localStorage.setItem('showProgressBar', String(isVisible));
+      if (settings.liquidGlassUi !== undefined) {
+        localStorage.setItem("liquidGlassUi", String(!!settings.liquidGlassUi));
+      }
       localStorage.setItem("luminareader_settings", JSON.stringify(settings));
     } catch (e) {
       console.warn("Chyba při ukládání nastavení do localStorage:", e);
@@ -932,32 +1476,45 @@ export class StorageManager {
   }
 
   /**
-   * Pomocná metoda pro vyčištění intra_session_samples:
+   * Pomocná metoda pro vyčištění a vyhlazení intra_session_samples:
    * - Odstraní umělé počáteční 220 WPM seed body (body v čase 0s nebo počáteční plochou sérii 220 WPM).
+   * - Odfiltruje nulové (0 WPM) propady vzniklé při pauzách / nečinnosti.
+   * - Potlačí izolované špičky (outlier despiking) a aplikuje klouzavý průměr (Moving Average 3–5 vzorků).
    * - Normalizuje vzorky na čisté 1-minutové intervaly { minute, elapsedSeconds, t, words, wpm }.
    */
   _cleanIntraSessionSamples(rawSamples, durationSec, wordsRead, avgWpm, fallbackTimestamp = Date.now()) {
+    if (typeof rawSamples === "string") {
+      try {
+        rawSamples = JSON.parse(rawSamples);
+      } catch (_) {
+        rawSamples = [];
+      }
+    }
     if (!Array.isArray(rawSamples) || rawSamples.length === 0) {
       return [];
     }
 
-    // 1. Odstranit body s elapsedSeconds <= 0 (počáteční 0s seed) a neplatné hodnoty
+    // 1. Odstranit body s elapsedSeconds <= 0 (počáteční 0s seed), nulové (0 WPM) idle propady a neplatné hodnoty
     let list = rawSamples.map((s, idx) => {
       const sec = Math.round(Number(s.elapsedSeconds ?? s.t ?? (s.minute ? s.minute * 60 : (idx + 1) * 60)));
+      const rawRate = Math.round(Number(s.rawWpm ?? s.wpm ?? s.instantaneousWpm ?? 0));
       const wpm = Math.round(Number(s.wpm ?? s.instantaneousWpm ?? 0));
       const words = s.words !== undefined ? Math.round(Number(s.words)) : wpm;
+      const effectiveWpm = wpm > 0 ? wpm : words;
       const minute = Number(s.minute) > 0 ? Number(s.minute) : Math.max(1, Math.ceil(sec / 60));
       return {
         minute,
         elapsedSeconds: sec,
         t: sec,
-        words: Math.max(0, words),
-        wpm: Math.max(0, wpm),
-        instantaneousWpm: Math.max(0, wpm),
+        words: Math.max(0, words > 0 ? words : effectiveWpm),
+        rawWpm: Math.max(0, rawRate > 0 ? rawRate : effectiveWpm),
+        wpm: Math.max(0, effectiveWpm),
+        instantaneousWpm: Math.max(0, effectiveWpm),
         timestamp: s.timestamp || fallbackTimestamp,
+        activeSeconds: s.activeSeconds || 60,
         isPartial: !!s.isPartial
       };
-    }).filter(s => s.elapsedSeconds > 0 && s.wpm >= 0 && s.wpm <= 1000);
+    }).filter(s => s.elapsedSeconds > 0 && s.wpm > 0 && s.wpm <= 650);
 
     // 2. Odstranit počáteční umělé ploché 220 WPM seed body
     // (pokud na začátku relace leží sekvence bodů s přesně 220 WPM a průměr relace je odlišný nebo následují reálné body)
@@ -984,7 +1541,26 @@ export class StorageManager {
       }
     }
 
-    return deduped;
+    // 4. Zachování neměnných 1-minutových snímků tempa bez klouzavého průměru a škálování
+    return deduped.map((s, i) => {
+      const minuteNum = Number(s.minute) > 0 ? Number(s.minute) : (i + 1);
+      const isLastPartial = s.isPartial && i === deduped.length - 1 && durationSec > (minuteNum - 1) * 60 && durationSec < minuteNum * 60;
+      const elapsedSec = isLastPartial ? durationSec : (s.elapsedSeconds || minuteNum * 60);
+      const safeWpm = Math.min(650, Math.max(1, Math.round(Number(s.wpm ?? s.instantaneousWpm ?? s.rawWpm ?? 0))));
+      const safeWords = s.words !== undefined ? Math.round(Number(s.words)) : safeWpm;
+      const finalWpm = safeWpm > 0 ? safeWpm : safeWords;
+      return {
+        ...s,
+        minute: minuteNum,
+        elapsedSeconds: elapsedSec,
+        t: elapsedSec,
+        words: safeWords,
+        wpm: finalWpm,
+        rawWpm: Math.round(Number(s.rawWpm ?? finalWpm)),
+        instantaneousWpm: finalWpm,
+        isPartial: !!s.isPartial
+      };
+    });
   }
 
   /**
@@ -1010,18 +1586,25 @@ export class StorageManager {
           break;
         }
 
-        const samples = Array.isArray(s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
-          ? (s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
-          : [];
+        let samples = s.intra_session_samples || s.intraSessionSamples || s.timelineSamples;
+        if (typeof samples === "string") {
+          try { samples = JSON.parse(samples); } catch (_) { samples = []; }
+        }
+        samples = Array.isArray(samples) ? samples : [];
+        const samplesWords = samples.reduce((sum, pt) => sum + Math.max(0, Math.round(pt.words || 0)), 0);
+        if (words === 0 && samplesWords > 0) {
+          hasAnomaly = true;
+          break;
+        }
         if (samples.some(pt => (Number(pt.elapsedSeconds ?? pt.t ?? 60) <= 0) || (Number(pt.wpm) === 220 && Math.abs(expectedAvg - 220) > 10))) {
           hasAnomaly = true;
           break;
         }
 
         const speeds = samples.map(pt => Number(pt.wpm) || 0).filter(w => w > 0);
-        const expectedPeak = speeds.length > 0 ? Math.max(...speeds, expectedAvg) : expectedAvg;
+        const expectedPeak = Math.max(speeds.length > 0 ? Math.max(...speeds) : expectedAvg, expectedAvg);
         const storedPeak = s.peak_wpm ?? s.peakWpm ?? 0;
-        if (storedPeak < expectedAvg || storedPeak !== expectedPeak) {
+        if (storedPeak !== expectedPeak || (storedPeak < expectedAvg && expectedAvg > 0)) {
           hasAnomaly = true;
           break;
         }
@@ -1046,8 +1629,12 @@ export class StorageManager {
    * 3. Přepočítá celkový souhrn (reading_stats_summary a denní časy) z opravených relací.
    */
   async recalculateAndNormalizeStats() {
-    const allSessions = await this.getAllReadingSessions();
-    const books = await this.getAllBooks();
+    let allSessions = [];
+    let books = [];
+    try {
+      allSessions = await this.getAllReadingSessions();
+      books = await this.getAllBooks();
+    } catch (_) {}
     let normalizedCount = 0;
 
     const dailyReadingMap = {};
@@ -1055,20 +1642,45 @@ export class StorageManager {
     let totalWords = 0;
 
     for (const session of allSessions) {
+      if (!session || typeof session !== "object") continue;
+      const targetSid = session.sessionId || session.id;
+
+      if (session.is_deleted === true || session.is_deleted === "true") {
+        if (targetSid) {
+          try {
+            await this.deleteReadingSession(targetSid, true);
+          } catch (_) {}
+        }
+        normalizedCount++;
+        continue;
+      }
       const durationSec = Math.max(0, Math.round(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0));
       // Úplné odstranění relací nesplňujících minimální práh 5 minut (300 sekund)
       if (durationSec < 300) {
-        await this.deleteReadingSession(session.sessionId || session.id, true);
+        if (targetSid) {
+          try {
+            await this.deleteReadingSession(targetSid, true);
+          } catch (_) {}
+        }
         normalizedCount++;
         continue;
       }
 
-      const words = Math.max(0, Math.round(session.words_read ?? session.wordsRead ?? 0));
+      let rawSamples = session.intra_session_samples || session.intraSessionSamples || session.timelineSamples;
+      if (typeof rawSamples === "string") {
+        try {
+          rawSamples = JSON.parse(rawSamples);
+        } catch (_) {
+          rawSamples = [];
+        }
+      }
+      rawSamples = Array.isArray(rawSamples) ? rawSamples : [];
+      const samplesWords = rawSamples.reduce((sum, pt) => sum + Math.max(0, Math.round(pt.words || 0)), 0);
+      let words = Math.max(0, Math.round(session.words_read ?? session.wordsRead ?? 0));
+      if (words === 0 && samplesWords > 0) {
+        words = samplesWords;
+      }
       const avgWpm = durationSec >= 10 ? Math.round((words / durationSec) * 60) : 0;
-
-      const rawSamples = Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
-        ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
-        : [];
       const fallbackTs = session.timestamp || ((session.startTime || session.start_time) ? new Date(session.startTime || session.start_time).getTime() : Date.now());
       let cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSec, words, avgWpm, fallbackTs);
 
@@ -1081,6 +1693,7 @@ export class StorageManager {
             elapsedSeconds: m * 60,
             t: m * 60,
             words: avgWpm,
+            rawWpm: avgWpm,
             wpm: avgWpm,
             instantaneousWpm: avgWpm,
             timestamp: fallbackTs,
@@ -1094,6 +1707,7 @@ export class StorageManager {
             elapsedSeconds: durationSec,
             t: durationSec,
             words: Math.round((avgWpm * remSec) / 60),
+            rawWpm: avgWpm,
             wpm: avgWpm,
             instantaneousWpm: avgWpm,
             timestamp: fallbackTs,
@@ -1103,7 +1717,10 @@ export class StorageManager {
       }
 
       const sampleSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
-      const peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds, avgWpm) : avgWpm;
+      let peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds) : avgWpm;
+      if (peakWpm < avgWpm && avgWpm > 0) {
+        peakWpm = avgWpm;
+      }
 
       const normalizedDate = this.getLocalDateString(session.date || session.startTime || session.start_time || session.timestamp);
       const prevAvg = session.avg_wpm ?? session.avgWpm ?? session.wpm;
@@ -1115,7 +1732,8 @@ export class StorageManager {
         session.date !== normalizedDate ||
         cleanedSamples.length !== rawSamples.length ||
         session.words_read !== words ||
-        session.duration !== durationSec
+        session.duration !== durationSec ||
+        cleanedSamples.some((cs, i) => !rawSamples[i] || rawSamples[i].wpm !== cs.wpm || rawSamples[i].rawWpm !== cs.rawWpm)
       );
 
       session.wordsRead = words;
@@ -1136,9 +1754,13 @@ export class StorageManager {
         session.updatedAt = new Date().toISOString();
       }
 
-      await this.saveReadingSession(session);
-      if (changed) {
-        normalizedCount++;
+      try {
+        await this.saveReadingSession(session);
+        if (changed) {
+          normalizedCount++;
+        }
+      } catch (saveErr) {
+        console.warn("[storage] Chyba při ukládání normalizované relace:", saveErr);
       }
 
       // Akumulace do denní mapy v sekundách
@@ -1189,19 +1811,43 @@ export class StorageManager {
    * Zachovává všechny knihy v knihovně a veškerá uživatelská nastavení
    */
   async resetReadingStats() {
-    const db = await this.getDB();
-    const stores = [];
-    if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
-    if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
+    // 0. Zaznamenat všechny stávající ID relací do tombstones před vymazáním
+    try {
+      const existing = await this.getAllReadingSessions();
+      if (Array.isArray(existing)) {
+        for (const s of existing) {
+          const sid = String(s.sessionId || s.id || "").trim();
+          if (sid) {
+            this.addDeletedSessionId(sid);
+          }
+        }
+      }
+    } catch (_) {}
 
-    if (stores.length > 0) {
-      await new Promise((resolve, reject) => {
-        const tx = db.transaction(stores, "readwrite");
-        stores.forEach(s => tx.objectStore(s).clear());
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => reject(tx.error);
-      });
-    }
+    try {
+      const db = await this.getDB();
+      if (db && db.objectStoreNames) {
+        const stores = [];
+        if (db.objectStoreNames.contains("reading_sessions")) stores.push("reading_sessions");
+        if (db.objectStoreNames.contains("sessions")) stores.push("sessions");
+
+        if (stores.length > 0) {
+          await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(stores, "readwrite");
+              stores.forEach(s => {
+                try { tx.objectStore(s).clear(); } catch (_) {}
+              });
+              tx.oncomplete = () => resolve(true);
+              tx.onerror = () => resolve(true);
+              tx.onabort = () => resolve(true);
+            } catch (_) {
+              resolve(true);
+            }
+          });
+        }
+      }
+    } catch (_) {}
 
     try {
       localStorage.removeItem("lumina_reading_sessions");
@@ -1221,32 +1867,45 @@ export class StorageManager {
   }
 
   async deleteBookRaw(id) {
-    if (!id) return;
+    if (!id) return false;
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readwrite");
-      const store = tx.objectStore("books");
-      store.delete(id);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => reject(tx.error);
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return false;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("books", "readwrite");
+        const store = tx.objectStore("books");
+        store.delete(id);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (_) {
+        resolve(false);
+      }
     });
   }
 
   async saveBookRaw(bookData) {
     if (!bookData) return null;
     const db = await this.getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("books", "readwrite");
-      const store = tx.objectStore("books");
-      store.put(bookData);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => reject(tx.error);
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("books", "readwrite");
+        const store = tx.objectStore("books");
+        store.put(bookData);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (_) {
+        resolve(false);
+      }
     });
   }
 
   async migrateSessionsBookId(oldBookId, newBookId) {
     if (!oldBookId || !newBookId || oldBookId === newBookId) return;
     const db = await this.getDB();
+    if (!db || !db.objectStoreNames) return;
     const storeNames = [];
     if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
     if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
@@ -1415,4 +2074,16 @@ export function normalizeBookProgress(book) {
 
 export async function deduplicateBooks() {
   return await storage.deduplicateBooks();
+}
+
+export async function purgeOrphanReadingSessions(remoteValidIds, remoteDeletedIds) {
+  return await storage.purgeOrphanReadingSessions(remoteValidIds, remoteDeletedIds);
+}
+
+export async function reconcileReadingSessions(remoteSessions) {
+  return await storage.reconcileReadingSessions(remoteSessions);
+}
+
+export async function reconcileSessionsWithCloud() {
+  return await storage.reconcileSessionsWithCloud();
 }

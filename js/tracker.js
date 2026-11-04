@@ -4,12 +4,16 @@
  * odhaduje zbývající čas a ukládá detailní čtecí relace s časovou osou WPM.
  */
 
-import { storage } from "./storage.js";
+import { storage } from "./storage.js?v=2.4.8";
 
 export const MIN_VALID_WPM = 40;
 export const MAX_VALID_WPM = 650;
+export const MAX_SUSTAINED_PAGE_WPM = 450;
 export const DEFAULT_NORMAL_WPM = 0;
 export const MIN_SESSION_DURATION_SEC = 300; // Minimální délka relace pro uložení (5 minut)
+export const DEFAULT_IDLE_TIMEOUT_MS = 90000; // 90 sekund bez interakce = pauza čtení (konfigurovatelné 30–60s)
+const IDLE_GRACE_READING_SEC = 30; // Po kolika sekundách ticha před idle pauzou se odečte mrtvý ocas nečinnosti
+const MIN_PAGE_DWELL_SEC = 3.0; // Minimální aktivní doba na stránce (ochrana proti rychlému přeskakování stran)
 
 /**
  * Vrátí datum ve formátu YYYY-MM-DD v lokálním časovém pásmu
@@ -23,7 +27,7 @@ export function getLocalDateKey(dateInput = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-const IDLE_TIMEOUT_MS = 45000; // 45 sekund bez interakce = pauza čtení
+const IDLE_TIMEOUT_MS = DEFAULT_IDLE_TIMEOUT_MS;
 const SESSION_ABANDON_TIMEOUT_MS = 900000; // 15 minut nečinnosti = automatické uložení relace
 
 export class ReadingTracker {
@@ -33,13 +37,19 @@ export class ReadingTracker {
     this.currentChapterIndex = 0;
     this.currentChapterWords = 0;
     
-    // Stav aktivity čtečky
+    // Stav aktivity čtečky a konfigurovatelný práh nečinnosti (30–60 s)
+    this.idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS;
     this.isActive = false;
     this.isIdle = false;
     this.activeTimeMs = 0;
     this.lastActivityTime = Date.now();
+    this.lastReadingProgressTime = Date.now();
+    this.lastDirectAttributionTime = 0;
     this.lastTickTime = Date.now();
     this.timerInterval = null;
+    this.unverifiedSilenceSeconds = 0;
+    this.unverifiedSilenceInterimWords = 0;
+    this.currentPageActiveSeconds = 0;
 
     // Metriky aktuální čtecí relace
     this.currentSessionId = null;
@@ -55,14 +65,16 @@ export class ReadingTracker {
     this.validReadingTimeMs = 0;
     this.validWordsRead = 0;
 
-    // Sledování čtení na úrovni bloků a deduplikace pravítka vs. otáčení stran
+    // Sledování čtení na úrovni bloků a deduplikace pravítka vs. otáčení stran vs. vertikální scroll
     this.creditedBlocks = new Set(); // Množina klíčů bloků již akreditovaných pro danou knihu
     this.currentReadingBlockId = null; // e.g. `${bookId}_ch${chapterIndex}_p${pageIndex}`
     this.blockEnterTimestamp = null; // Čas příchodu na aktuální blok
     this.blockEnterActiveSec = 0; // Aktivní sekundy při vstupu na blok
     this.blockVisibleWords = 0; // Viditelná slova na aktuálním bloku (pouze viewport)
     this.wordsCreditedOnCurrentPage = 0; // Slova již započtená na aktuální stránce (pravítkem nebo průběžně)
-    this.blockInterimWordsAttributed = 0; // Průběžně odhadovaná slova na bloku při vypnutém pravítku
+    this.blockDirectWordsAttributed = 0; // Slova přímo započtená pravítkem na aktuální stránce
+    this.blockInterimWordsAttributed = 0; // Průběžně odhadovaná slova na bloku
+    this.unreconciledRulerWords = 0; // Slova započtená pravítkem čekající na deduplikaci při vertikálním scrollu
     this.isContinuousTrackingActive = false; // Příznak, zda pro blok probíhá kontinuální přičítání (pravítko / scroll)
     
     // Zpětná kompatibilita pro stávající reference
@@ -71,6 +83,11 @@ export class ReadingTracker {
     this.pageEnterTimestamp = null;
     this.currentPageVisibleWords = 0;
     
+    // Režimy pravítka a sledování slov
+    this.rulerEnabled = !!this.rulerEnabled;
+    this.rulerMode = this.rulerMode || "line";
+    this.noRulerTotalWords = 0;
+
     // Striktní 1-minutový (60 aktivních sekund) bucket akumulátor
     this.currentMinuteActiveSeconds = 0;
     this.currentMinuteWords = 0;
@@ -93,22 +110,46 @@ export class ReadingTracker {
     this.initActivityListeners();
   }
 
+  /**
+   * Nastaví práh nečinnosti (v milisekundách, bezpečně oříznutý na 15–120 sekund).
+   */
+  setIdleTimeout(timeoutMs) {
+    const num = Number(timeoutMs);
+    if (Number.isFinite(num) && num >= 15000 && num <= 120000) {
+      this.idleTimeoutMs = Math.round(num);
+    }
+  }
+
   _isReaderActivelyVisible() {
     if (typeof document === "undefined") return true;
+    if (document.visibilityState === "hidden") return false;
     const statsModal = document.getElementById("stats-modal");
     if (statsModal && statsModal.classList.contains("open")) return false;
     const viewReader = document.getElementById("view-reader");
     if (viewReader && viewReader.classList.contains("is-hidden")) return false;
+    const settingsDrawer = document.getElementById("settings-drawer");
+    if (settingsDrawer && settingsDrawer.classList.contains("open")) return false;
+    const tocDrawer = document.getElementById("toc-drawer");
+    if (tocDrawer && tocDrawer.classList.contains("open")) return false;
+    const searchDrawer = document.getElementById("search-drawer");
+    if (searchDrawer && searchDrawer.classList.contains("open")) return false;
     return true;
   }
 
   initActivityListeners() {
-    const onUserAction = () => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    const onUserAction = (e) => {
       if (!this._isReaderActivelyVisible()) return;
+      if (e && e.target && typeof e.target.closest === "function") {
+        if (e.target.closest("#stats-modal, #settings-drawer, #toc-drawer, #search-drawer")) {
+          return;
+        }
+      }
       this.recordActivity();
     };
 
-    window.addEventListener("scroll", onUserAction, { passive: true });
+    window.addEventListener("scroll", onUserAction, { passive: true, capture: true });
     window.addEventListener("mousemove", onUserAction, { passive: true });
     window.addEventListener("pointermove", onUserAction, { passive: true });
     window.addEventListener("pointerdown", onUserAction, { passive: true });
@@ -116,6 +157,7 @@ export class ReadingTracker {
     window.addEventListener("touchstart", onUserAction, { passive: true });
     window.addEventListener("touchmove", onUserAction, { passive: true });
     window.addEventListener("click", onUserAction, { passive: true });
+    window.addEventListener("wheel", onUserAction, { passive: true });
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") {
@@ -136,12 +178,18 @@ export class ReadingTracker {
   /**
    * Zaznamená aktivní interakci uživatele (listování, posun, pravítko, stisk klávesy)
    */
-  recordActivity() {
-    this.lastActivityTime = Date.now();
+  recordActivity(isReadingProgress = false) {
+    const now = Date.now();
+    this.lastActivityTime = now;
+    if (isReadingProgress) {
+      this.lastReadingProgressTime = now;
+    }
+    this.unverifiedSilenceSeconds = 0;
+    this.unverifiedSilenceInterimWords = 0;
 
     if (this.isIdle) {
       this.isIdle = false;
-      this.lastTickTime = Date.now();
+      this.lastTickTime = now;
       this.notifyListeners({ type: "idleChange", isIdle: false });
       // Pokud byla předchozí relace ukončena, začíná nová souvislá relace
       if (this.currentBookId && !this.currentSessionId) {
@@ -153,13 +201,31 @@ export class ReadingTracker {
   }
 
   /**
+   * Odečte neověřené mrtvé sekundy (např. při přechodu do idle nebo při přeskočení stránky < 3s),
+   * aby nečinnost ani skimming nenaředily aktivní čtecí čas a nevytvářely 0 WPM propady.
+   */
+  _rewindActiveSeconds(secondsToRewind) {
+    const sec = Math.max(0, Math.round(secondsToRewind || 0));
+    if (sec <= 0) return;
+    if (this.currentMinuteActiveSeconds >= sec) {
+      this.currentMinuteActiveSeconds -= sec;
+    } else {
+      this.currentMinuteActiveSeconds = 0;
+    }
+    this.currentPageActiveSeconds = Math.max(0, this.currentPageActiveSeconds - sec);
+    const totalActiveSeconds = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
+    this.activeTimeMs = totalActiveSeconds * 1000;
+  }
+
+  /**
    * Zruší měření aktuální stránky bez započtení dwell time a slov
    * (při TOC skoku, posuvníku, vyhledávání, změně velikosti písma, okrajů).
    */
   cancelCurrentPageDwell() {
     if (this.blockInterimWordsAttributed > 0) {
-      this.sessionWordsRead = Math.max(0, this.sessionWordsRead - this.blockInterimWordsAttributed);
-      this.currentMinuteWords = Math.max(0, this.currentMinuteWords - this.blockInterimWordsAttributed);
+      const rollback = this.blockInterimWordsAttributed;
+      this.sessionWordsRead = Math.max(0, this.sessionWordsRead - rollback);
+      this.currentMinuteWords = Math.max(0, this.currentMinuteWords - rollback);
       this.wordsReadInCurrentMinute = this.currentMinuteWords;
     }
     this.blockEnterTimestamp = null;
@@ -169,89 +235,121 @@ export class ReadingTracker {
     this.blockVisibleWords = 0;
     this.currentPageVisibleWords = 0;
     this.blockEnterActiveSec = 0;
+    this.currentPageActiveSeconds = 0;
     this.wordsCreditedOnCurrentPage = 0;
+    this.blockDirectWordsAttributed = 0;
     this.blockInterimWordsAttributed = 0;
+    this.unverifiedSilenceInterimWords = 0;
     this.isContinuousTrackingActive = false;
   }
 
   /**
-   * Kontinuálně přičte přečtená slova (Reading Ruler, Word Tracking nebo vertikální posun).
+   * Nastaví stav pravítka (zapnuto/vypnuto) a jeho režim (line, word)
+   */
+  setRulerState(enabled, mode = "line") {
+    const prevEnabled = this.rulerEnabled;
+    this.rulerEnabled = !!enabled;
+    if (["line", "word"].includes(mode)) {
+      this.rulerMode = mode;
+    }
+    if (prevEnabled !== this.rulerEnabled) {
+      const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+      const currentTotal = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
+      this.noRulerTotalWords = Math.max(this.noRulerTotalWords || 0, currentTotal);
+      this.sessionWordsRead = Math.max(this.noRulerTotalWords, currentTotal);
+    }
+  }
+
+  /**
+   * Režim slovo za slovem (Word-by-word mode):
+   * Započítává přesně tolik slov, přes kolik pravítko přejede.
+   * Načtená slova se přičítají do aktuálního minutového bucketu (započítání 1x za minutu).
+   * @param {number} count Počet přejetých slov
+   */
+  recordWordByWord(count) {
+    if (!this.isActive || !count || count <= 0) return;
+    this.recordActivity(true);
+    const n = Math.max(0, Math.round(count));
+    this.currentMinuteWords += n;
+  }
+
+  /**
+   * Řádkový režim (Line mode):
+   * Započítává slova řádek po řádku – při přepnutí na další řádek se započítá předchozí řádek.
+   * Aktuálně čtený řádek se započte až v další minutě (při opuštění řádku).
+   * @param {number} count Počet slov na dokončeném řádku
+   */
+  recordLineCompleted(count) {
+    if (!this.isActive || !count || count <= 0) return;
+    this.recordActivity(true);
+    const n = Math.max(0, Math.round(count));
+    this.currentMinuteWords += n;
+  }
+
+  /**
+   * Generické započtení slov (kompatibilita)
    * @param {number} count Počet přečtených slov
    */
   attributeWords(count) {
     if (!this.isActive || !count || count <= 0) return;
-    if (this.isIdle) {
-      this.recordActivity();
-    }
-    const clampedWords = Math.min(650, Math.round(count));
-    if (clampedWords <= 0) return;
-
-    // Pokud před zapnutím pravítka běžela průběžná atribuce na téže stránce, nejprve ji nahradíme reálným posunem pravítka
-    if (this.blockInterimWordsAttributed > 0) {
-      this.sessionWordsRead = Math.max(0, this.sessionWordsRead - this.blockInterimWordsAttributed);
-      this.currentMinuteWords = Math.max(0, this.currentMinuteWords - this.blockInterimWordsAttributed);
-      this.wordsCreditedOnCurrentPage = Math.max(0, this.wordsCreditedOnCurrentPage - this.blockInterimWordsAttributed);
-      this.blockInterimWordsAttributed = 0;
-    }
-
-    this.isContinuousTrackingActive = true;
-    this.wordsCreditedOnCurrentPage += clampedWords;
-    this.currentMinuteWords += clampedWords;
-    this.wordsReadInCurrentMinute = this.currentMinuteWords;
-    this.sessionWordsRead += clampedWords;
-    this.recordActivity();
+    this.recordActivity(true);
+    const n = Math.max(0, Math.round(count));
+    this.currentMinuteWords += n;
+    this.noRulerTotalWords += n;
   }
 
   /**
-   * Plynulý odhad čtení slov na aktuální stránce v paged režimu, když je čtecí pravítko VYPNUTÉ.
-   * Připisuje slova plynule do aktuálního 1-minutového bucketu až do výše viditelných slov na stránce.
-   * @param {number} deltaSec Uplynulý aktivní čas v sekundách
+   * Přičte slova posunutá při vertikálním skrolování (pouze když není aktivní pravítko)
+   * @param {number} count Počet odskrolovaných slov
+   */
+  attributeScrollWords(count) {
+    if (!this.isActive || !count || count <= 0) return;
+    this.recordActivity(true);
+    const n = Math.max(0, Math.round(count));
+    this.currentMinuteWords += n;
+    this.noRulerTotalWords += n;
+  }
+
+  /**
+   * tickPageProgress zachován jako no-op pro zamezení umělého generování fiktivních slov
    */
   tickPageProgress(deltaSec) {
-    if (this.isContinuousTrackingActive || !this.currentReadingBlockId) return;
-    if (this.creditedBlocks.has(this.currentReadingBlockId)) return;
+    // Fiktivní slova již negenerujeme – počítání probíhá striktně podle reálně přečtených slov/řádků
+  }
 
-    // Pokud je čtecí pravítko zapnuté, slova se započítávají přes ruler.onProgress a zbylá slova při otočení stránky
-    const rulerEnabled = typeof window !== "undefined" && window.luminaApp?.ruler?.enabled;
-    if (rulerEnabled) return;
+  /**
+   * Pomocná metoda pro bezpečné odečtení neověřených slov (např. při přeskočení stránky < 3s).
+   * Odečítá pouze z aktuální stránky, nikdy nemaže dříve dokončené stránky.
+   */
+  _rollbackUnverifiedWords(wordsToRollback) {
+    const amount = Math.max(0, wordsToRollback || 0);
+    if (amount <= 0) return;
 
-    const rawWords = this.blockVisibleWords;
-    const pageWords = Math.max(40, Math.min(650, Math.round((rawWords && rawWords > 0) ? rawWords : 250)));
-
-    const totalActiveSec = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
-    let expectedPace = 180;
-    if (this.sessionWordsRead >= 15 && totalActiveSec >= 20) {
-      expectedPace = Math.max(60, Math.min(450, Math.round((this.sessionWordsRead / totalActiveSec) * 60)));
-    } else if (this.intra_session_samples.length > 0) {
-      const recentWpms = this.intra_session_samples.map(s => Number(s.wpm || s.words || 0)).filter(w => w > 0);
-      if (recentWpms.length > 0) {
-        expectedPace = Math.max(60, Math.min(450, Math.round(recentWpms.reduce((a, b) => a + b, 0) / recentWpms.length)));
+    this.sessionWordsRead = Math.max(0, this.sessionWordsRead - amount);
+    this.noRulerTotalWords = Math.max(0, this.noRulerTotalWords - amount);
+    if (this.currentMinuteWords >= amount) {
+      this.currentMinuteWords -= amount;
+    } else {
+      let rem = amount - this.currentMinuteWords;
+      this.currentMinuteWords = 0;
+      for (let i = this.intra_session_samples.length - 1; i >= 0 && rem > 0; i--) {
+        const s = this.intra_session_samples[i];
+        const take = Math.min(rem, s.words || 0);
+        s.words = Math.max(0, (s.words || 0) - take);
+        s.wpm = s.words;
+        rem -= take;
       }
     }
-
-    const wordsThisTick = (expectedPace / 60) * deltaSec;
-    if (this.wordsCreditedOnCurrentPage < pageWords) {
-      const deltaWords = Math.min(wordsThisTick, pageWords - this.wordsCreditedOnCurrentPage);
-      if (deltaWords > 0) {
-        this.wordsCreditedOnCurrentPage += deltaWords;
-        this.blockInterimWordsAttributed += deltaWords;
-        this.currentMinuteWords += deltaWords;
-        this.wordsReadInCurrentMinute = this.currentMinuteWords;
-        this.sessionWordsRead += deltaWords;
-      }
-    }
+    this.wordsReadInCurrentMinute = this.currentMinuteWords;
   }
 
   /**
    * Při otočení stránky vpřed (nextPage) nebo ukončení bloku dopočítá zbývající nezapočtená slova:
-   * remainingUncreditedWords = Math.max(0, visibleWordsOnPage - wordsCreditedOnCurrentPage),
+   * remainingUncreditedWords = Math.max(0, maxCreditedForDwell - wordsCreditedOnCurrentPage),
    * pokud uživatel strávil na stránce realistickou minimální dobu (>= 3 sekundy).
-   * Poté vyresetuje wordsCreditedOnCurrentPage = 0 pro novou stránku.
-   * Pokud dwellSeconds > 60, nerozsype slova pouze do aktuálního minutového bucketu (což
-   * způsobuje umělou WPM špičku), ale proporcionálně je rozdělí do všech minutových
-   * bucketů spadajících do doby čtení dané stránky.
+   * Ignoruje rychlé přeskakování stránek (< 3s) a nikdy nemaže již přečtená slova po dlouhé pauze.
    */
-  commitCurrentBlockDwell(direction = 1, visibleWordsOverride = null) {
+  commitCurrentBlockDwell(direction = 1, visibleWordsOverride = null, isFlushing = false) {
     const blockId = this.currentReadingBlockId;
     const enterTime = this.blockEnterTimestamp || this.pageEnterTimestamp || this.currentPageStartTime;
     const now = Date.now();
@@ -259,113 +357,61 @@ export class ReadingTracker {
     const rawWords = (visibleWordsOverride !== null && visibleWordsOverride !== undefined)
       ? visibleWordsOverride
       : (this.blockVisibleWords || 250);
-    const wordsOnPage = Math.max(0, Math.min(650, Math.round(rawWords)));
-    const creditedSoFar = Math.max(0, Math.round(this.wordsCreditedOnCurrentPage || 0));
-    const interimAttributed = this.blockInterimWordsAttributed || 0;
+    const wordsOnPage = Math.max(0, Math.min(MAX_VALID_WPM, Math.round(rawWords)));
+    const creditedSoFarExact = Math.max(0, this.wordsCreditedOnCurrentPage || 0);
+    const creditedSoFar = Math.max(0, Math.round(creditedSoFarExact));
+    const interimAttributed = Math.max(0, this.blockInterimWordsAttributed || 0);
     const startActiveSec = (this.blockEnterActiveSec !== null && this.blockEnterActiveSec !== undefined)
       ? this.blockEnterActiveSec
       : 0;
+    const pageActiveSec = this.currentPageActiveSeconds || 0;
 
     // Reset stavu stránky
     this.blockEnterTimestamp = null;
     this.pageEnterTimestamp = null;
     this.currentPageStartTime = null;
     this.currentReadingBlockId = null;
+    this.currentPageActiveSeconds = 0;
     this.wordsCreditedOnCurrentPage = 0;
+    this.blockDirectWordsAttributed = 0;
     this.blockInterimWordsAttributed = 0;
+    this.unverifiedSilenceInterimWords = 0;
+    this.unreconciledRulerWords = 0;
     this.isContinuousTrackingActive = false;
 
     if (!blockId || !enterTime || wordsOnPage <= 0) return 0;
 
-    const wallDwellSeconds = (now - enterTime) / 1000;
+    // Pokud je aktivní pravítko, slova se počítají výhradně podle zvoleného režimu pravítka (slovní, řádkový)
+    if (this.rulerEnabled) {
+      return 0;
+    }
+
+    const wallDwellSeconds = Math.max(0, (now - enterTime) / 1000);
     const currentTotalActiveSec = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
-    const activeDwellSeconds = Math.max(0, currentTotalActiveSec - startActiveSec);
-    const dwellSeconds = Math.max(activeDwellSeconds, wallDwellSeconds);
+    const activeDwellSeconds = Math.max(pageActiveSec, Math.max(0, currentTotalActiveSec - startActiveSec));
+    const effectiveDwellSeconds = activeDwellSeconds > 0
+      ? Math.max(activeDwellSeconds, Math.min(wallDwellSeconds, 12))
+      : (wallDwellSeconds < 60 ? wallDwellSeconds : 0);
 
-    // 1. Ochrana proti rychlému překlikávání stránek (< 3 sekundy) nebo opuštěné záložce (>= 600 sekund)
-    if (dwellSeconds < 3.0 || dwellSeconds >= 600) {
-      if (interimAttributed > 0) {
-        this.sessionWordsRead = Math.max(0, this.sessionWordsRead - interimAttributed);
-        this.currentMinuteWords = Math.max(0, this.currentMinuteWords - interimAttributed);
-        this.wordsReadInCurrentMinute = this.currentMinuteWords;
-      }
+    // 1. Ochrana proti rychlému skimmingu (< 3s) a listování zpět:
+    if (effectiveDwellSeconds < MIN_PAGE_DWELL_SEC || direction < 0 || isFlushing) {
       return 0;
     }
 
-    // Při zpětném listování (prevPage) nedopočítáváme nepřečtený zbytek stránky
-    if (direction < 0) {
-      return 0;
-    }
-
-    // 2. Výpočet zbývajících nezapočtených slov na stránce
-    const remainingUncreditedWords = Math.max(0, wordsOnPage - creditedSoFar);
-
+    // 2. Bez pravítka se načte celá stránka, pokud na ní uživatel strávil realistický čas (>= 3s)
     if (!this.creditedBlocks.has(blockId)) {
       this.creditedBlocks.add(blockId);
-      if (remainingUncreditedWords > 0) {
-        // Proporcionální distribuce pro dlouhý pobyt na stránce (> 60s):
-        // Zabraňuje náhlému WPM špičkovému skoku v aktuální minutě tím,
-        // že nerozsype všechna slova do jediného aktivního bucketu, ale rozdělí
-        // nezapočtená slova proporcionálně mezi všechny minutové buckety,
-        // které do doby čtení této stránky zasahovaly.
-        if (dwellSeconds > 60) {
-          const minuteOverlaps = [];
-          let sumOverlaps = 0;
-
-          for (let m = 1; m <= this.completedMinutesCount; m++) {
-            const bStart = (m - 1) * 60;
-            const bEnd = (m === this.completedMinutesCount) ? currentTotalActiveSec : m * 60;
-            const overlap = Math.max(0, Math.min(currentTotalActiveSec, bEnd) - Math.max(startActiveSec, bStart));
-            if (overlap > 0) {
-              minuteOverlaps.push({ minute: m, overlap });
-              sumOverlaps += overlap;
-            }
-          }
-
-          if (minuteOverlaps.length > 1 && sumOverlaps > 0) {
-            let distributedSoFar = 0;
-            for (let i = 0; i < minuteOverlaps.length; i++) {
-              const item = minuteOverlaps[i];
-              const isLast = (i === minuteOverlaps.length - 1);
-              const wordsForThis = isLast
-                ? Math.max(0, remainingUncreditedWords - distributedSoFar)
-                : Math.round(remainingUncreditedWords * (item.overlap / sumOverlaps));
-
-              distributedSoFar += wordsForThis;
-
-              if (item.minute < this.completedMinutesCount) {
-                // Uzavřený vzorek v intra_session_samples (index je minute - 1)
-                const sample = this.intra_session_samples[item.minute - 1];
-                if (sample) {
-                  sample.words = Math.round((sample.words || 0) + wordsForThis);
-                  sample.wpm = sample.words;
-                }
-              } else {
-                // Právě běžící minuta
-                this.currentMinuteWords += wordsForThis;
-                this.wordsReadInCurrentMinute = this.currentMinuteWords;
-              }
-            }
-
-            this.sessionWordsRead += remainingUncreditedWords;
-            return remainingUncreditedWords;
-          }
-        }
-
-        // Standardní přičtení pro dwell <= 60s nebo jediný minutový bucket
-        this.currentMinuteWords += remainingUncreditedWords;
-        this.wordsReadInCurrentMinute = this.currentMinuteWords;
-        this.sessionWordsRead += remainingUncreditedWords;
-        return remainingUncreditedWords;
-      }
+      this.currentMinuteWords += wordsOnPage;
+      this.noRulerTotalWords += wordsOnPage;
+      return wordsOnPage;
     }
 
     return 0;
   }
 
   // Alias pro zpětnou kompatibilitu
-  commitCurrentPageDwell(direction = 1, visibleWordsOverride = null) {
-    return this.commitCurrentBlockDwell(direction, visibleWordsOverride);
+  commitCurrentPageDwell(direction = 1, visibleWordsOverride = null, isFlushing = false) {
+    return this.commitCurrentBlockDwell(direction, visibleWordsOverride, isFlushing);
   }
 
   /**
@@ -424,10 +470,12 @@ export class ReadingTracker {
       this.blockEnterTimestamp = now;
       this.pageEnterTimestamp = now;
       this.blockEnterActiveSec = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
+      this.currentPageActiveSeconds = 0;
       const effectiveWords = visibleWords > 0 ? visibleWords : 250;
       this.blockVisibleWords = effectiveWords;
       this.currentPageVisibleWords = effectiveWords;
       this.wordsCreditedOnCurrentPage = 0;
+      this.blockDirectWordsAttributed = 0;
       this.blockInterimWordsAttributed = 0;
       this.isContinuousTrackingActive = false;
       this.currentChapterIndex = chapterIndex;
@@ -444,15 +492,17 @@ export class ReadingTracker {
       this.blockEnterTimestamp = now;
       this.pageEnterTimestamp = now;
       this.blockEnterActiveSec = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
+      this.currentPageActiveSeconds = 0;
       const effectiveWords = visibleWords > 0 ? visibleWords : 250;
       this.blockVisibleWords = effectiveWords;
       this.currentPageVisibleWords = effectiveWords;
       this.wordsCreditedOnCurrentPage = 0;
+      this.blockDirectWordsAttributed = 0;
       this.blockInterimWordsAttributed = 0;
       this.isContinuousTrackingActive = false;
       this.creditedBlocks.delete(newBlockId);
       this.currentChapterIndex = chapterIndex;
-      this.recordActivity();
+      this.recordActivity(true);
       return;
     }
 
@@ -469,7 +519,9 @@ export class ReadingTracker {
     if (this.currentReadingBlockId && !isVerticalScroll) {
       this.commitCurrentBlockDwell(direction);
     } else if (isVerticalScroll) {
+      this.currentPageActiveSeconds = 0;
       this.wordsCreditedOnCurrentPage = 0;
+      this.blockDirectWordsAttributed = 0;
       this.blockInterimWordsAttributed = 0;
     }
 
@@ -480,14 +532,16 @@ export class ReadingTracker {
     this.blockEnterTimestamp = now;
     this.pageEnterTimestamp = now;
     this.blockEnterActiveSec = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
+    this.currentPageActiveSeconds = 0;
     const effectiveVisibleWords = visibleWords > 0 ? visibleWords : 250;
     this.blockVisibleWords = effectiveVisibleWords;
     this.currentPageVisibleWords = effectiveVisibleWords;
     this.wordsCreditedOnCurrentPage = 0;
+    this.blockDirectWordsAttributed = 0;
     this.isContinuousTrackingActive = false;
     this.blockInterimWordsAttributed = 0;
     this.currentChapterIndex = chapterIndex;
-    this.recordActivity();
+    this.recordActivity(true);
 
     this.notifyListeners({
       type: "pageChange",
@@ -529,7 +583,7 @@ export class ReadingTracker {
         this.currentChapterIndex = resolvedIndex;
         this.currentChapterWords = resolvedWords || 1;
         this.currentScrollPercent = resolvedScroll;
-        this.recordActivity();
+        this.recordActivity(true);
       } else {
         // Relace ještě nebyla zahájena
         this.startNewContiguousSession(resolvedIndex, resolvedWords, resolvedScroll);
@@ -556,7 +610,12 @@ export class ReadingTracker {
     this.isIdle = false;
     this.isActive = true;
     this.lastActivityTime = now;
+    this.lastReadingProgressTime = now;
+    this.lastDirectAttributionTime = 0;
     this.lastTickTime = now;
+    this.unverifiedSilenceSeconds = 0;
+    this.unverifiedSilenceInterimWords = 0;
+    this.currentPageActiveSeconds = 0;
 
     // Reset vážených měřičů čtení
     this.validReadingTimeMs = 0;
@@ -573,11 +632,18 @@ export class ReadingTracker {
     this.blockVisibleWords = initialWords;
     this.currentPageVisibleWords = initialWords;
     this.wordsCreditedOnCurrentPage = 0;
+    this.blockDirectWordsAttributed = 0;
     this.blockInterimWordsAttributed = 0;
+    this.unreconciledRulerWords = 0;
     this.isContinuousTrackingActive = false;
     if (initialBlockId) {
       this.creditedBlocks.delete(initialBlockId);
     }
+
+    // Režimy pravítka a sledování slov
+    this.rulerEnabled = !!this.rulerEnabled;
+    this.rulerMode = this.rulerMode || "line";
+    this.noRulerTotalWords = 0;
 
     // Striktní 1-minutový (60 aktivních sekund) bucket akumulátor (bez jakýchkoliv 220 WPM seedů)
     this.currentMinuteActiveSeconds = 0;
@@ -605,9 +671,25 @@ export class ReadingTracker {
 
       if (!this.isActive || !this._isReaderActivelyVisible()) return;
 
-      // Pauza při nečinnosti uživatele > 45 sekund
-      if (now - this.lastActivityTime > IDLE_TIMEOUT_MS) {
+      const idleLimitMs = this.idleTimeoutMs || IDLE_TIMEOUT_MS;
+
+      // Pauza při nečinnosti uživatele > idleLimitMs (výchozí 30 sekund):
+      // Při přechodu do nečinnosti odečteme mrtvé sekundy ticha, ve kterých již neproběhla žádná interakce,
+      // aby pauzy nezpůsobovaly umělé propady k 0 WPM ani nenaředily aktivní dobu čtení.
+      if (now - this.lastActivityTime > idleLimitMs) {
         if (!this.isIdle) {
+          const rewindSec = Math.max(0, this.unverifiedSilenceSeconds - IDLE_GRACE_READING_SEC);
+          if (rewindSec > 0) {
+            this._rewindActiveSeconds(rewindSec);
+          }
+          if (this.unverifiedSilenceInterimWords > 0) {
+            const rewindWords = this.unverifiedSilenceInterimWords;
+            this.unverifiedSilenceInterimWords = 0;
+            this.blockInterimWordsAttributed = Math.max(0, this.blockInterimWordsAttributed - rewindWords);
+            this.wordsCreditedOnCurrentPage = Math.max(0, this.wordsCreditedOnCurrentPage - rewindWords);
+            this._rollbackUnverifiedWords(rewindWords);
+          }
+          this.unverifiedSilenceSeconds = 0;
           this.isIdle = true;
           this.notifyListeners({ type: "idleChange", isIdle: true });
         }
@@ -619,24 +701,42 @@ export class ReadingTracker {
       }
 
       if (this.isActive && !this.isIdle) {
+        // Ochrana proti nekonečnému načítání času na jediné statické stránce bez otočení/scrollu/posunu pravítka:
+        // Pokud na aktuální stránce již uplynula maximální realistická doba čtení (při 40 WPM)
+        // a uživatel za posledních 15s neposunul text ani pravítko, pozastavíme přičítání času do dalšího posunu.
+        const pageWords = Math.max(40, Math.min(MAX_VALID_WPM, Math.round(this.blockVisibleWords > 0 ? this.blockVisibleWords : 250)));
+        const maxPageActiveSec = Math.max(75, Math.round((pageWords / MIN_VALID_WPM) * 60));
+        if (this.currentPageActiveSeconds >= maxPageActiveSec && (now - this.lastReadingProgressTime) > 15000) {
+          return;
+        }
+
+        if (now - this.lastActivityTime >= 1000) {
+          this.unverifiedSilenceSeconds += 1;
+        } else {
+          this.unverifiedSilenceSeconds = 0;
+          this.unverifiedSilenceInterimWords = 0;
+        }
+
         // 1. Inkrementace aktivní sekundy v aktuální minutě
         this.currentMinuteActiveSeconds += 1;
+        this.currentPageActiveSeconds += 1;
 
-        // 2. Plynulý odhad slov v paged režimu, pokud je čtecí pravítko vypnuté
-        this.tickPageProgress(1);
-
-        // 3. Pokaždé, když currentMinuteActiveSeconds dosáhne 60 (přesně 1 minuta aktivního čtení):
+        // 2. Pokaždé, když currentMinuteActiveSeconds dosáhne 60 (přesně 1 minuta aktivního čtení):
         if (this.currentMinuteActiveSeconds >= 60) {
-          const wordsInThisMinute = Math.max(0, Math.round(this.currentMinuteWords));
           const minuteNumber = this.completedMinutesCount;
           const elapsedSecAtMinuteEnd = minuteNumber * 60;
+
+          let wordsInThisMinute = Math.max(0, Math.round(this.currentMinuteWords));
+          const clampedMinuteWpm = Math.min(MAX_VALID_WPM, Math.max(1, wordsInThisMinute));
 
           this.intra_session_samples.push({
             minute: minuteNumber,
             elapsedSeconds: elapsedSecAtMinuteEnd,
             t: elapsedSecAtMinuteEnd,
             words: wordsInThisMinute,
-            wpm: wordsInThisMinute // 1-minutový interval: přečtená slova v této minutě === WPM pro tuto minutu
+            rawWpm: wordsInThisMinute,
+            wpm: clampedMinuteWpm,
+            activeSeconds: 60
           });
 
           this.currentMinuteIndex = minuteNumber;
@@ -645,8 +745,8 @@ export class ReadingTracker {
           this.wordsReadInCurrentMinute = 0;
           this.completedMinutesCount += 1;
 
-          // Udržujeme sessionWordsRead přesně rovné součtu uzavřených minutových bucketů
-          this.sessionWordsRead = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+          const completedSoFar = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+          this.sessionWordsRead = Math.max(completedSoFar, Math.round(this.noRulerTotalWords || 0));
         }
 
         const totalActiveSeconds = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
@@ -671,15 +771,16 @@ export class ReadingTracker {
           }
         }
 
-        const totalWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0)
-          + Math.max(0, Math.round(this.currentMinuteWords));
-        this.sessionWordsRead = totalWords;
+        const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+        const liveWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
+        const displayWords = Math.max(liveWords, Math.round(this.noRulerTotalWords || 0));
+        this.sessionWordsRead = displayWords;
 
         this.notifyListeners({
           type: "tick",
           activeSeconds: totalActiveSeconds,
           wpm: this.getCurrentWpm(),
-          wordsRead: totalWords
+          wordsRead: displayWords
         });
       }
     }, 1000);
@@ -687,14 +788,24 @@ export class ReadingTracker {
 
   pause() {
     this.isActive = false;
+    this._pausedAt = Date.now();
     this.notifyListeners({ type: "stateChange", isActive: false });
   }
 
   resume() {
     if (!this.currentBookId) return;
+    const now = Date.now();
+    if (this._pausedAt && this.blockEnterTimestamp) {
+      const pausedDuration = Math.max(0, now - this._pausedAt);
+      this.blockEnterTimestamp += pausedDuration;
+      if (this.pageEnterTimestamp) this.pageEnterTimestamp += pausedDuration;
+    }
+    this._pausedAt = null;
     this.isActive = true;
-    this.lastTickTime = Date.now();
-    this.lastActivityTime = Date.now();
+    this.lastTickTime = now;
+    this.lastActivityTime = now;
+    this.unverifiedSilenceSeconds = 0;
+    this.unverifiedSilenceInterimWords = 0;
     this.isIdle = false;
     this.notifyListeners({ type: "stateChange", isActive: true });
   }
@@ -721,7 +832,7 @@ export class ReadingTracker {
    * @param {number} scrollPercent 0.0 až 1.0
    */
   updateScrollProgress(scrollPercent) {
-    this.recordActivity();
+    this.recordActivity(true);
     const clamped = Math.max(0, Math.min(1, scrollPercent));
     this.currentScrollPercent = clamped;
 
@@ -735,16 +846,19 @@ export class ReadingTracker {
 
   /**
    * Spočítá průměrnou rychlost čtení (Words Per Minute) aktuální relace:
+   * Average WPM = Total Words Read / Active Minutes Read
    * Striktně: duration >= 10 ? Math.round((words_read / duration) * 60) : 0.
-   * Nikdy nepoužívá výchozí 220 WPM.
    */
   getCurrentWpm() {
     const totalActiveSeconds = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
-    const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
-    const totalWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
+    if (totalActiveSeconds < 10) return 0;
 
-    if (totalActiveSeconds >= 10 && totalWords > 0) {
-      return Math.round((totalWords / totalActiveSeconds) * 60);
+    const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+    const rulerWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
+    const effectiveWords = Math.max(rulerWords, Math.round(this.noRulerTotalWords || 0));
+
+    if (effectiveWords > 0) {
+      return Math.min(MAX_VALID_WPM, Math.round((effectiveWords / totalActiveSeconds) * 60));
     }
     return 0;
   }
@@ -761,42 +875,104 @@ export class ReadingTracker {
   }
 
   /**
-   * Sestaví finální pole vzorků (včetně případné neuzavřené poslední minuty >= 15s) a sjednocené metriky
+   * Pomocná metoda pro normalizaci vzorků (zachovává přesné neměnné hodnoty každé minuty).
+   */
+  static smoothSamples(rawSamples, sessionAvgWpm = 0) {
+    if (!Array.isArray(rawSamples) || rawSamples.length === 0) return [];
+    return rawSamples.map((s, idx) => {
+      const minNum = Number(s.minute) || (idx + 1);
+      const elapsedSec = Number(s.elapsedSeconds ?? s.t ?? minNum * 60);
+      const words = s.words !== undefined ? Math.max(0, Math.round(Number(s.words))) : 0;
+      const rate = Number(s.rawWpm ?? s.wpm ?? words);
+      const wpm = Math.min(MAX_VALID_WPM, Math.max(1, Math.round(rate > 0 ? rate : (words > 0 ? words : (sessionAvgWpm > 0 ? sessionAvgWpm : 1)))));
+      return {
+        ...s,
+        minute: minNum,
+        elapsedSeconds: elapsedSec,
+        t: elapsedSec,
+        words,
+        rawWpm: rate > 0 ? rate : wpm,
+        wpm: s.wpm !== undefined ? Number(s.wpm) : wpm
+      };
+    });
+  }
+
+  /**
+   * Sestaví finální pole vzorků (včetně případné neuzavřené poslední minuty >= 30s) a sjednocené metriky:
+   * - Average WPM = Total Words Read / Active Minutes Read
+   * - Peak WPM = maximální udržená rychlost čtení za validní interval (>= 30–60 aktivních sekund) po vyhlazení
    */
   _buildSessionMetrics(totalActiveSeconds) {
+    const effectiveActiveSeconds = totalActiveSeconds > 0
+      ? totalActiveSeconds
+      : (this.intra_session_samples.length * 60 + this.currentMinuteActiveSeconds);
+
+    let wordsRead = 0;
+    let avgWpm = 0;
+    let rawSamples = [];
+
     const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
     const partialWords = Math.max(0, Math.round(this.currentMinuteWords));
-    const wordsRead = completedWords + partialWords;
+    const accumulatedWords = completedWords + partialWords;
+    wordsRead = Math.max(accumulatedWords, Math.round(this.noRulerTotalWords || 0));
 
-    let samples = this.intra_session_samples.map(s => ({ ...s }));
+    avgWpm = (effectiveActiveSeconds >= 10 && wordsRead > 0)
+      ? Math.min(MAX_VALID_WPM, Math.round((wordsRead / effectiveActiveSeconds) * 60))
+      : 0;
 
-    // Pokud neuzavřená poslední minuta trvá >= 15s a obsahuje přečtená slova (> 0), připojíme dílčí vzorek
-    if (this.currentMinuteActiveSeconds >= 15 && partialWords > 0) {
-      const partialWpm = Math.round((this.currentMinuteWords / this.currentMinuteActiveSeconds) * 60);
-      samples.push({
+    rawSamples = this.intra_session_samples.map(s => ({ ...s }));
+
+    // Pokud neuzavřená poslední minuta trvá >= 30s (udržený interval) a obsahuje přečtená slova (> 0),
+    // připojíme dílčí vzorek
+    if (this.currentMinuteActiveSeconds >= 30 && partialWords > 0) {
+      const rawPartialWpm = Math.round((partialWords / this.currentMinuteActiveSeconds) * 60);
+      const clampedPartialWpm = Math.min(MAX_VALID_WPM, Math.max(1, rawPartialWpm));
+      rawSamples.push({
         minute: this.completedMinutesCount,
-        elapsedSeconds: totalActiveSeconds,
-        t: totalActiveSeconds,
+        elapsedSeconds: effectiveActiveSeconds,
+        t: effectiveActiveSeconds,
         words: partialWords,
-        wpm: partialWpm,
+        rawWpm: rawPartialWpm,
+        wpm: clampedPartialWpm,
+        activeSeconds: this.currentMinuteActiveSeconds,
+        isPartial: true
+      });
+    } else if (rawSamples.length === 0 && effectiveActiveSeconds >= 15 && wordsRead > 0) {
+      // Relace trvala méně než 1 celou minutu, ale splňuje podmínky pro dílčí vzorek
+      const rawPartialWpm = Math.round((wordsRead / effectiveActiveSeconds) * 60);
+      const clampedPartialWpm = Math.min(MAX_VALID_WPM, Math.max(1, rawPartialWpm));
+      rawSamples.push({
+        minute: 1,
+        elapsedSeconds: effectiveActiveSeconds,
+        t: effectiveActiveSeconds,
+        words: wordsRead,
+        rawWpm: rawPartialWpm,
+        wpm: clampedPartialWpm,
+        activeSeconds: effectiveActiveSeconds,
         isPartial: true
       });
     }
 
-    // Oříznutí počátečních nulových bucketů (pokud relace začala neaktivitou před zahájením čtení)
-    const firstActiveIdx = samples.findIndex(s => (s.words > 0 || s.wpm > 0));
-    if (firstActiveIdx > 0) {
-      samples = samples.slice(firstActiveIdx);
-    }
+    // Každý minutový vzorek je pevný a neměnný (immutable snapshot),
+    // nesmí být modifikován vyhlazováním, klouzavým průměrem ani škálováním!
+    const samples = rawSamples;
 
-    const avgWpm = totalActiveSeconds >= 10 ? Math.round((wordsRead / totalActiveSeconds) * 60) : 0;
-    const peakWpm = samples.length > 0
-      ? Math.max(...samples.map(s => Number(s.wpm) || 0), avgWpm)
+    // Peak WPM se počítá výhradně z udržených intervalů (>= 30–60s aktivního čtení)
+    const sustainedWpms = samples
+      .filter(s => !s.isPartial || (s.activeSeconds ?? 60) >= 30)
+      .map(s => Number(s.wpm) || 0)
+      .filter(w => w >= 1 && w <= MAX_VALID_WPM);
+
+    let peakWpm = sustainedWpms.length > 0
+      ? Math.min(MAX_VALID_WPM, Math.max(...sustainedWpms))
       : avgWpm;
+    if (peakWpm < avgWpm && avgWpm > 0) {
+      peakWpm = avgWpm;
+    }
 
     return {
       wordsRead,
-      durationSeconds: totalActiveSeconds,
+      durationSeconds: effectiveActiveSeconds,
       avgWpm,
       peakWpm,
       samples
@@ -843,8 +1019,8 @@ export class ReadingTracker {
    * Uloží aktuální souvislou relaci do IndexedDB (reading_sessions) a aktualizuje knihu
    */
   async flushSession() {
-    // Před uložením zhodnotíme zbývající slova na aktuálně otevřeném bloku
-    this.commitCurrentBlockDwell(1);
+    // Před uložením zhodnotíme aktuální blok s příznakem isFlushing = true (nepřičítá unread remainder nedokončené stránky)
+    this.commitCurrentBlockDwell(1, null, true);
 
     const totalActiveSeconds = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
     const bookId = this.currentBookId;
@@ -882,7 +1058,10 @@ export class ReadingTracker {
         timelineSamples: samples,
         date: dateKey,
         timestamp: now,
-        updatedAt: new Date(now).toISOString()
+        is_deleted: false,
+        isDeleted: false,
+        updatedAt: new Date(now).toISOString(),
+        syncedToCloud: false
       };
 
       try {
@@ -905,7 +1084,15 @@ export class ReadingTracker {
         }
 
         // PUSH DO SUPABASE: Odeslání platné relace (>= 5 min) a aktualizovaného souhrnu statistik
-        storage.pushReadingSessionAndStatsToCloud(savedSession || sessionRecord).catch(err => {
+        storage.pushReadingSessionAndStatsToCloud(savedSession || sessionRecord).then((res) => {
+          if (res?.success) {
+            const sid = (savedSession || sessionRecord).sessionId || (savedSession || sessionRecord).id;
+            if (sid) {
+              const toMark = { ...(savedSession || sessionRecord), syncedToCloud: true };
+              storage.saveReadingSession(toMark).catch(() => {});
+            }
+          }
+        }).catch(err => {
           console.warn("[LuminaSync] Varování při pushi čtecí relace do Supabase:", err);
         });
 
@@ -932,15 +1119,21 @@ export class ReadingTracker {
     this.sessionStartTime = null;
     this.activeTimeMs = 0;
     this.sessionWordsRead = 0;
+    this.noRulerTotalWords = 0;
     this.sessionDailySecondsCommitted = 0;
     this.validReadingTimeMs = 0;
     this.validWordsRead = 0;
     this.currentReadingBlockId = null;
     this.blockEnterTimestamp = null;
     this.blockEnterActiveSec = 0;
+    this.currentPageActiveSeconds = 0;
     this.blockVisibleWords = 0;
     this.wordsCreditedOnCurrentPage = 0;
+    this.blockDirectWordsAttributed = 0;
     this.blockInterimWordsAttributed = 0;
+    this.unverifiedSilenceSeconds = 0;
+    this.unverifiedSilenceInterimWords = 0;
+    this.unreconciledRulerWords = 0;
     this.isContinuousTrackingActive = false;
     this.currentPageKey = null;
     this.pageEnterTimestamp = null;
@@ -999,9 +1192,14 @@ export class ReadingTracker {
   static async computeGlobalStats(customSessions = null, customBooks = null) {
     const rawSessions = customSessions !== null ? customSessions : ((typeof storage !== "undefined" && storage.getAllReadingSessions) ? await storage.getAllReadingSessions() : []);
     const books = customBooks !== null ? customBooks : ((typeof storage !== "undefined" && storage.getAllBooks) ? await storage.getAllBooks() : []);
+    const deletedSet = new Set((typeof storage !== "undefined" && typeof storage.getDeletedSessionIds === "function") ? storage.getDeletedSessionIds() : []);
 
-    // Filtrujeme striktně pouze relace s aktivní dobou čtení >= 5 minut (300 sekund)
+    // Filtrujeme striktně pouze relace s aktivní dobou čtení >= 5 minut (300 sekund) a nesmazané relace
     const sessions = (rawSessions || []).filter(s => {
+      if (!s) return false;
+      if (s.is_deleted === true || s.is_deleted === "true") return false;
+      const sid = String(s.sessionId ?? s.id ?? "").trim();
+      if (sid && deletedSet.has(sid)) return false;
       const sec = Math.max(0, Math.round(s.duration ?? s.durationSeconds ?? s.activeSeconds ?? 0));
       return sec >= MIN_SESSION_DURATION_SEC;
     });
@@ -1015,22 +1213,27 @@ export class ReadingTracker {
       }
     }
 
-    // Sjednocení metrik každé relace, aby nedocházelo k žádnému driftu
+    // Sjednocení metrik každé relace bez opakovaného vyhlazování již uložených vzorků
     allSessions.forEach(s => {
-      const dur = Math.max(0, Math.round(s.duration ?? s.durationSeconds ?? s.activeSeconds ?? 0));
-      const words = Math.max(0, Math.round(s.words_read ?? s.wordsRead ?? 0));
-      const trueAvgWpm = dur >= 10 ? Math.round((words / dur) * 60) : 0;
       const samples = Array.isArray(s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
         ? (s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
         : [];
-      const sampleWpms = samples.map(pt => Number(pt.wpm ?? pt.instantaneousWpm ?? 0)).filter(w => w > 0);
-      const truePeakWpm = sampleWpms.length > 0 ? Math.max(...sampleWpms, trueAvgWpm) : trueAvgWpm;
+      const rawDur = Math.max(0, Math.round(s.duration ?? s.durationSeconds ?? s.activeSeconds ?? 0));
+      const rawWords = Math.max(0, Math.round(s.words_read ?? s.wordsRead ?? 0));
 
-      s.duration = dur;
-      s.durationSeconds = dur;
-      s.activeSeconds = dur;
-      s.words_read = words;
-      s.wordsRead = words;
+      const effectiveDur = rawDur;
+      const trueAvgWpm = effectiveDur >= 10 ? Math.min(MAX_VALID_WPM, Math.round((rawWords / effectiveDur) * 60)) : 0;
+      const sampleWpms = samples
+        .filter(pt => !pt.isPartial || (pt.activeSeconds ?? 60) >= 30)
+        .map(pt => Number(pt.wpm ?? 0))
+        .filter(w => w >= 1 && w <= MAX_VALID_WPM);
+      const truePeakWpm = sampleWpms.length > 0 ? Math.min(MAX_VALID_WPM, Math.max(...sampleWpms, trueAvgWpm)) : trueAvgWpm;
+
+      s.duration = effectiveDur;
+      s.durationSeconds = effectiveDur;
+      s.activeSeconds = effectiveDur;
+      s.words_read = rawWords;
+      s.wordsRead = rawWords;
       s.avg_wpm = trueAvgWpm;
       s.avgWpm = trueAvgWpm;
       s.wpm = trueAvgWpm;

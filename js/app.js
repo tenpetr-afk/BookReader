@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js";
-import { EpubParser } from "./epub-parser.js";
-import { PDFLoader } from "./pdf-loader.js";
-import { tracker, ReadingTracker } from "./tracker.js";
-import { ReadingRuler } from "./ruler.js";
-import { StatsCharts } from "./charts.js";
-import { supabaseSync } from "./supabase-sync.js";
-import { supabase } from "./supabase-client.js";
+import { storage, computeFileHash } from "./storage.js?v=2.4.8";
+import { EpubParser } from "./epub-parser.js?v=2.4.8";
+import { PDFLoader } from "./pdf-loader.js?v=2.4.8";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.4.8";
+import { ReadingRuler } from "./ruler.js?v=2.4.8";
+import { StatsCharts } from "./charts.js?v=2.4.8";
+import { supabaseSync } from "./supabase-sync.js?v=2.4.8";
+import { supabase } from "./supabase-client.js?v=2.4.8";
 
-export const APP_VERSION = "v1.21.0";
+export const APP_VERSION = "v2.4.8";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -66,6 +66,8 @@ export class LuminaApp {
     this._libraryNeedsRefresh = false;
     this._statsNeedRefresh = false;
     this._rulerPageChangeRafId = null;
+    this._rulerPageChangeTimer = null;
+    this._rulerTransitionEndHandler = null;
     this._isLoadingNextChapter = false;
     this._isLoadingPrevChapter = false;
     this._isModeTransitioning = false;
@@ -104,24 +106,25 @@ export class LuminaApp {
       }
     } catch (_) {}
 
-    // 2. Nastavení a pravítko
+    // 2. Nastavení motivu a zobrazení UI ihned
     try {
       this.applySettings();
     } catch (e) {
       console.warn("[LuminaApp] Chyba při aplikování nastavení:", e);
     }
 
+    // 3. Klíčové navázání událostí - MUSÍ proběhnout VŽDY a OKAMŽITĚ, aby tlačítka nezůstala hluchá
+    try {
+      this.setupEventListeners();
+    } catch (e) {
+      console.error("[LuminaApp] Kritická chyba při setupEventListeners:", e);
+    }
+
+    // 4. Inicializace doplňkových komponent čtečky a zkratek
     try {
       this.initRuler();
     } catch (e) {
       console.warn("[LuminaApp] Chyba při inicializaci pravítka:", e);
-    }
-
-    // 3. Klíčové navázání událostí - MUSÍ proběhnout vždy, aby tlačítka nezůstala hluchá
-    try {
-      this.bindEvents();
-    } catch (e) {
-      console.error("[LuminaApp] Kritická chyba při bindEvents:", e);
     }
 
     try {
@@ -141,69 +144,32 @@ export class LuminaApp {
       this.initCloudSync();
     } catch (e) {
       console.warn("[LuminaApp] Chyba při inicializaci cloud sync:", e);
+      this.updateSyncUI("idle");
     }
 
-    // 4. Automatická kontrola a migrace statistik v IndexedDB
-    try {
-      await storage.sanitizeCorruptedStats();
-    } catch (e) {
-      console.warn("[LuminaApp] Chyba při startovní kontrole integrity statistik:", e);
-    }
-
-    // 5. Načíst knihy z IndexedDB s bezpečnou cloudovou hydratací
+    // 5. Okamžité načtení lokálních knih z IndexedDB a vykreslení knihovny (bez blokování cloudem)
     let books = [];
     try {
       books = await storage.getAllBooks();
     } catch (dbErr) {
-      console.error("[LuminaApp] Chyba při načítání knih z IndexedDB:", dbErr);
+      console.warn("[LuminaApp] Chyba při načítání knih z IndexedDB:", dbErr);
       books = [];
     }
 
-    try {
-      if (books.length === 0) {
-        let cloudLoaded = false;
-        if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
-          try {
-            await this.loadLibrary();
-            books = await storage.getAllBooks();
-            if (books && books.length > 0) cloudLoaded = true;
-          } catch (e) {
-            console.warn("[Supabase Sync] Nepodařilo se hydratovat knihy z cloudu:", e);
-          }
-        }
-        if (!cloudLoaded && (!books || books.length === 0)) {
-          // Automaticky nabídnout nebo nahrát vzorovou knihu
-          try {
-            await this.loadBundledSampleBook();
-            books = await storage.getAllBooks();
-          } catch (sampleErr) {
-            console.warn("[LuminaApp] Nepodařilo se načíst vzorovou knihu:", sampleErr);
-          }
-        }
-      }
-    } catch (loadErr) {
-      console.warn("[LuminaApp] Chyba při synchronizaci/načítání výchozí knihovny:", loadErr);
-    }
-
-    // 6. Vykreslit knihovnu (vždy zobrazit existující knihy nebo prázdný stav)
     try {
       await this.renderLibrary();
     } catch (renderErr) {
       console.error("[LuminaApp] Chyba při renderLibrary:", renderErr);
     }
 
-    // 7. Spuštění asynchronní synchronizace s cloudem v pozadí (neblokující)
+    // 6. Asynchronní kontrola a migrace statistik v IndexedDB na pozadí (neblokující)
     try {
-      setTimeout(() => {
-        try {
-          this.syncWithCloud(false).catch(err => {
-            console.warn("[LuminaApp] Chyba při tiché synchronizaci na pozadí:", err);
-          });
-        } catch (_) {}
-      }, 1000);
+      storage.sanitizeCorruptedStats().catch(e => {
+        console.warn("[LuminaApp] Chyba při startovní kontrole integrity statistik:", e);
+      });
     } catch (_) {}
 
-    // 8. Zkontrolovat naposledy čtenou knihu a obnovit stav čtení při znovunačtení
+    // 7. Zkontrolovat naposledy čtenou knihu a obnovit stav čtení při znovunačtení
     try {
       const lastBookId = storage.getLastActiveBookId();
       const activeView = localStorage.getItem("lumina_active_view");
@@ -215,6 +181,63 @@ export class LuminaApp {
     } catch (restoreErr) {
       console.warn("[LuminaApp] Chyba při obnovení rozečtené knihy:", restoreErr);
     }
+
+    // 8. Bezpečná a tichá asynchronní synchronizace s cloudem v pozadí (neblokující)
+    try {
+      setTimeout(() => {
+        try {
+          if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
+            this.syncWithCloud(false).then(async (res) => {
+              // Pokud byla lokální knihovna prázdná a cloud stáhl knihy, znovu vykreslit
+              if (books.length === 0 && res?.stats?.downloaded > 0) {
+                await this.renderLibrary();
+              }
+            }).catch(err => {
+              console.warn("[LuminaApp] Chyba při tiché synchronizaci na pozadí:", err);
+              this.updateSyncUI("idle");
+            });
+          } else {
+            this.updateSyncUI("idle");
+          }
+        } catch (_) {
+          this.updateSyncUI("idle");
+        }
+      }, 600);
+    } catch (_) {}
+
+    this._isAppReady = true;
+    requestAnimationFrame(() => {
+      this.syncAllSegmentedBubbles(true);
+    });
+  }
+
+  setupEventListeners() {
+    this.bindEvents();
+    this.initSegmentedBubbles();
+    // Automatická synchronizace grafické výplně tekutého skla pro všechny posuvníky
+    document.addEventListener("input", (e) => {
+      if (e.target && e.target.type === "range") {
+        this.updateRangeFill(e.target);
+      }
+    }, { passive: true });
+
+    // Interakční stavy Liquid Glass posuvníků (aktivní elastické roztažení na dotek / kliknutí)
+    document.addEventListener("pointerdown", (e) => {
+      const slider = e.target && e.target.closest && e.target.closest('input[type="range"]');
+      if (slider) {
+        slider.classList.add("is-active");
+      }
+    }, { passive: true });
+
+    const clearActiveSliders = () => {
+      document.querySelectorAll('input[type="range"].is-active').forEach(sl => {
+        sl.classList.remove("is-active");
+      });
+    };
+
+    document.addEventListener("pointerup", clearActiveSliders, { passive: true });
+    document.addEventListener("pointercancel", clearActiveSliders, { passive: true });
+    this.syncAllRangeFills();
   }
 
   cacheDom() {
@@ -229,7 +252,6 @@ export class LuminaApp {
       fileInput: document.getElementById("file-input"),
       dropZone: document.getElementById("drop-zone"),
       btnUpload: document.getElementById("btn-upload"),
-      btnLoadSample: document.getElementById("btn-load-sample"),
       btnToggleSettingsLib: document.getElementById("btn-toggle-settings-lib"),
       btnToggleStatsLib: document.getElementById("btn-toggle-stats-lib"),
       btnCloudSync: document.getElementById("btn-cloud-sync"),
@@ -340,7 +362,7 @@ export class LuminaApp {
       fontDropdownTrigger: document.getElementById("font-dropdown-trigger"),
       fontDropdownCurrent: document.getElementById("font-dropdown-current"),
       fontDropdownMenu: document.getElementById("font-dropdown-menu"),
-      fontSelects: document.querySelectorAll(".font-dropdown-item[data-font], [data-font]"),
+      fontSelects: document.querySelectorAll(".font-dropdown-item[data-font]"),
       settingFastReading: document.getElementById("setting-fast-reading"),
       sliderFontSize: document.getElementById("slider-font-size"),
       valFontSize: document.getElementById("val-font-size"),
@@ -365,8 +387,9 @@ export class LuminaApp {
       settingPencilFlick: document.getElementById("setting-pencil-flick"),
       rulerAutoHeightSetting: document.getElementById("ruler-auto-height-setting"),
       settingRulerHeightContainer: document.getElementById("setting-ruler-height-container"),
-      rulerModeSelects: document.querySelectorAll("[data-ruler-mode]"),
+      rulerModeSelects: document.querySelectorAll("#settings-drawer [data-ruler-mode], #settings-drawer [data-ruler-style]"),
       rulerColorSelects: document.querySelectorAll("#settings-drawer [data-ruler-color]"),
+      drawerFocusButtons: document.querySelectorAll("#settings-drawer [data-ruler-focus]"),
       sliderRulerHeight: document.getElementById("slider-ruler-height"),
       valRulerHeight: document.getElementById("val-ruler-height"),
       sliderRulerOpacity: document.getElementById("slider-ruler-opacity"),
@@ -381,6 +404,7 @@ export class LuminaApp {
       popoverModeLine: document.getElementById("popover-mode-line"),
       popoverModeWord: document.getElementById("popover-mode-word"),
       popoverStyleButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-style]"),
+      popoverFocusButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-focus]"),
       popoverColorButtons: document.querySelectorAll("#ruler-quick-popover [data-ruler-color]"),
       popoverRulerSnapToggle: document.getElementById("popover-ruler-snap") || document.getElementById("popover-ruler-snap-toggle"),
       popoverRulerAutoHeightToggle: document.getElementById("popover-ruler-auto-height-toggle"),
@@ -419,6 +443,7 @@ export class LuminaApp {
       valPdfRulerHeight: document.getElementById("val-pdf-ruler-height"),
 
       settingShowFooter: document.getElementById("setting-show-footer"),
+      settingLiquidGlass: document.getElementById("setting-liquid-glass"),
       readingModeControl: document.getElementById("reading-mode-control"),
       readingModeSelects: document.querySelectorAll("[data-reading-mode]"),
 
@@ -464,12 +489,33 @@ export class LuminaApp {
     this.ruler.app = this;
     this.ruler.readingMode = this.readingMode;
 
+    const initialModeType = this.settings?.ruler?.rulerModeType || (this.settings?.ruler?.wordTracking ? "word" : "line");
+    this.ruler.setRulerMode(initialModeType);
+
+    this.ruler.onStateChange = (enabled, mode) => {
+      if (typeof tracker !== "undefined" && tracker.setRulerState) {
+        tracker.setRulerState(enabled, mode);
+      }
+    };
+
+    if (typeof tracker !== "undefined" && tracker.setRulerState) {
+      tracker.setRulerState(this.ruler.enabled, initialModeType);
+    }
+
     // Kontinuální akreditace slov při posunu pravítka po řádcích a slovech
     this.wordsCreditedOnCurrentPage = 0;
     this.ruler.onProgress = (type, count) => {
       if (count > 0) {
         this.wordsCreditedOnCurrentPage = (this.wordsCreditedOnCurrentPage || 0) + count;
-        tracker.attributeWords(count);
+        if (typeof tracker !== "undefined") {
+          if (type === "line") {
+            tracker.recordLineCompleted(count);
+          } else if (type === "word") {
+            tracker.recordWordByWord(count);
+          } else {
+            tracker.attributeWords(count);
+          }
+        }
       }
     };
 
@@ -490,6 +536,27 @@ export class LuminaApp {
 
     // Horizontální přejetí (swipe) zachycené pravítkem
     this.ruler.onSwipe = (dir) => {
+      this.lastSwipeTime = Date.now();
+      if (this.ruler) {
+        this.ruler.lastSwipeTime = Date.now();
+        this.ruler.lastTouchEndTime = Date.now();
+        this.ruler.isTouchActive = false;
+        this.ruler.cancelHold(false);
+        this.ruler.isHoldTriggered = false;
+        this.ruler.isDraggingRuler = false;
+        this.ruler.flickResyncTopLine = true;
+        this.ruler.isLineLocked = true;
+        this.ruler.suppressLineAdvancement = true;
+        if (this.ruler.pointerRafId) {
+          cancelAnimationFrame(this.ruler.pointerRafId);
+          this.ruler.pointerRafId = null;
+        }
+        this.ruler.rafPointerPending = false;
+        this.ruler.pendingPointerX = null;
+        this.ruler.pendingPointerY = null;
+        this.ruler.pendingPointerType = null;
+        this.ruler.lockAdvancement(650);
+      }
       if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
@@ -501,6 +568,22 @@ export class LuminaApp {
 
     // Rychlé švihnutí stylusu (Apple Pencil Flick Gesture) pro okamžité otočení strany
     this.ruler.onPenFlick = (dir) => {
+      this.lastSwipeTime = Date.now();
+      if (this.ruler) {
+        this.ruler.lastSwipeTime = Date.now();
+        this.ruler.flickResyncTopLine = true;
+        this.ruler.isLineLocked = true;
+        this.ruler.suppressLineAdvancement = true;
+        if (this.ruler.pointerRafId) {
+          cancelAnimationFrame(this.ruler.pointerRafId);
+          this.ruler.pointerRafId = null;
+        }
+        this.ruler.rafPointerPending = false;
+        this.ruler.pendingPointerX = null;
+        this.ruler.pendingPointerY = null;
+        this.ruler.pendingPointerType = null;
+        this.ruler.lockAdvancement(650);
+      }
       if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
@@ -513,8 +596,29 @@ export class LuminaApp {
 
     const isInReader = this.dom.viewReader ? !this.dom.viewReader.classList.contains("is-hidden") : true;
     const showRuler = this.settings.showRulerButton !== false;
-    this.ruler.setEnabled(isInReader && showRuler && this.settings.ruler.enabled);
-    this.ruler.setMode(this.settings.ruler.mode);
+    const rulerStyle = this.settings.ruler.style || this.settings.ruler.mode || "highlight";
+    let rulerFocus = this.settings.ruler.focusMode || "off";
+    if (rulerFocus === "above") rulerFocus = "up";
+    if (rulerFocus === "below") rulerFocus = "down";
+    const isBothOff = (rulerStyle === "off" && rulerFocus === "off");
+    if (isBothOff) {
+      this.settings.ruler.enabled = false;
+    }
+    this.ruler.setStyle(rulerStyle);
+    this.ruler.setFocusMode(rulerFocus);
+    if (rulerStyle !== "off") {
+      this.settings.ruler.lastActiveStyle = rulerStyle;
+      this.ruler.lastActiveStyle = rulerStyle;
+    }
+    if (rulerFocus !== "off") {
+      this.settings.ruler.lastActiveFocus = rulerFocus;
+      this.ruler.lastActiveFocus = rulerFocus;
+    }
+    if (!isBothOff) {
+      this.settings.ruler.lastActiveCombination = { style: rulerStyle, focusMode: rulerFocus };
+      this.ruler.lastActiveCombination = { style: rulerStyle, focusMode: rulerFocus };
+    }
+    this.ruler.setEnabled(isInReader && showRuler && this.settings.ruler.enabled && !isBothOff);
     this.ruler.setColor(this.settings.ruler.color);
     this.ruler.setHeight(this.settings.ruler.height);
     this.ruler.setAutoHeight(true);
@@ -526,22 +630,117 @@ export class LuminaApp {
     const snapEnabled = typeof storage.getSetting === "function" ? storage.getSetting("rulerSnapToLines", true) : (this.settings.ruler.snapToLines !== false);
     this.settings.ruler.snapToLines = snapEnabled;
     this.ruler.setSnapToLines(snapEnabled);
-    this.ruler.setWordTracking(this.settings.ruler.wordTracking ?? false);
+    const rulerModeType = this.settings.ruler.rulerModeType || (this.settings.ruler.wordTracking ? "word" : "line");
+    this.ruler.setRulerMode(rulerModeType);
+    if (typeof tracker !== "undefined" && tracker.setRulerState) {
+      tracker.setRulerState(this.ruler.enabled, rulerModeType);
+    }
     this.ruler.setDimOpacity(this.settings.ruler.dimOpacity);
     this.ruler.setFollowMode(this.settings.ruler.followMode);
 
     this.updateRulerToggleButtonUI();
     this.updateTouchZonesUI();
-    this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+    this.updateRulerSettingsVisibility(rulerStyle, rulerFocus, this.isPdfMode);
   }
 
   setSwitchState(el, checked) {
     if (!el) return;
     const isChecked = !!checked;
+    const wasChecked = el.classList.contains("is-checked") || el.getAttribute("aria-checked") === "true";
     el.checked = isChecked;
     el.setAttribute("aria-checked", String(isChecked));
     el.classList.toggle("is-checked", isChecked);
     el.classList.toggle("active", isChecked);
+
+    if (this._isAppReady && wasChecked !== isChecked) {
+      el.classList.remove("is-morphing", "morph-to-on", "morph-to-off");
+      void el.offsetWidth;
+      el.classList.add("is-morphing", isChecked ? "morph-to-on" : "morph-to-off");
+      clearTimeout(el._morphTimer);
+      el._morphTimer = setTimeout(() => {
+        el.classList.remove("is-morphing", "morph-to-on", "morph-to-off");
+      }, 300);
+    }
+  }
+
+  syncAllSegmentedBubbles(immediate = false) {
+    const containers = document.querySelectorAll(".popover-styles-grid, .popover-segmented-control");
+    containers.forEach((container) => {
+      let bubble = container.querySelector(".segmented-bubble");
+      if (!bubble) {
+        bubble = document.createElement("span");
+        bubble.className = "segmented-bubble";
+        bubble.setAttribute("aria-hidden", "true");
+        container.prepend(bubble);
+      }
+      const activeBtn = container.querySelector(
+        ".popover-style-btn.active:not(.is-hidden):not([disabled]), .segment-btn.active:not(.is-hidden):not([disabled])"
+      );
+      if (!activeBtn || container.offsetParent === null || activeBtn.offsetParent === null) {
+        return;
+      }
+      const left = activeBtn.offsetLeft;
+      const width = activeBtn.offsetWidth;
+      if (width === 0) return;
+
+      if (immediate) {
+        const prevTransition = bubble.style.transition;
+        bubble.style.transition = "none";
+        bubble.style.transform = `translate3d(${left}px, 0, 0)`;
+        bubble.style.width = `${width}px`;
+        bubble.style.opacity = "1";
+        void bubble.offsetWidth;
+        bubble.style.transition = prevTransition;
+      } else {
+        bubble.style.transform = `translate3d(${left}px, 0, 0)`;
+        bubble.style.width = `${width}px`;
+        bubble.style.opacity = "1";
+      }
+    });
+  }
+
+  initSegmentedBubbles() {
+    const containers = document.querySelectorAll(".popover-styles-grid, .popover-segmented-control");
+    if (window.MutationObserver) {
+      const observer = new MutationObserver((mutations) => {
+        let shouldUpdate = false;
+        for (const m of mutations) {
+          if (m.type === "attributes" && m.attributeName === "class") {
+            shouldUpdate = true;
+            break;
+          }
+        }
+        if (shouldUpdate) {
+          this.syncAllSegmentedBubbles(false);
+        }
+      });
+      containers.forEach((c) => {
+        observer.observe(c, { attributes: true, attributeFilter: ["class"], subtree: true });
+      });
+    }
+    window.addEventListener("resize", () => {
+      this.syncAllSegmentedBubbles(true);
+    }, { passive: true });
+  }
+
+  updateRangeFill(input) {
+    if (!input || input.type !== "range") return;
+    const min = parseFloat(input.min !== "" ? input.min : "0");
+    const max = parseFloat(input.max !== "" ? input.max : "100");
+    const val = parseFloat(input.value !== "" ? input.value : "0");
+    const range = max - min;
+    const ratio = range > 0 ? Math.max(0, Math.min(1, (val - min) / range)) : 0;
+    const pct = ratio * 100;
+    input.style.setProperty("--slider-fill-pct", `${pct.toFixed(2)}%`);
+    input.style.setProperty("--slider-ratio", `${ratio.toFixed(4)}`);
+  }
+
+  syncAllRangeFills() {
+    try {
+      document.querySelectorAll('input[type="range"]').forEach(input => {
+        this.updateRangeFill(input);
+      });
+    } catch (_) {}
   }
 
   resolveEffectiveColumnCount() {
@@ -600,9 +799,9 @@ export class LuminaApp {
 
     document.documentElement.style.setProperty("--reader-font-size", `${s.fontSize}px`);
     document.documentElement.style.setProperty("--reader-line-height", s.lineHeight || 1.6);
-    document.documentElement.style.setProperty("--reader-letter-spacing", `${s.letterSpacing ?? 0}px`);
-    document.documentElement.style.setProperty("--reader-word-spacing", `${s.wordSpacing ?? 0}px`);
-    const margin = Number(this.settings.marginPercent ?? 20);
+    document.documentElement.style.setProperty("--reader-letter-spacing", `${s.letterSpacing ?? 0.75}px`);
+    document.documentElement.style.setProperty("--reader-word-spacing", `${s.wordSpacing ?? 2}px`);
+    const margin = Number(this.settings.marginPercent ?? 8);
     const stageWidthVw = `${100 - (margin * 2)}vw`;
     document.documentElement.style.setProperty('--reader-stage-width', stageWidthVw);
     const colGapVw = `${(margin * 0.25).toFixed(2)}vw`;
@@ -638,17 +837,17 @@ export class LuminaApp {
       if (this.dom.valLineHeight) this.dom.valLineHeight.textContent = lh.toFixed(1);
     }
     if (this.dom.sliderLetterSpacing) {
-      const ls = Number(s.letterSpacing ?? 0);
+      const ls = Number(s.letterSpacing ?? 0.75);
       this.dom.sliderLetterSpacing.value = ls;
       if (this.dom.valLetterSpacing) this.dom.valLetterSpacing.textContent = `${ls}px`;
     }
     if (this.dom.sliderWordSpacing) {
-      const ws = Number(s.wordSpacing ?? 0);
+      const ws = Number(s.wordSpacing ?? 2);
       this.dom.sliderWordSpacing.value = ws;
       if (this.dom.valWordSpacing) this.dom.valWordSpacing.textContent = `${ws}px`;
     }
     if (this.dom.sliderPageMargin) {
-      const marginVal = this.settings.marginPercent ?? 20;
+      const marginVal = this.settings.marginPercent ?? 8;
       this.dom.sliderPageMargin.value = marginVal;
       if (this.dom.valPageMargin) this.dom.valPageMargin.textContent = `${marginVal}%`;
     }
@@ -659,9 +858,9 @@ export class LuminaApp {
     const showRuler = s.showRulerButton !== false;
     this.setSwitchState(this.dom.rulerToggle, showRuler);
     const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;
-    if (rulerContainer) {
+    if (rulerContainer && rulerContainer.style) {
       rulerContainer.style.display = showRuler ? "flex" : "none";
-      rulerContainer.classList.toggle("is-hidden", !showRuler);
+      rulerContainer.classList?.toggle?.("is-hidden", !showRuler);
     }
     if (!showRuler && this.ruler?.enabled) {
       this.ruler.setEnabled(false);
@@ -705,7 +904,12 @@ export class LuminaApp {
       lora: "Lora",
       inter: "Inter (Sans)",
       atkinson: "Atkinson Hyperlegible",
-      opendyslexic: "Pro dyslexii"
+      verdana: "Verdana",
+      arial: "Arial",
+      literata: "Literata",
+      opendyslexic: "OpenDyslexic",
+      "comic-sans": "Comic Sans",
+      comicsans: "Comic Sans"
     };
     const activeFont = s.fontFamily || "georgia";
     if (this.dom.fontDropdownCurrent) {
@@ -724,14 +928,24 @@ export class LuminaApp {
       this.dom.readerContent.classList.toggle("bionic-active", !!s.fastReading);
     }
     // Režimy pravítka
+    const activeRulerStyle = s.ruler.style || s.ruler.mode || "highlight";
+    let activeRulerFocus = s.ruler.focusMode || "off";
+    if (activeRulerFocus === "above") activeRulerFocus = "up";
+    if (activeRulerFocus === "below") activeRulerFocus = "down";
+
     this.dom.rulerModeSelects.forEach(btn => {
-      btn.classList.toggle("active", (btn.dataset.rulerMode || btn.dataset.rulerStyle) === s.ruler.mode);
+      btn.classList.toggle("active", (btn.dataset.rulerMode || btn.dataset.rulerStyle) === activeRulerStyle);
     });
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
-        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === s.ruler.mode);
+        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === activeRulerStyle);
       });
     }
+    document.querySelectorAll("[data-ruler-focus]").forEach(btn => {
+      const f = btn.dataset.rulerFocus;
+      const normalized = (f === "above" ? "up" : (f === "below" ? "down" : f));
+      btn.classList.toggle("active", normalized === activeRulerFocus);
+    });
     // Barvy pravítka
     this.dom.rulerColorSelects.forEach(btn => {
       btn.classList.toggle("active", btn.dataset.rulerColor === s.ruler.color);
@@ -750,11 +964,21 @@ export class LuminaApp {
       this.setSwitchState(this.dom.settingShowFooter, showProgressBar);
     }
 
-    // Synchronizace rychlého popoveru pravítka
-    if (this.dom.popoverModeLine && this.dom.popoverModeWord) {
-      this.dom.popoverModeLine.classList.toggle("active", !s.ruler.wordTracking);
-      this.dom.popoverModeWord.classList.toggle("active", !!s.ruler.wordTracking);
+    // Režim tekutého skla (Liquid Glass UI)
+    const isLiquidGlass = !!s.liquidGlassUi;
+    document.body.classList.toggle("ui-liquid-glass", isLiquidGlass);
+    document.documentElement.classList.toggle("ui-liquid-glass", isLiquidGlass);
+    if (this.dom.settingLiquidGlass) {
+      this.setSwitchState(this.dom.settingLiquidGlass, isLiquidGlass);
     }
+
+    // Synchronizace rychlého popoveru pravítka
+    const curRulerMode = s.ruler?.rulerModeType || (s.ruler?.wordTracking ? "word" : "line");
+    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", curRulerMode === "line");
+    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", curRulerMode === "word");
+    document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.rulerModeType === curRulerMode);
+    });
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
         btn.classList.toggle("active", btn.dataset.rulerStyle === s.ruler.mode);
@@ -775,6 +999,9 @@ export class LuminaApp {
       this.dom.popoverRulerFollowSelect.value = s.ruler.followMode;
     }
 
+    // Aktualizace výplní všech liquid-glass posuvníků
+    this.syncAllRangeFills();
+
     // Aplikace režimu čtení (vodorovně vs svisle)
     this.applyReadingMode(this.readingMode);
 
@@ -793,14 +1020,29 @@ export class LuminaApp {
       return;
     }
 
-    // Pokud čteme knihu, přepočítat stránkování (pouze v horizontálním režimu pro EPUB)
+    // Pokud čteme knihu, přepočítat stránkování a zkalibrovat pravítko (pouze v horizontálním režimu pro EPUB)
     if (!this.isVerticalReadingMode() && this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
       requestAnimationFrame(() => {
         this.recomputeGlobalPagination();
         this.recalcPages();
-        this.goToPage(this.currentPageIndex);
+        this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
         this.renderScrubberTicks();
+        if (this.ruler && this.ruler.enabled) {
+          this.ruler.forceReleaseNavigationLocks?.();
+          this.ruler.updateStyles?.();
+          this.ruler.refreshLines();
+          if (this.ruler.wordTracking) this.ruler.refreshWords?.();
+          this.ruler.applyPosition();
+        }
       });
+    } else if (this.isVerticalReadingMode() && this.currentBook && this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden")) {
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks?.();
+        this.ruler.updateStyles?.();
+        this.ruler.refreshLines();
+        if (this.ruler.wordTracking) this.ruler.refreshWords?.();
+        this.ruler.applyPosition();
+      }
     }
 
     this.updateTouchZonesUI();
@@ -1005,15 +1247,30 @@ export class LuminaApp {
       });
     });
 
-    // Vzorová kniha tlačítko
-    this.dom.btnLoadSample?.addEventListener("click", () => this.loadBundledSampleBook());
-
     // 2. Přepínání pohledů a stránkování
     if (this.dom.btnBackToLibrary) this.dom.btnBackToLibrary.addEventListener("click", () => this.showLibraryView());
     
     // Tlačítka stránkování v patičce
-    if (this.dom.btnPagePrev) this.dom.btnPagePrev.addEventListener("click", () => this.prevPage());
-    if (this.dom.btnPageNext) this.dom.btnPageNext.addEventListener("click", () => this.nextPage());
+    if (this.dom.btnPagePrev) this.dom.btnPagePrev.addEventListener("click", () => {
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.lastTouchEndTime = Date.now();
+        this.ruler.lastSwipeTime = Date.now();
+        this.ruler.flickResyncTopLine = true;
+        this.ruler.isLineLocked = true;
+        this.ruler.lockAdvancement(450);
+      }
+      this.prevPage();
+    });
+    if (this.dom.btnPageNext) this.dom.btnPageNext.addEventListener("click", () => {
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.lastTouchEndTime = Date.now();
+        this.ruler.lastSwipeTime = Date.now();
+        this.ruler.flickResyncTopLine = true;
+        this.ruler.isLineLocked = true;
+        this.ruler.lockAdvancement(450);
+      }
+      this.nextPage();
+    });
 
     // Dotykové zóny na okrajích obrazovky (listování nebo krokování pravítka)
     let lastSwipeTime = 0;
@@ -1034,16 +1291,20 @@ export class LuminaApp {
           return;
         }
         if (this.isUiOrOverlayEvent(e)) return;
-        if (this.isNavigating || this.ruler?.isLineLocked) {
+
+        // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
+        const now = Date.now();
+        const isRecentSwipe = (now - lastSwipeTime < 650) ||
+          (now - (this.lastSwipeTime || 0) < 650) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 650);
+        const isRecentTap = (now - lastTapTime < 650) ||
+          (now - (this.ruler?.lastTouchTapTime || 0) < 650);
+
+        if (isRecentSwipe || isRecentTap) {
           e.preventDefault();
           return;
         }
-        if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
-          this.ruler.stepLine(-1, true);
-          return;
-        }
-        // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
-        if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 500) {
+        if (this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
           e.preventDefault();
           return;
         }
@@ -1051,8 +1312,31 @@ export class LuminaApp {
         if (this.ruler?.enabled && this.ruler?.isPenEvent(e)) {
           return;
         }
+        if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
+          this.ruler.stepLine(-1, true);
+          return;
+        }
         if (this.ruler && this.ruler.enabled) {
           if (this.ruler.followMode === "mouse") {
+            lastTapTime = Date.now();
+            if (this.ruler) {
+              this.ruler.lastTouchEndTime = Date.now();
+              this.ruler.lastSwipeTime = Date.now();
+              this.ruler.isTouchActive = false;
+              this.ruler.flickResyncTopLine = true;
+              this.ruler.isLineLocked = true;
+              this.ruler.suppressLineAdvancement = true;
+              if (this.ruler.pointerRafId) {
+                cancelAnimationFrame(this.ruler.pointerRafId);
+                this.ruler.pointerRafId = null;
+              }
+              this.ruler.rafPointerPending = false;
+              this.ruler.pendingPointerX = null;
+              this.ruler.pendingPointerY = null;
+              this.ruler.pendingPointerType = null;
+              this.ruler.lockAdvancement(650);
+            }
+            this.prevPage();
             return;
           }
           const dir = this.getRulerTapDirection(e.clientX, e.clientY);
@@ -1078,16 +1362,20 @@ export class LuminaApp {
         return;
       }
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating || this.ruler?.isLineLocked) {
+
+      // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
+      const now = Date.now();
+      const isRecentSwipe = (now - lastSwipeTime < 650) ||
+        (now - (this.lastSwipeTime || 0) < 650) ||
+        (now - (this.ruler?.lastSwipeTime || 0) < 650);
+      const isRecentTap = (now - lastTapTime < 650) ||
+        (now - (this.ruler?.lastTouchTapTime || 0) < 650);
+
+      if (isRecentSwipe || isRecentTap) {
         e.preventDefault();
         return;
       }
-      if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
-        this.ruler.stepLine(1, true);
-        return;
-      }
-      // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
-      if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 500) {
+      if (this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
         e.preventDefault();
         return;
       }
@@ -1095,8 +1383,31 @@ export class LuminaApp {
       if (this.ruler?.enabled && this.ruler?.isPenEvent(e)) {
         return;
       }
+      if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
+        this.ruler.stepLine(1, true);
+        return;
+      }
       if (this.ruler && this.ruler.enabled) {
         if (this.ruler.followMode === "mouse") {
+          lastTapTime = Date.now();
+          if (this.ruler) {
+            this.ruler.lastTouchEndTime = Date.now();
+            this.ruler.lastSwipeTime = Date.now();
+            this.ruler.isTouchActive = false;
+            this.ruler.flickResyncTopLine = true;
+            this.ruler.isLineLocked = true;
+            this.ruler.suppressLineAdvancement = true;
+            if (this.ruler.pointerRafId) {
+              cancelAnimationFrame(this.ruler.pointerRafId);
+              this.ruler.pointerRafId = null;
+            }
+            this.ruler.rafPointerPending = false;
+            this.ruler.pendingPointerX = null;
+            this.ruler.pendingPointerY = null;
+            this.ruler.pendingPointerType = null;
+            this.ruler.lockAdvancement(650);
+          }
+          this.nextPage();
           return;
         }
         const dir = this.getRulerTapDirection(e.clientX, e.clientY);
@@ -1113,219 +1424,304 @@ export class LuminaApp {
     let touchStartTime = 0;
     let isSwiping = false;
 
-    this.dom.pagedViewport.addEventListener("touchstart", (e) => {
-      if (this.isVerticalReadingMode()) return;
-      if (this.isUiOrOverlayEvent(e)) {
-        isSwiping = false;
-        return;
-      }
-      if (this.isNavigating) {
-        isSwiping = false;
-        return;
-      }
-      if (e.touches.length !== 1) {
-        isSwiping = false;
-        return;
-      }
-      // Apple Pencil v režimu sledování myši nesmí zahajovat swipe
-      if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
-        isSwiping = false;
-        return;
-      }
-      touchStartX = e.touches[0].clientX;
-      touchStartY = e.touches[0].clientY;
-      touchStartTime = Date.now();
-      isSwiping = true;
-    }, { passive: true });
+    if (this.dom.pagedViewport) {
+      this.dom.pagedViewport.addEventListener("touchstart", (e) => {
+        if (this.isVerticalReadingMode()) return;
+        if (this.isUiOrOverlayEvent(e)) {
+          isSwiping = false;
+          return;
+        }
+        if (this.isNavigating) {
+          isSwiping = false;
+          return;
+        }
+        if (e.touches.length !== 1) {
+          isSwiping = false;
+          return;
+        }
+        // Apple Pencil v režimu sledování myši nesmí zahajovat swipe
+        if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
+          isSwiping = false;
+          return;
+        }
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        touchStartTime = Date.now();
+        isSwiping = true;
+      }, { passive: true });
 
-    this.dom.pagedViewport.addEventListener("touchend", (e) => {
-      if (this.isVerticalReadingMode()) return;
-      if (this.isUiOrOverlayEvent(e)) {
-        isSwiping = false;
-        return;
-      }
-      if (this.isNavigating || this.ruler?.isLineLocked || (Date.now() - lastSwipeTime < 450) || (Date.now() - (this.ruler?.lastSwipeTime || 0) < 450)) {
-        isSwiping = false;
-        return;
-      }
-      if (!isSwiping || e.changedTouches.length !== 1) {
-        isSwiping = false;
-        return;
-      }
-      isSwiping = false;
-
-      // Stylus v režimu sledování myši nesmí otáčet stránky ani krokovat
-      if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
-        return;
-      }
-
-      const touchEndX = e.changedTouches[0].clientX;
-      const touchEndY = e.changedTouches[0].clientY;
-      const deltaX = touchEndX - touchStartX;
-      const deltaY = touchEndY - touchStartY;
-      const absDeltaX = Math.abs(deltaX);
-      const absDeltaY = Math.abs(deltaY);
-      const dist = Math.hypot(deltaX, deltaY);
-      const duration = Date.now() - touchStartTime;
-      const velocity = duration > 0 ? absDeltaX / duration : 0;
-
-      // 1. Horizontální přejetí (relaxed finger swipe) pro okamžité, plynulé otáčení stránek:
-      // Ergonomické prahy: |ΔX| >= 30 px, |ΔY| <= 65 px, trvání <= 450 ms, rychlost >= 0.3 px/ms
-      if (absDeltaX >= 30 && absDeltaY <= 65 && duration <= 450 && velocity >= 0.3) {
-        lastSwipeTime = Date.now();
+      this.dom.pagedViewport.addEventListener("touchend", (e) => {
+        if (this.isVerticalReadingMode()) return;
+        if (this.isUiOrOverlayEvent(e)) {
+          isSwiping = false;
+          return;
+        }
         if (this.ruler) {
-          this.ruler.lastSwipeTime = Date.now();
-          this.ruler.cancelHold(false);
-          this.ruler.isHoldTriggered = false;
-          this.ruler.isDraggingRuler = false;
-          this.ruler.flickResyncTopLine = true;
-          this.ruler.isLineLocked = true;
-          this.ruler.suppressLineAdvancement = true;
-          this.ruler.lockAdvancement(400);
+          this.ruler.lastTouchEndTime = Date.now();
         }
-        if (deltaX < 0) {
-          this.nextPage();
-        } else {
-          this.prevPage();
+        const now = Date.now();
+        const isRecentSwipe = (now - lastSwipeTime < 650) ||
+          (now - (this.lastSwipeTime || 0) < 650) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 650);
+        if (this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0)) || isRecentSwipe) {
+          isSwiping = false;
+          if (e.cancelable) e.preventDefault();
+          e.stopPropagation();
+          return;
         }
-        return;
-      }
+        if (!isSwiping || e.changedTouches.length !== 1) {
+          isSwiping = false;
+          return;
+        }
+        isSwiping = false;
 
-      // 2. V režimu sledování myši ("mouse") prst nehýbe ani neukotvuje pravítko
-      if (this.ruler && this.ruler.enabled && this.ruler.followMode === "mouse") {
-        if (absDeltaX < 15 && absDeltaY < 15 && this.isCenterTap(touchEndX, touchEndY)) {
+        // Stylus v režimu sledování myši nesmí otáčet stránky ani krokovat
+        if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
+          return;
+        }
+
+        const touchEndX = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+        const deltaX = touchEndX - touchStartX;
+        const deltaY = touchEndY - touchStartY;
+        const absDeltaX = Math.abs(deltaX);
+        const absDeltaY = Math.abs(deltaY);
+        const dist = Math.hypot(deltaX, deltaY);
+        const duration = Date.now() - touchStartTime;
+        const velocity = duration > 0 ? absDeltaX / duration : 0;
+
+        // 1. Horizontální přejetí (relaxed finger swipe) pro okamžité, plynulé otáčení stránek:
+        // Ergonomické prahy: |ΔX| >= 30 px, |ΔY| <= 65 px, trvání <= 450 ms, rychlost >= 0.3 px/ms
+        if (absDeltaX >= 30 && absDeltaY <= 65 && duration <= 450 && velocity >= 0.3) {
+          if (e.cancelable) {
+            e.preventDefault();
+          }
+          e.stopPropagation();
+          lastSwipeTime = Date.now();
+          this.lastSwipeTime = Date.now();
+          if (this.ruler) {
+            this.ruler.lastSwipeTime = Date.now();
+            this.ruler.lastTouchEndTime = Date.now();
+            this.ruler.isTouchActive = false;
+            this.ruler.cancelHold(false);
+            this.ruler.isHoldTriggered = false;
+            this.ruler.isDraggingRuler = false;
+            this.ruler.flickResyncTopLine = true;
+            this.ruler.isLineLocked = true;
+            this.ruler.suppressLineAdvancement = true;
+            if (this.ruler.pointerRafId) {
+              cancelAnimationFrame(this.ruler.pointerRafId);
+              this.ruler.pointerRafId = null;
+            }
+            this.ruler.rafPointerPending = false;
+            this.ruler.pendingPointerX = null;
+            this.ruler.pendingPointerY = null;
+            this.ruler.pendingPointerType = null;
+            this.ruler.lockAdvancement(650);
+          }
+          if (deltaX < 0) {
+            this.nextPage();
+          } else {
+            this.prevPage();
+          }
+          return;
+        }
+
+        // 2. V režimu sledování myši ("mouse") prst nehýbe ani neukotvuje pravítko
+        if (this.ruler && this.ruler.enabled && this.ruler.followMode === "mouse") {
+          if (absDeltaX < 15 && absDeltaY < 15) {
+            if (this.isCenterTap(touchEndX, touchEndY)) {
+              lastTapTime = Date.now();
+              this.toggleReaderChrome();
+              if (e.cancelable) e.preventDefault();
+              return;
+            }
+            const width = window.innerWidth || document.documentElement.clientWidth;
+            if (touchEndX < width * 0.2) {
+              lastTapTime = Date.now();
+              if (this.ruler) {
+                this.ruler.lastSwipeTime = Date.now();
+                this.ruler.lastTouchEndTime = Date.now();
+                this.ruler.isTouchActive = false;
+                this.ruler.flickResyncTopLine = true;
+                this.ruler.isLineLocked = true;
+                this.ruler.suppressLineAdvancement = true;
+                if (this.ruler.pointerRafId) {
+                  cancelAnimationFrame(this.ruler.pointerRafId);
+                  this.ruler.pointerRafId = null;
+                }
+                this.ruler.rafPointerPending = false;
+                this.ruler.pendingPointerX = null;
+                this.ruler.pendingPointerY = null;
+                this.ruler.pendingPointerType = null;
+                this.ruler.lockAdvancement(650);
+              }
+              if (e.cancelable) e.preventDefault();
+              this.prevPage();
+              return;
+            } else if (touchEndX > width * 0.8) {
+              lastTapTime = Date.now();
+              if (this.ruler) {
+                this.ruler.lastSwipeTime = Date.now();
+                this.ruler.lastTouchEndTime = Date.now();
+                this.ruler.isTouchActive = false;
+                this.ruler.flickResyncTopLine = true;
+                this.ruler.isLineLocked = true;
+                this.ruler.suppressLineAdvancement = true;
+                if (this.ruler.pointerRafId) {
+                  cancelAnimationFrame(this.ruler.pointerRafId);
+                  this.ruler.pointerRafId = null;
+                }
+                this.ruler.rafPointerPending = false;
+                this.ruler.pendingPointerX = null;
+                this.ruler.pendingPointerY = null;
+                this.ruler.pendingPointerType = null;
+                this.ruler.lockAdvancement(650);
+              }
+              if (e.cancelable) e.preventDefault();
+              this.nextPage();
+              return;
+            }
+          }
+          return;
+        }
+
+        // 3. Dotykové zóny pro krokování pravítka v klávesovém režimu (layout zóny)
+        // Krokování se spustí pouze při čistém, stacionárním klepnutí (|deltaX| < 10px a |deltaY| < 10px)
+        if (this.ruler && this.ruler.enabled && this.ruler.followMode === "keyboard") {
+          if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+            return;
+          }
+          if (absDeltaX >= 10 || absDeltaY >= 10 || dist >= 10) return;
+          if (this.ruler.isHoldTriggered) {
+            this.ruler.isHoldTriggered = false;
+            return;
+          }
+          if (typeof this.ruler.handleTap === "function") {
+            const handled = this.ruler.handleTap(touchEndX, touchEndY, "touch", dist);
+            if (handled) {
+              lastTapTime = Date.now();
+              e.preventDefault();
+            }
+            return;
+          }
           lastTapTime = Date.now();
-          this.toggleReaderChrome();
+          const dir = this.getRulerTapDirection(touchEndX, touchEndY);
+          this.ruler.stepLine(dir, true);
           e.preventDefault();
+          return;
         }
-        return;
-      }
 
-      // 3. Dotykové zóny pro krokování pravítka v klávesovém režimu (layout zóny)
-      // Krokování se spustí pouze při čistém, stacionárním klepnutí (|deltaX| < 10px a |deltaY| < 10px)
-      if (this.ruler && this.ruler.enabled && this.ruler.followMode === "keyboard") {
+        // 4. Běžné klepnutí (Tap) když je pravítko vypnuté
+        if (absDeltaX < 15 && absDeltaY < 15) {
+          if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+            this.closeFloatingDock();
+            e.preventDefault();
+            return;
+          }
+          if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+            return;
+          }
+          if (this.isCenterTap(touchEndX, touchEndY)) {
+            lastTapTime = Date.now();
+            this.toggleReaderChrome();
+            e.preventDefault();
+            return;
+          }
+        }
+      }, { passive: false });
+
+      // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
+      this.dom.pagedViewport.addEventListener("click", (e) => {
+        if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+          this.closeFloatingDock();
+          return;
+        }
+        if (this.isUiOrOverlayEvent(e)) return;
+
+        const now = Date.now();
+        const isRecentSwipe = (now - lastSwipeTime < 650) ||
+          (now - (this.lastSwipeTime || 0) < 650) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 650);
+        const isRecentTouch = (now - lastTapTime < 650) ||
+          (now - (this.ruler?.lastTouchTapTime || 0) < 650) ||
+          (now - (this.ruler?.lastTouchEndTime || 0) < 650);
+
+        if (isRecentSwipe || isRecentTouch || this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
+          return;
+        }
         if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
           return;
         }
-        if (absDeltaX >= 10 || absDeltaY >= 10 || dist >= 10) return;
+
+        // Klepnutí doprostřed obrazovky přepne zobrazení hlavičky a spodní lišty
+        if (this.isCenterTap(e.clientX, e.clientY)) {
+          if (!this.ruler || !this.ruler.enabled || this.ruler.followMode === "mouse") {
+            lastTapTime = Date.now();
+            this.toggleReaderChrome();
+            return;
+          }
+        }
+
+        if (!this.ruler || !this.ruler.enabled) return;
+        if (this.ruler.followMode === "mouse") {
+          return;
+        }
         if (this.ruler.isHoldTriggered) {
           this.ruler.isHoldTriggered = false;
           return;
         }
-        if (typeof this.ruler.handleTap === "function") {
-          const handled = this.ruler.handleTap(touchEndX, touchEndY, "touch", dist);
-          if (handled) {
-            lastTapTime = Date.now();
-            e.preventDefault();
+        if (this.ruler.followMode === "keyboard") {
+          if (typeof this.ruler.handleTap === "function") {
+            const handled = this.ruler.handleTap(e.clientX, e.clientY, "mouse", 0);
+            if (handled) {
+              lastTapTime = Date.now();
+              e.preventDefault();
+            }
           }
           return;
         }
         lastTapTime = Date.now();
-        const dir = this.getRulerTapDirection(touchEndX, touchEndY);
+        const dir = this.getRulerTapDirection(e.clientX, e.clientY);
         this.ruler.stepLine(dir, true);
-        e.preventDefault();
-        return;
-      }
+      });
 
-      // 4. Běžné klepnutí (Tap) když je pravítko vypnuté
-      if (absDeltaX < 15 && absDeltaY < 15) {
-        if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
-          this.closeFloatingDock();
-          e.preventDefault();
-          return;
+      // Přejetí dvěma prsty po touchpadu nebo kolečko myši (Mac Trackpad - vždy přesně 1 strana)
+      let isWheelTurnLocked = false;
+      let wheelMomentumTimer = null;
+
+      this.dom.pagedViewport.addEventListener("wheel", (e) => {
+        if (this.isVerticalReadingMode()) return;
+        if (this.isAnyModalOrMenuOpen()) return;
+        if (this.isNavigating || this.ruler?.isLineLocked) return;
+        this.ruler?.cancelHold();
+        const absX = Math.abs(e.deltaX);
+        const absY = Math.abs(e.deltaY);
+        const isHorizontal = absX >= absY;
+        const delta = isHorizontal ? e.deltaX : (absY > 35 ? e.deltaY : 0);
+
+        // Pokud ještě trvá setrvačnost předchozího gesta, další stranu neotáčíme
+        if (!isWheelTurnLocked && Math.abs(delta) > 22) {
+          isWheelTurnLocked = true;
+          if (delta > 0) {
+            this.nextPage();
+          } else {
+            this.prevPage();
+          }
         }
-        if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
-          return;
+
+        // Resetujeme zámek teprve, až intenzita pohybu klesne (konec fyzického gesta prsty)
+        clearTimeout(wheelMomentumTimer);
+        wheelMomentumTimer = setTimeout(() => {
+          isWheelTurnLocked = false;
+        }, 160);
+
+        // Pokud setrvačnost klesla na naprosté minimum, uvolníme dříve pro svižnost
+        if (Math.abs(delta) < 3) {
+          isWheelTurnLocked = false;
         }
-        if (this.isCenterTap(touchEndX, touchEndY)) {
-          lastTapTime = Date.now();
-          this.toggleReaderChrome();
-          e.preventDefault();
-          return;
-        }
-      }
-    }, { passive: false });
-
-    // Kliknutí myší na plochu čtečky pro ovládání pravítka nebo přepnutí systémových lišt
-    this.dom.pagedViewport.addEventListener("click", (e) => {
-      if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
-        this.closeFloatingDock();
-        return;
-      }
-      if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating || this.ruler?.isLineLocked) return;
-      if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 350) {
-        return;
-      }
-      if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
-        return;
-      }
-
-      // Klepnutí doprostřed obrazovky přepne zobrazení hlavičky a spodní lišty
-      if (this.isCenterTap(e.clientX, e.clientY)) {
-        if (!this.ruler || !this.ruler.enabled || this.ruler.followMode === "mouse") {
-          lastTapTime = Date.now();
-          this.toggleReaderChrome();
-          return;
-        }
-      }
-
-      if (!this.ruler || !this.ruler.enabled) return;
-      if (this.ruler.followMode === "mouse") {
-        return;
-      }
-      if (this.ruler.isHoldTriggered) {
-        this.ruler.isHoldTriggered = false;
-        return;
-      }
-      if (typeof this.ruler.handleTap === "function" && this.ruler.followMode === "keyboard") {
-        const handled = this.ruler.handleTap(e.clientX, e.clientY, "mouse", 0);
-        if (handled) {
-          lastTapTime = Date.now();
-          e.preventDefault();
-        }
-        return;
-      }
-      lastTapTime = Date.now();
-      const dir = this.getRulerTapDirection(e.clientX, e.clientY);
-      this.ruler.stepLine(dir, true);
-    });
-
-    // Přejetí dvěma prsty po touchpadu nebo kolečko myši (Mac Trackpad - vždy přesně 1 strana)
-    let isWheelTurnLocked = false;
-    let wheelMomentumTimer = null;
-
-    this.dom.pagedViewport.addEventListener("wheel", (e) => {
-      if (this.isVerticalReadingMode()) return;
-      if (this.isAnyModalOrMenuOpen()) return;
-      if (this.isNavigating || this.ruler?.isLineLocked) return;
-      this.ruler?.cancelHold();
-      const absX = Math.abs(e.deltaX);
-      const absY = Math.abs(e.deltaY);
-      const isHorizontal = absX >= absY;
-      const delta = isHorizontal ? e.deltaX : (absY > 35 ? e.deltaY : 0);
-
-      // Pokud ještě trvá setrvačnost předchozího gesta, další stranu neotáčíme
-      if (!isWheelTurnLocked && Math.abs(delta) > 22) {
-        isWheelTurnLocked = true;
-        if (delta > 0) {
-          this.nextPage();
-        } else {
-          this.prevPage();
-        }
-      }
-
-      // Resetujeme zámek teprve, až intenzita pohybu klesne (konec fyzického gesta prsty)
-      clearTimeout(wheelMomentumTimer);
-      wheelMomentumTimer = setTimeout(() => {
-        isWheelTurnLocked = false;
-      }, 160);
-
-      // Pokud setrvačnost klesla na naprosté minimum, uvolníme dříve pro svižnost
-      if (Math.abs(delta) < 3) {
-        isWheelTurnLocked = false;
-      }
-    }, { passive: true });
+      }, { passive: true });
+    }
 
     // Přizpůsobení stran při změně orientace iPadu (Portrait/Landscape) a velikosti okna
     let lastEffectiveCols = this.resolveEffectiveColumnCount();
@@ -1409,7 +1805,7 @@ export class LuminaApp {
     ].filter(Boolean);
 
     uiContainers.forEach((container) => {
-      ["pointerdown", "touchstart", "click"].forEach((eventType) => {
+      ["pointerdown", "pointermove", "pointerup", "touchstart", "touchmove", "touchend", "click"].forEach((eventType) => {
         container.addEventListener(eventType, (e) => {
           if (eventType === "click" && container.id === "reader-header") {
             if (this.dom.rulerQuickPopover && !this.dom.rulerQuickPopover.classList.contains("is-hidden")) {
@@ -1420,7 +1816,7 @@ export class LuminaApp {
             }
           }
           e.stopPropagation();
-        });
+        }, { passive: eventType !== "touchmove" });
       });
     });
 
@@ -1566,9 +1962,11 @@ export class LuminaApp {
         this.closeStatsModal();
       });
     }
-    this.dom.statsModal.addEventListener("click", (e) => {
-      if (e.target === this.dom.statsModal) this.closeStatsModal();
-    });
+    if (this.dom.statsModal) {
+      this.dom.statsModal.addEventListener("click", (e) => {
+        if (e.target === this.dom.statsModal) this.closeStatsModal();
+      });
+    }
 
     // Pravítko toggle tlačítko v hlavičce
     if (this.dom.btnToggleRuler) {
@@ -1610,19 +2008,26 @@ export class LuminaApp {
           }
           this.dom.rulerQuickPopover.classList.remove("is-hidden");
           this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "true");
-          this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+          this.updateRulerToggleButtonUI();
+          this.updateRulerSettingsVisibility(this.settings?.ruler?.style || this.settings?.ruler?.mode, this.settings?.ruler?.focusMode, this.isPdfMode);
           this.setPdfRulerUIVisibility(this.isPdfMode);
           if (this.isPdfMode && this.currentBook?.pdfRulerConfig) {
             this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
           }
+          this.syncAllRangeFills();
+          requestAnimationFrame(() => {
+            this.syncAllSegmentedBubbles(true);
+          });
         } else {
           this.dom.rulerQuickPopover.classList.add("is-hidden");
           this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
         }
       });
 
-      this.dom.rulerQuickPopover.addEventListener("click", (e) => {
-        e.stopPropagation();
+      ["pointerdown", "pointermove", "pointerup", "touchstart", "touchmove", "touchend", "click"].forEach((evt) => {
+        this.dom.rulerQuickPopover.addEventListener(evt, (e) => {
+          e.stopPropagation();
+        }, { passive: evt !== "touchmove" });
       });
 
       // Zavření popoveru kliknutím mimo (outside-click dismiss) — capture fáze, nejvyšší priorita.
@@ -1646,11 +2051,8 @@ export class LuminaApp {
       // Stejný handler pro touchstart (iPad – pointerdown může být passive v některých kontextech)
       document.addEventListener("touchstart", (e) => {
         if (!this.dom.rulerQuickPopover || this.dom.rulerQuickPopover.classList.contains("is-hidden")) return;
-        const touch = e.touches[0];
-        if (!touch) return;
-        const target = document.elementFromPoint(touch.clientX, touch.clientY);
-        const insidePopover = this.dom.rulerQuickPopover.contains(target);
-        const insideBtn = this.dom.btnRulerQuickMenu && this.dom.btnRulerQuickMenu.contains(target);
+        const insidePopover = this.dom.rulerQuickPopover.contains(e.target);
+        const insideBtn = this.dom.btnRulerQuickMenu && this.dom.btnRulerQuickMenu.contains(e.target);
         if (insidePopover || insideBtn) return;
         e.preventDefault();
         e.stopPropagation();
@@ -1757,13 +2159,46 @@ export class LuminaApp {
     document.addEventListener("click", _handleOutsideTap);
     document.addEventListener("touchend", _handleOutsideTap, { passive: true });
 
+    const bindRulerSettingAction = (el, action) => {
+      if (!el) return;
+      let lastTrigger = 0;
+      const trigger = (e) => {
+        const now = Date.now();
+        if (now - lastTrigger < 250) {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          return;
+        }
+        lastTrigger = now;
+        action(e);
+      };
+
+      el.addEventListener("pointerup", (e) => {
+        if (e.pointerType === "pen" || e.pointerType === "touch") {
+          const rect = el.getBoundingClientRect();
+          if (
+            e.clientX >= rect.left - 10 &&
+            e.clientX <= rect.right + 10 &&
+            e.clientY >= rect.top - 10 &&
+            e.clientY <= rect.bottom + 10
+          ) {
+            trigger(e);
+          }
+        }
+      });
+
+      el.addEventListener("click", (e) => {
+        trigger(e);
+      });
+    };
+
     const popoverSnapToggle = this.dom.popoverRulerSnapToggle || document.getElementById("popover-ruler-snap") || document.getElementById("popover-ruler-snap-toggle");
     if (popoverSnapToggle) {
       const handlePopoverSnap = (e) => {
         if (this.isPdfMode && this.isImageOnlyPdf) return;
         if (e) {
           e.stopPropagation();
-          if (e.type === "click" && e.target && e.target.tagName !== "INPUT") {
+          if (e.target && e.target.tagName !== "INPUT" && e.cancelable) {
             e.preventDefault();
           }
         }
@@ -1778,65 +2213,70 @@ export class LuminaApp {
         this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       };
-      popoverSnapToggle.addEventListener("click", handlePopoverSnap);
+      bindRulerSettingAction(popoverSnapToggle, handlePopoverSnap);
       if (popoverSnapToggle.tagName === "INPUT") {
         popoverSnapToggle.addEventListener("change", handlePopoverSnap);
       }
     }
 
     if (this.dom.popoverModeLine) {
-      this.dom.popoverModeLine.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.setWordTracking(false);
+      bindRulerSettingAction(this.dom.popoverModeLine, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
+        this.setRulerModeType("line");
       });
     }
 
     if (this.dom.popoverModeWord) {
-      this.dom.popoverModeWord.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      bindRulerSettingAction(this.dom.popoverModeWord, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
         if (this.isPdfMode && this.isImageOnlyPdf) return;
-        this.setWordTracking(true);
+        this.setRulerModeType("word");
       });
     }
 
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
       if (btn !== this.dom.popoverModeLine && btn !== this.dom.popoverModeWord) {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (this.isPdfMode && this.isImageOnlyPdf) return;
-          const isWord = btn.dataset.rulerModeType === "word";
-          this.setWordTracking(isWord);
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          if (this.isPdfMode && this.isImageOnlyPdf && btn.dataset.rulerModeType === "word") return;
+          this.setRulerModeType(btn.dataset.rulerModeType || "line");
         });
       }
     });
 
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetBtn = e.target.closest('[data-ruler-style]') || btn;
-          const newMode = targetBtn ? targetBtn.dataset.rulerStyle : null;
-          if (!newMode) return;
-          if (!this.settings.ruler) this.settings.ruler = {};
-          this.settings.ruler.mode = newMode;
-          this.ruler.setMode(this.settings.ruler.mode);
-          this.updateRulerToggleButtonUI();
-          this.updateRulerSettingsVisibility(newMode, this.isPdfMode);
-          storage.saveSettings(this.settings);
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-style]') || btn) : btn;
+          const newStyle = targetBtn ? targetBtn.dataset.rulerStyle : null;
+          this.setRulerStyle(newStyle);
+        });
+      });
+    }
+
+    if (this.dom.popoverFocusButtons) {
+      this.dom.popoverFocusButtons.forEach(btn => {
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-focus]') || btn) : btn;
+          const newFocus = targetBtn ? targetBtn.dataset.rulerFocus : null;
+          this.setRulerFocusMode(newFocus);
         });
       });
     }
 
     if (this.dom.popoverColorButtons) {
       this.dom.popoverColorButtons.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetBtn = e.target.closest('[data-ruler-color]') || btn;
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-color]') || btn) : btn;
           const newColor = targetBtn ? targetBtn.dataset.rulerColor : null;
           if (!newColor) return;
           if (!this.settings.ruler) this.settings.ruler = {};
@@ -1950,9 +2390,10 @@ export class LuminaApp {
     }
 
     this.dom.fontSelects.forEach(btn => {
-      btn.addEventListener("click", (e) => {
+      btn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        this.settings.fontFamily = btn.dataset.font;
+        const fontKey = btn.dataset.font;
+        this.settings.fontFamily = fontKey;
         this.applySettings();
         storage.saveSettings(this.settings);
         if (this.dom.fontDropdownWrapper) {
@@ -1961,6 +2402,16 @@ export class LuminaApp {
         if (this.dom.fontDropdownTrigger) {
           this.dom.fontDropdownTrigger.setAttribute("aria-expanded", "false");
           this.dom.fontDropdownTrigger.focus();
+        }
+
+        this.handleTypographyOrLayoutChange();
+
+        // Kalibrace po finálním načtení webfontů (Literata, OpenDyslexic atd.)
+        if (document.fonts && document.fonts.ready) {
+          try {
+            await document.fonts.ready;
+          } catch (_) {}
+          this.handleTypographyOrLayoutChange();
         }
       });
     });
@@ -2077,6 +2528,7 @@ export class LuminaApp {
             return;
           }
 
+          tracker.cancelCurrentPageDwell();
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               this.recomputeGlobalPagination();
@@ -2106,6 +2558,7 @@ export class LuminaApp {
         this.settings.contentWidth = parseInt(e.target.value, 10);
         this.applySettings();
         storage.saveSettings(this.settings);
+        this.handleTypographyOrLayoutChange();
       });
     }
 
@@ -2114,6 +2567,7 @@ export class LuminaApp {
         this.settings.textAlign = "left";
         this.applySettings();
         storage.saveSettings(this.settings);
+        this.handleTypographyOrLayoutChange();
       });
     }
 
@@ -2122,6 +2576,7 @@ export class LuminaApp {
         this.settings.textAlign = "justify";
         this.applySettings();
         storage.saveSettings(this.settings);
+        this.handleTypographyOrLayoutChange();
       });
     }
 
@@ -2132,9 +2587,9 @@ export class LuminaApp {
         this.settings.showRulerButton = nextVal;
         this.setSwitchState(this.dom.rulerToggle, nextVal);
         const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;
-        if (rulerContainer) {
+        if (rulerContainer && rulerContainer.style) {
           rulerContainer.style.display = nextVal ? "flex" : "none";
-          rulerContainer.classList.toggle("is-hidden", !nextVal);
+          rulerContainer.classList?.toggle?.("is-hidden", !nextVal);
         }
         if (!nextVal && this.ruler?.enabled) {
           this.ruler.setEnabled(false);
@@ -2166,14 +2621,16 @@ export class LuminaApp {
         this.updateRulerToggleButtonUI();
         storage.saveSettings(this.settings);
       };
-      drawerSnapToggle.addEventListener("click", handleDrawerSnap);
+      bindRulerSettingAction(drawerSnapToggle, handleDrawerSnap);
       if (drawerSnapToggle.tagName === "INPUT") {
         drawerSnapToggle.addEventListener("change", handleDrawerSnap);
       }
     }
 
     if (this.dom.rulerWordTrackingSetting) {
-      this.dom.rulerWordTrackingSetting.addEventListener("click", () => {
+      bindRulerSettingAction(this.dom.rulerWordTrackingSetting, (e) => {
+        if (e && e.cancelable) e.preventDefault();
+        if (e) e.stopPropagation();
         const nextVal = !(this.settings.ruler.wordTracking ?? false);
         this.setWordTracking(nextVal);
       });
@@ -2191,28 +2648,36 @@ export class LuminaApp {
       });
     }
 
-    this.dom.rulerModeSelects.forEach(btn => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const targetBtn = e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn;
-        const newMode = targetBtn ? (targetBtn.dataset.rulerMode || targetBtn.dataset.rulerStyle) : null;
-        if (!newMode) return;
-        if (!this.settings.ruler) this.settings.ruler = {};
-        this.settings.ruler.mode = newMode;
-        this.ruler.setMode(this.settings.ruler.mode);
-        this.updateRulerToggleButtonUI();
-        this.updateRulerSettingsVisibility(newMode, this.isPdfMode);
-        storage.saveSettings(this.settings);
+    if (this.dom.rulerModeSelects) {
+      this.dom.rulerModeSelects.forEach(btn => {
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-mode], [data-ruler-style]') || btn) : btn;
+          const newStyle = targetBtn ? (targetBtn.dataset.rulerStyle || targetBtn.dataset.rulerMode) : null;
+          this.setRulerStyle(newStyle);
+        });
       });
-    });
+    }
+
+    if (this.dom.drawerFocusButtons) {
+      this.dom.drawerFocusButtons.forEach(btn => {
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-focus]') || btn) : btn;
+          let newFocus = targetBtn ? targetBtn.dataset.rulerFocus : null;
+          this.setRulerFocusMode(newFocus);
+        });
+      });
+    }
 
     if (this.dom.rulerColorSelects) {
       this.dom.rulerColorSelects.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetBtn = e.target.closest('[data-ruler-color]') || btn;
+        bindRulerSettingAction(btn, (e) => {
+          if (e && e.cancelable) e.preventDefault();
+          if (e) e.stopPropagation();
+          const targetBtn = (e && e.target && e.target.closest) ? (e.target.closest('[data-ruler-color]') || btn) : btn;
           const newColor = targetBtn ? targetBtn.dataset.rulerColor : null;
           if (!newColor) return;
           if (!this.settings.ruler) this.settings.ruler = {};
@@ -2261,8 +2726,8 @@ export class LuminaApp {
 
     if (this.dom.rulerFollowButtons) {
       this.dom.rulerFollowButtons.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
+        bindRulerSettingAction(btn, (e) => {
+          if (e) e.stopPropagation();
           const val = btn.dataset.rulerFollow;
           if (!val) return;
           if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") return;
@@ -2324,6 +2789,19 @@ export class LuminaApp {
       });
     }
 
+    // Přepínač Vzhled tekutého skla (Liquid Glass)
+    if (this.dom.settingLiquidGlass) {
+      this.dom.settingLiquidGlass.addEventListener("click", () => {
+        const val = !this.settings.liquidGlassUi;
+        this.settings.liquidGlassUi = val;
+        this.setSwitchState(this.dom.settingLiquidGlass, val);
+        document.body.classList.toggle("ui-liquid-glass", val);
+        document.documentElement.classList.toggle("ui-liquid-glass", val);
+        storage.saveSettings(this.settings);
+        this.syncAllRangeFills();
+      });
+    }
+
     // Přepínač rychlého čtení (Bionic reading)
     if (this.dom.settingFastReading) {
       this.dom.settingFastReading.addEventListener("click", () => {
@@ -2336,23 +2814,25 @@ export class LuminaApp {
     }
 
     // Export statistik
-    this.dom.btnExportData.addEventListener("click", async () => {
-      const stats = await ReadingTracker.computeGlobalStats();
-      const sessions = await storage.getAllReadingSessions();
-      const exportObj = {
-        exportedAt: new Date().toISOString(),
-        stats,
-        readingSessions: sessions,
-        sessions
-      };
-      const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `luminareader-stats-${new Date().toISOString().split("T")[0]}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
+    if (this.dom.btnExportData) {
+      this.dom.btnExportData.addEventListener("click", async () => {
+        const stats = await ReadingTracker.computeGlobalStats();
+        const sessions = await storage.getAllReadingSessions();
+        const exportObj = {
+          exportedAt: new Date().toISOString(),
+          stats,
+          readingSessions: sessions,
+          sessions
+        };
+        const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `luminareader-stats-${new Date().toISOString().split("T")[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
 
     // Přepočítání a normalizace statistik
     if (this.dom.btnRecalcStats) {
@@ -2389,12 +2869,25 @@ export class LuminaApp {
         if (!confirmed) return;
         try {
           this.dom.btnResetStats.disabled = true;
+
+          // 1. Získat ID všech stávajících relací pro tombstones
+          let existingIds = [];
+          try {
+            const sessions = await storage.getAllReadingSessions();
+            existingIds = (sessions || []).map(s => String(s.sessionId || s.id || "").trim()).filter(Boolean);
+          } catch (_) {}
+
+          // 2. Lokální reset dat a záznam tombstones
           await storage.resetReadingStats();
+          existingIds.forEach(id => storage.addDeletedSessionId(id));
+
           tracker.stopSession();
           tracker.creditedBlocks.clear();
+
+          // 3. Cloudový soft-delete všech relací a nulování reading_stats_summary
           if (supabaseSync && supabaseSync.isOnline()) {
             try {
-              await supabaseSync.clearCloudReadingStats();
+              await supabaseSync.clearCloudReadingStats(existingIds);
             } catch (cloudErr) {
               console.warn("Varování při resetování cloudových statistik:", cloudErr);
             }
@@ -2423,9 +2916,13 @@ export class LuminaApp {
     window.addEventListener("resize", () => {
       if (this.dom.statsModal && this.dom.statsModal.classList.contains("open")) {
         if (this._selectedSessionId && this._availableSessions) {
-          const session = this._availableSessions.find(s => s.sessionId === this._selectedSessionId);
+          const session = this._availableSessions.find(s => (s.sessionId === this._selectedSessionId || s.id === this._selectedSessionId));
           if (session && this.dom.sessionTimelineChartContainer) {
-            StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
+            try {
+              StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
+            } catch (err) {
+              console.error("[app] Chyba při resize grafu relace:", err);
+            }
           }
         }
       }
@@ -2618,6 +3115,7 @@ export class LuminaApp {
           e.preventDefault();
           if (this.ruler) {
             if (!this.ruler.enabled) {
+              this.ensureActiveRulerVisualMode();
               this.settings.ruler.enabled = true;
               this.ruler.setEnabled(true);
               this.updateRulerToggleButtonUI();
@@ -2646,6 +3144,7 @@ export class LuminaApp {
           e.preventDefault();
           if (this.ruler) {
             if (!this.ruler.enabled) {
+              this.ensureActiveRulerVisualMode();
               this.settings.ruler.enabled = true;
               this.ruler.setEnabled(true);
               this.updateRulerToggleButtonUI();
@@ -2671,14 +3170,160 @@ export class LuminaApp {
     });
   }
 
+  ensureActiveRulerVisualMode() {
+    if (!this.settings.ruler) this.settings.ruler = {};
+    const currentStyle = this.settings.ruler.style || this.settings.ruler.mode || "off";
+    let currentFocus = this.settings.ruler.focusMode || "off";
+    if (currentFocus === "above") currentFocus = "up";
+    if (currentFocus === "below") currentFocus = "down";
+
+    if (currentStyle === "off" && currentFocus === "off") {
+      let targetStyle = "highlight";
+      let targetFocus = "off";
+
+      const lastCombo = this.settings.ruler.lastActiveCombination || this.ruler?.lastActiveCombination;
+      if (lastCombo && ((lastCombo.style && lastCombo.style !== "off") || (lastCombo.focusMode && lastCombo.focusMode !== "off"))) {
+        targetStyle = lastCombo.style || "off";
+        targetFocus = lastCombo.focusMode || "off";
+      } else if (this.settings.ruler.lastActiveStyle && this.settings.ruler.lastActiveStyle !== "off") {
+        targetStyle = this.settings.ruler.lastActiveStyle;
+        targetFocus = "off";
+      } else if (this.ruler?.lastActiveStyle && this.ruler.lastActiveStyle !== "off") {
+        targetStyle = this.ruler.lastActiveStyle;
+        targetFocus = "off";
+      }
+
+      if (targetStyle === "off" && targetFocus === "off") {
+        targetStyle = "highlight";
+        targetFocus = "off";
+      }
+
+      this.settings.ruler.style = targetStyle;
+      this.settings.ruler.mode = targetStyle;
+      this.settings.ruler.focusMode = targetFocus;
+
+      if (this.ruler) {
+        this.ruler.style = targetStyle;
+        this.ruler.mode = targetStyle;
+        this.ruler.focusMode = targetFocus;
+        this.ruler.setStyle(targetStyle);
+        this.ruler.setFocusMode(targetFocus);
+      }
+    }
+  }
+
+  setRulerStyle(newStyle) {
+    if (!newStyle || !["off", "highlight", "bottom-cover"].includes(newStyle)) return;
+    if (!this.settings.ruler) this.settings.ruler = {};
+
+    let currentFocus = this.settings.ruler.focusMode || "off";
+    if (currentFocus === "above") currentFocus = "up";
+    if (currentFocus === "below") currentFocus = "down";
+
+    this.settings.ruler.style = newStyle;
+    this.settings.ruler.mode = newStyle;
+
+    if (newStyle !== "off") {
+      this.settings.ruler.lastActiveStyle = newStyle;
+      this.settings.ruler.lastActiveCombination = { style: newStyle, focusMode: currentFocus };
+      if (this.ruler) {
+        this.ruler.lastActiveStyle = newStyle;
+        this.ruler.lastActiveCombination = { style: newStyle, focusMode: currentFocus };
+      }
+    } else if (currentFocus !== "off") {
+      this.settings.ruler.lastActiveCombination = { style: "off", focusMode: currentFocus };
+      if (this.ruler) {
+        this.ruler.lastActiveCombination = { style: "off", focusMode: currentFocus };
+      }
+    }
+
+    if (newStyle === "off" && currentFocus === "off") {
+      // Obě volby jsou vypnuty: automaticky přejít do deaktivovaného stavu
+      this.settings.ruler.enabled = false;
+      if (this.ruler) {
+        this.ruler.setStyle("off");
+        this.ruler.setEnabled(false);
+      }
+    } else {
+      // Alespoň jedna vizuální složka je aktivní
+      if (!this.settings.ruler.enabled) {
+        this.settings.ruler.enabled = true;
+      }
+      if (this.ruler) {
+        this.ruler.setStyle(newStyle);
+        this.ruler.setEnabled(true);
+      }
+    }
+
+    this.updateRulerToggleButtonUI();
+    this.updateRulerSettingsVisibility(newStyle, currentFocus, this.isPdfMode);
+    storage.saveSettings(this.settings);
+  }
+
+  setRulerFocusMode(newFocus) {
+    if (!newFocus) return;
+    if (newFocus === "above") newFocus = "up";
+    if (newFocus === "below") newFocus = "down";
+    if (!["off", "up", "down", "both"].includes(newFocus)) return;
+    if (!this.settings.ruler) this.settings.ruler = {};
+
+    const currentStyle = this.settings.ruler.style || this.settings.ruler.mode || "off";
+    this.settings.ruler.focusMode = newFocus;
+
+    if (newFocus !== "off") {
+      this.settings.ruler.lastActiveFocus = newFocus;
+      this.settings.ruler.lastActiveCombination = { style: currentStyle, focusMode: newFocus };
+      if (this.ruler) {
+        this.ruler.lastActiveFocus = newFocus;
+        this.ruler.lastActiveCombination = { style: currentStyle, focusMode: newFocus };
+      }
+    } else if (currentStyle !== "off") {
+      this.settings.ruler.lastActiveCombination = { style: currentStyle, focusMode: "off" };
+      if (this.ruler) {
+        this.ruler.lastActiveCombination = { style: currentStyle, focusMode: "off" };
+      }
+    }
+
+    if (newFocus === "off" && currentStyle === "off") {
+      // Obě volby jsou vypnuty: automaticky přejít do deaktivovaného stavu
+      this.settings.ruler.enabled = false;
+      if (this.ruler) {
+        this.ruler.setFocusMode("off");
+        this.ruler.setEnabled(false);
+      }
+    } else {
+      // Alespoň jedna vizuální složka je aktivní
+      if (!this.settings.ruler.enabled) {
+        this.settings.ruler.enabled = true;
+      }
+      if (this.ruler) {
+        this.ruler.setFocusMode(newFocus);
+        this.ruler.setEnabled(true);
+      }
+    }
+
+    this.updateRulerToggleButtonUI();
+    this.updateRulerSettingsVisibility(currentStyle, newFocus, this.isPdfMode);
+    storage.saveSettings(this.settings);
+  }
+
   toggleRuler() {
     const isInReader = !this.dom.viewReader.classList.contains("is-hidden");
     if (!isInReader) return;
     if (this.settings.showRulerButton === false) return;
 
     document.body.classList.add("in-reader-view");
-    this.ruler.toggle();
+    const willEnable = !this.ruler.enabled;
+    if (willEnable) {
+      this.ensureActiveRulerVisualMode();
+      this.ruler.setEnabled(true);
+    } else {
+      this.ruler.setEnabled(false);
+    }
     this.settings.ruler.enabled = this.ruler.enabled;
+    if (typeof tracker !== "undefined" && tracker.setRulerState) {
+      tracker.setRulerState(this.ruler.enabled, this.ruler.rulerMode);
+    }
     storage.saveSettings(this.settings);
     this.updateRulerToggleButtonUI();
     this.showToast(this.ruler.enabled ? "Pravítko zapnuto" : "Pravítko vypnuto", "info");
@@ -2722,27 +3367,40 @@ export class LuminaApp {
     }
   }
 
-  setWordTracking(isWordMode) {
+  setRulerModeType(mode) {
     if (this.isPdfMode && this.isImageOnlyPdf) {
-      isWordMode = false;
+      mode = "line";
     }
+    const validMode = ["line", "word"].includes(mode) ? mode : "line";
     if (!this.settings.ruler) this.settings.ruler = {};
-    const enabled = !!isWordMode;
-    this.settings.ruler.wordTracking = enabled;
+    this.settings.ruler.rulerModeType = validMode;
+    this.settings.ruler.wordTracking = (validMode === "word");
 
-    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", !enabled);
-    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", enabled);
+    // 1. Okamžitá synchronní aktualizace UI stavu tlačítek a přepínačů
+    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", validMode === "line");
+    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", validMode === "word");
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
-      btn.classList.toggle("active", (btn.dataset.rulerModeType === "word") === enabled);
+      btn.classList.toggle("active", btn.dataset.rulerModeType === validMode);
     });
-
-    if (this.ruler) {
-      this.ruler.setWordTracking(enabled);
-      this.ruler.applyPosition();
+    if (this.dom.rulerWordTrackingSetting) {
+      this.setSwitchState(this.dom.rulerWordTrackingSetting, validMode === "word");
     }
 
     this.updateRulerToggleButtonUI();
     storage.saveSettings(this.settings);
+
+    // 2. Aktivace režimu v pravítku a trackeru
+    if (this.ruler) {
+      this.ruler.setRulerMode(validMode);
+      if (typeof tracker !== "undefined" && tracker.setRulerState) {
+        tracker.setRulerState(this.ruler.enabled, validMode);
+      }
+      this.ruler.applyPosition();
+    }
+  }
+
+  setWordTracking(isWordMode) {
+    this.setRulerModeType(isWordMode ? "word" : "line");
   }
 
   updateRulerToggleButtonUI() {
@@ -2766,20 +3424,25 @@ export class LuminaApp {
 
     const showRuler = this.settings.showRulerButton !== false;
     const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;
-    if (rulerContainer) {
+    if (rulerContainer && rulerContainer.style) {
       rulerContainer.style.display = showRuler ? "flex" : "none";
-      rulerContainer.classList.toggle("is-hidden", !showRuler);
+      rulerContainer.classList?.toggle?.("is-hidden", !showRuler);
     }
 
-    const isWordTrackingActive = !!this.settings.ruler.wordTracking;
-    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", !isWordTrackingActive);
-    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", isWordTrackingActive);
+    const curRulerMode = this.settings.ruler.rulerModeType || (this.settings.ruler.wordTracking ? "word" : "line");
+    if (this.dom.popoverModeLine) this.dom.popoverModeLine.classList.toggle("active", curRulerMode === "line");
+    if (this.dom.popoverModeWord) this.dom.popoverModeWord.classList.toggle("active", curRulerMode === "word");
     document.querySelectorAll("[data-ruler-mode-type]").forEach(btn => {
-      btn.classList.toggle("active", (btn.dataset.rulerModeType === "word") === isWordTrackingActive);
+      btn.classList.toggle("active", btn.dataset.rulerModeType === curRulerMode);
     });
+    const currentStyle = this.settings.ruler.style || this.settings.ruler.mode || "highlight";
+    let currentFocus = this.settings.ruler.focusMode || "off";
+    if (currentFocus === "above") currentFocus = "up";
+    if (currentFocus === "below") currentFocus = "down";
+
     if (this.dom.popoverStyleButtons) {
       this.dom.popoverStyleButtons.forEach(btn => {
-        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === this.settings.ruler.mode);
+        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === currentStyle);
       });
     }
     if (this.dom.popoverColorButtons) {
@@ -2789,7 +3452,7 @@ export class LuminaApp {
     }
     if (this.dom.rulerModeSelects) {
       this.dom.rulerModeSelects.forEach(btn => {
-        btn.classList.toggle("active", (btn.dataset.rulerMode || btn.dataset.rulerStyle) === this.settings.ruler.mode);
+        btn.classList.toggle("active", (btn.dataset.rulerStyle || btn.dataset.rulerMode) === currentStyle);
       });
     }
     if (this.dom.rulerColorSelects) {
@@ -2797,8 +3460,14 @@ export class LuminaApp {
         btn.classList.toggle("active", btn.dataset.rulerColor === this.settings.ruler.color);
       });
     }
+    document.querySelectorAll("[data-ruler-focus]").forEach(btn => {
+      const f = btn.dataset.rulerFocus;
+      const normalized = (f === "above" ? "up" : (f === "below" ? "down" : f));
+      btn.classList.toggle("active", normalized === currentFocus);
+    });
     this.updateTouchZonesUI();
-    this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+    this.updateRulerSettingsVisibility(currentStyle, currentFocus, this.isPdfMode);
+    this.syncAllSegmentedBubbles(false);
   }
 
 
@@ -2998,29 +3667,40 @@ export class LuminaApp {
 
   /**
    * Kontextově adaptivní viditelnost ovládacích prvků pravítka v popoveru a draweru.
-   * @param {string} [style] - highlight | focus | bottom-cover
+   * @param {string} [style] - off | highlight | bottom-cover
+   * @param {string|boolean} [focusMode] - off | up | down | both (nebo boolean isPdf při legacy volání)
    * @param {boolean} [isPdf] - zda je aktivní PDF dokument
    */
-  updateRulerSettingsVisibility(style = null, isPdf = null) {
-    const activeStyle = style || this.settings?.ruler?.mode || this.ruler?.mode || "highlight";
+  updateRulerSettingsVisibility(style = null, focusMode = null, isPdf = null) {
+    if (typeof focusMode === "boolean") {
+      isPdf = focusMode;
+      focusMode = null;
+    }
+    const activeStyle = style || this.settings?.ruler?.style || this.settings?.ruler?.mode || this.ruler?.style || "highlight";
+    let activeFocus = focusMode || this.settings?.ruler?.focusMode || this.ruler?.focusMode || "off";
+    if (activeFocus === "above") activeFocus = "up";
+    if (activeFocus === "below") activeFocus = "down";
     const activePdf = isPdf !== null && isPdf !== undefined ? !!isPdf : !!this.isPdfMode;
     const isImageOnly = activePdf && !!this.isImageOnlyPdf;
 
-    // 1. Color section: skryto pro režim focus (Zaostření)
-    const hideColor = activeStyle === "focus";
+    // 1. Color section: skryto pro styl "off" (Vypnuto)
+    const hideColor = activeStyle === "off";
     const popoverColor = this.dom.popoverRulerColorSection || document.getElementById("popover-ruler-color-section");
     if (popoverColor) popoverColor.classList.toggle("is-hidden", hideColor);
 
     const drawerColor = this.dom.drawerRulerColorSection || document.getElementById("drawer-ruler-color-section");
     if (drawerColor) drawerColor.classList.toggle("is-hidden", hideColor);
 
-    // 2. Dimming opacity section: skryto pro režim highlight (Zvýrazňovač)
-    const hideOpacity = activeStyle === "highlight";
+    // 2. Dimming opacity section: skryto a zakázáno pro zaostření "off" (Vypnuto)
+    const hideOpacity = activeFocus === "off";
     const popoverOpacity = this.dom.popoverRulerOpacitySection || document.getElementById("popover-ruler-opacity-section");
     if (popoverOpacity) popoverOpacity.classList.toggle("is-hidden", hideOpacity);
 
     const drawerOpacity = this.dom.drawerRulerOpacitySection || document.getElementById("drawer-ruler-opacity-section");
     if (drawerOpacity) drawerOpacity.classList.toggle("is-hidden", hideOpacity);
+
+    if (this.dom.sliderRulerOpacity) this.dom.sliderRulerOpacity.disabled = hideOpacity;
+    if (this.dom.popoverSliderRulerOpacity) this.dom.popoverSliderRulerOpacity.disabled = hideOpacity;
 
     // 3. PDF height & auto-height section: skryto pro režim bottom-cover nebo mimo PDF dokument
     const hidePdfHeight = !activePdf || activeStyle === "bottom-cover";
@@ -3069,16 +3749,17 @@ export class LuminaApp {
     const popoverModeWord = this.dom.popoverModeWord || document.getElementById("popover-mode-word");
     const popoverModeLine = this.dom.popoverModeLine || document.getElementById("popover-mode-line");
     const popoverModeSegmented = this.dom.popoverModeSegmented || document.getElementById("popover-mode-segmented");
+    const curRulerMode = this.settings.ruler?.rulerModeType || (this.settings.ruler?.wordTracking ? "word" : "line");
     if (popoverModeWord) {
       popoverModeWord.classList.toggle("is-hidden", isImageOnly);
       popoverModeWord.disabled = isImageOnly;
-      if (isImageOnly) {
-        popoverModeWord.classList.remove("active");
-        if (popoverModeLine) popoverModeLine.classList.add("active");
-      } else {
-        popoverModeWord.classList.toggle("active", !!this.settings.ruler?.wordTracking);
-        if (popoverModeLine) popoverModeLine.classList.toggle("active", !this.settings.ruler?.wordTracking);
-      }
+    }
+    if (isImageOnly) {
+      if (popoverModeWord) popoverModeWord.classList.remove("active");
+      if (popoverModeLine) popoverModeLine.classList.add("active");
+    } else {
+      if (popoverModeWord) popoverModeWord.classList.toggle("active", curRulerMode === "word");
+      if (popoverModeLine) popoverModeLine.classList.toggle("active", curRulerMode === "line");
     }
     if (popoverModeSegmented) {
       popoverModeSegmented.classList.toggle("is-single-segment", isImageOnly);
@@ -3333,22 +4014,6 @@ export class LuminaApp {
     }
   }
 
-  async loadBundledSampleBook() {
-    if (this.isImporting) return;
-    try {
-      this.showToast("Načítám vzorovou knihu R.U.R...", "info");
-      const resp = await fetch("sample-books/rur.epub");
-      if (!resp.ok) throw new Error("Soubor rur.epub nebyl nalezen na serveru");
-      const blob = await resp.blob();
-      const file = new File([blob], "rur.epub", { type: "application/epub+zip" });
-      await this.handleFileUpload(file);
-    } catch (e) {
-      console.warn("Chyba při načítání vzorové knihy:", e);
-      this.showToast("Vzorovou knihu se nepodařilo načíst.", "error");
-      this.renderLibrary();
-    }
-  }
-
   async loadLibrary() {
     try {
       await supabaseSync.syncAll({ silent: true });
@@ -3502,14 +4167,26 @@ export class LuminaApp {
 
     supabaseSync.onSyncCompleted(async (stats) => {
       const isReaderActive = this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden");
-      if (isReaderActive) {
+      const isStatsModalOpen = this.dom.statsModal && this.dom.statsModal.classList.contains("open");
+      if (isReaderActive && !isStatsModalOpen) {
         this._libraryNeedsRefresh = true;
         this._statsNeedRefresh = true;
         return;
       }
       console.log("[LuminaApp] Cloud sync byl dokončen, obnovuji statistiky a knihovnu:", stats);
       await this.refreshStatsUI();
-      await this.renderLibrary();
+      if (!isReaderActive) {
+        await this.renderLibrary();
+      }
+    });
+
+    // Globální posluchač události dokončení synchronizace a rekonsiliace relací
+    window.addEventListener("lumina-sync-completed", async (e) => {
+      const isReaderActive = this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden");
+      const isStatsModalOpen = this.dom.statsModal && this.dom.statsModal.classList.contains("open");
+      if (!isReaderActive || isStatsModalOpen) {
+        await this.refreshStatsUI();
+      }
     });
   }
 
@@ -3570,6 +4247,7 @@ export class LuminaApp {
       if (stats.uploadedToCloud > 0) parts.push(`postup odeslán`);
       if (stats.sessionsDownloaded > 0) parts.push(`relace staženy: ${stats.sessionsDownloaded}`);
       if (stats.sessionsUploaded > 0) parts.push(`relace odeslány: ${stats.sessionsUploaded}`);
+      if (stats.sessionsPurged > 0) parts.push(`relace promazány: ${stats.sessionsPurged}`);
       if (stats.sessionsMerged > 0) parts.push(`statistiky sloučeny`);
       
       const msg = parts.length > 0
@@ -3775,10 +4453,7 @@ export class LuminaApp {
       await this.loadCurrentChapter(targetPage);
       if (this.ruler && this.ruler.enabled) {
         this.ruler.forceReleaseNavigationLocks();
-        this.ruler.refreshLines();
-        this.ruler.resetPositionForPage(1);
         this.ruler.updateStyles();
-        this.ruler.applyPosition();
       }
     } catch (err) {
       console.error("Chyba při otevírání knihy:", err);
@@ -3786,12 +4461,14 @@ export class LuminaApp {
     }
   }
 
-  onPdfPageRendered(currentPage, numPages, isReflow = false, isInitial = false) {
+  onPdfPageRendered(currentPage, numPages, isReflow = false, isInitial = false, explicitDirection = null) {
     const prevPageIndex = this.currentPageIndex;
     this.currentPageIndex = currentPage - 1;
     this.totalPagesInChapter = numPages;
     const isPageChanged = !isReflow && !isInitial && this.currentPageIndex !== prevPageIndex;
-    const direction = isPageChanged ? (this.currentPageIndex > prevPageIndex ? 1 : -1) : 0;
+    const direction = explicitDirection !== null
+      ? explicitDirection
+      : (isPageChanged ? (this.currentPageIndex > prevPageIndex ? 1 : -1) : 0);
     if (isPageChanged || isInitial) {
       this.wordsCreditedOnCurrentPage = 0;
     }
@@ -4296,6 +4973,13 @@ export class LuminaApp {
 
     this._isLoadingNextChapter = true;
     try {
+      while (nextIdx < this.currentParser.spine.length) {
+        const candidate = await this.getOrLoadChapter(nextIdx);
+        if (candidate && !candidate.isBlank) break;
+        nextIdx++;
+      }
+      if (nextIdx >= this.currentParser.spine.length) return;
+
       const chapterData = await this.getOrLoadChapter(nextIdx);
       if (!this.isVerticalReadingMode() || !this.currentParser || this._isModeTransitioning) return;
 
@@ -4331,6 +5015,13 @@ export class LuminaApp {
     this._isLoadingPrevChapter = true;
     const vp = this.dom.pagedViewport;
     try {
+      while (prevIdx >= 0) {
+        const candidate = await this.getOrLoadChapter(prevIdx);
+        if (candidate && !candidate.isBlank) break;
+        prevIdx--;
+      }
+      if (prevIdx < 0) return;
+
       const chapterData = await this.getOrLoadChapter(prevIdx);
       if (!this.isVerticalReadingMode() || !this.currentParser || this._isModeTransitioning) return;
 
@@ -4380,7 +5071,7 @@ export class LuminaApp {
       this.dom.readerContent.style.transform = "none";
     }
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.hideForPageTransition();
+      this.ruler.prepareForPageTransition(targetPage === "last" ? -1 : 1);
     }
 
     this.isNavigating = true;
@@ -4390,6 +5081,8 @@ export class LuminaApp {
     try {
       const chapterData = await this.getOrLoadChapter(this.currentChapterIndex);
       this.currentRawChapterHtml = chapterData.html;
+      this.currentChapterWords = chapterData.wordCount || 0;
+      this._maxVScrollByChapter = new Map();
 
       const title = chapterData.title || this.getChapterTitle(this.currentChapterIndex);
       if (this.dom.chapterTitleEl) this.dom.chapterTitleEl.textContent = title;
@@ -4490,7 +5183,7 @@ export class LuminaApp {
     }
 
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.hideForPageTransition();
+      this.ruler.prepareForPageTransition(targetPage === "last" ? -1 : 1);
     }
 
     // 1. Okamžitý reset indexu a transformace před načtením a vložením nového DOMu
@@ -4541,6 +5234,7 @@ export class LuminaApp {
     try {
       const chapter = await this.currentParser.loadChapter(this.currentChapterIndex);
       this.currentRawChapterHtml = chapter.html;
+      this.currentChapterWords = chapter.wordCount || 0;
       if (this.dom.chapterTitleEl) this.dom.chapterTitleEl.textContent = chapter.title;
       if (this.dom.pagedChapterName) this.dom.pagedChapterName.textContent = chapter.title;
       this.renderChapterHtml();
@@ -4580,6 +5274,9 @@ export class LuminaApp {
 
       if (targetPage === "last") {
         finalPageIndex = Math.max(0, this.totalPagesInChapter - 1);
+        while (finalPageIndex > 0 && !this.hasVisibleContentOnPage(finalPageIndex)) {
+          finalPageIndex--;
+        }
         navDirection = -1;
       } else if (typeof targetPage === "object" && targetPage !== null) {
         if (typeof targetPage.pageIndex === "number" && targetPage.pageIndex >= 0) {
@@ -4595,15 +5292,15 @@ export class LuminaApp {
         navDirection = finalPageIndex > 0 ? 1 : 0;
       }
 
-      // Phase 3 (Immediate Ruler Re-Indexing & Masking): Synchronní usazení a zamaskování
-      this.goToPage(finalPageIndex, navDirection, true, { isInitialLoad: true });
+      // 1. Nejprve usadíme stránku i pravítko na cílovou pozici před odhalením obsahu
+      this.goToPage(finalPageIndex, navDirection, true, { isInitialLoad: true, skipRulerUpdate: true });
 
-      // Pojistka synchronního refreshnutí a zamaskování pravítka pro cílovou stránku
+      // 2. Synchronní refreshnutí a zamaskování pravítka pro cílovou stránku před zobrazením textu
       if (this.ruler && this.ruler.enabled) {
         this.ruler.resetPositionForPage(navDirection, true);
       }
 
-      // Phase 4 (Reveal): Obnovení viditelnosti po ukotvení a zamaskování cílové strany
+      // 3. Reveal: Nyní bezpečně odebereme třídu is-chapter-loading a nastavíme opacity = "1"
       if (stage) {
         stage.classList.remove("is-chapter-loading");
         void stage.offsetWidth;
@@ -4611,7 +5308,7 @@ export class LuminaApp {
       }
       if (this.dom.readerContent) {
         this.dom.readerContent.classList.remove("is-chapter-loading");
-        void this.dom.readerContent.offsetWidth; // Vynutíme uplatnění cílové transformace před odhalením
+        void this.dom.readerContent.offsetWidth;
         this.dom.readerContent.style.opacity = "1";
       }
       requestAnimationFrame(() => {
@@ -4683,7 +5380,7 @@ export class LuminaApp {
   beginSliderDrag() {
     this._isSliderDragging = true;
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.hideForPageTransition();
+      this.ruler.prepareForPageTransition(1);
     }
     if (
       this.settings.fastReading &&
@@ -4704,6 +5401,20 @@ export class LuminaApp {
       clearTimeout(this._sliderCommitTimer);
       this._sliderCommitTimer = null;
     }
+    if (this._sliderCssRafId) {
+      cancelAnimationFrame(this._sliderCssRafId);
+      this._sliderCssRafId = null;
+    }
+    // Synchronously flush all typography and stage margin CSS custom properties
+    // before measuring column step and line positions on the next animation frame
+    document.documentElement.style.setProperty("--reader-font-size", `${this.settings.fontSize}px`);
+    document.documentElement.style.setProperty("--reader-line-height", this.settings.lineHeight);
+    document.documentElement.style.setProperty("--reader-letter-spacing", `${this.settings.letterSpacing}px`);
+    document.documentElement.style.setProperty("--reader-word-spacing", `${this.settings.wordSpacing}px`);
+    const m = this.settings.marginPercent ?? 8;
+    document.documentElement.style.setProperty("--reader-stage-width", `${100 - (m * 2)}vw`);
+    document.documentElement.style.setProperty("--col-gap", `${(m * 0.25).toFixed(2)}vw`);
+
     if (this._bionicSuspendedForDrag) {
       this.renderChapterHtml();
       this._bionicSuspendedForDrag = false;
@@ -4718,6 +5429,16 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
           this.ruler.updateStyles();
           this.ruler.refreshLines();
+          if (this.ruler.snapToLines && this.ruler.cachedLines.length > 0) {
+            const clampedIdx = Math.max(0, Math.min(this.ruler.activeLineIndex >= 0 ? this.ruler.activeLineIndex : 0, this.ruler.cachedLines.length - 1));
+            this.ruler.activeLineIndex = clampedIdx;
+            const geom = this.ruler.computeLineGeometry(clampedIdx);
+            if (geom) {
+              this.ruler.height = geom.height;
+              this.ruler.targetY = geom.targetY;
+              this.ruler.currentY = geom.targetY;
+            }
+          }
           this.ruler.applyPosition();
         }
         return;
@@ -4730,9 +5451,111 @@ export class LuminaApp {
         this.ruler.forceReleaseNavigationLocks();
         this.ruler.updateStyles();
         this.ruler.refreshLines();
+        if (this.ruler.wordTracking) {
+          this.ruler.refreshWords();
+        }
+        if (this.ruler.snapToLines && this.ruler.cachedLines.length > 0) {
+          const clampedIdx = Math.max(0, Math.min(this.ruler.activeLineIndex >= 0 ? this.ruler.activeLineIndex : 0, this.ruler.cachedLines.length - 1));
+          this.ruler.activeLineIndex = clampedIdx;
+          const geom = this.ruler.computeLineGeometry(clampedIdx);
+          if (geom) {
+            this.ruler.height = geom.height;
+            this.ruler.targetY = geom.targetY;
+            this.ruler.currentY = geom.targetY;
+          }
+        }
         this.ruler.applyPosition();
       }
     });
+  }
+
+  handleTypographyOrLayoutChange() {
+    if (!this.currentBook || this.isPdfMode || !this.dom.readerContent || this.dom.viewReader?.classList.contains("is-hidden")) return;
+
+    this._cachedColumnStep = null;
+    tracker.cancelCurrentPageDwell();
+
+    if (this.isVerticalReadingMode()) {
+      this.recalcPages();
+      this.updatePageUI();
+    } else {
+      this.recomputeGlobalPagination();
+      this.recalcPages();
+      this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
+      this.renderScrubberTicks();
+    }
+
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.forceReleaseNavigationLocks?.();
+      this.ruler.updateStyles?.();
+      this.ruler.refreshLines();
+      if (this.ruler.wordTracking) {
+        this.ruler.refreshWords?.();
+      }
+      if (this.ruler.snapToLines && this.ruler.cachedLines.length > 0) {
+        const clampedIdx = Math.max(0, Math.min(this.ruler.activeLineIndex >= 0 ? this.ruler.activeLineIndex : 0, this.ruler.cachedLines.length - 1));
+        this.ruler.activeLineIndex = clampedIdx;
+        const geom = this.ruler.computeLineGeometry(clampedIdx);
+        if (geom) {
+          this.ruler.height = geom.height;
+          this.ruler.targetY = geom.targetY;
+          this.ruler.currentY = geom.targetY;
+        }
+      }
+      this.ruler.applyPosition();
+    }
+  }
+
+  cleanTrailingEmptyNodes(root) {
+    if (!root) return;
+
+    const isNodeEmpty = (node) => {
+      if (!node) return false;
+      if (node.nodeType === Node.COMMENT_NODE) return true;
+      if (node.nodeType === Node.TEXT_NODE) {
+        return node.textContent.replace(/[\s\u00a0\u200b-\u200d\ufeff]+/g, "").length === 0;
+      }
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const tag = node.tagName.toLowerCase();
+        if (["img", "image", "svg", "canvas", "video", "audio", "table"].includes(tag)) {
+          return false;
+        }
+        if (tag === "br" || tag === "hr") {
+          return true;
+        }
+        const hasMedia = node.querySelector("img, image, svg, canvas, video, audio, table") !== null;
+        if (hasMedia) return false;
+        const text = node.textContent.replace(/[\s\u00a0\u200b-\u200d\ufeff]+/g, "");
+        return text.length === 0;
+      }
+      return false;
+    };
+
+    while (root.lastChild) {
+      if (isNodeEmpty(root.lastChild)) {
+        root.removeChild(root.lastChild);
+        continue;
+      }
+      if (root.lastChild.nodeType === Node.ELEMENT_NODE) {
+        let nested = root.lastChild;
+        while (nested.lastChild && isNodeEmpty(nested.lastChild)) {
+          nested.removeChild(nested.lastChild);
+        }
+        if (isNodeEmpty(nested)) {
+          root.removeChild(nested);
+          continue;
+        }
+      }
+      break;
+    }
+
+    // Vynulovat margin-bottom i padding-bottom na koncových potomcích pro zabránění přetečení
+    let current = root.lastElementChild;
+    while (current) {
+      current.style.marginBottom = "0px";
+      current.style.paddingBottom = "0px";
+      current = current.lastElementChild;
+    }
   }
 
   renderChapterHtml() {
@@ -4742,6 +5565,7 @@ export class LuminaApp {
       ? this.toBionicReadingHtml(this.currentRawChapterHtml || "", this.currentChapterIndex)
       : (this.currentRawChapterHtml || "");
     this.dom.readerContent.innerHTML = htmlToRender;
+    this.cleanTrailingEmptyNodes(this.dom.readerContent);
     const imgs = this.dom.readerContent.querySelectorAll("img");
     imgs.forEach(img => {
       img.loading = "eager";
@@ -4752,6 +5576,7 @@ export class LuminaApp {
   applyFastReadingMode() {
     if (!this.currentBook || !this.dom.readerContent || this.isPdfMode) return;
 
+    tracker.cancelCurrentPageDwell();
     this.dom.readerContent.classList.toggle("bionic-active", !!this.settings.fastReading);
 
     if (this.isVerticalReadingMode()) {
@@ -4789,8 +5614,12 @@ export class LuminaApp {
     }
 
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.refreshLines();
-      this.ruler.applyPosition();
+      requestAnimationFrame(() => {
+        if (!this.ruler || !this.ruler.enabled) return;
+        this.ruler.refreshLines();
+        this.ruler.refreshWords();
+        this.ruler.applyPosition();
+      });
     }
   }
 
@@ -4842,6 +5671,78 @@ export class LuminaApp {
     }
   }
 
+  /**
+   * Zjistí, zda daná stránka kapitoly obsahuje skutečný viditelný obsah (text nebo média).
+   * Zabraňuje zobrazování a generování prázdných stran na konci kapitol.
+   */
+  hasVisibleContentOnPage(pageIndex) {
+    if (this.isPdfMode || this.isVerticalReadingMode()) return true;
+    if (!this.dom.pagedStage || !this.dom.readerContent) return true;
+    const { stageWidth, exactStep } = this.getExactColumnStep();
+    if (pageIndex < 0 || exactStep <= 0 || stageWidth <= 0) return false;
+
+    const pageStartRel = pageIndex * exactStep;
+    const pageEndRel = pageStartRel + stageWidth;
+
+    const stageRect = this.dom.pagedStage.getBoundingClientRect();
+    const stageLeft = stageRect.left;
+
+    let currentOffset = 0;
+    const transform = this.dom.readerContent.style.transform;
+    if (transform) {
+      const match = transform.match(/translate3d\(\s*(-?[\d.]+)\s*px/);
+      if (match) {
+        currentOffset = Math.abs(parseFloat(match[1])) || 0;
+      }
+    }
+
+    const elements = this.dom.readerContent.querySelectorAll(
+      "p, h1, h2, h3, h4, h5, h6, img, svg, canvas, table, blockquote, pre, code, ul, ol, li, div, section, article"
+    );
+    const range = document.createRange();
+
+    for (let i = elements.length - 1; i >= 0; i--) {
+      const el = elements[i];
+      const tag = el.tagName.toLowerCase();
+      const isMedia = ["img", "image", "svg", "canvas", "video", "audio", "table"].includes(tag);
+
+      if (!isMedia && el.textContent.trim().length === 0) continue;
+
+      if (isMedia) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          const rightRel = (r.right - stageLeft) + currentOffset;
+          const leftRel = (r.left - stageLeft) + currentOffset;
+          if (rightRel > pageStartRel + 3 && leftRel < pageEndRel - 3) {
+            return true;
+          }
+        }
+      } else {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let textNode;
+        while ((textNode = walker.nextNode())) {
+          if (textNode.textContent.trim().length > 0) {
+            try {
+              range.selectNodeContents(textNode);
+              const rects = range.getClientRects();
+              for (let j = 0; j < rects.length; j++) {
+                const r = rects[j];
+                if (r.width > 0 && r.height > 0) {
+                  const rightRel = (r.right - stageLeft) + currentOffset;
+                  const leftRel = (r.left - stageLeft) + currentOffset;
+                  if (rightRel > pageStartRel + 3 && leftRel < pageEndRel - 3) {
+                    return true;
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   recalcPages() {
     if (this.isPdfMode) {
       if (this.pdfLoader) {
@@ -4866,15 +5767,29 @@ export class LuminaApp {
     this.pageGap = gap;
     const scrollWidth = this.dom.readerContent.scrollWidth;
 
-    // Bezpečnostní práh pro sub-pixelový přetisk a mezeru mezi sloupci
-    const safetyThreshold = Math.max(5, Math.min(gap * 0.5, 15));
+    const colWidth = (typeof this.resolveEffectiveColumnCount === "function" && this.resolveEffectiveColumnCount() === 2)
+      ? Math.max(50, (stageWidth - gap) / 2)
+      : stageWidth;
+    // Robustní bezpečnostní práh proti sub-pixelovému přetisku, mezerám a mikromarginům
+    const safetyThreshold = Math.max(30, Math.min(gap + 20, colWidth * 0.35));
+
     if (scrollWidth <= stageWidth + safetyThreshold) {
       this.totalPagesInChapter = 1;
     } else {
       this.totalPagesInChapter = 1 + Math.ceil((scrollWidth - stageWidth - safetyThreshold) / exactStep);
     }
 
+    // Ověříme, zda poslední vypočtená strana skutečně obsahuje viditelný text nebo média
+    while (this.totalPagesInChapter > 1 && !this.hasVisibleContentOnPage(this.totalPagesInChapter - 1)) {
+      console.log(`[LuminaReader] recalcPages: Vyřazuji prázdnou stranu ${this.totalPagesInChapter}`);
+      this.totalPagesInChapter--;
+    }
+
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
+
+    if (this.ruler && this.ruler._canonicalColTopOffsets) {
+      this.ruler._canonicalColTopOffsets.clear();
+    }
 
     this.updatePageUI();
   }
@@ -4906,17 +5821,39 @@ export class LuminaApp {
     }
 
     // Horizontální stránkovaný režim EPUB:
-    if (this.ruler && this.ruler.enabled && this.ruler.wordTracking && this.ruler.cachedWords && this.ruler.cachedWords.length > 0) {
-      return this.ruler.cachedWords.length;
-    }
-
-    const chapterWords = this.currentChapterWords || tracker.currentChapterWords || 1000;
+    // Pozn.: this.ruler.cachedWords obsahuje pouze slova jednoho aktivního řádku (~8-15 slov),
+    // proto jej nikdy nepoužíváme jako počet slov celé stránky!
+    const chapterWords = this.currentChapterWords
+      || (this.bookWordCounts?.chapterCounts?.[this.currentChapterIndex])
+      || tracker.currentChapterWords
+      || 1000;
     const pages = Math.max(1, this.totalPagesInChapter || 1);
+    if (pages === 1 && chapterWords > 0) {
+      return Math.max(15, Math.min(650, Math.round(chapterWords)));
+    }
     return Math.max(40, Math.min(650, Math.round(chapterWords / pages)));
   }
 
+  releaseNavigationLocks() {
+    clearTimeout(this._navSafetyTimer);
+    if (this.navigatingPageTimer) {
+      clearTimeout(this.navigatingPageTimer);
+      this.navigatingPageTimer = null;
+    }
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
+    this.isLineLocked = false;
+    const stage = this.dom.pagedStage;
+    if (stage) stage.classList.remove("is-turning-page");
+    if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
+    document.body.classList.remove("is-turning-page");
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.forceReleaseNavigationLocks();
+    }
+  }
+
   goToPage(pageIndex, explicitDirection = null, immediateRuler = true, options = {}) {
-    if (options.isNavigationJump || options.isReflow) {
+    if (options.isNavigationJump) {
       tracker.cancelCurrentPageDwell();
     }
     if (this.isPdfMode && this.pdfLoader) {
@@ -4955,16 +5892,25 @@ export class LuminaApp {
     this.pageGap = gap;
     const offset = this.currentPageIndex * exactStep;
 
+    const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
+    const direction = explicitDirection !== null
+      ? explicitDirection
+      : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
+
+    if (this.ruler && this.ruler._canonicalColTopOffsets && isPageChanged) {
+      this.ruler._canonicalColTopOffsets.clear();
+    }
+
     // Okamžitá hardwarově akcelerovaná CSS transformace stránky bez blokování snímku
     if (this.dom.readerContent) {
       this.dom.readerContent.style.transition = "none";
       this.dom.readerContent.style.transform = `translate3d(-${offset.toFixed(2)}px, 0, 0)`;
     }
 
-    const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
-    const direction = explicitDirection !== null
-      ? explicitDirection
-      : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
+    // Usazení masek zaostření na výchozí řádek PO transformaci sloupce pro udržení viditelnosti clon bez zmrazení chybných souřadnic
+    if (this.ruler && this.ruler.enabled && isPageChanged && !options.skipRulerUpdate) {
+      this.ruler.prepareForPageTransition(direction);
+    }
 
     const stage = this.dom.pagedStage;
     if (isPageChanged) {
@@ -5001,9 +5947,9 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
         }
       }
-    }, 300); // 300ms maximum lock lifetime
+    }, 650); // 650ms safety fallback lock lifetime
 
-    // Failsafe timeout pro zaručené odemčení navigačního zámku
+    // Failsafe timeout pro zaručené odemčení navigačního zámku po ustálení gest a WebKit syntetických eventů
     if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
     this.navigatingPageTimer = setTimeout(() => {
       this.isNavigating = false;
@@ -5013,10 +5959,13 @@ export class LuminaApp {
       if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
       document.body.classList.remove("is-turning-page");
       if (this.ruler && this.ruler.enabled) {
-        this.ruler.forceReleaseNavigationLocks();
+        this.ruler.isNavigating = false;
+        this.ruler.isNavigatingPage = false;
+        this.ruler.isLineLocked = false;
+        this.ruler.suppressLineAdvancement = false;
       }
       this.navigatingPageTimer = null;
-    }, 200);
+    }, 650);
 
     try {
       // Zaznamenání přechodu stránky do trackeru s přesným počtem viditelných slov a dwell time
@@ -5053,24 +6002,78 @@ export class LuminaApp {
         this.saveProgress(false);
       }, 150);
 
-      // Odložená aktualizace pravítka do double requestAnimationFrame po layout flush na WebKitu/iPadu
+      // Odložená aktualizace pravítka po layout flush a ustálení na WebKitu/iPadu
       if (this.ruler && this.ruler.enabled) {
         if (this._rulerPageChangeRafId) {
           cancelAnimationFrame(this._rulerPageChangeRafId);
           this._rulerPageChangeRafId = null;
         }
-        this._rulerPageChangeRafId = requestAnimationFrame(() => {
-          this._rulerPageChangeRafId = requestAnimationFrame(() => {
-            this._rulerPageChangeRafId = null;
+        if (this._rulerPageChangeTimer) {
+          clearTimeout(this._rulerPageChangeTimer);
+          this._rulerPageChangeTimer = null;
+        }
+        const content = this.dom.readerContent || document.getElementById("reader-content");
+        if (content && this._rulerTransitionEndHandler) {
+          content.removeEventListener("transitionend", this._rulerTransitionEndHandler);
+          this._rulerTransitionEndHandler = null;
+        }
+
+        if (!options?.skipRulerUpdate) {
+          let transitionDuration = 0;
+          if (content) {
+            try {
+              const cs = window.getComputedStyle(content);
+              const transProp = cs.transitionProperty || "";
+              const transDur = parseFloat(cs.transitionDuration) || 0;
+              if (transDur > 0 && (transProp.includes("transform") || transProp === "all")) {
+                transitionDuration = transDur * 1000;
+              }
+            } catch (e) {}
+          }
+
+          const executeRulerPageChange = () => {
+            if (this._rulerPageChangeTimer) {
+              clearTimeout(this._rulerPageChangeTimer);
+              this._rulerPageChangeTimer = null;
+            }
+            if (content && this._rulerTransitionEndHandler) {
+              content.removeEventListener("transitionend", this._rulerTransitionEndHandler);
+              this._rulerTransitionEndHandler = null;
+            }
             try {
               if (this.ruler && this.ruler.enabled) {
-                this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
+                if (content) void content.offsetWidth;
+                this.ruler.refreshLines();
+                this.ruler.resetPositionForPage(direction, isPageChanged);
               }
             } catch (rulerErr) {
               console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
             }
-          });
-        });
+          };
+
+          if (transitionDuration > 0 && content) {
+            this._rulerTransitionEndHandler = (e) => {
+              if (e && e.target !== content) return;
+              executeRulerPageChange();
+            };
+            content.addEventListener("transitionend", this._rulerTransitionEndHandler, { once: true });
+            this._rulerPageChangeTimer = setTimeout(executeRulerPageChange, Math.round(transitionDuration + 50));
+          } else if (immediateRuler) {
+            this._rulerPageChangeRafId = requestAnimationFrame(() => {
+              this._rulerPageChangeRafId = null;
+              if (content) void content.offsetWidth;
+              executeRulerPageChange();
+            });
+          } else {
+            // Post-Transition Settle Verification: double requestAnimationFrame + debounced settle timeout (60ms)
+            this._rulerPageChangeRafId = requestAnimationFrame(() => {
+              this._rulerPageChangeRafId = requestAnimationFrame(() => {
+                this._rulerPageChangeRafId = null;
+                this._rulerPageChangeTimer = setTimeout(executeRulerPageChange, 60);
+              });
+            });
+          }
+        }
       }
 
       requestAnimationFrame(() => {
@@ -5080,22 +6083,7 @@ export class LuminaApp {
       });
     } catch (err) {
       console.error('Page navigation error:', err);
-    } finally {
-      // Synchronní uvolnění navigačního zámku ihned po vykreslení DOMu
-      clearTimeout(this._navSafetyTimer);
-      if (this.navigatingPageTimer) {
-        clearTimeout(this.navigatingPageTimer);
-        this.navigatingPageTimer = null;
-      }
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isLineLocked = false;
-      if (stage) stage.classList.remove("is-turning-page");
-      if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-      document.body.classList.remove("is-turning-page");
-      if (this.ruler && this.ruler.enabled && !this._rulerPageChangeRafId) {
-        this.ruler.forceReleaseNavigationLocks();
-      }
+      this.releaseNavigationLocks();
     }
   }
 
@@ -5124,6 +6112,9 @@ export class LuminaApp {
       if (this.isNavigating) return;
       if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
       this.lastPageTurnTime = now;
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.prepareForPageTransition(1);
+      }
       await this.pdfLoader.nextPage();
       return;
     }
@@ -5149,9 +6140,10 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(350);
+      this.ruler.lockAdvancement(650, 1);
       this.ruler.activeLineIndex = 0;
       this.ruler.activeWordIndex = 0;
+      this.ruler.prepareForPageTransition(1);
     }
 
     clearTimeout(this._navSafetyTimer);
@@ -5168,42 +6160,35 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
         }
       }
-    }, 300); // 300ms maximum lock lifetime
+    }, 650); // 650ms safety fallback lock lifetime
 
     try {
       // 1. Pokud jsme ještě před koncem známých stran kapitoly, otočíme stranu v rámci kapitoly
       if (this.currentPageIndex < this.totalPagesInChapter - 1) {
-        this.goToPage(this.currentPageIndex + 1, 1);
-        console.log(`[LuminaReader] nextPage() resolved cleanly: page -> ${this.currentPageIndex + 1}`);
-        return;
+        if (this.hasVisibleContentOnPage(this.currentPageIndex + 1)) {
+          this.goToPage(this.currentPageIndex + 1, 1);
+          console.log(`[LuminaReader] nextPage() resolved cleanly: page -> ${this.currentPageIndex + 1}`);
+          return;
+        } else {
+          console.log(`[LuminaReader] nextPage(): detekována prázdná strana ${this.currentPageIndex + 2}, přesun na konec kapitoly`);
+          this.totalPagesInChapter = this.currentPageIndex + 1;
+        }
       }
 
       // 2. Zdánlivě jsme na konci kapitoly. Přepočítáme živý DOM rozměr,
       // abychom zabránili přeskočení nepřečteného textu kvůli donačteným obrázkům
       this.recalcPages();
       if (this.currentPageIndex < this.totalPagesInChapter - 1) {
-        this.goToPage(this.currentPageIndex + 1, 1);
-        console.log(`[LuminaReader] nextPage() advanced after recalc: page -> ${this.currentPageIndex + 1}`);
-        return;
+        if (this.hasVisibleContentOnPage(this.currentPageIndex + 1)) {
+          this.goToPage(this.currentPageIndex + 1, 1);
+          console.log(`[LuminaReader] nextPage() advanced after recalc: page -> ${this.currentPageIndex + 1}`);
+          return;
+        } else {
+          this.totalPagesInChapter = this.currentPageIndex + 1;
+        }
       }
 
-      // 3. Fyzická kontrola scrollWidth proti offsetu jako pojistka
-      const { stageWidth, gap, exactStep } = this.getExactColumnStep();
-      const safetyThreshold = Math.max(5, Math.min(gap * 0.5, 15));
-      const currentOffset = this.currentPageIndex * exactStep;
-      const scrollWidth = this.dom.readerContent?.scrollWidth || 0;
-      const remainingWidth = scrollWidth - (currentOffset + stageWidth);
-      if (remainingWidth > safetyThreshold) {
-        this.totalPagesInChapter = Math.max(
-          this.currentPageIndex + 2,
-          1 + Math.ceil((scrollWidth - stageWidth - safetyThreshold) / exactStep)
-        );
-        this.goToPage(this.currentPageIndex + 1, 1);
-        console.log(`[LuminaReader] nextPage() advanced via scrollWidth check: page -> ${this.currentPageIndex + 1}`);
-        return;
-      }
-
-      // 4. Kapitola je skutečně dočtena: přechod na další kapitolu
+      // 3. Kapitola je skutečně dočtena: přechod na další kapitolu
       if (this.currentChapterIndex < this.currentParser.spine.length - 1) {
         console.log(`[LuminaReader] nextPage() advancing to next chapter -> ${this.currentChapterIndex + 1}`);
         tracker.commitCurrentBlockDwell(1, this.getVisibleWordsOnCurrentPage());
@@ -5214,20 +6199,11 @@ export class LuminaApp {
         this.wordsCreditedOnCurrentPage = 0;
         this.showToast("Dočetli jste knihu až do konce! 🎉", "success");
         console.log("[LuminaReader] nextPage() reached end of book");
+        this.releaseNavigationLocks();
       }
     } catch (err) {
       console.error('Page navigation error:', err);
-    } finally {
-      clearTimeout(this._navSafetyTimer);
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isLineLocked = false;
-      if (stage) stage.classList.remove("is-turning-page");
-      if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-      document.body.classList.remove("is-turning-page");
-      if (this.ruler) {
-        this.ruler.forceReleaseNavigationLocks();
-      }
+      this.releaseNavigationLocks();
     }
   }
 
@@ -5252,6 +6228,9 @@ export class LuminaApp {
       if (this.isNavigating) return;
       if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
       this.lastPageTurnTime = now;
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.prepareForPageTransition(-1);
+      }
       await this.pdfLoader.prevPage();
       return;
     }
@@ -5274,7 +6253,8 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(350);
+      this.ruler.lockAdvancement(650, -1);
+      this.ruler.prepareForPageTransition(-1);
     }
 
     clearTimeout(this._navSafetyTimer);
@@ -5291,7 +6271,7 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
         }
       }
-    }, 300); // 300ms maximum lock lifetime
+    }, 650); // 650ms safety fallback lock lifetime
 
     try {
       if (this.currentPageIndex > 0) {
@@ -5300,26 +6280,35 @@ export class LuminaApp {
       } else if (this.currentChapterIndex > 0) {
         console.log(`[LuminaReader] prevPage() moving to prev chapter -> ${this.currentChapterIndex - 1}`);
         await this.navigateChapter(-1, "last");
+      } else {
+        this.releaseNavigationLocks();
       }
     } catch (err) {
       console.error('Page navigation error:', err);
-    } finally {
-      clearTimeout(this._navSafetyTimer);
-      this.isNavigating = false;
-      this.isNavigatingPage = false;
-      this.isLineLocked = false;
-      if (stage) stage.classList.remove("is-turning-page");
-      if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
-      document.body.classList.remove("is-turning-page");
-      if (this.ruler) {
-        this.ruler.forceReleaseNavigationLocks();
-      }
+      this.releaseNavigationLocks();
     }
   }
 
   async navigateChapter(delta, targetPage = 0) {
     if (!this.currentParser) return;
-    const newIdx = this.currentChapterIndex + delta;
+    let newIdx = this.currentChapterIndex + delta;
+
+    // Při sekvenčním listování (delta = 1 nebo -1) přeskočit zcela prázdné položky spine bez textu a médií
+    if (Math.abs(delta) === 1) {
+      while (newIdx >= 0 && newIdx < this.currentParser.spine.length) {
+        try {
+          const peekChapter = await this.getOrLoadChapter(newIdx);
+          if (peekChapter && !peekChapter.isBlank) {
+            break;
+          }
+          console.log(`[LuminaReader] Přeskakuji prázdnou položku spine na indexu ${newIdx}`);
+          newIdx += delta;
+        } catch (e) {
+          break;
+        }
+      }
+    }
+
     if (newIdx >= 0 && newIdx < this.currentParser.spine.length) {
       if (this.isVerticalReadingMode() && !this.isPdfMode) {
         const targetSec = this.dom.readerContent?.querySelector(`.epub-chapter-section[data-chapter-index="${newIdx}"]`);
@@ -5354,7 +6343,7 @@ export class LuminaApp {
         }
       }
       if (this.ruler && this.ruler.enabled) {
-        this.ruler.hideForPageTransition();
+        this.ruler.prepareForPageTransition(delta >= 0 ? 1 : -1);
       }
       if (targetPage !== "last") {
         this.currentPageIndex = (typeof targetPage === "number") ? targetPage : (targetPage?.pageIndex ?? 0);
@@ -5495,17 +6484,21 @@ export class LuminaApp {
           const maxSecScroll = Math.max(1, secHeight - vpHeight);
           const chapterScrollRatio = Math.max(0, Math.min(1, scrollIntoSec / maxSecScroll));
 
-          // Kontinuální akreditace slov při vertikálním skrolování (pokud není aktivní pravítko, které počítá přesně po řádcích/slovech)
+          // Kontinuální akreditace slov při vertikálním skrolování s automatickou deduplikací vůči pravítku
           this._maxVScrollByChapter = this._maxVScrollByChapter || new Map();
           const prevRatio = this._maxVScrollByChapter.get(activeIdx) || 0;
           if (chapterScrollRatio > prevRatio) {
             const deltaRatio = chapterScrollRatio - prevRatio;
-            this._maxVScrollByChapter.set(activeIdx, chapterScrollRatio);
-            if (!(this.ruler && this.ruler.enabled)) {
-              const secWords = parseInt(activeSection.dataset.wordCount, 10) || 1000;
-              const wordsScrolled = Math.round(deltaRatio * secWords);
-              if (wordsScrolled > 0 && wordsScrolled <= 500) {
-                tracker.attributeWords(wordsScrolled);
+            const secWords = parseInt(activeSection.dataset.wordCount, 10) || this.currentChapterWords || 1000;
+            const wordsScrolled = Math.round(deltaRatio * secWords);
+            if (wordsScrolled >= 1) {
+              this._maxVScrollByChapter.set(activeIdx, chapterScrollRatio);
+              if (wordsScrolled <= 650) {
+                if (typeof tracker.attributeScrollWords === "function") {
+                  tracker.attributeScrollWords(wordsScrolled);
+                } else {
+                  tracker.attributeWords(wordsScrolled);
+                }
               }
             }
           }
@@ -5787,13 +6780,16 @@ export class LuminaApp {
     }
     const showRuler = this.settings.showRulerButton !== false;
     const rulerContainer = this.dom.rulerToggleBtn || this.dom.rulerSplitPill;
-    if (rulerContainer) {
+    if (rulerContainer && rulerContainer.style) {
       rulerContainer.style.display = showRuler ? "flex" : "none";
-      rulerContainer.classList.toggle("is-hidden", !showRuler);
+      rulerContainer.classList?.toggle?.("is-hidden", !showRuler);
     }
-    if (showRuler && this.settings.ruler.enabled) {
+    const hasReaderContent = !!(this.dom.readerContent && this.dom.readerContent.innerHTML.trim());
+    const isBothOff = (!this.settings.ruler.style || this.settings.ruler.style === "off") && (!this.settings.ruler.focusMode || this.settings.ruler.focusMode === "off");
+    if (showRuler && this.settings.ruler.enabled && !isBothOff && hasReaderContent) {
       this.ruler.setEnabled(true);
     } else {
+      if (isBothOff) this.settings.ruler.enabled = false;
       this.ruler.setEnabled(false);
     }
     this.updateTouchZonesUI();
@@ -5839,7 +6835,8 @@ export class LuminaApp {
       if (willOpen) {
         this.updateSettingsTabsVisibility(this.isPdfMode);
         this.setPdfRulerUIVisibility(this.isPdfMode);
-        this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+        this.updateRulerToggleButtonUI();
+        this.updateRulerSettingsVisibility(this.settings?.ruler?.style || this.settings?.ruler?.mode, this.settings?.ruler?.focusMode, this.isPdfMode);
         if (this.isPdfMode) {
           const cfg = this.currentBook?.pdfRulerConfig || {
             height: this.ruler?.getPdfRulerHeight?.() || 32,
@@ -5847,6 +6844,9 @@ export class LuminaApp {
           };
           this.syncPdfRulerUI(cfg);
         }
+        requestAnimationFrame(() => {
+          this.syncAllSegmentedBubbles(true);
+        });
       }
     } else if (name === "search") {
       const willOpen = !this.dom.searchDrawer?.classList.contains("open");
@@ -5899,7 +6899,8 @@ export class LuminaApp {
         this.switchToSettingsTab(targetTab);
       }
       this.setPdfRulerUIVisibility(this.isPdfMode);
-      this.updateRulerSettingsVisibility(this.settings?.ruler?.mode, this.isPdfMode);
+      this.updateRulerToggleButtonUI();
+      this.updateRulerSettingsVisibility(this.settings?.ruler?.style || this.settings?.ruler?.mode, this.settings?.ruler?.focusMode, this.isPdfMode);
       if (this.isPdfMode) {
         const cfg = this.currentBook?.pdfRulerConfig || {
           height: this.ruler?.getPdfRulerHeight?.() || 32,
@@ -5907,6 +6908,7 @@ export class LuminaApp {
         };
         this.syncPdfRulerUI(cfg);
       }
+      this.syncAllRangeFills();
     }
   }
 
@@ -5950,6 +6952,9 @@ export class LuminaApp {
     if (targetPane) {
       targetPane.classList.add("active");
     }
+    requestAnimationFrame(() => {
+      this.syncAllSegmentedBubbles(true);
+    });
   }
 
   updateSettingsTabsVisibility(isPdf = this.isPdfMode) {
@@ -6273,8 +7278,13 @@ export class LuminaApp {
 
   async initSessionAnalytics() {
     const rawSessions = await storage.getAllReadingSessions();
-    // Filtrujeme striktně pouze relace s délkou alespoň 5 minut (>= 300 sekund)
+    const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
+    // Filtrujeme striktně pouze relace s délkou alespoň 5 minut (>= 300 sekund) a nesmazané relace
     const savedSessions = (rawSessions || []).filter(s => {
+      if (!s) return false;
+      if (s.is_deleted === true || s.is_deleted === "true") return false;
+      const sid = String(s.sessionId ?? s.id ?? "").trim();
+      if (sid && deletedSet.has(sid)) return false;
       const dur = Math.max(0, Math.round(s.durationSeconds ?? s.activeSeconds ?? s.duration ?? 0));
       return dur >= 300;
     });
@@ -6308,6 +7318,7 @@ export class LuminaApp {
         : (allSessions[0].sessionId || allSessions[0].id);
       this.selectSession(targetId);
     } else {
+      this._selectedSessionId = null;
       this.renderEmptySessionTimeline();
     }
   }
@@ -6423,7 +7434,10 @@ export class LuminaApp {
             e.stopPropagation();
             e.preventDefault();
             if (!window.confirm("Opravdu si přejete smazat tuto čtecí relaci? Statistiky budou automaticky přepočítány.")) return;
-            const targetId = deleteBtn.getAttribute("data-session-id") || sid || s.sessionId || s.id;
+            const targetId = String(deleteBtn.getAttribute("data-session-id") || sid || s.sessionId || s.id || "").trim();
+            if (!targetId) return;
+
+            deleteBtn.disabled = true;
 
             try {
               await storage.deleteReadingSession(targetId);
@@ -6462,8 +7476,11 @@ export class LuminaApp {
 
   selectSession(sessionId) {
     if (!this._availableSessions) return;
-    const session = this._availableSessions.find(s => s.sessionId === sessionId || s.id === sessionId);
-    if (!session) return;
+    const session = this._availableSessions.find(s => (s.sessionId === sessionId || s.id === sessionId) && s.is_deleted !== true && s.is_deleted !== "true");
+    if (!session) {
+      this.renderEmptySessionTimeline();
+      return;
+    }
 
     const sid = session.sessionId || session.id;
     this._selectedSessionId = sid;
@@ -6489,10 +7506,10 @@ export class LuminaApp {
       ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
       : [];
     const speeds = samples.map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
-    const rawPeak = session.peakWpm ?? session.peak_wpm;
-    const peakWpm = rawPeak 
-      ? Math.max(Math.round(rawPeak), avgWpm) 
-      : (speeds.length > 0 ? Math.max(...speeds, avgWpm) : avgWpm);
+    let peakWpm = speeds.length > 0 ? Math.max(...speeds) : avgWpm;
+    if (peakWpm < avgWpm && avgWpm > 0) {
+      peakWpm = avgWpm;
+    }
 
     if (this.dom.sessionBadgeDuration) {
       this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(durationSec);
@@ -6508,7 +7525,11 @@ export class LuminaApp {
     }
 
     if (this.dom.sessionTimelineChartContainer) {
-      StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
+      try {
+        StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
+      } catch (err) {
+        console.error("[app] Chyba při vykreslení grafu časové osy relace:", err);
+      }
     }
   }
 

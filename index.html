@@ -2,6 +2,9 @@
 <html lang="cs" data-theme="warm" data-font="georgia">
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -23,14 +26,18 @@
   <!-- Supabase JS Client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Webová písma Google Fonts (Lora, Atkinson Hyperlegible, Merriweather, Inter) -->
+  <!-- Webová písma Google Fonts (Lora, Atkinson Hyperlegible, Merriweather, Inter, Literata) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Inter:wght@400;500;600;700&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+
+  <!-- OpenDyslexic Web Font -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.1.0/index.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.1.0/700.css" />
 
   <!-- Styly aplikace -->
-  <link rel="stylesheet" href="css/style.css" />
-  <link rel="stylesheet" href="css/reader.css" />
+  <link rel="stylesheet" href="./css/style.css?v=2.4.8" />
+  <link rel="stylesheet" href="./css/reader.css?v=2.4.8" />
 </head>
 <body class="show-footer-bar">
 
@@ -108,12 +115,9 @@
       <section id="empty-library" class="empty-state">
         <div class="empty-icon">📖</div>
         <h3>Vaše knihovna je prázdná</h3>
-        <p>Nahrajte svou oblíbenou elektronickou knihu ve formátu EPUB nebo PDF přetažením sem, nebo načtěte vzorovou knihu.</p>
+        <p>Nahrajte svou oblíbenou elektronickou knihu ve formátu EPUB nebo PDF přetažením sem.</p>
         <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
-          <button id="btn-load-sample" class="btn btn-primary">
-            Načíst ukázkovou knihu (Karel Čapek: R.U.R.)
-          </button>
-          <button class="btn btn-secondary" onclick="document.getElementById('file-input').click()">
+          <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">
             Vybrat EPUB / PDF z počítače
           </button>
         </div>
@@ -187,6 +191,7 @@
             <div class="popover-section" id="popover-follow-section">
               <div class="popover-section-label">Způsob pohybu</div>
               <div class="popover-styles-grid">
+                <span class="segmented-bubble" aria-hidden="true"></span>
                 <button type="button" class="popover-style-btn" data-ruler-follow="mouse">Kurzor myši</button>
                 <button type="button" class="popover-style-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
               </div>
@@ -202,10 +207,11 @@
               </div>
             </div>
 
-            <!-- Režim pravítka: Řádkové vs. Sledování slov -->
+            <!-- Režim pravítka: Řádky vs. Slova -->
             <div class="popover-section" id="popover-ruler-mode-section">
               <div class="popover-section-label">Režim zvýraznění</div>
-              <div class="popover-segmented-control" id="popover-mode-segmented">
+              <div class="popover-segmented-control columns-2" id="popover-mode-segmented">
+                <span class="segmented-bubble" aria-hidden="true"></span>
                 <button type="button" class="segment-btn active" id="popover-mode-line" data-ruler-mode-type="line">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                   <span>Řádky</span>
@@ -218,12 +224,25 @@
             </div>
 
             <!-- Styl zobrazení -->
-            <div class="popover-section">
+            <div class="popover-section" id="popover-ruler-style-section">
               <div class="popover-section-label">Styl pravítka</div>
               <div class="popover-styles-grid columns-3">
+                <span class="segmented-bubble" aria-hidden="true"></span>
+                <button type="button" class="popover-style-btn" data-ruler-style="off">Vypnuto</button>
                 <button type="button" class="popover-style-btn active" data-ruler-style="highlight">Zvýrazňovač</button>
-                <button type="button" class="popover-style-btn" data-ruler-style="focus">Zaostření</button>
                 <button type="button" class="popover-style-btn" data-ruler-style="bottom-cover">Spodní clona</button>
+              </div>
+            </div>
+
+            <!-- Zaostření okolí -->
+            <div class="popover-section" id="popover-ruler-focus-section">
+              <div class="popover-section-label">Zaostření okolí</div>
+              <div class="popover-styles-grid columns-4">
+                <span class="segmented-bubble" aria-hidden="true"></span>
+                <button type="button" class="popover-style-btn active" data-ruler-focus="off">Vypnuto</button>
+                <button type="button" class="popover-style-btn" data-ruler-focus="up">Nahoře</button>
+                <button type="button" class="popover-style-btn" data-ruler-focus="down">Dole</button>
+                <button type="button" class="popover-style-btn" data-ruler-focus="both">Obojí</button>
               </div>
             </div>
 
@@ -242,7 +261,7 @@
             <!-- Intenzita ztmavení okolí -->
             <div class="popover-section" id="popover-ruler-opacity-section">
               <div class="popover-row-between">
-                <span class="popover-section-label">Ztmavení okolí (Zaostření)</span>
+                <span class="popover-section-label">Ztmavení okolí</span>
                 <span id="popover-val-ruler-opacity" class="popover-val-badge">65%</span>
               </div>
               <div class="popover-slider-wrapper">
@@ -411,8 +430,32 @@
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
               </button>
+              <button type="button" class="font-dropdown-item" role="option" data-font="verdana" aria-selected="false">
+                <span class="font-dropdown-name">Verdana</span>
+                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+              <button type="button" class="font-dropdown-item" role="option" data-font="arial" aria-selected="false">
+                <span class="font-dropdown-name">Arial</span>
+                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+              <button type="button" class="font-dropdown-item" role="option" data-font="literata" aria-selected="false">
+                <span class="font-dropdown-name">Literata</span>
+                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
               <button type="button" class="font-dropdown-item" role="option" data-font="opendyslexic" aria-selected="false">
-                <span class="font-dropdown-name">Pro dyslexii</span>
+                <span class="font-dropdown-name">OpenDyslexic</span>
+                <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+              <button type="button" class="font-dropdown-item" role="option" data-font="comic-sans" aria-selected="false">
+                <span class="font-dropdown-name">Comic Sans</span>
                 <svg class="font-dropdown-check" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
@@ -456,18 +499,18 @@
         <div class="slider-setting">
           <div class="slider-label">
             <span>Mezery mezi písmeny</span>
-            <span id="val-letter-spacing">0px</span>
+            <span id="val-letter-spacing">0.75px</span>
           </div>
-          <input type="range" id="slider-letter-spacing" class="slider-input" min="0" max="4" step="0.25" value="0" />
+          <input type="range" id="slider-letter-spacing" class="slider-input" min="0" max="4" step="0.25" value="0.75" />
         </div>
 
         <!-- Mezery mezi slovy -->
         <div class="slider-setting">
           <div class="slider-label">
             <span>Mezery mezi slovy</span>
-            <span id="val-word-spacing">0px</span>
+            <span id="val-word-spacing">2px</span>
           </div>
-          <input type="range" id="slider-word-spacing" class="slider-input" min="0" max="8" step="0.5" value="0" />
+          <input type="range" id="slider-word-spacing" class="slider-input" min="0" max="8" step="0.5" value="2" />
         </div>
       </div>
 
@@ -489,15 +532,16 @@
         <div class="slider-setting">
           <div class="slider-label">
             <span>Velikost okrajů</span>
-            <span id="val-page-margin">20%</span>
+            <span id="val-page-margin">8%</span>
           </div>
-          <input type="range" id="slider-page-margin" class="slider-input" min="8" max="40" step="2" value="20" />
+          <input type="range" id="slider-page-margin" class="slider-input" min="8" max="40" step="2" value="8" />
         </div>
 
         <!-- Režim zobrazení stránek -->
         <div class="settings-group" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
           <div class="settings-group-title">Režim zobrazení stránek</div>
           <div class="popover-segmented-control columns-2" id="reading-mode-control">
+            <span class="segmented-bubble" aria-hidden="true"></span>
             <button type="button" class="segment-btn active" data-reading-mode="horizontal">Vodorovně</button>
             <button type="button" class="segment-btn" data-reading-mode="vertical">Svisle (webový scroll)</button>
           </div>
@@ -507,6 +551,7 @@
         <div class="settings-group" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
           <div class="settings-group-title">Rozvržení sloupců</div>
           <div class="popover-segmented-control columns-3" id="columns-mode-control">
+            <span class="segmented-bubble" aria-hidden="true"></span>
             <button type="button" class="segment-btn" data-columns="auto">Automaticky</button>
             <button type="button" class="segment-btn" data-columns="1">1 sloupec</button>
             <button type="button" class="segment-btn" data-columns="2">2 sloupce</button>
@@ -517,6 +562,17 @@
         <div class="toggle-row" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
           <span class="toggle-title">Zobrazit postup čtení</span>
           <button type="button" role="switch" id="setting-show-footer" class="switch-control is-checked active" aria-checked="true" aria-label="Zobrazit postup čtení">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+          </button>
+        </div>
+
+        <!-- Vzhled tekutého skla (Liquid Glass) -->
+        <div class="toggle-row" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
+          <div>
+            <span class="toggle-title">Vzhled tekutého skla (Liquid Glass)</span>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0.15rem 0 0 0;">Přepne plovoucí lišty, panely a ovládací prvky do skleněného designu s odlesky a hloubkou</p>
+          </div>
+          <button type="button" role="switch" id="setting-liquid-glass" class="switch-control" aria-checked="false" aria-label="Vzhled tekutého skla (Liquid Glass)">
             <span class="switch-track"><span class="switch-thumb"></span></span>
           </button>
         </div>
@@ -541,18 +597,31 @@
 
           <div style="margin-bottom: 1rem;" id="settings-follow-section">
             <div class="slider-label"><span>Způsob pohybu</span></div>
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem;">
-              <button type="button" class="font-btn" data-ruler-follow="mouse">Kurzor myši</button>
-              <button type="button" class="font-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
+            <div class="popover-segmented-control columns-2">
+              <span class="segmented-bubble" aria-hidden="true"></span>
+              <button type="button" class="segment-btn" data-ruler-follow="mouse">Kurzor myši</button>
+              <button type="button" class="segment-btn" data-ruler-follow="keyboard">Klávesové šipky</button>
             </div>
           </div>
 
-          <div style="margin-bottom: 1rem;">
+          <div style="margin-bottom: 1rem;" id="drawer-ruler-style-section">
             <div class="slider-label"><span>Styl pravítka</span></div>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem;">
-              <button class="font-btn" data-ruler-mode="highlight" data-ruler-style="highlight">Zvýrazňovač</button>
-              <button class="font-btn" data-ruler-mode="focus" data-ruler-style="focus">Zaostření</button>
-              <button class="font-btn" data-ruler-mode="bottom-cover" data-ruler-style="bottom-cover">Spodní clona</button>
+            <div class="popover-segmented-control columns-3">
+              <span class="segmented-bubble" aria-hidden="true"></span>
+              <button type="button" class="segment-btn" data-ruler-mode="off" data-ruler-style="off">Vypnuto</button>
+              <button type="button" class="segment-btn active" data-ruler-mode="highlight" data-ruler-style="highlight">Zvýrazňovač</button>
+              <button type="button" class="segment-btn" data-ruler-mode="bottom-cover" data-ruler-style="bottom-cover">Spodní clona</button>
+            </div>
+          </div>
+
+          <div style="margin-bottom: 1rem;" id="drawer-ruler-focus-section">
+            <div class="slider-label"><span>Zaostření okolí</span></div>
+            <div class="popover-segmented-control columns-4">
+              <span class="segmented-bubble" aria-hidden="true"></span>
+              <button type="button" class="segment-btn active" data-ruler-focus="off">Vypnuto</button>
+              <button type="button" class="segment-btn" data-ruler-focus="up">Nahoře</button>
+              <button type="button" class="segment-btn" data-ruler-focus="down">Dole</button>
+              <button type="button" class="segment-btn" data-ruler-focus="both">Obojí</button>
             </div>
           </div>
 
@@ -580,19 +649,19 @@
             </div>
           </div>
 
-          <!-- Funkce pravítka: Sledování slov -->
+          <!-- Funkce pravítka: Režim zvýraznění -->
           <div style="margin-bottom: 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;" id="drawer-word-tracking-section">
-            <div class="toggle-row">
-              <span class="toggle-title">Sledování jednotlivých slov</span>
-              <button type="button" role="switch" id="ruler-word-tracking-setting" class="switch-control" aria-checked="false" aria-label="Sledování jednotlivých slov">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-              </button>
+            <div class="slider-label"><span>Režim pravítka</span></div>
+            <div class="popover-segmented-control columns-2" id="drawer-mode-segmented">
+              <span class="segmented-bubble" aria-hidden="true"></span>
+              <button type="button" class="segment-btn active" data-ruler-mode-type="line">Řádky</button>
+              <button type="button" class="segment-btn" data-ruler-mode-type="word">Slova</button>
             </div>
           </div>
 
           <div class="slider-setting" id="drawer-ruler-opacity-section">
             <div class="slider-label">
-              <span>Intenzita ztmavení okolí (režim Zaostření)</span>
+              <span>Intenzita ztmavení okolí</span>
               <span id="val-ruler-opacity">65%</span>
             </div>
             <input type="range" id="slider-ruler-opacity" class="slider-input" min="20" max="90" value="65" />
@@ -781,6 +850,6 @@
   <div id="toast-notification" class="toast" role="status" aria-live="polite"></div>
 
   <!-- Hlavní aplikační skript -->
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="./js/app.js?v=2.4.8"></script>
 </body>
 </html>

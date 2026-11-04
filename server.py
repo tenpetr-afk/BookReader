@@ -2,7 +2,7 @@
 """
 server.py
 Lokální HTTP server pro LuminaReader.
-Automaticky obsluhuje statické soubory ze složky 'public'
+Automaticky obsluhuje statické soubory z kořenového adresáře
 a při spuštění otevře výchozí webový prohlížeč.
 """
 
@@ -16,7 +16,6 @@ import mimetypes
 
 PORT = 8000
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-PUBLIC_DIR = os.path.join(ROOT_DIR, "public") if os.path.isdir(os.path.join(ROOT_DIR, "public")) else ROOT_DIR
 
 # Zajistíme správné MIME typy
 mimetypes.add_type("application/epub+zip", ".epub")
@@ -29,7 +28,7 @@ mimetypes.add_type("font/woff", ".woff")
 
 class ReaderHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=PUBLIC_DIR, **kwargs)
+        super().__init__(*args, directory=ROOT_DIR, **kwargs)
 
     def end_headers(self):
         # Přidáme hlavičky proti nechtěnému cachování při vývoji
@@ -51,11 +50,11 @@ def open_browser():
     webbrowser.open(url)
 
 def main():
-    if not os.path.exists(PUBLIC_DIR):
-        print(f"Chyba: Adresář '{PUBLIC_DIR}' neexistuje!")
+    if not os.path.exists(ROOT_DIR):
+        print(f"Chyba: Adresář '{ROOT_DIR}' neexistuje!")
         sys.exit(1)
 
-    os.chdir(PUBLIC_DIR)
+    os.chdir(ROOT_DIR)
     
     # Povolit znovupoužití adresy
     socketserver.TCPServer.allow_reuse_address = True
