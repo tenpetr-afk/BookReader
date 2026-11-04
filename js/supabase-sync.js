@@ -4,9 +4,9 @@
  * obousměrnou synchronizaci mezi zařízeními a offline-first fungování.
  */
 
-import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.4.4';
-import { storage, computeFileHash } from './storage.js?v=2.4.4';
-import { EpubParser } from './epub-parser.js?v=2.4.4';
+import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.4.5';
+import { storage, computeFileHash } from './storage.js?v=2.4.5';
+import { EpubParser } from './epub-parser.js?v=2.4.5';
 
 export class SupabaseSync {
   constructor() {
@@ -918,17 +918,23 @@ export class SupabaseSync {
     const dur = Math.round(Number(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0));
     if (dur < 300) return null; // Striktně zahodit relace < 5 minut
 
+    const avg = Math.round(Number(session.avg_wpm ?? session.avgWpm ?? session.wpm ?? 0));
+    const peak = Math.max(Math.round(Number(session.peak_wpm ?? session.peakWpm ?? avg)), avg);
+    let samples = session.intra_session_samples || session.intraSessionSamples || session.timelineSamples;
+    if (typeof samples === "string") {
+      try { samples = JSON.parse(samples); } catch (_) { samples = []; }
+    }
+    const cleanSamples = Array.isArray(samples) ? samples : [];
+
     const payload = {
       id: String(session.sessionId || session.id),
       book_id: String(session.bookId || session.book_id || "unknown"),
       start_time: session.startTime || session.start_time || new Date(session.timestamp || Date.now()).toISOString(),
       duration: Math.round(Number(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0)),
       words_read: Math.round(Number(session.words_read ?? session.wordsRead ?? 0)),
-      avg_wpm: Math.round(Number(session.avg_wpm ?? session.avgWpm ?? session.wpm ?? 0)),
-      peak_wpm: Math.round(Number(session.peak_wpm ?? session.peakWpm ?? session.avg_wpm ?? 0)),
-      intra_session_samples: Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
-        ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
-        : [],
+      avg_wpm: avg,
+      peak_wpm: peak,
+      intra_session_samples: cleanSamples,
       is_deleted: false,
       updated_at: session.updatedAt || session.updated_at || new Date().toISOString()
     };
@@ -968,17 +974,23 @@ export class SupabaseSync {
       const dur = Math.round(Number(session.duration ?? session.durationSeconds ?? session.activeSeconds ?? 0));
       if (dur < 300) continue; // Pouze relace >= 5 minut
 
+      const avg = Math.round(Number(session.avg_wpm ?? session.avgWpm ?? session.wpm ?? 0));
+      const peak = Math.max(Math.round(Number(session.peak_wpm ?? session.peakWpm ?? avg)), avg);
+      let samples = session.intra_session_samples || session.intraSessionSamples || session.timelineSamples;
+      if (typeof samples === "string") {
+        try { samples = JSON.parse(samples); } catch (_) { samples = []; }
+      }
+      const cleanSamples = Array.isArray(samples) ? samples : [];
+
       cleanPayloads.push({
         id: String(session.sessionId || session.id),
         book_id: String(session.bookId || session.book_id || "unknown"),
         start_time: session.startTime || session.start_time || new Date(session.timestamp || Date.now()).toISOString(),
         duration: dur,
         words_read: Math.round(Number(session.words_read ?? session.wordsRead ?? 0)),
-        avg_wpm: Math.round(Number(session.avg_wpm ?? session.avgWpm ?? session.wpm ?? 0)),
-        peak_wpm: Math.round(Number(session.peak_wpm ?? session.peakWpm ?? session.avg_wpm ?? 0)),
-        intra_session_samples: Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
-          ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
-          : [],
+        avg_wpm: avg,
+        peak_wpm: peak,
+        intra_session_samples: cleanSamples,
         is_deleted: false,
         updated_at: session.updatedAt || session.updated_at || new Date().toISOString()
       });
@@ -1110,7 +1122,7 @@ export class SupabaseSync {
     if (!this.isOnline() || !supabase) return null;
 
     try {
-      const { ReadingTracker } = await import("./tracker.js?v=2.4.4");
+      const { ReadingTracker } = await import("./tracker.js?v=2.4.5");
       const localStats = await ReadingTracker.computeGlobalStats();
       const hasDeletedTombstones = (typeof storage.getDeletedSessionIds === "function" && storage.getDeletedSessionIds().length > 0);
 

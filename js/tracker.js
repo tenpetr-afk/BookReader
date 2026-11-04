@@ -4,7 +4,7 @@
  * odhaduje zbývající čas a ukládá detailní čtecí relace s časovou osou WPM.
  */
 
-import { storage } from "./storage.js?v=2.4.4";
+import { storage } from "./storage.js?v=2.4.5";
 
 export const MIN_VALID_WPM = 40;
 export const MAX_VALID_WPM = 650;
@@ -254,19 +254,9 @@ export class ReadingTracker {
     }
     if (prevEnabled !== this.rulerEnabled) {
       const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
-      const currentRulerTotal = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
-      if (this.rulerEnabled) {
-        if (this.intra_session_samples.length === 0 && this.currentMinuteWords === 0 && this.noRulerTotalWords > 0) {
-          this.currentMinuteWords = this.noRulerTotalWords;
-        }
-      } else {
-        if (currentRulerTotal > this.noRulerTotalWords) {
-          this.noRulerTotalWords = currentRulerTotal;
-        }
-      }
-      this.sessionWordsRead = this.rulerEnabled
-        ? (completedWords + Math.max(0, Math.round(this.currentMinuteWords)))
-        : Math.max(this.noRulerTotalWords, currentRulerTotal);
+      const currentTotal = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
+      this.noRulerTotalWords = Math.max(this.noRulerTotalWords || 0, currentTotal);
+      this.sessionWordsRead = Math.max(this.noRulerTotalWords, currentTotal);
     }
   }
 
@@ -304,11 +294,8 @@ export class ReadingTracker {
     if (!this.isActive || !count || count <= 0) return;
     this.recordActivity(true);
     const n = Math.max(0, Math.round(count));
-    if (this.rulerEnabled) {
-      this.currentMinuteWords += n;
-    } else {
-      this.noRulerTotalWords += n;
-    }
+    this.currentMinuteWords += n;
+    this.noRulerTotalWords += n;
   }
 
   /**
@@ -319,9 +306,8 @@ export class ReadingTracker {
     if (!this.isActive || !count || count <= 0) return;
     this.recordActivity(true);
     const n = Math.max(0, Math.round(count));
-    if (!this.rulerEnabled) {
-      this.noRulerTotalWords += n;
-    }
+    this.currentMinuteWords += n;
+    this.noRulerTotalWords += n;
   }
 
   /**
@@ -340,6 +326,7 @@ export class ReadingTracker {
     if (amount <= 0) return;
 
     this.sessionWordsRead = Math.max(0, this.sessionWordsRead - amount);
+    this.noRulerTotalWords = Math.max(0, this.noRulerTotalWords - amount);
     if (this.currentMinuteWords >= amount) {
       this.currentMinuteWords -= amount;
     } else {
@@ -414,11 +401,10 @@ export class ReadingTracker {
     // 2. Bez pravítka se načte celá stránka, pokud na ní uživatel strávil realistický čas (>= 3s)
     if (!this.creditedBlocks.has(blockId)) {
       this.creditedBlocks.add(blockId);
+      this.currentMinuteWords += wordsOnPage;
       this.noRulerTotalWords += wordsOnPage;
       return wordsOnPage;
     }
-
-    return 0;
 
     return 0;
   }
@@ -740,21 +726,7 @@ export class ReadingTracker {
           const minuteNumber = this.completedMinutesCount;
           const elapsedSecAtMinuteEnd = minuteNumber * 60;
 
-          let wordsInThisMinute = 0;
-          if (!this.rulerEnabled) {
-            // Bez pravítka: spočítá průměr přečtených slov za celou čtecí relaci
-            const avgWpm = minuteNumber > 0 ? Math.round((this.noRulerTotalWords / elapsedSecAtMinuteEnd) * 60) : 0;
-            wordsInThisMinute = avgWpm;
-            for (const s of this.intra_session_samples) {
-              s.words = avgWpm;
-              s.rawWpm = avgWpm;
-              s.wpm = Math.max(1, avgWpm);
-            }
-          } else {
-            // S pravítkem (slovní, řádkový režim): přesný počet slov přečtených za tuto 1 minutu
-            wordsInThisMinute = Math.max(0, Math.round(this.currentMinuteWords));
-          }
-
+          let wordsInThisMinute = Math.max(0, Math.round(this.currentMinuteWords));
           const clampedMinuteWpm = Math.min(MAX_VALID_WPM, Math.max(1, wordsInThisMinute));
 
           this.intra_session_samples.push({
@@ -774,11 +746,7 @@ export class ReadingTracker {
           this.completedMinutesCount += 1;
 
           const completedSoFar = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
-          if (!this.rulerEnabled) {
-            this.sessionWordsRead = Math.max(0, Math.round(this.noRulerTotalWords));
-          } else {
-            this.sessionWordsRead = completedSoFar + Math.max(0, Math.round(this.currentMinuteWords));
-          }
+          this.sessionWordsRead = Math.max(completedSoFar, Math.round(this.noRulerTotalWords || 0));
         }
 
         const totalActiveSeconds = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
@@ -803,13 +771,9 @@ export class ReadingTracker {
           }
         }
 
-        let displayWords = 0;
-        if (!this.rulerEnabled) {
-          displayWords = Math.max(0, Math.round(this.noRulerTotalWords));
-        } else {
-          const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
-          displayWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
-        }
+        const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
+        const liveWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
+        const displayWords = Math.max(liveWords, Math.round(this.noRulerTotalWords || 0));
         this.sessionWordsRead = displayWords;
 
         this.notifyListeners({
@@ -949,63 +913,44 @@ export class ReadingTracker {
 
     const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
     const partialWords = Math.max(0, Math.round(this.currentMinuteWords));
-    const rulerWords = completedWords + partialWords;
+    const accumulatedWords = completedWords + partialWords;
+    wordsRead = Math.max(accumulatedWords, Math.round(this.noRulerTotalWords || 0));
 
-    if (!this.rulerEnabled && rulerWords === 0) {
-      // Když pravítko nebylo použito vůbec: spočítá průměr přečtených slov za celou čtecí relaci
-      wordsRead = Math.max(0, Math.round(this.noRulerTotalWords));
-      avgWpm = (effectiveActiveSeconds >= 10 && wordsRead > 0)
-        ? Math.min(MAX_VALID_WPM, Math.round((wordsRead / effectiveActiveSeconds) * 60))
-        : 0;
+    avgWpm = (effectiveActiveSeconds >= 10 && wordsRead > 0)
+      ? Math.min(MAX_VALID_WPM, Math.round((wordsRead / effectiveActiveSeconds) * 60))
+      : 0;
 
-      const numMinutes = Math.max(1, Math.floor(effectiveActiveSeconds / 60));
-      for (let m = 1; m <= numMinutes; m++) {
-        rawSamples.push({
-          minute: m,
-          elapsedSeconds: m * 60,
-          t: m * 60,
-          words: avgWpm,
-          rawWpm: avgWpm,
-          wpm: Math.max(1, avgWpm),
-          activeSeconds: 60
-        });
-      }
-      if (effectiveActiveSeconds % 60 >= 30 && avgWpm > 0) {
-        rawSamples.push({
-          minute: numMinutes + 1,
-          elapsedSeconds: effectiveActiveSeconds,
-          t: effectiveActiveSeconds,
-          words: Math.round((avgWpm * (effectiveActiveSeconds % 60)) / 60),
-          rawWpm: avgWpm,
-          wpm: Math.max(1, avgWpm),
-          activeSeconds: effectiveActiveSeconds % 60,
-          isPartial: true
-        });
-      }
-    } else {
-      wordsRead = Math.max(rulerWords, Math.round(this.noRulerTotalWords || 0));
-      avgWpm = (effectiveActiveSeconds >= 10 && wordsRead > 0)
-        ? Math.min(MAX_VALID_WPM, Math.round((wordsRead / effectiveActiveSeconds) * 60))
-        : 0;
+    rawSamples = this.intra_session_samples.map(s => ({ ...s }));
 
-      rawSamples = this.intra_session_samples.map(s => ({ ...s }));
-
-      // Pokud neuzavřená poslední minuta trvá >= 30s (udržený interval) a obsahuje přečtená slova (> 0),
-      // připojíme dílčí vzorek
-      if (this.currentMinuteActiveSeconds >= 30 && partialWords > 0) {
-        const rawPartialWpm = Math.round((this.currentMinuteWords / this.currentMinuteActiveSeconds) * 60);
-        const clampedPartialWpm = Math.min(MAX_VALID_WPM, Math.max(1, rawPartialWpm));
-        rawSamples.push({
-          minute: this.completedMinutesCount,
-          elapsedSeconds: effectiveActiveSeconds,
-          t: effectiveActiveSeconds,
-          words: partialWords,
-          rawWpm: rawPartialWpm,
-          wpm: clampedPartialWpm,
-          activeSeconds: this.currentMinuteActiveSeconds,
-          isPartial: true
-        });
-      }
+    // Pokud neuzavřená poslední minuta trvá >= 30s (udržený interval) a obsahuje přečtená slova (> 0),
+    // připojíme dílčí vzorek
+    if (this.currentMinuteActiveSeconds >= 30 && partialWords > 0) {
+      const rawPartialWpm = Math.round((partialWords / this.currentMinuteActiveSeconds) * 60);
+      const clampedPartialWpm = Math.min(MAX_VALID_WPM, Math.max(1, rawPartialWpm));
+      rawSamples.push({
+        minute: this.completedMinutesCount,
+        elapsedSeconds: effectiveActiveSeconds,
+        t: effectiveActiveSeconds,
+        words: partialWords,
+        rawWpm: rawPartialWpm,
+        wpm: clampedPartialWpm,
+        activeSeconds: this.currentMinuteActiveSeconds,
+        isPartial: true
+      });
+    } else if (rawSamples.length === 0 && effectiveActiveSeconds >= 15 && wordsRead > 0) {
+      // Relace trvala méně než 1 celou minutu, ale splňuje podmínky pro dílčí vzorek
+      const rawPartialWpm = Math.round((wordsRead / effectiveActiveSeconds) * 60);
+      const clampedPartialWpm = Math.min(MAX_VALID_WPM, Math.max(1, rawPartialWpm));
+      rawSamples.push({
+        minute: 1,
+        elapsedSeconds: effectiveActiveSeconds,
+        t: effectiveActiveSeconds,
+        words: wordsRead,
+        rawWpm: rawPartialWpm,
+        wpm: clampedPartialWpm,
+        activeSeconds: effectiveActiveSeconds,
+        isPartial: true
+      });
     }
 
     // Každý minutový vzorek je pevný a neměnný (immutable snapshot),
@@ -1018,9 +963,12 @@ export class ReadingTracker {
       .map(s => Number(s.wpm) || 0)
       .filter(w => w >= 1 && w <= MAX_VALID_WPM);
 
-    const peakWpm = sustainedWpms.length > 0
+    let peakWpm = sustainedWpms.length > 0
       ? Math.min(MAX_VALID_WPM, Math.max(...sustainedWpms))
       : avgWpm;
+    if (peakWpm < avgWpm && avgWpm > 0) {
+      peakWpm = avgWpm;
+    }
 
     return {
       wordsRead,

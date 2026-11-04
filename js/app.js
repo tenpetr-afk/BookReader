@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.4.4";
-import { EpubParser } from "./epub-parser.js?v=2.4.4";
-import { PDFLoader } from "./pdf-loader.js?v=2.4.4";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.4.4";
-import { ReadingRuler } from "./ruler.js?v=2.4.4";
-import { StatsCharts } from "./charts.js?v=2.4.4";
-import { supabaseSync } from "./supabase-sync.js?v=2.4.4";
-import { supabase } from "./supabase-client.js?v=2.4.4";
+import { storage, computeFileHash } from "./storage.js?v=2.4.5";
+import { EpubParser } from "./epub-parser.js?v=2.4.5";
+import { PDFLoader } from "./pdf-loader.js?v=2.4.5";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.4.5";
+import { ReadingRuler } from "./ruler.js?v=2.4.5";
+import { StatsCharts } from "./charts.js?v=2.4.5";
+import { supabaseSync } from "./supabase-sync.js?v=2.4.5";
+import { supabase } from "./supabase-client.js?v=2.4.5";
 
-export const APP_VERSION = "v2.4.4";
+export const APP_VERSION = "v2.4.5";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -2212,32 +2212,14 @@ export class LuminaApp {
           this.dom.fontDropdownTrigger.focus();
         }
 
-        const recalibrate = () => {
-          if (this.currentBook && !this.dom.viewReader?.classList.contains("is-hidden")) {
-            if (!this.isVerticalReadingMode() && !this.isPdfMode) {
-              this.recomputeGlobalPagination();
-              this.recalcPages();
-              this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
-              this.renderScrubberTicks();
-            }
-            if (this.ruler && this.ruler.enabled) {
-              this.ruler.forceReleaseNavigationLocks?.();
-              this.ruler.updateStyles?.();
-              this.ruler.refreshLines();
-              if (this.ruler.wordTracking) this.ruler.refreshWords?.();
-              this.ruler.applyPosition();
-            }
-          }
-        };
-
-        recalibrate();
+        this.handleTypographyOrLayoutChange();
 
         // Kalibrace po finálním načtení webfontů (Literata, OpenDyslexic atd.)
         if (document.fonts && document.fonts.ready) {
           try {
             await document.fonts.ready;
           } catch (_) {}
-          recalibrate();
+          this.handleTypographyOrLayoutChange();
         }
       });
     });
@@ -2354,6 +2336,7 @@ export class LuminaApp {
             return;
           }
 
+          tracker.cancelCurrentPageDwell();
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               this.recomputeGlobalPagination();
@@ -2383,6 +2366,7 @@ export class LuminaApp {
         this.settings.contentWidth = parseInt(e.target.value, 10);
         this.applySettings();
         storage.saveSettings(this.settings);
+        this.handleTypographyOrLayoutChange();
       });
     }
 
@@ -2391,6 +2375,7 @@ export class LuminaApp {
         this.settings.textAlign = "left";
         this.applySettings();
         storage.saveSettings(this.settings);
+        this.handleTypographyOrLayoutChange();
       });
     }
 
@@ -2399,6 +2384,7 @@ export class LuminaApp {
         this.settings.textAlign = "justify";
         this.applySettings();
         storage.saveSettings(this.settings);
+        this.handleTypographyOrLayoutChange();
       });
     }
 
@@ -5291,6 +5277,43 @@ export class LuminaApp {
     });
   }
 
+  handleTypographyOrLayoutChange() {
+    if (!this.currentBook || this.isPdfMode || !this.dom.readerContent || this.dom.viewReader?.classList.contains("is-hidden")) return;
+
+    this._cachedColumnStep = null;
+    tracker.cancelCurrentPageDwell();
+
+    if (this.isVerticalReadingMode()) {
+      this.recalcPages();
+      this.updatePageUI();
+    } else {
+      this.recomputeGlobalPagination();
+      this.recalcPages();
+      this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
+      this.renderScrubberTicks();
+    }
+
+    if (this.ruler && this.ruler.enabled) {
+      this.ruler.forceReleaseNavigationLocks?.();
+      this.ruler.updateStyles?.();
+      this.ruler.refreshLines();
+      if (this.ruler.wordTracking) {
+        this.ruler.refreshWords?.();
+      }
+      if (this.ruler.snapToLines && this.ruler.cachedLines.length > 0) {
+        const clampedIdx = Math.max(0, Math.min(this.ruler.activeLineIndex >= 0 ? this.ruler.activeLineIndex : 0, this.ruler.cachedLines.length - 1));
+        this.ruler.activeLineIndex = clampedIdx;
+        const geom = this.ruler.computeLineGeometry(clampedIdx);
+        if (geom) {
+          this.ruler.height = geom.height;
+          this.ruler.targetY = geom.targetY;
+          this.ruler.currentY = geom.targetY;
+        }
+      }
+      this.ruler.applyPosition();
+    }
+  }
+
   cleanTrailingEmptyNodes(root) {
     if (!root) return;
 
@@ -5361,6 +5384,7 @@ export class LuminaApp {
   applyFastReadingMode() {
     if (!this.currentBook || !this.dom.readerContent || this.isPdfMode) return;
 
+    tracker.cancelCurrentPageDwell();
     this.dom.readerContent.classList.toggle("bionic-active", !!this.settings.fastReading);
 
     if (this.isVerticalReadingMode()) {
@@ -7289,7 +7313,10 @@ export class LuminaApp {
       ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples) 
       : [];
     const speeds = samples.map(s => Number(s.wpm ?? s.instantaneousWpm) || 0).filter(w => w > 0);
-    const peakWpm = speeds.length > 0 ? Math.max(...speeds) : avgWpm;
+    let peakWpm = speeds.length > 0 ? Math.max(...speeds) : avgWpm;
+    if (peakWpm < avgWpm && avgWpm > 0) {
+      peakWpm = avgWpm;
+    }
 
     if (this.dom.sessionBadgeDuration) {
       this.dom.sessionBadgeDuration.textContent = ReadingTracker.formatDurationDetailed(durationSec);

@@ -408,7 +408,10 @@ export class StatsCharts {
 
       // 5. Výpočet špičkové rychlosti (Peak WPM) výhradně z vykreslených hodnot s.wpm
       const sampleSpeeds = dedupedSamples.map(s => s.wpm).filter(w => w > 0);
-      const peakWpm = sampleSpeeds.length > 0 ? Math.min(650, Math.max(...sampleSpeeds)) : (avgWpm > 0 ? avgWpm : 0);
+      let peakWpm = sampleSpeeds.length > 0 ? Math.min(650, Math.max(...sampleSpeeds)) : (avgWpm > 0 ? avgWpm : 0);
+      if (peakWpm < avgWpm && avgWpm > 0) {
+        peakWpm = avgWpm;
+      }
 
       // Synchronizujeme odznaky špičkového a průměrného tempa v UI
       const peakBadge = document.getElementById("session-badge-peak-wpm");

@@ -246,13 +246,13 @@ export class StorageManager {
   }
 
   async uploadBook(book) {
-    const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
+    const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
     return await supabaseSync.uploadBook(book);
   }
 
   async syncWithCloud(options) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
       return await supabaseSync.syncAll(options);
     } catch (err) {
       console.warn("[StorageManager] syncWithCloud selhal:", err);
@@ -262,7 +262,7 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
       return await supabaseSync.pushSessionAndStats(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
@@ -272,7 +272,7 @@ export class StorageManager {
 
   async pushReadingSessionsToCloud(sessions) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
       return await supabaseSync.pushMultipleSessions(sessions);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
@@ -738,13 +738,47 @@ export class StorageManager {
     let savedCount = 0;
 
     let booksMap = null;
+    let localSessionsMap = new Map();
     try {
-      const localBooks = await this.getAllBooks();
+      const [localBooks, localSessions] = await Promise.all([
+        this.getAllBooks(),
+        this.getAllReadingSessions()
+      ]);
       booksMap = new Map((localBooks || []).map(b => [b.id, b]));
+      for (const ls of (localSessions || [])) {
+        if (!ls) continue;
+        const sid = String(ls.sessionId || ls.id || "").trim();
+        if (sid) localSessionsMap.set(sid, ls);
+      }
     } catch (_) {}
 
     for (const [rowId, session] of validRemoteMap.entries()) {
       if (deletedTombstones.has(rowId)) continue;
+
+      const existingLocal = localSessionsMap.get(rowId);
+      if (existingLocal) {
+        if (!session.bookTitle && !session.book_title && existingLocal.bookTitle) {
+          session.bookTitle = existingLocal.bookTitle;
+        }
+
+        // Zachovat bohaté lokální vzorky intra_session_samples, pokud cloud vrátil prázdné pole nebo null
+        let remoteSamples = session.intra_session_samples || session.intraSessionSamples || session.timelineSamples;
+        if (typeof remoteSamples === "string") {
+          try { remoteSamples = JSON.parse(remoteSamples); } catch (_) { remoteSamples = []; }
+          session.intra_session_samples = remoteSamples;
+        }
+        const localSamples = Array.isArray(existingLocal.intra_session_samples) && existingLocal.intra_session_samples.length > 0
+          ? existingLocal.intra_session_samples
+          : (Array.isArray(existingLocal.intraSessionSamples) && existingLocal.intraSessionSamples.length > 0
+            ? existingLocal.intraSessionSamples
+            : (Array.isArray(existingLocal.timelineSamples) ? existingLocal.timelineSamples : []));
+
+        if ((!Array.isArray(remoteSamples) || remoteSamples.length === 0) && localSamples.length > 0) {
+          session.intra_session_samples = localSamples;
+          session.intraSessionSamples = localSamples;
+          session.timelineSamples = localSamples;
+        }
+      }
 
       if (!session.bookTitle && !session.book_title && session.book_id && booksMap) {
         const b = booksMap.get(session.book_id);
@@ -784,7 +818,7 @@ export class StorageManager {
    */
   async reconcileSessionsWithCloud() {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.4");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.4.5");
       if (!supabaseSync || !supabaseSync.isOnline()) {
         return { success: false, reason: "offline", purged: 0, saved: 0 };
       }
@@ -843,9 +877,15 @@ export class StorageManager {
     }
 
     // Filtrace a normalizace 1-minutových vzorků intra_session_samples (bez umělých 220 WPM seed bodů na 0s a bez 0 WPM idle propadů)
-    const rawSamples = Array.isArray(sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples) 
-      ? (sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples) 
-      : [];
+    let rawSamples = sessionData.intra_session_samples || sessionData.intraSessionSamples || sessionData.timelineSamples;
+    if (typeof rawSamples === "string") {
+      try {
+        rawSamples = JSON.parse(rawSamples);
+      } catch (_) {
+        rawSamples = [];
+      }
+    }
+    rawSamples = Array.isArray(rawSamples) ? rawSamples : [];
     const cleanedSamples = this._cleanIntraSessionSamples(rawSamples, durationSeconds, wordsRead, avgWpm, timestamp);
 
     // Výpočet udržené špičkové rychlosti: max z validních vzorků (>= 30–60s)
@@ -853,7 +893,10 @@ export class StorageManager {
       .filter(s => !s.isPartial || (s.activeSeconds ?? 60) >= 30)
       .map(s => s.wpm)
       .filter(w => w > 0 && w <= 650);
-    const peakWpm = validSpeeds.length > 0 ? Math.min(650, Math.max(...validSpeeds)) : avgWpm;
+    let peakWpm = validSpeeds.length > 0 ? Math.min(650, Math.max(...validSpeeds)) : avgWpm;
+    if (peakWpm < avgWpm && avgWpm > 0) {
+      peakWpm = avgWpm;
+    }
 
     const updatedAt = sessionData.updatedAt || sessionData.updated_at || new Date().toISOString();
 
@@ -1440,6 +1483,13 @@ export class StorageManager {
    * - Normalizuje vzorky na čisté 1-minutové intervaly { minute, elapsedSeconds, t, words, wpm }.
    */
   _cleanIntraSessionSamples(rawSamples, durationSec, wordsRead, avgWpm, fallbackTimestamp = Date.now()) {
+    if (typeof rawSamples === "string") {
+      try {
+        rawSamples = JSON.parse(rawSamples);
+      } catch (_) {
+        rawSamples = [];
+      }
+    }
     if (!Array.isArray(rawSamples) || rawSamples.length === 0) {
       return [];
     }
@@ -1536,9 +1586,11 @@ export class StorageManager {
           break;
         }
 
-        const samples = Array.isArray(s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
-          ? (s.intra_session_samples || s.intraSessionSamples || s.timelineSamples)
-          : [];
+        let samples = s.intra_session_samples || s.intraSessionSamples || s.timelineSamples;
+        if (typeof samples === "string") {
+          try { samples = JSON.parse(samples); } catch (_) { samples = []; }
+        }
+        samples = Array.isArray(samples) ? samples : [];
         const samplesWords = samples.reduce((sum, pt) => sum + Math.max(0, Math.round(pt.words || 0)), 0);
         if (words === 0 && samplesWords > 0) {
           hasAnomaly = true;
@@ -1550,9 +1602,9 @@ export class StorageManager {
         }
 
         const speeds = samples.map(pt => Number(pt.wpm) || 0).filter(w => w > 0);
-        const expectedPeak = speeds.length > 0 ? Math.max(...speeds) : expectedAvg;
+        const expectedPeak = Math.max(speeds.length > 0 ? Math.max(...speeds) : expectedAvg, expectedAvg);
         const storedPeak = s.peak_wpm ?? s.peakWpm ?? 0;
-        if (storedPeak !== expectedPeak) {
+        if (storedPeak !== expectedPeak || (storedPeak < expectedAvg && expectedAvg > 0)) {
           hasAnomaly = true;
           break;
         }
@@ -1614,9 +1666,15 @@ export class StorageManager {
         continue;
       }
 
-      const rawSamples = Array.isArray(session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
-        ? (session.intra_session_samples || session.intraSessionSamples || session.timelineSamples)
-        : [];
+      let rawSamples = session.intra_session_samples || session.intraSessionSamples || session.timelineSamples;
+      if (typeof rawSamples === "string") {
+        try {
+          rawSamples = JSON.parse(rawSamples);
+        } catch (_) {
+          rawSamples = [];
+        }
+      }
+      rawSamples = Array.isArray(rawSamples) ? rawSamples : [];
       const samplesWords = rawSamples.reduce((sum, pt) => sum + Math.max(0, Math.round(pt.words || 0)), 0);
       let words = Math.max(0, Math.round(session.words_read ?? session.wordsRead ?? 0));
       if (words === 0 && samplesWords > 0) {
@@ -1659,7 +1717,10 @@ export class StorageManager {
       }
 
       const sampleSpeeds = cleanedSamples.map(s => s.wpm).filter(w => w > 0);
-      const peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds) : avgWpm;
+      let peakWpm = sampleSpeeds.length > 0 ? Math.max(...sampleSpeeds) : avgWpm;
+      if (peakWpm < avgWpm && avgWpm > 0) {
+        peakWpm = avgWpm;
+      }
 
       const normalizedDate = this.getLocalDateString(session.date || session.startTime || session.start_time || session.timestamp);
       const prevAvg = session.avg_wpm ?? session.avgWpm ?? session.wpm;
