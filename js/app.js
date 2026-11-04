@@ -5595,6 +5595,10 @@ export class LuminaApp {
 
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, this.currentPageIndex));
 
+    if (this.ruler && this.ruler._canonicalColTopOffsets) {
+      this.ruler._canonicalColTopOffsets.clear();
+    }
+
     this.updatePageUI();
   }
 
@@ -5701,15 +5705,19 @@ export class LuminaApp {
       ? explicitDirection
       : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
 
-    // Synchronní usazení masek zaostření na výchozí řádek PŘED transformací sloupce
-    if (this.ruler && this.ruler.enabled && isPageChanged && !options.skipRulerUpdate) {
-      this.ruler.prepareForPageTransition(direction);
+    if (this.ruler && this.ruler._canonicalColTopOffsets && isPageChanged) {
+      this.ruler._canonicalColTopOffsets.clear();
     }
 
     // Okamžitá hardwarově akcelerovaná CSS transformace stránky bez blokování snímku
     if (this.dom.readerContent) {
       this.dom.readerContent.style.transition = "none";
       this.dom.readerContent.style.transform = `translate3d(-${offset.toFixed(2)}px, 0, 0)`;
+    }
+
+    // Usazení masek zaostření na výchozí řádek PO transformaci sloupce pro udržení viditelnosti clon bez zmrazení chybných souřadnic
+    if (this.ruler && this.ruler.enabled && isPageChanged && !options.skipRulerUpdate) {
+      this.ruler.prepareForPageTransition(direction);
     }
 
     const stage = this.dom.pagedStage;
@@ -5839,7 +5847,9 @@ export class LuminaApp {
             }
             try {
               if (this.ruler && this.ruler.enabled) {
-                this.ruler.onPageChange(direction, isPageChanged, immediateRuler);
+                if (content) void content.offsetWidth;
+                this.ruler.refreshLines();
+                this.ruler.resetPositionForPage(direction, isPageChanged);
               }
             } catch (rulerErr) {
               console.error("[LuminaApp] Error updating ruler on page change:", rulerErr);
