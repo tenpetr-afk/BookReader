@@ -536,6 +536,27 @@ export class LuminaApp {
 
     // Horizontální přejetí (swipe) zachycené pravítkem
     this.ruler.onSwipe = (dir) => {
+      this.lastSwipeTime = Date.now();
+      if (this.ruler) {
+        this.ruler.lastSwipeTime = Date.now();
+        this.ruler.lastTouchEndTime = Date.now();
+        this.ruler.isTouchActive = false;
+        this.ruler.cancelHold(false);
+        this.ruler.isHoldTriggered = false;
+        this.ruler.isDraggingRuler = false;
+        this.ruler.flickResyncTopLine = true;
+        this.ruler.isLineLocked = true;
+        this.ruler.suppressLineAdvancement = true;
+        if (this.ruler.pointerRafId) {
+          cancelAnimationFrame(this.ruler.pointerRafId);
+          this.ruler.pointerRafId = null;
+        }
+        this.ruler.rafPointerPending = false;
+        this.ruler.pendingPointerX = null;
+        this.ruler.pendingPointerY = null;
+        this.ruler.pendingPointerType = null;
+        this.ruler.lockAdvancement(650);
+      }
       if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
@@ -547,6 +568,22 @@ export class LuminaApp {
 
     // Rychlé švihnutí stylusu (Apple Pencil Flick Gesture) pro okamžité otočení strany
     this.ruler.onPenFlick = (dir) => {
+      this.lastSwipeTime = Date.now();
+      if (this.ruler) {
+        this.ruler.lastSwipeTime = Date.now();
+        this.ruler.flickResyncTopLine = true;
+        this.ruler.isLineLocked = true;
+        this.ruler.suppressLineAdvancement = true;
+        if (this.ruler.pointerRafId) {
+          cancelAnimationFrame(this.ruler.pointerRafId);
+          this.ruler.pointerRafId = null;
+        }
+        this.ruler.rafPointerPending = false;
+        this.ruler.pendingPointerX = null;
+        this.ruler.pendingPointerY = null;
+        this.ruler.pendingPointerType = null;
+        this.ruler.lockAdvancement(650);
+      }
       if (this.isVerticalReadingMode()) return;
       if (this.isAnyModalOrMenuOpen()) return;
       if (dir > 0) {
@@ -1254,21 +1291,29 @@ export class LuminaApp {
           return;
         }
         if (this.isUiOrOverlayEvent(e)) return;
-        if (this.isNavigating || this.ruler?.isLineLocked) {
+
+        // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
+        const now = Date.now();
+        const isRecentSwipe = (now - lastSwipeTime < 650) ||
+          (now - (this.lastSwipeTime || 0) < 650) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 650);
+        const isRecentTap = (now - lastTapTime < 650) ||
+          (now - (this.ruler?.lastTouchTapTime || 0) < 650);
+
+        if (isRecentSwipe || isRecentTap) {
           e.preventDefault();
           return;
         }
-        if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
-          this.ruler.stepLine(-1, true);
-          return;
-        }
-        // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
-        if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 500) {
+        if (this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
           e.preventDefault();
           return;
         }
         // Při zapnutém pravítku slouží Apple Pencil výhradně k pozicování pravítka, nikoliv k přepínání stránek
         if (this.ruler?.enabled && this.ruler?.isPenEvent(e)) {
+          return;
+        }
+        if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
+          this.ruler.stepLine(-1, true);
           return;
         }
         if (this.ruler && this.ruler.enabled) {
@@ -1277,9 +1322,19 @@ export class LuminaApp {
             if (this.ruler) {
               this.ruler.lastTouchEndTime = Date.now();
               this.ruler.lastSwipeTime = Date.now();
+              this.ruler.isTouchActive = false;
               this.ruler.flickResyncTopLine = true;
               this.ruler.isLineLocked = true;
-              this.ruler.lockAdvancement(450);
+              this.ruler.suppressLineAdvancement = true;
+              if (this.ruler.pointerRafId) {
+                cancelAnimationFrame(this.ruler.pointerRafId);
+                this.ruler.pointerRafId = null;
+              }
+              this.ruler.rafPointerPending = false;
+              this.ruler.pendingPointerX = null;
+              this.ruler.pendingPointerY = null;
+              this.ruler.pendingPointerType = null;
+              this.ruler.lockAdvancement(650);
             }
             this.prevPage();
             return;
@@ -1307,21 +1362,29 @@ export class LuminaApp {
         return;
       }
       if (this.isUiOrOverlayEvent(e)) return;
-      if (this.isNavigating || this.ruler?.isLineLocked) {
+
+      // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
+      const now = Date.now();
+      const isRecentSwipe = (now - lastSwipeTime < 650) ||
+        (now - (this.lastSwipeTime || 0) < 650) ||
+        (now - (this.ruler?.lastSwipeTime || 0) < 650);
+      const isRecentTap = (now - lastTapTime < 650) ||
+        (now - (this.ruler?.lastTouchTapTime || 0) < 650);
+
+      if (isRecentSwipe || isRecentTap) {
         e.preventDefault();
         return;
       }
-      if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
-        this.ruler.stepLine(1, true);
-        return;
-      }
-      // Pokud před chvilkou proběhl swipe prstem nebo tap, potlačíme syntetický click iPadu
-      if (Date.now() - lastSwipeTime < 500 || Date.now() - lastTapTime < 500) {
+      if (this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
         e.preventDefault();
         return;
       }
       // Při zapnutém pravítku slouží Apple Pencil výhradně k pozicování pravítka
       if (this.ruler?.enabled && this.ruler?.isPenEvent(e)) {
+        return;
+      }
+      if (this.ruler?.enabled && this.ruler.followMode === "keyboard") {
+        this.ruler.stepLine(1, true);
         return;
       }
       if (this.ruler && this.ruler.enabled) {
@@ -1330,9 +1393,19 @@ export class LuminaApp {
           if (this.ruler) {
             this.ruler.lastTouchEndTime = Date.now();
             this.ruler.lastSwipeTime = Date.now();
+            this.ruler.isTouchActive = false;
             this.ruler.flickResyncTopLine = true;
             this.ruler.isLineLocked = true;
-            this.ruler.lockAdvancement(450);
+            this.ruler.suppressLineAdvancement = true;
+            if (this.ruler.pointerRafId) {
+              cancelAnimationFrame(this.ruler.pointerRafId);
+              this.ruler.pointerRafId = null;
+            }
+            this.ruler.rafPointerPending = false;
+            this.ruler.pendingPointerX = null;
+            this.ruler.pendingPointerY = null;
+            this.ruler.pendingPointerType = null;
+            this.ruler.lockAdvancement(650);
           }
           this.nextPage();
           return;
@@ -1386,7 +1459,11 @@ export class LuminaApp {
         if (this.ruler) {
           this.ruler.lastTouchEndTime = Date.now();
         }
-        if (this.isNavigating || this.ruler?.isLineLocked || (Date.now() - lastSwipeTime < 500) || (Date.now() - (this.ruler?.lastSwipeTime || 0) < 500)) {
+        const now = Date.now();
+        const isRecentSwipe = (now - lastSwipeTime < 650) ||
+          (now - (this.lastSwipeTime || 0) < 650) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 650);
+        if (this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0)) || isRecentSwipe) {
           isSwiping = false;
           if (e.cancelable) e.preventDefault();
           e.stopPropagation();
@@ -1421,9 +1498,11 @@ export class LuminaApp {
           }
           e.stopPropagation();
           lastSwipeTime = Date.now();
+          this.lastSwipeTime = Date.now();
           if (this.ruler) {
             this.ruler.lastSwipeTime = Date.now();
             this.ruler.lastTouchEndTime = Date.now();
+            this.ruler.isTouchActive = false;
             this.ruler.cancelHold(false);
             this.ruler.isHoldTriggered = false;
             this.ruler.isDraggingRuler = false;
@@ -1435,7 +1514,10 @@ export class LuminaApp {
               this.ruler.pointerRafId = null;
             }
             this.ruler.rafPointerPending = false;
-            this.ruler.lockAdvancement(450);
+            this.ruler.pendingPointerX = null;
+            this.ruler.pendingPointerY = null;
+            this.ruler.pendingPointerType = null;
+            this.ruler.lockAdvancement(650);
           }
           if (deltaX < 0) {
             this.nextPage();
@@ -1460,9 +1542,19 @@ export class LuminaApp {
               if (this.ruler) {
                 this.ruler.lastSwipeTime = Date.now();
                 this.ruler.lastTouchEndTime = Date.now();
+                this.ruler.isTouchActive = false;
                 this.ruler.flickResyncTopLine = true;
                 this.ruler.isLineLocked = true;
-                this.ruler.lockAdvancement(450);
+                this.ruler.suppressLineAdvancement = true;
+                if (this.ruler.pointerRafId) {
+                  cancelAnimationFrame(this.ruler.pointerRafId);
+                  this.ruler.pointerRafId = null;
+                }
+                this.ruler.rafPointerPending = false;
+                this.ruler.pendingPointerX = null;
+                this.ruler.pendingPointerY = null;
+                this.ruler.pendingPointerType = null;
+                this.ruler.lockAdvancement(650);
               }
               if (e.cancelable) e.preventDefault();
               this.prevPage();
@@ -1472,9 +1564,19 @@ export class LuminaApp {
               if (this.ruler) {
                 this.ruler.lastSwipeTime = Date.now();
                 this.ruler.lastTouchEndTime = Date.now();
+                this.ruler.isTouchActive = false;
                 this.ruler.flickResyncTopLine = true;
                 this.ruler.isLineLocked = true;
-                this.ruler.lockAdvancement(450);
+                this.ruler.suppressLineAdvancement = true;
+                if (this.ruler.pointerRafId) {
+                  cancelAnimationFrame(this.ruler.pointerRafId);
+                  this.ruler.pointerRafId = null;
+                }
+                this.ruler.rafPointerPending = false;
+                this.ruler.pendingPointerX = null;
+                this.ruler.pendingPointerY = null;
+                this.ruler.pendingPointerType = null;
+                this.ruler.lockAdvancement(650);
               }
               if (e.cancelable) e.preventDefault();
               this.nextPage();
@@ -1536,8 +1638,16 @@ export class LuminaApp {
           return;
         }
         if (this.isUiOrOverlayEvent(e)) return;
-        if (this.isNavigating || this.ruler?.isLineLocked) return;
-        if (Date.now() - lastSwipeTime < 550 || Date.now() - lastTapTime < 550 || (Date.now() - (this.ruler?.lastTouchEndTime || 0) < 550)) {
+
+        const now = Date.now();
+        const isRecentSwipe = (now - lastSwipeTime < 650) ||
+          (now - (this.lastSwipeTime || 0) < 650) ||
+          (now - (this.ruler?.lastSwipeTime || 0) < 650);
+        const isRecentTouch = (now - lastTapTime < 650) ||
+          (now - (this.ruler?.lastTouchTapTime || 0) < 650) ||
+          (now - (this.ruler?.lastTouchEndTime || 0) < 650);
+
+        if (isRecentSwipe || isRecentTouch || this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
           return;
         }
         if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
@@ -1561,11 +1671,13 @@ export class LuminaApp {
           this.ruler.isHoldTriggered = false;
           return;
         }
-        if (typeof this.ruler.handleTap === "function" && this.ruler.followMode === "keyboard") {
-          const handled = this.ruler.handleTap(e.clientX, e.clientY, "mouse", 0);
-          if (handled) {
-            lastTapTime = Date.now();
-            e.preventDefault();
+        if (this.ruler.followMode === "keyboard") {
+          if (typeof this.ruler.handleTap === "function") {
+            const handled = this.ruler.handleTap(e.clientX, e.clientY, "mouse", 0);
+            if (handled) {
+              lastTapTime = Date.now();
+              e.preventDefault();
+            }
           }
           return;
         }
@@ -5853,7 +5965,7 @@ export class LuminaApp {
         this.ruler.suppressLineAdvancement = false;
       }
       this.navigatingPageTimer = null;
-    }, 450);
+    }, 650);
 
     try {
       // Zaznamenání přechodu stránky do trackeru s přesným počtem viditelných slov a dwell time
@@ -6028,7 +6140,7 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(350, 1);
+      this.ruler.lockAdvancement(650, 1);
       this.ruler.activeLineIndex = 0;
       this.ruler.activeWordIndex = 0;
       this.ruler.prepareForPageTransition(1);
@@ -6048,7 +6160,7 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
         }
       }
-    }, 300); // 300ms maximum lock lifetime
+    }, 650); // 650ms safety fallback lock lifetime
 
     try {
       // 1. Pokud jsme ještě před koncem známých stran kapitoly, otočíme stranu v rámci kapitoly
@@ -6141,7 +6253,7 @@ export class LuminaApp {
     this.isLineLocked = true;
     if (this.ruler) {
       this.ruler.isLineLocked = true;
-      this.ruler.lockAdvancement(350, -1);
+      this.ruler.lockAdvancement(650, -1);
       this.ruler.prepareForPageTransition(-1);
     }
 
@@ -6159,7 +6271,7 @@ export class LuminaApp {
           this.ruler.forceReleaseNavigationLocks();
         }
       }
-    }, 300); // 300ms maximum lock lifetime
+    }, 650); // 650ms safety fallback lock lifetime
 
     try {
       if (this.currentPageIndex > 0) {
