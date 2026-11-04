@@ -1270,7 +1270,7 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
   border-radius: 4px !important;
 }
 
-.reading-ruler.word-tracking-mode.mode-focus {
+.reading-ruler.word-tracking-mode.mode-focus:not(.mode-bottom-cover):not(.mode-highlight) {
   background: transparent !important;
   border: none !important;
   outline: none !important;
@@ -1414,7 +1414,7 @@ body.ruler-vertical-mode .ruler-focused-image {
   box-shadow: none !important;
 }
 
-.reading-ruler.mode-focus:not(.is-media-focus) {
+.reading-ruler.mode-focus:not(.is-media-focus):not(.mode-bottom-cover):not(.mode-highlight) {
   background: transparent !important;
   border: none !important;
   outline: none !important;
@@ -1433,6 +1433,7 @@ body.ruler-vertical-mode .ruler-focused-image {
   height: 2px !important;
   overflow: visible !important;
   contain: none !important;
+  z-index: 20 !important;
 }
 
 .reading-ruler.mode-bottom-cover,

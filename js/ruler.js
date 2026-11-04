@@ -630,7 +630,11 @@ export class ReadingRuler {
       } else {
         // 1. V PDF režimu vynutit výchozí plnošířkový řádkový režim (wordTracking = false),
         // pokud uživatel explicitně nezapnul sledování slov v PDF.
-        if (!wasPdfMode || !this.wordTrackingExplicitlyEnabledInPdf) {
+        const isSettingWord = this.app?.settings?.ruler?.rulerModeType === "word" || this.app?.settings?.ruler?.wordTracking === true;
+        if (isSettingWord || this.wordTrackingExplicitlyEnabledInPdf) {
+          this.wordTracking = true;
+          this.wordTrackingExplicitlyEnabledInPdf = true;
+        } else if (!wasPdfMode) {
           this.wordTracking = false;
           this.wordTrackingExplicitlyEnabledInPdf = false;
         }
@@ -825,15 +829,59 @@ export class ReadingRuler {
     }
     this._rulerMode = valid;
     this.wordTracking = (valid === "word");
+    if (this.isPdfMode) {
+      this.wordTrackingExplicitlyEnabledInPdf = this.wordTracking;
+    }
 
     if (this.rulerEl) {
       this.rulerEl.classList.toggle("word-tracking-mode", valid === "word");
       this.rulerEl.classList.toggle("line-mode", valid === "line");
     }
 
+    this._lastEmptyWordsDetectTime = 0;
+    this._lastActiveLineIndex = -1;
+    this._lastAppliedWordWidth = null;
+    this._lastWordSolidRatio = null;
+
     if (valid === "word") {
-      this.refreshWords();
+      if (!this.cachedLines || this.cachedLines.length === 0) {
+        this.refreshLines();
+      }
+      const targetLine = (this.activeLineIndex >= 0 && this.activeLineIndex < (this.cachedLines?.length || 0))
+        ? this.activeLineIndex
+        : 0;
+      this.activeLineIndex = targetLine;
+      const words = this.ensureActiveWords(targetLine);
+      if (words && words.length > 0) {
+        this.activeWordIndex = 0;
+        this.setWordWindow(0);
+      } else {
+        this.activeWordIndex = -1;
+      }
+      if (this.rulerEl) this.rulerEl.classList.add("word-tracking-mode");
+    } else {
+      this.activeWordIndex = -1;
+      this._clearWordCache();
+      if (this.rulerEl) {
+        this.rulerEl.classList.remove("word-tracking-mode", "no-preview");
+      }
+      if (this.wordWaveEl) {
+        this.wordWaveEl.style.display = "none";
+      }
+      if (this.cachedLines && this.cachedLines.length > 0) {
+        const lineIdx = Math.max(0, Math.min(this.cachedLines.length - 1, this.activeLineIndex >= 0 ? this.activeLineIndex : 0));
+        this.activeLineIndex = lineIdx;
+        const geom = this.computeLineGeometry(lineIdx);
+        if (geom) {
+          this.height = geom.height;
+          this.targetY = geom.targetY;
+          this.currentY = geom.targetY;
+        }
+      }
     }
+
+    this.updateBodyClasses();
+    this.updateStyles();
     if (typeof this.onStateChange === "function") {
       this.onStateChange(this.enabled, this.rulerMode);
     }
@@ -2997,7 +3045,7 @@ export class ReadingRuler {
       }
     }
 
-    const isBottomCoverWordTracking = !this.isPdfMode && this.mode === "bottom-cover" && this.wordTracking;
+    const isBottomCoverWordTracking = (this.style === "bottom-cover" || this.mode === "bottom-cover") && !!this.wordTracking;
     const rx = Math.round((this.wordTracking && !isBottomCoverWordTracking) ? (this.wordLeft || 0) : (this._rulerLeft || 0));
     const ry = Math.round(screenY);
 
@@ -6616,6 +6664,9 @@ export class ReadingRuler {
       this.navigatingPageLockoutEndTime = 0;
 
       try {
+        // Refresh lines for the active page:
+        this.refreshLines();
+
         if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
           const isVertical = this.isVerticalMode();
           const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
@@ -6679,9 +6730,6 @@ export class ReadingRuler {
           this.applyPosition();
           return;
         }
-
-        // Refresh lines for the active page:
-        this.refreshLines();
 
         if (this.wordTracking) {
           const targetLineIdx = (this.cachedLines && this.cachedLines.length > 0)
@@ -7588,7 +7636,8 @@ export class ReadingRuler {
         this._rulerWidth = Math.round(targetWidth);
 
         // 1. Vizuální indikátor pravítka ve vertikálním PDF módu
-        if (this.style === "bottom-cover") {
+        if (this.style === "bottom-cover" || this.mode === "bottom-cover") {
+          const hex = colorHexMap[this.color] || "#f59e0b";
           this.rulerEl.style.top = "0px";
           this.rulerEl.style.left = "0px";
           this.rulerEl.style.right = "auto";
@@ -7596,10 +7645,15 @@ export class ReadingRuler {
           this.rulerEl.style.maxWidth = `${Math.round(targetWidth)}px`;
           this.rulerEl.style.height = "2px";
           this.rulerEl.style.transform = `translate3d(${Math.round(targetLeft)}px, ${Math.round(screenY)}px, 0)`;
-          this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+          this.rulerEl.style.setProperty("background-color", hex, "important");
+          this.rulerEl.style.setProperty("color", hex, "important");
+          this.rulerEl.style.border = "none";
+          this.rulerEl.style.outline = "none";
+          this.rulerEl.style.setProperty("box-shadow", "0 1px 4px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.45)", "important");
           this.rulerEl.style.opacity = "1";
           this.rulerEl.style.visibility = "visible";
           this.rulerEl.style.display = "block";
+          this.rulerEl.style.setProperty("z-index", "20", "important");
         } else if (this.style === "off" || this.mode === "off") {
           this.rulerEl.classList.remove("is-visible");
           this.rulerEl.classList.add("is-hidden", "mode-off");
@@ -7812,6 +7866,7 @@ export class ReadingRuler {
       this._rulerWidth = rulerWidth;
 
       if (activeStyle === "bottom-cover") {
+        const hex = colorHexMap[this.color] || "#f59e0b";
         this.rulerEl.style.top = "0px";
         this.rulerEl.style.left = "0px";
         this.rulerEl.style.right = "auto";
@@ -7819,13 +7874,15 @@ export class ReadingRuler {
         this.rulerEl.style.maxWidth = `${rulerWidth}px`;
         this.rulerEl.style.height = "2px";
         this.rulerEl.style.transform = `translate3d(${rulerLeft}px, ${rulerTop}px, 0)`;
-        this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+        this.rulerEl.style.setProperty("background-color", hex, "important");
+        this.rulerEl.style.setProperty("color", hex, "important");
         this.rulerEl.style.border = "none";
         this.rulerEl.style.outline = "none";
-        this.rulerEl.style.boxShadow = "none";
+        this.rulerEl.style.setProperty("box-shadow", "0 1px 4px rgba(var(--ruler-glow-rgb, 245, 158, 11), 0.45)", "important");
         this.rulerEl.style.opacity = "1";
         this.rulerEl.style.visibility = "visible";
         this.rulerEl.style.display = "block";
+        this.rulerEl.style.setProperty("z-index", "20", "important");
       } else if (activeStyle === "off") {
         this.rulerEl.classList.remove("is-visible");
         this.rulerEl.classList.add("is-hidden", "mode-off");
@@ -8061,9 +8118,16 @@ export class ReadingRuler {
       }
     } else if (this.isPdfMode && this.activeLineIndex >= 0 && this.cachedLines && this.cachedLines.length > 0) {
       activeGeom = this.computeLineGeometry(this.activeLineIndex);
-      if (activeGeom && this.style !== "bottom-cover" && this.mode !== "bottom-cover" && activeGeom.height) {
-        h = activeGeom.height;
-        this.height = h;
+      if (activeGeom) {
+        if (Number.isFinite(activeGeom.targetY)) {
+          y = activeGeom.targetY;
+          this.targetY = activeGeom.targetY;
+          this.currentY = activeGeom.targetY;
+        }
+        if (this.style !== "bottom-cover" && this.mode !== "bottom-cover" && activeGeom.height) {
+          h = activeGeom.height;
+          this.height = h;
+        }
       }
     }
 
@@ -8147,7 +8211,7 @@ export class ReadingRuler {
     let slitLeft = 0;
     let slitRight = window.innerWidth;
 
-    const isBottomCoverWordTracking = !this.isPdfMode && (this.style === "bottom-cover" || this.mode === "bottom-cover") && !!this.wordTracking;
+    const isBottomCoverWordTracking = (this.style === "bottom-cover" || this.mode === "bottom-cover") && !!this.wordTracking;
 
     if (this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia && !isBottomCoverWordTracking) {
       const x = Number.isFinite(this.wordLeft) ? Math.round(this.wordLeft) : 0;
@@ -8359,6 +8423,14 @@ export class ReadingRuler {
       slate: "#64748b"
     };
 
+    const colorGlowMap = {
+      amber: "245, 158, 11",
+      cyan: "6, 182, 212",
+      emerald: "16, 185, 129",
+      lavender: "168, 85, 247",
+      slate: "100, 116, 139"
+    };
+
     const geom = activeGeom || this.computeLineGeometry(this.activeLineIndex);
     const docLineTop = (geom && Number.isFinite(geom.lineTop)) ? geom.lineTop : (activeStyle === "bottom-cover" ? (y - h) : y);
     const docLineBottom = (geom && Number.isFinite(geom.lineBottom)) ? geom.lineBottom : (activeStyle === "bottom-cover" ? y : (y + h));
@@ -8369,6 +8441,8 @@ export class ReadingRuler {
     // Vizuální indikátor pravítka dle activeStyle (off / highlight / bottom-cover)
     this.rulerEl.style.setProperty("transition", "none", "important");
     if (activeStyle === "bottom-cover") {
+      const hex = colorHexMap[this.color] || "#f59e0b";
+      const glowRgb = colorGlowMap[this.color] || "245, 158, 11";
       this.rulerEl.style.top = "0px";
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "auto";
@@ -8376,13 +8450,17 @@ export class ReadingRuler {
       this.rulerEl.style.maxWidth = `${Math.round(this._rulerWidth || colWidth || 100)}px`;
       this.rulerEl.style.height = "2px";
       this.rulerEl.style.transform = `translate3d(${Math.round(this._rulerLeft != null ? this._rulerLeft : (colLeft || 0))}px, ${lineScreenBottom}px, 0)`;
-      this.rulerEl.style.backgroundColor = colorHexMap[this.color] || "#f59e0b";
+      this.rulerEl.style.setProperty("background-color", hex, "important");
+      this.rulerEl.style.setProperty("color", hex, "important");
       this.rulerEl.style.border = "none";
       this.rulerEl.style.outline = "none";
-      this.rulerEl.style.boxShadow = "none";
+      this.rulerEl.style.setProperty("box-shadow", `0 1px 4px rgba(${glowRgb}, 0.45)`, "important");
       this.rulerEl.style.opacity = "1";
       this.rulerEl.style.visibility = "visible";
       this.rulerEl.style.display = "block";
+      this.rulerEl.style.overflow = "visible";
+      this.rulerEl.style.contain = "none";
+      this.rulerEl.style.setProperty("z-index", "20", "important");
     } else if (activeStyle === "off") {
       this.rulerEl.classList.remove("is-visible");
       this.rulerEl.classList.add("is-hidden", "mode-off");
@@ -8410,6 +8488,7 @@ export class ReadingRuler {
       this.rulerEl.style.opacity = "1";
       this.rulerEl.style.visibility = "visible";
       this.rulerEl.style.display = "block";
+      this.rulerEl.style.setProperty("z-index", "20", "important");
       if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
     }
 
@@ -8656,11 +8735,6 @@ export class ReadingRuler {
 
   updateRulerPosition(index = 0) {
     if (!this.rulerEl) return;
-    if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
-      this.height = this.pdfRulerHeight || 32;
-      this.applyPosition();
-      return;
-    }
     this.refreshLines();
 
     if (this.cachedLines.length === 0) {
@@ -8771,7 +8845,7 @@ export class ReadingRuler {
     const activeStyle = this.style || this.mode || "highlight";
     this.rulerEl.classList.toggle("mode-off", activeStyle === "off");
     this.rulerEl.classList.toggle("mode-highlight", activeStyle === "highlight");
-    this.rulerEl.classList.toggle("mode-focus", this.focusMode && this.focusMode !== "off");
+    this.rulerEl.classList.toggle("mode-focus", (this.focusMode && this.focusMode !== "off") && activeStyle === "off");
     this.rulerEl.classList.toggle("mode-underline", activeStyle === "underline");
     this.rulerEl.classList.toggle("mode-bottom-cover", activeStyle === "bottom-cover");
 
@@ -8839,12 +8913,13 @@ export class ReadingRuler {
     };
     if (activeStyle === "bottom-cover") {
       const hex = colorHexMap[this.color] || "#f59e0b";
-      this.rulerEl.style.backgroundColor = hex;
-      this.rulerEl.style.color = hex;
+      this.rulerEl.style.setProperty("background-color", hex, "important");
+      this.rulerEl.style.setProperty("color", hex, "important");
       this.rulerEl.style.height = "2px";
       this.rulerEl.style.contain = "none";
       this.rulerEl.style.opacity = "1";
       this.rulerEl.style.visibility = "visible";
+      this.rulerEl.style.setProperty("z-index", "20", "important");
     } else if (activeStyle === "off") {
       this.rulerEl.style.backgroundColor = "transparent";
       this.rulerEl.style.color = "";
@@ -8863,7 +8938,7 @@ export class ReadingRuler {
       this.rulerEl.style.visibility = "visible";
     }
 
-    const isBottomCoverWordTracking = !this.isPdfMode && activeStyle === "bottom-cover" && !!this.wordTracking;
+    const isBottomCoverWordTracking = activeStyle === "bottom-cover" && !!this.wordTracking;
     if (!isBottomCoverWordTracking && this.wordWaveEl) {
       this.wordWaveEl.style.display = "none";
     }
