@@ -1,15 +1,16 @@
 # LuminaReader 📖
 
-Moderní, rychlá a na soukromí orientovaná webová aplikace pro čtení elektronických knih a dokumentů ve formátech **EPUB** a **PDF** s analytickým měřením rychlosti čtení, statistikami, cloudovou synchronizací a adaptivním čtecím pravítkem.
+Moderní, rychlá a na soukromí orientovaná webová aplikace pro čtení elektronických knih ve formátu **EPUB** s analytickým měřením rychlosti čtení, statistikami a adaptivním čtecím pravítkem.
 
 ---
 
 ## ✨ Hlavní funkce
 
-### 1. Čtečka elektronických knih (EPUB & PDF)
-- **Nahrávání knih a dokumentů**: Přetažení (Drag & Drop) nebo výběr souborů `.epub` a `.pdf` z disku.
+### 1. Čtečka elektronických knih (EPUB)
+- **Nahrávání knih**: Přetažení (Drag & Drop) nebo výběr souboru `.epub` z disku.
 - **Lokální knihovna**: Všechny knihy i data jsou bezpečně uloženy přímo v prohlížeči (`IndexedDB`), funguje i zcela offline.
-- **Navigace**: Obsah knihy (TOC), listování kapitolami a stránkami, zapamatování přesné pozice čtení.
+- **Ukázková kniha v ceně**: Součástí je předpřipravená kniha *Karel Čapek – R.U.R.* pro okamžité vyzkoušení.
+- **Navigace**: Obsah knihy (TOC), listování kapitolami, zapamatování přesné pozice čtení.
 - **Typografie a motivy**:
   - 5 barevných témat: **Světlý**, **Teplý papír**, **Sépie**, **Tmavý**, **AMOLED černá**.
   - Výběr písem: Georgia (Serif), Merriweather, Inter (Sans-serif) a speciální písmo pro snazší čtení při dyslexii.
@@ -24,7 +25,6 @@ Moderní, rychlá a na soukromí orientovaná webová aplikace pro čtení elekt
   - Graf času čtení za posledních 7 dní.
   - Graf vývoje rychlosti čtení v čase.
   - Export všech dat do formátu JSON.
-- **Cloudová synchronizace**: Volitelná synchronizace historie a statistik se Supabase.
 
 ### 3. Čtecí pravítko (Reading Ruler)
 - Pomůcka pro udržení pozornosti a prevenci přeskakování řádků.
@@ -76,27 +76,23 @@ Aplikace se automaticky otevře ve vašem výchozím prohlížeči na adrese:
 
 ```
 BookReader/
-├── .github/
-│   └── workflows/
-│       └── deploy.yml       # GitHub Actions deployment na GitHub Pages
-├── css/
-│   ├── reader.css           # Typografie čtení a styly čtecího pravítka
-│   └── style.css            # Styly uživatelského rozhraní, témata, panely a modály
-├── js/
-│   ├── app.js               # Hlavní koordinátor aplikace a UI událostí
-│   ├── charts.js            # SVG grafy pro statistiky
-│   ├── epub-parser.js       # Kompletní parser EPUB standardu (EPUB 2 i 3)
-│   ├── pdf-loader.js        # Integrace Mozilla PDF.js pro načítání PDF knih
-│   ├── ruler.js             # Adaptivní čtecí pravítko a pacer
-│   ├── storage.js           # Správce IndexedDB a localStorage
-│   ├── supabase-client.js   # Klient pro cloudovou databázi Supabase
-│   ├── supabase-sync.js     # Synchronizace čtecích relací a dat se Supabase
-│   ├── tracker.js           # Měřič rychlosti čtení, WPM a detekce aktivity
-│   └── zip.js               # Zero-dependency ZIP dekomprese (DecompressionStream)
-├── index.html               # Hlavní HTML struktura aplikace
-├── server.py                # Lehký Python HTTP server s automatickým otevřením prohlížeče
 ├── start.sh                 # Spouštěcí bash skript
-├── bump_version.py          # Nástroj pro správu verze a cache-busting
-├── supabase_schema.sql      # SQL schéma pro tabulky v Supabase
-└── README.md                # Dokumentace aplikace
+├── server.py                # Lehký Python HTTP server s automatickým otevřením prohlížeče
+├── generate_sample_book.py  # Generátor ukázkové knihy R.U.R.
+├── README.md                # Dokumentace aplikace
+└── public/
+    ├── index.html           # Hlavní HTML struktura
+    ├── css/
+    │   ├── style.css        # Styly uživatelského rozhraní, témata, modály
+    │   └── reader.css       # Typografie čtení a styly čtecího pravítka
+    ├── js/
+    │   ├── zip.js           # Zero-dependency ZIP dekomprese (DecompressionStream)
+    │   ├── epub-parser.js   # Kompletní parser EPUB standardu (EPUB 2 i 3)
+    │   ├── storage.js       # Správce IndexedDB a localStorage
+    │   ├── tracker.js       # Měřič rychlosti čtení, WPM a detekce aktivity
+    │   ├── ruler.js         # Čtecí pravítko a speed pacer
+    │   ├── charts.js        # SVG grafy pro statistiky
+    │   └── app.js           # Hlavní koordinátor aplikace a UI událostí
+    └── sample-books/
+        └── rur.epub         # Vygenerovaná ukázková kniha
 ```

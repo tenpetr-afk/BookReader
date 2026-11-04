@@ -4,7 +4,7 @@
  * kapitol a převod interních obrázků a stylů na bezpečné Blob URL.
  */
 
-import { ZipArchive } from "./zip.js?v=2.4.8";
+import { ZipArchive } from "./zip.js";
 
 export class EpubParser {
   constructor(archive) {
@@ -405,47 +405,6 @@ export class EpubParser {
     const scripts = body.querySelectorAll("script");
     scripts.forEach(s => s.remove());
 
-    // Odstranění koncových prázdných elementů, odstavců a bílých znaků, které vytvářejí prázdné strany na konci kapitol
-    const isNodeEmpty = (node) => {
-      if (!node) return false;
-      if (node.nodeType === Node.COMMENT_NODE) return true;
-      if (node.nodeType === Node.TEXT_NODE) {
-        return node.textContent.replace(/[\s\u00a0\u200b-\u200d\ufeff]+/g, "").length === 0;
-      }
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        const tag = node.tagName.toLowerCase();
-        if (["img", "image", "svg", "canvas", "video", "audio", "table"].includes(tag)) {
-          return false;
-        }
-        if (tag === "br" || tag === "hr") {
-          return true;
-        }
-        const hasMedia = node.querySelector("img, image, svg, canvas, video, audio, table") !== null;
-        if (hasMedia) return false;
-        const text = node.textContent.replace(/[\s\u00a0\u200b-\u200d\ufeff]+/g, "");
-        return text.length === 0;
-      }
-      return false;
-    };
-
-    while (body.lastChild) {
-      if (isNodeEmpty(body.lastChild)) {
-        body.removeChild(body.lastChild);
-        continue;
-      }
-      if (body.lastChild.nodeType === Node.ELEMENT_NODE) {
-        let nested = body.lastChild;
-        while (nested.lastChild && isNodeEmpty(nested.lastChild)) {
-          nested.removeChild(nested.lastChild);
-        }
-        if (isNodeEmpty(nested)) {
-          body.removeChild(nested);
-          continue;
-        }
-      }
-      break;
-    }
-
     // Spočítáme slova
     const cleanText = body.innerText || body.textContent || "";
     const words = cleanText
@@ -453,8 +412,6 @@ export class EpubParser {
       .split(/\s+/)
       .filter(w => w.length > 0);
     const wordCount = words.length;
-    const hasMedia = body.querySelectorAll("img, image, svg, canvas, video, audio, table").length > 0;
-    const isBlank = wordCount === 0 && !hasMedia;
 
     // Získáme název kapitoly
     let title = "";
@@ -482,8 +439,7 @@ export class EpubParser {
       html: body.innerHTML,
       wordCount,
       totalChapters: this.spine.length,
-      fullPath: spineEntry.fullPath,
-      isBlank
+      fullPath: spineEntry.fullPath
     };
   }
 
