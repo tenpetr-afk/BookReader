@@ -504,6 +504,18 @@ export class ReadingRuler {
   }
 
   forceReleaseNavigationLocks() {
+    if (this.lineLockTimer) {
+      clearTimeout(this.lineLockTimer);
+      this.lineLockTimer = null;
+    }
+    if (this.suppressTimer) {
+      clearTimeout(this.suppressTimer);
+      this.suppressTimer = null;
+    }
+    if (this._navSafetyTimer) {
+      clearTimeout(this._navSafetyTimer);
+      this._navSafetyTimer = null;
+    }
     this.isNavigating = false;
     this.isNavigatingPage = false;
     this.isLineLocked = false;
@@ -6010,6 +6022,10 @@ export class ReadingRuler {
       return;
     }
 
+    if (!this.cachedLines || this.cachedLines.length === 0) {
+      this.detectLines();
+    }
+
     if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
       const isVertical = this.isVerticalMode();
       const vp = isVertical ? (document.querySelector(".paged-viewport") || document.getElementById("paged-viewport")) : null;
@@ -6073,7 +6089,7 @@ export class ReadingRuler {
       return;
     }
 
-    if (this.cachedLines.length === 0) {
+    if (!this.cachedLines || this.cachedLines.length === 0) {
       this.detectLines();
     }
 
@@ -6808,11 +6824,45 @@ export class ReadingRuler {
     const effectiveDirection = this.flickResyncTopLine ? (direction >= 0 ? 1 : -1) : direction;
     this.flickResyncTopLine = false;
 
-    // Transition lock chránící pravítko na cílovém řádku nové strany
+    if (this.lineLockTimer) {
+      clearTimeout(this.lineLockTimer);
+      this.lineLockTimer = null;
+    }
+
     this.isPageTransitioning = false;
-    this.isLineLocked = true;
-    this.suppressLineAdvancement = true;
-    this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + 200);
+    if (isPageChanged) {
+      this.isLineLocked = true;
+      this.suppressLineAdvancement = true;
+      const lockDuration = 200;
+      this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + lockDuration);
+      this.lineLockTimer = setTimeout(() => {
+        this.isLineLocked = false;
+        this.suppressLineAdvancement = false;
+        this.isPageTransitioning = false;
+        this._postTransitionAnchorLineIndex = null;
+        this.lineLockTimer = null;
+        const s = this.getStageElement();
+        if (s) s.classList.remove("is-turning-page");
+        document.body.classList.remove("is-turning-page");
+        const c = document.getElementById("reader-content");
+        if (c) c.classList.remove("is-turning-page");
+        if (this.enabled) {
+          this.applyPosition();
+        }
+      }, lockDuration);
+
+      if (this._navSafetyTimer) clearTimeout(this._navSafetyTimer);
+      this._navSafetyTimer = setTimeout(() => {
+        if (this.isNavigating || this.isLineLocked || this.suppressLineAdvancement || this.isPageTransitioning) {
+          this.forceReleaseNavigationLocks();
+        }
+      }, Math.max(350, lockDuration + 100));
+    } else {
+      this.isLineLocked = false;
+      this.suppressLineAdvancement = false;
+      this._postTransitionAnchorLineIndex = null;
+      this.navigatingPageLockoutEndTime = 0;
+    }
 
     const stage = this.getStageElement();
     const content = document.getElementById("reader-content");
@@ -6834,9 +6884,12 @@ export class ReadingRuler {
       }
 
       this.isPageTransitioning = false;
-      this.isLineLocked = true;
-      this.suppressLineAdvancement = true;
-      this.navigatingPageLockoutEndTime = Math.max(this.navigatingPageLockoutEndTime || 0, Date.now() + 200);
+      if (!isPageChanged) {
+        this.isLineLocked = false;
+        this.suppressLineAdvancement = false;
+        this._postTransitionAnchorLineIndex = null;
+        this.navigatingPageLockoutEndTime = 0;
+      }
 
       try {
         // Clear cached line geometry before recalculating line 0
@@ -7223,7 +7276,9 @@ export class ReadingRuler {
       if (this.followMode !== "mouse" && !this.isVerticalMode()) {
         this.setNoTransition(false);
       }
-      if (!this.isLineLocked && !this.isNavigating && !this.isNavigatingPage && Date.now() >= this.navigatingPageLockoutEndTime) {
+      if (Date.now() >= this.navigatingPageLockoutEndTime) {
+        this.isLineLocked = false;
+        this.suppressLineAdvancement = false;
         this._postTransitionAnchorLineIndex = null;
       }
     });
@@ -7263,7 +7318,10 @@ export class ReadingRuler {
    * - Ignoruje při pohybu > 10px nebo pokud je aktivní / dokončené podržení (long-press).
    */
   handleTap(clientX, clientY, pointerType = "touch", movementDelta = 0) {
-    if (!this.enabled || this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) || this.isLineLocked || this.followMode !== "keyboard") return false;
+    if (!this.cachedLines || this.cachedLines.length === 0) {
+      this.refreshLines();
+    }
+    if (!this.enabled || this.isImageOnlyPdf || (!this.cachedLines || this.cachedLines.length === 0) || this.isLineLocked || this.followMode !== "keyboard") return false;
     if (this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return false;
     if (pointerType !== "touch" && pointerType !== "mouse" && pointerType !== "pen") return false;
     if (movementDelta > 10) return false;
@@ -7312,8 +7370,11 @@ export class ReadingRuler {
    * Posun o jeden řádek nebo slovo (krokování tlačítky na iPadu či šipkami)
    */
   stepLine(direction, force = false) {
+    if (!this.cachedLines || this.cachedLines.length === 0) {
+      this.refreshLines();
+    }
     // Pokud probíhá přechod strany, aktivní tažení nebo dobíhá lockout přechodu strany, ignorovat krokování
-    if (!this.enabled || this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
+    if (!this.enabled || this.isImageOnlyPdf || (!this.cachedLines || this.cachedLines.length === 0) || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime) return;
     if (direction > 0 && (this.suppressLineAdvancement || (performance.now() - this.pageTurnTimestamp < 350))) {
       return;
     }
@@ -9381,17 +9442,18 @@ export class ReadingRuler {
     this.updateBodyClasses();
 
     if (this.enabled) {
+      this.forceReleaseNavigationLocks();
       if (this.isVerticalMode()) {
         this.ensureVerticalScrollListener();
       }
-      if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
-        this.applyPosition();
+      this.refreshLines();
+      if (this.wordTracking) {
+        this.refreshWords();
+      }
+      if (this.isVerticalMode() && this.followMode === "keyboard" && this.stationaryScreenY === null) {
+        this.initDefaultStationaryAnchor();
       } else {
-        if (this.isVerticalMode() && this.followMode === "keyboard" && this.stationaryScreenY === null) {
-          this.initDefaultStationaryAnchor();
-        } else {
-          this.updateRulerPosition(0);
-        }
+        this.updateRulerPosition(this.activeLineIndex >= 0 ? this.activeLineIndex : 0);
       }
       if (this.followMode === "mouse" && this.lastPointerX != null && this.lastPointerY != null) {
         this.updateCursorVisibility(this.lastPointerX, this.lastPointerY, "mouse");

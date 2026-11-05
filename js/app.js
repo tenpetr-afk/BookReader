@@ -3202,6 +3202,7 @@ export class LuminaApp {
           if (this.ruler) {
             if (!this.ruler.enabled) {
               this.ensureActiveRulerVisualMode();
+              this.releaseNavigationLocks();
               this.settings.ruler.enabled = true;
               this.ruler.setEnabled(true);
               this.updateRulerToggleButtonUI();
@@ -3231,6 +3232,7 @@ export class LuminaApp {
           if (this.ruler) {
             if (!this.ruler.enabled) {
               this.ensureActiveRulerVisualMode();
+              this.releaseNavigationLocks();
               this.settings.ruler.enabled = true;
               this.ruler.setEnabled(true);
               this.updateRulerToggleButtonUI();
@@ -3402,7 +3404,13 @@ export class LuminaApp {
     const willEnable = !this.ruler.enabled;
     if (willEnable) {
       this.ensureActiveRulerVisualMode();
+      this.releaseNavigationLocks();
       this.ruler.setEnabled(true);
+      if (this.isPdfMode) {
+        this.ruler.refreshLines();
+        this.ruler.updateStyles();
+        this.ruler.applyPosition();
+      }
     } else {
       this.ruler.setEnabled(false);
     }
@@ -4478,9 +4486,10 @@ export class LuminaApp {
         if (this.ruler && this.ruler.enabled) {
           this.ruler.forceReleaseNavigationLocks();
           this.ruler.refreshLines();
-          this.ruler.resetPositionForPage(1);
+          this.ruler.resetPositionForPage(1, false);
           this.ruler.updateStyles();
           this.ruler.applyPosition();
+          this.releaseNavigationLocks();
         }
 
         await this.renderPdfToc();
@@ -4579,6 +4588,14 @@ export class LuminaApp {
     // Re-synchronize reading ruler with the freshly rendered text layer
     if (this.ruler && this.ruler.enabled) {
       this.ruler.onPageChange(direction, isPageChanged, true);
+    }
+    if (isPageChanged) {
+      if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
+      this.navigatingPageTimer = setTimeout(() => {
+        this.releaseNavigationLocks();
+      }, 200);
+    } else {
+      this.releaseNavigationLocks();
     }
   }
 
