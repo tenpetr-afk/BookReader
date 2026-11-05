@@ -2,6 +2,7 @@
  * charts.js - Lehká SVG vizualizace statistik rychlosti čtení a aktivity.
  * Nevyžaduje žádné těžké knihovny (Chart.js apod.), je plně responzivní
  * a přizpůsobuje se světlému i tmavému motivu aplikace.
+ * Obsahuje interaktivní plovoucí tooltipy (hover/proximity/touch/focus).
  */
 
 export class StatsCharts {
@@ -60,24 +61,73 @@ export class StatsCharts {
       const y = padding.top + chartH - barH;
 
       svg += `
-        <g class="chart-bar-group" tabindex="0">
-          <rect x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="4" fill="url(#barGrad)">
-            <title>${d.label}: ${d.minutes} minut (${d.words} slov)</title>
+        <g class="chart-bar-group" tabindex="0" role="graphics-symbol" aria-label="${StatsCharts._escapeHtml(d.label)}: ${d.minutes} minut (${d.words || 0} slov)" data-idx="${i}">
+          <rect x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="4" fill="url(#barGrad)" class="chart-bar-rect">
           </rect>
-          <text x="${x + barWidth / 2}" y="${height - 10}" font-size="11" fill="currentColor" opacity="0.75" text-anchor="middle">${d.label}</text>
-          ${d.minutes > 0 ? `<text x="${x + barWidth / 2}" y="${y - 6}" font-size="10" font-weight="bold" fill="currentColor" opacity="0.85" text-anchor="middle">${d.minutes}</text>` : ""}
+          <text x="${x + barWidth / 2}" y="${height - 10}" font-size="11" fill="currentColor" opacity="0.75" text-anchor="middle" pointer-events="none">${d.label}</text>
+          ${d.minutes > 0 ? `<text x="${x + barWidth / 2}" y="${y - 6}" font-size="10" font-weight="bold" fill="currentColor" opacity="0.85" text-anchor="middle" pointer-events="none">${d.minutes}</text>` : ""}
         </g>
       `;
     });
 
     svg += `</svg>`;
     container.innerHTML = svg;
+
+    // Interaktivní tooltipy pro sloupce
+    const svgEl = container.querySelector(".stats-svg-chart");
+    const barGroups = container.querySelectorAll(".chart-bar-group");
+    const interactiveBars = [];
+
+    normalizedData.forEach((d, i) => {
+      const el = barGroups[i];
+      if (!el) return;
+      const x = padding.left + i * step + (step - barWidth) / 2;
+      const barH = Math.max(3, (d.minutes / maxMinutes) * chartH);
+      const y = padding.top + chartH - barH;
+
+      interactiveBars.push({
+        element: el,
+        cx: x + barWidth / 2,
+        cy: y,
+        x0: x,
+        x1: x + barWidth,
+        y0: y,
+        y1: padding.top + chartH,
+        getData: () => {
+          const minCount = d.minutes;
+          const minDeclension = minCount === 1 ? "minuta" : (minCount >= 2 && minCount <= 4 ? "minuty" : "minut");
+          const wordCount = d.words || 0;
+          const wordDeclension = wordCount === 1 ? "slovo" : (wordCount >= 2 && wordCount <= 4 ? "slova" : "slov");
+          const avgWpm = minCount > 0 && wordCount > 0 ? Math.round(wordCount / minCount) : 0;
+
+          return {
+            title: "Aktivita čtení",
+            badge: d.label,
+            badgeType: "info",
+            value: String(minCount),
+            unit: minDeclension,
+            valueColor: "#38bdf8",
+            details: [
+              { icon: "📝", text: `${wordCount.toLocaleString("cs-CZ")} ${wordDeclension}` },
+              avgWpm > 0 ? { icon: "⚡", text: `Tempo: ${avgWpm} WPM` } : null
+            ].filter(Boolean)
+          };
+        }
+      });
+    });
+
+    StatsCharts._setupChartInteractivity(container, svgEl, interactiveBars, {
+      crosshair: false,
+      isBarChart: true,
+      padding,
+      chartH
+    });
   }
 
   /**
    * Vykreslí křivku vývoje rychlosti čtení (WPM) v historii relací
    * @param {HTMLElement} container 
-   * @param {Array<{index: number, wpm: number, avg_wpm?: number, avgWpm?: number, wordsRead?: number, durationSeconds?: number, date: string, timestamp?: number, startTime?: string, bookTitle: string}>} history 
+   * @param {Array<{index: number, wpm: number, avg_wpm?: number, avgWpm?: number, wordsRead?: number, durationSeconds?: number, date: string, timestamp?: number, startTime?: string, bookTitle: string, sessionId?: string, id?: string}>} history 
    * @param {number} avgWpm 
    */
   static renderWpmProgressChart(container, history, avgWpm = 0) {
@@ -163,15 +213,22 @@ export class StatsCharts {
     // Čára grafu
     svg += `<polyline fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${points}" />`;
 
-    // Jednotlivé body
+    // Vertikální vodící osa (crosshair) pod aktivním bodem
+    svg += `
+      <line class="chart-crosshair" x1="0" y1="${padding.top}" x2="0" y2="${padding.top + chartH}" stroke="currentColor" stroke-opacity="0.18" stroke-dasharray="3,3" stroke-width="1.2" opacity="0" pointer-events="none" />
+    `;
+
+    // Jednotlivé interaktivní body s rozšířenou oblastí zásahu (hit-area)
     validHistory.forEach((h, i) => {
       const pointWpm = Math.round(h.wpm);
       const cx = getX(i);
       const cy = getY(pointWpm);
       svg += `
-        <circle cx="${cx}" cy="${cy}" r="4" fill="#ffffff" stroke="#10b981" stroke-width="2">
-          <title>${pointWpm} WPM (${h.date} - ${h.bookTitle})</title>
-        </circle>
+        <g class="chart-point-group" tabindex="0" role="graphics-symbol" aria-label="${pointWpm} WPM - ${StatsCharts.formatSessionDate(h)}" data-idx="${i}">
+          <circle cx="${cx}" cy="${cy}" r="16" fill="transparent" class="chart-hit-area" />
+          <circle cx="${cx}" cy="${cy}" r="8" fill="none" stroke="#10b981" stroke-width="2.5" class="chart-point-halo" opacity="0" />
+          <circle cx="${cx}" cy="${cy}" r="4" fill="#ffffff" stroke="#10b981" stroke-width="2" class="chart-point-marker" />
+        </g>
       `;
     });
 
@@ -248,6 +305,55 @@ export class StatsCharts {
 
     svg += `</svg>`;
     container.innerHTML = svg;
+
+    // Interaktivní tooltipy pro body
+    const svgEl = container.querySelector(".stats-svg-chart");
+    const pointGroups = container.querySelectorAll(".chart-point-group");
+    const interactivePoints = [];
+
+    validHistory.forEach((h, i) => {
+      const el = pointGroups[i];
+      if (!el) return;
+      const pointWpm = Math.round(h.wpm);
+      const cx = getX(i);
+      const cy = getY(pointWpm);
+      const durSec = Number(h.duration ?? h.durationSeconds ?? 0);
+      const words = Number(h.wordsRead ?? h.words_read ?? 0);
+      const durFormatted = durSec > 0 ? StatsCharts.formatDuration(durSec) : null;
+      const wordsFormatted = words > 0 ? `${words.toLocaleString("cs-CZ")} slov` : null;
+      const timeAndWords = [durFormatted, wordsFormatted].filter(Boolean).join(" • ");
+
+      interactivePoints.push({
+        element: el,
+        cx,
+        cy,
+        onClick: () => {
+          const sid = h.sessionId || h.id;
+          if (sid) {
+            container.dispatchEvent(new CustomEvent("session-select", { detail: { sessionId: sid }, bubbles: true }));
+          }
+        },
+        getData: () => ({
+          title: StatsCharts.formatSessionDate(h),
+          badge: `Relace #${h.index || (i + 1)}`,
+          badgeType: "success",
+          value: String(pointWpm),
+          unit: "WPM",
+          valueColor: "#10b981",
+          details: [
+            h.bookTitle ? { icon: "📖", text: h.bookTitle } : null,
+            timeAndWords ? { icon: "⏱️", text: timeAndWords } : null
+          ].filter(Boolean)
+        })
+      });
+    });
+
+    StatsCharts._setupChartInteractivity(container, svgEl, interactivePoints, {
+      crosshair: true,
+      isBarChart: false,
+      padding,
+      chartH
+    });
   }
 
   /**
@@ -560,8 +666,14 @@ export class StatsCharts {
         const xPos = getX(tick.sec);
         svg += `
           <line x1="${xPos}" y1="${padding.top}" x2="${xPos}" y2="${padding.top + chartH}" stroke="currentColor" stroke-opacity="0.05" stroke-dasharray="2,2" />
-          <text x="${xPos}" y="${height - 12}" font-size="10" fill="currentColor" opacity="0.65" font-variant-numeric="tabular-nums" text-anchor="middle">${tick.label}</text>
+          <text x="${xPos}" y="${height - 12}" font-size="10" fill="currentColor" opacity="0.65" font-variant-numeric="tabular-nums" text-anchor="${textAnchorMiddle(tick.sec, maxElapsed)}">${tick.label}</text>
         `;
+      }
+
+      function textAnchorMiddle(sec, maxE) {
+        if (sec <= 0) return "start";
+        if (sec >= maxE - 5) return "end";
+        return "middle";
       }
 
       // 3. Oranžová přerušovaná čára průměrné rychlosti (Průměr: X WPM) na přesné hodnotě session.avg_wpm
@@ -576,6 +688,11 @@ export class StatsCharts {
 
       // 5. Hlavní čára grafu
       svg += `<path d="${curvePath}" fill="none" stroke="#3b82f6" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" />`;
+
+      // Vertikální vodící linka (crosshair) pod aktivním bodem
+      svg += `
+        <line class="chart-crosshair" x1="0" y1="${padding.top}" x2="0" y2="${padding.top + chartH}" stroke="currentColor" stroke-opacity="0.18" stroke-dasharray="3,3" stroke-width="1.2" opacity="0" pointer-events="none" />
+      `;
 
       // 6. Nalezení bodu se špičkovou rychlostí (Peak WPM) mezi reálnými vzorky výhradně z vykreslených hodnot s.wpm
       let peakPoint = null;
@@ -598,29 +715,75 @@ export class StatsCharts {
         const minNum = pt.minute || Math.max(1, Math.ceil(pt.sec / 60)) || (idx + 1);
         const displayWpm = ptSpeed;
         const wordsInMin = pt.words !== undefined ? Math.round(Number(pt.words)) : displayWpm;
-        const tooltipLabel = `${minNum}. minuta: ${wordsInMin} slov (${displayWpm} WPM)`;
+        const labelText = `${minNum}. minuta: ${wordsInMin} slov (${displayWpm} WPM)`;
 
         if (isPeak) {
           svg += `
-            <g class="chart-peak-marker" tabindex="0">
-              <circle cx="${pt.x}" cy="${pt.y}" r="7" fill="rgba(236, 72, 153, 0.25)" filter="url(#glowEffect)" />
-              <circle cx="${pt.x}" cy="${pt.y}" r="4.5" fill="#ffffff" stroke="#ec4899" stroke-width="2.5">
-                <title>Špička – ${tooltipLabel}</title>
-              </circle>
-              <text x="${pt.x}" y="${Math.max(padding.top + 8, pt.y - 10)}" font-size="10" font-weight="800" fill="#ec4899" text-anchor="middle">${displayWpm} WPM</text>
+            <g class="chart-point-group chart-peak-marker" tabindex="0" role="graphics-symbol" aria-label="Špička – ${labelText}" data-idx="${idx}">
+              <circle cx="${pt.x}" cy="${pt.y}" r="16" fill="transparent" class="chart-hit-area" />
+              <circle cx="${pt.x}" cy="${pt.y}" r="8" fill="rgba(236, 72, 153, 0.25)" class="chart-point-halo chart-peak-halo" filter="url(#glowEffect)" />
+              <circle cx="${pt.x}" cy="${pt.y}" r="4.5" fill="#ffffff" stroke="#ec4899" stroke-width="2.5" class="chart-point-marker chart-peak-point" />
+              <text x="${pt.x}" y="${Math.max(padding.top + 8, pt.y - 10)}" font-size="10" font-weight="800" fill="#ec4899" text-anchor="middle" pointer-events="none">${displayWpm} WPM</text>
             </g>
           `;
         } else {
           svg += `
-            <circle cx="${pt.x}" cy="${pt.y}" r="3.5" fill="#ffffff" stroke="#3b82f6" stroke-width="2" class="chart-point">
-              <title>${tooltipLabel}</title>
-            </circle>
+            <g class="chart-point-group" tabindex="0" role="graphics-symbol" aria-label="${labelText}" data-idx="${idx}">
+              <circle cx="${pt.x}" cy="${pt.y}" r="16" fill="transparent" class="chart-hit-area" />
+              <circle cx="${pt.x}" cy="${pt.y}" r="8" fill="none" stroke="#3b82f6" stroke-width="2.5" class="chart-point-halo" opacity="0" />
+              <circle cx="${pt.x}" cy="${pt.y}" r="3.5" fill="#ffffff" stroke="#3b82f6" stroke-width="2" class="chart-point-marker chart-point" />
+            </g>
           `;
         }
       });
 
       svg += `</svg>`;
       container.innerHTML = svg;
+
+      // Interaktivní tooltipy pro body časové osy
+      const svgEl = container.querySelector(".stats-svg-chart");
+      const pointGroups = container.querySelectorAll(".chart-point-group");
+      const interactivePoints = [];
+      let groupIdx = 0;
+
+      points.forEach((pt, idx) => {
+        if (pt.isAnchor) return;
+        const el = pointGroups[groupIdx++];
+        if (!el) return;
+
+        const ptSpeed = Number(pt.wpm || 0);
+        const isPeak = peakPoint && pt === peakPoint && ptSpeed > 0;
+        const minNum = pt.minute || Math.max(1, Math.ceil(pt.sec / 60)) || (idx + 1);
+        const displayWpm = ptSpeed;
+        const wordsInMin = pt.words !== undefined ? Math.round(Number(pt.words)) : displayWpm;
+        const secFormatted = StatsCharts.formatDuration(pt.sec);
+        const wordDeclension = wordsInMin === 1 ? "slovo" : (wordsInMin >= 2 && wordsInMin <= 4 ? "slova" : "slov");
+
+        interactivePoints.push({
+          element: el,
+          cx: pt.x,
+          cy: pt.y,
+          getData: () => ({
+            title: `${minNum}. minuta (${secFormatted})`,
+            badge: isPeak ? "🔥 Špička" : "Vzorek",
+            badgeType: isPeak ? "peak" : "info",
+            value: String(displayWpm),
+            unit: "WPM",
+            valueColor: isPeak ? "#ec4899" : "#3b82f6",
+            details: [
+              { icon: "📝", text: `${wordsInMin.toLocaleString("cs-CZ")} ${wordDeclension} za minutu` },
+              pt.isPartial ? { icon: "⏱️", text: "Závěrečný úsek relace" } : null
+            ].filter(Boolean)
+          })
+        });
+      });
+
+      StatsCharts._setupChartInteractivity(container, svgEl, interactivePoints, {
+        crosshair: true,
+        isBarChart: false,
+        padding,
+        chartH
+      });
     } catch (err) {
       console.error("[StatsCharts] Chyba při vykreslování grafu časové osy:", err);
       container.innerHTML = `
@@ -630,5 +793,374 @@ export class StatsCharts {
         </div>
       `;
     }
+  }
+
+  // =========================================================================
+  // Pomocné funkce pro formátování a interaktivní tooltipy
+  // =========================================================================
+
+  /**
+   * Naformátuje datum a čas čtecí relace pro hlavičku tooltipu
+   * @param {Object} h Objekt relace
+   * @returns {string} Naformátovaný řetězec data/času
+   */
+  static formatSessionDate(h) {
+    if (!h) return "";
+    let dateObj = null;
+    if (h.timestamp) {
+      dateObj = new Date(h.timestamp);
+    } else if (h.startTime) {
+      dateObj = new Date(h.startTime);
+    } else if (h.date) {
+      const parts = String(h.date).split("-");
+      if (parts.length === 3) {
+        dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      }
+    }
+
+    if (dateObj && !isNaN(dateObj.getTime())) {
+      const day = dateObj.getDate();
+      const month = dateObj.getMonth() + 1;
+      const year = dateObj.getFullYear();
+      const hours = String(dateObj.getHours()).padStart(2, "0");
+      const mins = String(dateObj.getMinutes()).padStart(2, "0");
+      if (h.timestamp || h.startTime) {
+        return `${day}. ${month}. ${year}, ${hours}:${mins}`;
+      }
+      return `${day}. ${month}. ${year}`;
+    }
+
+    return String(h.date || (h.index ? `Relace #${h.index}` : "Čtecí relace"));
+  }
+
+  /**
+   * Převede počet sekund na lidsky čitelný čas (např. 33 min 56 s)
+   * @param {number} totalSeconds Celkový čas v sekundách
+   * @returns {string}
+   */
+  static formatDuration(totalSeconds) {
+    const sec = Math.max(0, Math.round(Number(totalSeconds || 0)));
+    if (sec < 60) return `${sec} s`;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m < 60) return s > 0 ? `${m} min ${s} s` : `${m} min`;
+    const h = Math.floor(m / 60);
+    const remM = m % 60;
+    return remM > 0 ? `${h} h ${remM} min` : `${h} h`;
+  }
+
+  /**
+   * Bezpečné ošetření textových řetězců proti XSS v HTML tooltipu
+   * @param {string} str 
+   * @returns {string}
+   */
+  static _escapeHtml(str) {
+    if (str === null || str === undefined) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  /**
+   * Získá nebo vytvoří element tooltipu uvnitř kontejneru
+   * @param {HTMLElement} container 
+   * @returns {HTMLElement}
+   */
+  static _getOrCreateTooltip(container) {
+    let tooltip = container.querySelector(".stats-chart-tooltip");
+    if (!tooltip) {
+      tooltip = document.createElement("div");
+      tooltip.className = "stats-chart-tooltip is-hidden";
+      tooltip.setAttribute("role", "tooltip");
+      tooltip.setAttribute("aria-hidden", "true");
+      container.appendChild(tooltip);
+    }
+    return tooltip;
+  }
+
+  /**
+   * Sestaví strukturované HTML pro tělo tooltipu
+   * @param {Object} data 
+   * @returns {string}
+   */
+  static _buildTooltipHtml(data) {
+    if (!data) return "";
+    const esc = StatsCharts._escapeHtml;
+
+    let html = `<div class="stats-tooltip-card">`;
+
+    // 1. Hlavička: Popisek / Datum + Odznak
+    if (data.title || data.badge) {
+      html += `<div class="stats-tooltip-header">`;
+      if (data.title) {
+        html += `<span class="stats-tooltip-title">${esc(data.title)}</span>`;
+      }
+      if (data.badge) {
+        const badgeCls = data.badgeType ? `badge-${esc(data.badgeType)}` : "";
+        html += `<span class="stats-tooltip-badge ${badgeCls}">${esc(data.badge)}</span>`;
+      }
+      html += `</div>`;
+    }
+
+    // 2. Hlavní přesná číselná hodnota s jednotkou
+    html += `<div class="stats-tooltip-value-row">`;
+    const colorStyle = data.valueColor ? `style="color: ${esc(data.valueColor)};"` : "";
+    html += `<span class="stats-tooltip-value" ${colorStyle}>${esc(data.value)}</span>`;
+    if (data.unit) {
+      html += `<span class="stats-tooltip-unit">${esc(data.unit)}</span>`;
+    }
+    html += `</div>`;
+
+    // 3. Doplňující detaily (kniha, počet slov, trvání, tempo)
+    if (Array.isArray(data.details) && data.details.length > 0) {
+      html += `<div class="stats-tooltip-details">`;
+      for (const d of data.details) {
+        if (!d || !d.text) continue;
+        html += `<div class="stats-tooltip-detail-item">`;
+        if (d.icon) {
+          html += `<span class="stats-tooltip-icon">${d.icon}</span>`;
+        }
+        html += `<span class="stats-tooltip-text">${esc(d.text)}</span>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+    return html;
+  }
+
+  /**
+   * Dynamicky umístí tooltip nad/pod aktivní bod s ošetřením všech okrajů
+   * @param {HTMLElement} container Kontejner grafu
+   * @param {HTMLElement} tooltip Element tooltipu
+   * @param {HTMLElement} targetEl Aktivní prvek bodu grafu
+   */
+  static _positionTooltip(container, tooltip, targetEl) {
+    if (!container || !tooltip || !targetEl) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const marker = targetEl.querySelector(".chart-point-marker, .chart-bar-rect, circle") || targetEl;
+    const targetRect = marker.getBoundingClientRect();
+
+    // Střed bodu v souřadnicích kontejneru (v CSS pixelech)
+    const targetCenterX = (targetRect.left - containerRect.left) + targetRect.width / 2;
+
+    const tooltipWidth = tooltip.offsetWidth || 180;
+    const tooltipHeight = tooltip.offsetHeight || 60;
+
+    // Výchozí pozice: dynamicky nad aktivním bodem
+    let placement = "top";
+    let top = (targetRect.top - containerRect.top) - tooltipHeight - 10;
+
+    // Ošetření horního okraje: pokud by tooltip přetekl nahoru, přesune se pod bod
+    if (top < 6) {
+      top = (targetRect.bottom - containerRect.top) + 10;
+      placement = "bottom";
+
+      // Ošetření spodního okraje kontejneru
+      if (top + tooltipHeight > containerRect.height - 6) {
+        top = Math.max(6, containerRect.height - tooltipHeight - 6);
+      }
+    }
+
+    // Horizontální vycentrování nad bodem
+    let left = targetCenterX - tooltipWidth / 2;
+
+    // Ošetření levého a pravého okraje: tooltip nesmí přetéct mimo viditelnou plochu grafu
+    const minLeft = 6;
+    const maxLeft = Math.max(minLeft, containerRect.width - tooltipWidth - 6);
+    const clampedLeft = Math.max(minLeft, Math.min(maxLeft, left));
+
+    // Posun šipky tak, aby mířila přesně na střed aktivního bodu i při ořezání u okraje
+    const arrowOffset = Math.round(targetCenterX - (clampedLeft + tooltipWidth / 2));
+    const maxArrowOffset = Math.max(0, Math.floor(tooltipWidth / 2 - 14));
+    const clampedArrowOffset = Math.max(-maxArrowOffset, Math.min(maxArrowOffset, arrowOffset));
+
+    tooltip.setAttribute("data-placement", placement);
+    tooltip.style.setProperty("--arrow-offset-x", `${clampedArrowOffset}px`);
+    tooltip.style.left = `${Math.round(clampedLeft)}px`;
+    tooltip.style.top = `${Math.round(top)}px`;
+  }
+
+  /**
+   * Nastaví interaktivní detekci kurzoru (hover / blízkost / touch) a plovoucí tooltip
+   * @param {HTMLElement} container Kontejner grafu
+   * @param {SVGElement} svg SVG element grafu
+   * @param {Array<{element: HTMLElement, cx: number, cy: number, getData: Function, onClick?: Function, x0?: number, x1?: number, y0?: number, y1?: number}>} points Seznam interaktivních bodů
+   * @param {Object} options Volby (crosshair, padding, chartH, isBarChart)
+   */
+  static _setupChartInteractivity(container, svg, points, options = {}) {
+    if (!container || !svg || !points || points.length === 0) return;
+
+    container.classList.add("stats-interactive-chart-container");
+    const tooltip = StatsCharts._getOrCreateTooltip(container);
+    const crosshair = svg.querySelector(".chart-crosshair");
+
+    let activeIndex = -1;
+
+    const activatePoint = (idx) => {
+      if (idx < 0 || idx >= points.length) return;
+      if (activeIndex === idx && !tooltip.classList.contains("is-hidden")) return;
+
+      if (activeIndex >= 0 && activeIndex < points.length) {
+        points[activeIndex].element.classList.remove("is-active");
+      }
+
+      activeIndex = idx;
+      const p = points[idx];
+      p.element.classList.add("is-active");
+
+      // Nastavení vertikální linky crosshair
+      if (crosshair && p.cx !== undefined && options.crosshair) {
+        crosshair.setAttribute("x1", p.cx);
+        crosshair.setAttribute("x2", p.cx);
+        const topY = options.padding ? options.padding.top : 20;
+        const botY = options.padding && options.chartH ? (options.padding.top + options.chartH) : 180;
+        crosshair.setAttribute("y1", topY);
+        crosshair.setAttribute("y2", botY);
+        crosshair.style.opacity = "1";
+      }
+
+      // Aktualizace obsahu tooltipu
+      const data = p.getData ? p.getData() : null;
+      if (data) {
+        tooltip.innerHTML = StatsCharts._buildTooltipHtml(data);
+        tooltip.classList.remove("is-hidden");
+        tooltip.setAttribute("aria-hidden", "false");
+        StatsCharts._positionTooltip(container, tooltip, p.element);
+      }
+    };
+
+    const deactivatePoint = () => {
+      if (activeIndex >= 0 && activeIndex < points.length) {
+        points[activeIndex].element.classList.remove("is-active");
+      }
+      activeIndex = -1;
+
+      if (crosshair) {
+        crosshair.style.opacity = "0";
+      }
+
+      tooltip.classList.add("is-hidden");
+      tooltip.setAttribute("aria-hidden", "true");
+    };
+
+    // Detekce kurzoru (Hover & bezprostřední blízkost)
+    const handleMouseMove = (e) => {
+      let mx, my;
+      const svgMatrix = svg.getScreenCTM();
+      if (svgMatrix) {
+        const pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const svgP = pt.matrixTransform(svgMatrix.inverse());
+        mx = svgP.x;
+        my = svgP.y;
+      } else {
+        const rect = svg.getBoundingClientRect();
+        mx = ((e.clientX - rect.left) / (rect.width || 1)) * (svg.viewBox.baseVal.width || 500);
+        my = ((e.clientY - rect.top) / (rect.height || 1)) * (svg.viewBox.baseVal.height || 200);
+      }
+
+      if (options.isBarChart) {
+        // Pro sloupcové grafy: test zásahu sloupce
+        let hitIdx = -1;
+        for (let i = 0; i < points.length; i++) {
+          const p = points[i];
+          if (mx >= (p.x0 - 6) && mx <= (p.x1 + 6) && my >= (p.y0 - 15) && my <= (p.y1 + 15)) {
+            hitIdx = i;
+            break;
+          }
+        }
+        if (hitIdx >= 0) {
+          activatePoint(hitIdx);
+        } else {
+          deactivatePoint();
+        }
+        return;
+      }
+
+      // Pro bodové/křivkové grafy: vyhledání nejbližšího bodu
+      let closestIdx = -1;
+      let minDistance = Infinity;
+
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const dx = mx - p.cx;
+        const dy = (my - p.cy) * 0.85;
+        const dist = Math.hypot(dx, dy);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestIdx = i;
+        }
+      }
+
+      // Práh pro bezprostřední blízkost: 28 SVG pixelů
+      if (minDistance <= 28 && closestIdx >= 0) {
+        activatePoint(closestIdx);
+      } else {
+        deactivatePoint();
+      }
+    };
+
+    svg.addEventListener("mousemove", handleMouseMove, { passive: true });
+    svg.addEventListener("mouseleave", deactivatePoint, { passive: true });
+    container.addEventListener("mouseleave", deactivatePoint, { passive: true });
+
+    // Touch podpora pro mobilní zařízení
+    const handleTouch = (e) => {
+      if (!e.touches || e.touches.length === 0) return;
+      const touch = e.touches[0];
+      const svgMatrix = svg.getScreenCTM();
+      if (!svgMatrix) return;
+      const pt = svg.createSVGPoint();
+      pt.x = touch.clientX;
+      pt.y = touch.clientY;
+      const svgP = pt.matrixTransform(svgMatrix.inverse());
+      const mx = svgP.x;
+      const my = svgP.y;
+
+      let closestIdx = -1;
+      let minDistance = Infinity;
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const dist = Math.hypot(mx - p.cx, my - p.cy);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestIdx = i;
+        }
+      }
+
+      if (minDistance <= 38 && closestIdx >= 0) {
+        activatePoint(closestIdx);
+      }
+    };
+
+    svg.addEventListener("touchstart", handleTouch, { passive: true });
+    svg.addEventListener("touchmove", handleTouch, { passive: true });
+
+    // Přímé eventy na bodech pro přístupnost (klávesnice / hover / klik)
+    points.forEach((p, idx) => {
+      p.element.addEventListener("mouseenter", () => activatePoint(idx));
+      p.element.addEventListener("focus", () => activatePoint(idx));
+      p.element.addEventListener("blur", () => deactivatePoint());
+      if (p.onClick) {
+        p.element.addEventListener("click", (e) => {
+          p.onClick(e);
+        });
+      }
+    });
+
+    // Skrytí tooltipu při stisku klávesy Escape
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        deactivatePoint();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
   }
 }

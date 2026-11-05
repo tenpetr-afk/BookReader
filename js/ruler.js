@@ -8689,33 +8689,41 @@ export class ReadingRuler {
       this.rulerEl.style.transform = `translate3d(${Math.round(colLeft)}px, ${screenY}px, 0)`;
 
       if (isBottomCoverWordTracking && !isCurrentMedia) {
-        let curWord = (this.activeWordIndex >= 0 && this.activeWordIndex < this.cachedWords.length)
-          ? this.cachedWords[this.activeWordIndex]
-          : null;
-
-        if (!curWord && this.cachedWords.length > 0) {
-          curWord = this.cachedWords[0];
-          this.activeWordIndex = 0;
-        }
-
-        let currentPointerX;
-        const isPointerInCol = Number.isFinite(this.lastPointerX) && this.lastPointerX >= colLeft && this.lastPointerX <= colLeft + colWidth;
-        if (this.followMode !== "keyboard" && isPointerInCol) {
-          currentPointerX = this.lastPointerX;
-        } else if (curWord && Number.isFinite(curWord.centerX)) {
-          currentPointerX = curWord.centerX;
-        } else if (Number.isFinite(this.lastPointerX)) {
-          currentPointerX = this.lastPointerX;
-        } else {
-          currentPointerX = Math.round(colLeft + colWidth / 2);
-        }
-
         const WAVE_WIDTH = RULER_WAVE_WIDTH || 80;
+        const halfWave = Math.round(WAVE_WIDTH / 2);
         const rulerLeft = Math.round(colLeft);
         const rulerWidth = Math.round(colWidth);
-        let waveX = Math.round((currentPointerX - rulerLeft) - (WAVE_WIDTH / 2));
-        const maxWaveX = Math.max(0, rulerWidth - WAVE_WIDTH);
-        waveX = Math.max(0, Math.min(maxWaveX, waveX));
+
+        let currentPointerX;
+        if (this.followMode !== "keyboard") {
+          // Režim sledování kurzoru: pozice striktně následuje X myši bez resetu na první slovo
+          if (Number.isFinite(this.lastPointerX)) {
+            currentPointerX = this.lastPointerX;
+          } else {
+            currentPointerX = Math.round(colLeft + colWidth / 2);
+          }
+        } else {
+          // Klávesový režim: pozice se váže na střed aktivního slova
+          let curWord = (this.activeWordIndex >= 0 && this.activeWordIndex < this.cachedWords.length)
+            ? this.cachedWords[this.activeWordIndex]
+            : null;
+          if (!curWord && this.cachedWords.length > 0) {
+            curWord = this.cachedWords[0];
+            this.activeWordIndex = 0;
+          }
+          if (curWord && Number.isFinite(curWord.centerX)) {
+            currentPointerX = curWord.centerX;
+          } else if (Number.isFinite(this.lastPointerX)) {
+            currentPointerX = this.lastPointerX;
+          } else {
+            currentPointerX = Math.round(colLeft + colWidth / 2);
+          }
+        }
+
+        let waveX = Math.round((currentPointerX - rulerLeft) - halfWave);
+        const minWaveX = -halfWave;
+        const maxWaveX = Math.max(minWaveX, rulerWidth - halfWave);
+        waveX = Math.max(minWaveX, Math.min(maxWaveX, waveX));
 
         if (!this.wordWaveEl && this.rulerEl) {
           this.wordWaveEl = document.createElement("div");

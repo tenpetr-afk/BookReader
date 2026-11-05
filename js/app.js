@@ -4,16 +4,16 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.4.8";
-import { EpubParser } from "./epub-parser.js?v=2.4.8";
-import { PDFLoader } from "./pdf-loader.js?v=2.4.8";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.4.8";
-import { ReadingRuler } from "./ruler.js?v=2.4.8";
-import { StatsCharts } from "./charts.js?v=2.4.8";
-import { supabaseSync } from "./supabase-sync.js?v=2.4.8";
-import { supabase } from "./supabase-client.js?v=2.4.8";
+import { storage, computeFileHash } from "./storage.js?v=2.4.9";
+import { EpubParser } from "./epub-parser.js?v=2.4.9";
+import { PDFLoader } from "./pdf-loader.js?v=2.4.9";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.4.9";
+import { ReadingRuler } from "./ruler.js?v=2.4.9";
+import { StatsCharts } from "./charts.js?v=2.4.9";
+import { supabaseSync } from "./supabase-sync.js?v=2.4.9";
+import { supabase } from "./supabase-client.js?v=2.4.9";
 
-export const APP_VERSION = "v2.4.8";
+export const APP_VERSION = "v2.4.9";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -2998,19 +2998,36 @@ export class LuminaApp {
       });
     }
 
+    // Interaktivní výběr relace kliknutím na bod v grafu historie WPM
+    if (this.dom.wpmChartContainer) {
+      this.dom.wpmChartContainer.addEventListener("session-select", (e) => {
+        if (e.detail && e.detail.sessionId) {
+          this.selectSession(e.detail.sessionId);
+        }
+      });
+    }
+
     // Přeškálování SVG grafů při změně velikosti okna
+    let resizeTimer = null;
     window.addEventListener("resize", () => {
       if (this.dom.statsModal && this.dom.statsModal.classList.contains("open")) {
-        if (this._selectedSessionId && this._availableSessions) {
-          const session = this._availableSessions.find(s => (s.sessionId === this._selectedSessionId || s.id === this._selectedSessionId));
-          if (session && this.dom.sessionTimelineChartContainer) {
-            try {
-              StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
-            } catch (err) {
-              console.error("[app] Chyba při resize grafu relace:", err);
+        if (resizeTimer) clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          if (this._lastStats) {
+            if (this.dom.dailyChartContainer) StatsCharts.renderDailyActivityChart(this.dom.dailyChartContainer, this._lastStats.last7Days);
+            if (this.dom.wpmChartContainer) StatsCharts.renderWpmProgressChart(this.dom.wpmChartContainer, this._lastStats.wpmHistory, this._lastStats.averageWpm);
+          }
+          if (this._selectedSessionId && this._availableSessions) {
+            const session = this._availableSessions.find(s => (s.sessionId === this._selectedSessionId || s.id === this._selectedSessionId));
+            if (session && this.dom.sessionTimelineChartContainer) {
+              try {
+                StatsCharts.renderSessionTimelineChart(this.dom.sessionTimelineChartContainer, session);
+              } catch (err) {
+                console.error("[app] Chyba při resize grafu relace:", err);
+              }
             }
           }
-        }
+        }, 80);
       }
     });
 
@@ -7326,6 +7343,7 @@ export class LuminaApp {
   async refreshStatsUI() {
     try {
       const stats = await ReadingTracker.computeGlobalStats();
+      this._lastStats = stats;
 
       if (this.dom.statTotalTime) this.dom.statTotalTime.textContent = stats.totalTimeFormatted;
       if (this.dom.statAvgWpm) {

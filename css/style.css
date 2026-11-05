@@ -1728,6 +1728,14 @@ body.settings-sheet-open .drawer-backdrop {
   color: #ec4899;
 }
 
+#wpm-chart-container,
+#daily-chart-container,
+#session-timeline-chart-container,
+.stats-interactive-chart-container {
+  position: relative;
+  width: 100%;
+}
+
 .session-chart-container {
   min-height: 200px;
   position: relative;
@@ -1735,27 +1743,298 @@ body.settings-sheet-open .drawer-backdrop {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   padding: 0.5rem 0.25rem;
-  overflow: hidden;
+  overflow: visible; /* Plovoucí tooltip se nesmí ořezávat */
 }
 
-.session-chart-container .stats-svg-chart {
+.session-chart-container .stats-svg-chart,
+.stats-svg-chart {
   display: block;
   overflow: visible;
+  touch-action: pan-y;
 }
 
+/* Interaktivní body a prvky grafů */
+.chart-point-group {
+  outline: none;
+  cursor: pointer;
+}
+
+.chart-hit-area {
+  cursor: pointer;
+  pointer-events: all;
+}
+
+.chart-point-marker {
+  cursor: pointer;
+  transition: r 0.18s cubic-bezier(0.16, 1, 0.3, 1), stroke-width 0.18s ease, fill 0.18s ease, filter 0.18s ease;
+}
+
+.chart-point-halo {
+  pointer-events: none;
+  transition: r 0.18s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease;
+}
+
+/* Aktivní zvýraznění bodu při najetí nebo bezprostřední blízkosti kurzoru */
+.chart-point-group:hover .chart-point-marker,
+.chart-point-group.is-active .chart-point-marker,
+.chart-point-group:focus-visible .chart-point-marker {
+  r: 5.5;
+  stroke-width: 3;
+}
+
+.chart-point-group:hover .chart-point-halo,
+.chart-point-group.is-active .chart-point-halo,
+.chart-point-group:focus-visible .chart-point-halo {
+  r: 10;
+  opacity: 0.35;
+}
+
+/* Špičkový bod tempa čtení v relaci */
 .chart-peak-marker {
   cursor: pointer;
   outline: none;
 }
 
-.chart-point {
-  cursor: pointer;
-  transition: r 0.15s ease, stroke-width 0.15s ease;
+.chart-peak-marker:hover .chart-peak-point,
+.chart-peak-marker.is-active .chart-peak-point,
+.chart-peak-marker:focus-visible .chart-peak-point {
+  r: 6.5;
+  stroke-width: 3.5;
 }
 
-.chart-point:hover {
-  r: 5.5;
-  stroke-width: 2.5;
+.chart-peak-marker:hover .chart-peak-halo,
+.chart-peak-marker.is-active .chart-peak-halo,
+.chart-peak-marker:focus-visible .chart-peak-halo {
+  r: 12;
+  opacity: 0.65;
+}
+
+/* Sloupcový graf denní aktivity */
+.chart-bar-group {
+  outline: none;
+  cursor: pointer;
+}
+
+.chart-bar-rect {
+  cursor: pointer;
+  transition: opacity 0.16s ease, filter 0.16s ease;
+}
+
+.chart-bar-group:hover .chart-bar-rect,
+.chart-bar-group.is-active .chart-bar-rect,
+.chart-bar-group:focus-visible .chart-bar-rect {
+  filter: brightness(1.25);
+}
+
+/* Vertikální vodící linka (crosshair) pod aktivním bodem */
+.chart-crosshair {
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+/* ==========================================================================
+   Plovoucí interaktivní tooltip pro grafy statistik
+   ========================================================================== */
+
+.stats-chart-tooltip {
+  position: absolute;
+  z-index: 100;
+  pointer-events: none;
+  background: var(--bg-surface-elevated, #1e293b);
+  color: var(--text-main, #f8fafc);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+  border-radius: var(--radius-md, 10px);
+  padding: 0.55rem 0.8rem;
+  font-family: var(--font-ui, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+  max-width: 290px;
+  min-width: 140px;
+  box-sizing: border-box;
+  will-change: transform, opacity, left, top;
+}
+
+.stats-chart-tooltip.is-hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transform: translateY(4px) scale(0.96) !important;
+  pointer-events: none !important;
+}
+
+/* Šipka ukazující na pozici bodu */
+.stats-chart-tooltip::after {
+  content: "";
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  left: calc(50% + var(--arrow-offset-x, 0px));
+  transform: translateX(-50%);
+}
+
+.stats-chart-tooltip[data-placement="top"]::after {
+  top: 100%;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid var(--bg-surface-elevated, #1e293b);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.08));
+}
+
+.stats-chart-tooltip[data-placement="bottom"]::after {
+  bottom: 100%;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 6px solid var(--bg-surface-elevated, #1e293b);
+  filter: drop-shadow(0 -1px 1px rgba(0, 0, 0, 0.08));
+}
+
+/* Obsah tooltipu */
+.stats-tooltip-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.stats-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.stats-tooltip-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  letter-spacing: 0.02em;
+}
+
+.stats-tooltip-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.12rem 0.38rem;
+  border-radius: var(--radius-sm, 6px);
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.stats-tooltip-badge.badge-peak {
+  background: rgba(236, 72, 153, 0.2);
+  color: #ec4899;
+}
+
+.stats-tooltip-badge.badge-success {
+  background: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+}
+
+.stats-tooltip-badge.badge-info {
+  background: rgba(59, 130, 246, 0.18);
+  color: #38bdf8;
+}
+
+.stats-tooltip-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-bottom: 0.25rem;
+}
+
+.stats-tooltip-value {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--text-main, #ffffff);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-tooltip-unit {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted, #94a3b8);
+}
+
+.stats-tooltip-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  padding-top: 0.35rem;
+  margin-top: 0.2rem;
+}
+
+.stats-tooltip-detail-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  color: var(--text-muted, #cbd5e1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 250px;
+}
+
+.stats-tooltip-icon {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+}
+
+.stats-tooltip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Podpora liquid glass módu */
+body.ui-liquid-glass .stats-chart-tooltip {
+  background: var(--lq-glass-bg, rgba(30, 41, 59, 0.8)) !important;
+  backdrop-filter: var(--lq-glass-blur, blur(16px)) !important;
+  -webkit-backdrop-filter: var(--lq-glass-blur, blur(16px)) !important;
+  border: 1px solid var(--lq-glass-border, rgba(255, 255, 255, 0.18)) !important;
+}
+
+/* Přizpůsobení šipky a tooltipu v závislosti na tématu */
+[data-theme="dark"] .stats-chart-tooltip,
+[data-theme="oled"] .stats-chart-tooltip {
+  background: var(--bg-surface-elevated, #1e293b);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="dark"] .stats-chart-tooltip[data-placement="top"]::after,
+[data-theme="oled"] .stats-chart-tooltip[data-placement="top"]::after {
+  border-top-color: var(--bg-surface-elevated, #1e293b);
+}
+
+[data-theme="dark"] .stats-chart-tooltip[data-placement="bottom"]::after,
+[data-theme="oled"] .stats-chart-tooltip[data-placement="bottom"]::after {
+  border-bottom-color: var(--bg-surface-elevated, #1e293b);
+}
+
+[data-theme="sepia"] .stats-chart-tooltip,
+[data-theme="warm"] .stats-chart-tooltip {
+  background: var(--bg-surface-elevated, #fbf0d9);
+  border-color: rgba(138, 102, 60, 0.25);
+  color: #2c2523;
+  box-shadow: 0 10px 25px rgba(60, 40, 20, 0.15);
+}
+
+[data-theme="sepia"] .stats-chart-tooltip[data-placement="top"]::after,
+[data-theme="warm"] .stats-chart-tooltip[data-placement="top"]::after {
+  border-top-color: var(--bg-surface-elevated, #fbf0d9);
+}
+
+[data-theme="sepia"] .stats-chart-tooltip[data-placement="bottom"]::after,
+[data-theme="warm"] .stats-chart-tooltip[data-placement="bottom"]::after {
+  border-bottom-color: var(--bg-surface-elevated, #fbf0d9);
 }
 
 .session-history-details {
@@ -2141,6 +2420,7 @@ body.is-pdf-mode .reading-ruler.mode-off,
   overflow: visible !important;
   contain: none !important;
   z-index: 20 !important;
+  clip-path: inset(-10px 0 -30px 0) !important;
 }
 
 .reading-ruler.mode-bottom-cover,
@@ -3476,6 +3756,7 @@ body.is-pdf-mode .reading-ruler.mode-bottom-cover.word-tracking-mode,
   overflow: visible !important;
   contain: none !important;
   z-index: 20 !important;
+  clip-path: inset(-10px 0 -30px 0) !important;
 }
 
 body.is-pdf-mode .reading-ruler.mode-bottom-cover,

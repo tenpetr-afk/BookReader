@@ -4,9 +4,9 @@
  * obousměrnou synchronizaci mezi zařízeními a offline-first fungování.
  */
 
-import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.4.8';
-import { storage, computeFileHash } from './storage.js?v=2.4.8';
-import { EpubParser } from './epub-parser.js?v=2.4.8';
+import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.4.9';
+import { storage, computeFileHash } from './storage.js?v=2.4.9';
+import { EpubParser } from './epub-parser.js?v=2.4.9';
 
 export class SupabaseSync {
   constructor() {
@@ -1122,7 +1122,7 @@ export class SupabaseSync {
     if (!this.isOnline() || !supabase) return null;
 
     try {
-      const { ReadingTracker } = await import("./tracker.js?v=2.4.8");
+      const { ReadingTracker } = await import("./tracker.js?v=2.4.9");
       const localStats = await ReadingTracker.computeGlobalStats();
       const hasDeletedTombstones = (typeof storage.getDeletedSessionIds === "function" && storage.getDeletedSessionIds().length > 0);
 

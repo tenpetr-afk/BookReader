@@ -4,7 +4,7 @@
  * odhaduje zbývající čas a ukládá detailní čtecí relace s časovou osou WPM.
  */
 
-import { storage } from "./storage.js?v=2.4.8";
+import { storage } from "./storage.js?v=2.4.9";
 
 export const MIN_VALID_WPM = 40;
 export const MAX_VALID_WPM = 650;
@@ -1351,10 +1351,13 @@ export class ReadingTracker {
       .slice(-20)
       .map((s, idx) => ({
         index: idx + 1,
+        sessionId: s.sessionId || s.id,
+        id: s.id || s.sessionId,
         wpm: Math.round(s.avg_wpm ?? s.avgWpm ?? s.wpm),
         avg_wpm: Math.round(s.avg_wpm ?? s.avgWpm ?? s.wpm),
         wordsRead: s.words_read ?? s.wordsRead ?? 0,
         duration: s.duration ?? s.durationSeconds ?? 0,
+        durationSeconds: s.duration ?? s.durationSeconds ?? 0,
         date: getLocalDateKey(s.date || s.startTime || s.timestamp),
         timestamp: s.timestamp || (s.startTime ? new Date(s.startTime).getTime() : null),
         startTime: s.startTime,
