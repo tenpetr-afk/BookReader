@@ -4,7 +4,7 @@
  * odhaduje zbývající čas a ukládá detailní čtecí relace s časovou osou WPM.
  */
 
-import { storage } from "./storage.js?v=2.6.0";
+import { storage } from "./storage.js?v=2.6.1";
 
 export const MIN_VALID_WPM = 40;
 export const MAX_VALID_WPM = 650;
@@ -151,9 +151,9 @@ export class ReadingTracker {
    */
   initBookProgress(bookId, bookData = null) {
     if (!bookId) return;
-    this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, bookId);
-    this.creditedLines = this._getOrCreateSet(this._bookCreditedLines, bookId);
-    this.creditedWords = this._getOrCreateSet(this._bookCreditedWords, bookId);
+    this.creditedBlocks = new Set();
+    this.creditedLines = new Set();
+    this.creditedWords = new Set();
     this.chapterHighWaterScroll = this._getOrCreateMap(this._bookChapterScroll, bookId);
     this.committedPageKeys = this.creditedBlocks;
 
@@ -174,12 +174,6 @@ export class ReadingTracker {
       this._bookHighWaterMarks.set(bookId, this.highWaterMark);
     } else {
       this.highWaterMark = this._bookHighWaterMarks.get(bookId);
-    }
-
-    if (bookData?.creditedBlocks && Array.isArray(bookData.creditedBlocks)) {
-      for (const b of bookData.creditedBlocks) {
-        this.creditedBlocks.add(b);
-      }
     }
   }
 
@@ -219,32 +213,24 @@ export class ReadingTracker {
     }
 
     // Shodná kapitola: zkontrolujeme pageIndex
-    const hasPgA = posA.pageIndex !== undefined && posA.pageIndex !== null;
-    const hasPgB = posB.pageIndex !== undefined && posB.pageIndex !== null;
-    if (hasPgA && hasPgB) {
-      const pgA = Number(posA.pageIndex);
-      const pgB = Number(posB.pageIndex);
-      if (pgA !== pgB) {
-        return pgA - pgB;
-      }
+    const pgA = Number(posA.pageIndex ?? 0);
+    const pgB = Number(posB.pageIndex ?? 0);
+    if (pgA !== pgB) {
+      return pgA - pgB;
+    }
 
-      // Shodná stránka: zkontrolujeme lineIndex
-      const hasLnA = posA.lineIndex !== undefined && posA.lineIndex !== null && posA.lineIndex >= 0;
-      const hasLnB = posB.lineIndex !== undefined && posB.lineIndex !== null && posB.lineIndex >= 0;
-      if (hasLnA && hasLnB) {
-        const lnA = Number(posA.lineIndex);
-        const lnB = Number(posB.lineIndex);
-        if (lnA !== lnB) {
-          return lnA - lnB;
-        }
+    // Shodná stránka: zkontrolujeme lineIndex
+    const lnA = Number(posA.lineIndex ?? -1);
+    const lnB = Number(posB.lineIndex ?? -1);
+    if (lnA !== lnB) {
+      return lnA - lnB;
+    }
 
-        // Shodný řádek: zkontrolujeme wordIndex
-        const hasWdA = posA.wordIndex !== undefined && posA.wordIndex !== null && posA.wordIndex >= 0;
-        const hasWdB = posB.wordIndex !== undefined && posB.wordIndex !== null && posB.wordIndex >= 0;
-        if (hasWdA && hasWdB) {
-          return Number(posA.wordIndex) - Number(posB.wordIndex);
-        }
-      }
+    // Shodný řádek: zkontrolujeme wordIndex
+    const wdA = Number(posA.wordIndex ?? -1);
+    const wdB = Number(posB.wordIndex ?? -1);
+    if (wdA !== wdB) {
+      return wdA - wdB;
     }
 
     // Vertikální mód nebo kontinuální posuvník: zkontrolujeme scrollRatio
@@ -454,7 +440,7 @@ export class ReadingTracker {
    * Režim slovo za slovem (Word-by-word mode):
    * Započítává přesně tolik slov, přes kolik pravítko přejede.
    * Načtená slova se přičítají do aktuálního minutového bucketu (započítání 1x za minutu).
-   * Automaticky deduplikuje slova a potlačuje přírůstky při couvání nebo čtení za high-water markem.
+   * Automaticky deduplikuje slova v rámci probíhající čtecí relace.
    * @param {number} count Počet přejetých slov
    * @param {Object|null} context Kontext pozice: { bookId, chapterIndex, pageIndex, lineIndex, wordIndex, wordKey, blockKey }
    * @returns {number} Počet skutečně započtených nových slov
@@ -473,22 +459,18 @@ export class ReadingTracker {
       const wordKey = context.wordKey || `${bookId}_ch${chIdx}_p${pgIdx}_l${lnIdx}_w${wdIdx}`;
       const blockKey = context.blockKey || `${bookId}_ch${chIdx}_p${pgIdx}`;
 
-      // 1. Deduplikace: bylo toto slovo již akreditováno?
+      if (!this.creditedWords) this.creditedWords = new Set();
+      if (!this.creditedBlocks) this.creditedBlocks = new Set();
+
+      // Deduplikace v rámci aktuální relace
       if (this.creditedWords.has(wordKey)) {
-        return 0; // Potlačeno: již přečteno
+        return 0; // Potlačeno: již přečteno v této relaci
       }
 
-      // 2. High-water mark: nachází se slovo za nejvyšším dosaženým bodem čtení?
-      const pos = { chapterIndex: chIdx, pageIndex: pgIdx, lineIndex: lnIdx, wordIndex: wdIdx };
-      if (this._isBehindHighWaterMark(pos)) {
-        this.creditedWords.add(wordKey);
-        this.creditedBlocks.add(blockKey);
-        return 0; // Potlačeno: couvnuto / re-reading dříve přečteného textu
-      }
-
-      // Dopředný postup do nepřečteného textu
       this.creditedWords.add(wordKey);
       this.creditedBlocks.add(blockKey);
+
+      const pos = { chapterIndex: chIdx, pageIndex: pgIdx, lineIndex: lnIdx, wordIndex: wdIdx };
       this._advanceHighWaterMark(pos);
     }
 
@@ -501,8 +483,8 @@ export class ReadingTracker {
   /**
    * Řádkový režim (Line mode):
    * Započítává slova řádek po řádku – při přepnutí na další řádek se započítá předchozí řádek.
-   * Aktuálně čtený řádek se započte až v další minutě (při opuštění řádku).
-   * Automaticky deduplikuje řádky a potlačuje přírůstky při couvání nahoru nebo čtení za high-water markem.
+   * Aktuálně čtený řádek se započte po dokončení čtení řádku.
+   * Automaticky deduplikuje řádky v rámci probíhající čtecí relace.
    * @param {number} count Počet slov na dokončeném řádku
    * @param {Object|null} context Kontext pozice: { bookId, chapterIndex, pageIndex, lineIndex, lineKey, blockKey }
    * @returns {number} Počet skutečně započtených nových slov
@@ -520,22 +502,18 @@ export class ReadingTracker {
       const lineKey = context.lineKey || `${bookId}_ch${chIdx}_p${pgIdx}_l${lnIdx}`;
       const blockKey = context.blockKey || `${bookId}_ch${chIdx}_p${pgIdx}`;
 
-      // 1. Deduplikace: byl tento řádek již akreditován?
+      if (!this.creditedLines) this.creditedLines = new Set();
+      if (!this.creditedBlocks) this.creditedBlocks = new Set();
+
+      // Deduplikace v rámci aktuální relace: byl tento řádek již v této relaci akreditován?
       if (this.creditedLines.has(lineKey)) {
-        return 0; // Potlačeno: již dříve přečtený řádek
+        return 0; // Již započteno v této relaci
       }
 
-      // 2. High-water mark: nachází se řádek za nejvyšším dosaženým bodem čtení?
-      const pos = { chapterIndex: chIdx, pageIndex: pgIdx, lineIndex: lnIdx };
-      if (this._isBehindHighWaterMark(pos)) {
-        this.creditedLines.add(lineKey);
-        this.creditedBlocks.add(blockKey);
-        return 0; // Potlačeno: couvnuto / re-reading dříve přečteného textu
-      }
-
-      // Dopředný postup do nepřečteného textu
       this.creditedLines.add(lineKey);
       this.creditedBlocks.add(blockKey);
+
+      const pos = { chapterIndex: chIdx, pageIndex: pgIdx, lineIndex: lnIdx };
       this._advanceHighWaterMark(pos);
     }
 
@@ -546,7 +524,7 @@ export class ReadingTracker {
   }
 
   /**
-   * Generické započtení slov (kompatibilita) s ochranou proti re-readingu
+   * Generické započtení slov (kompatibilita)
    * @param {number} count Počet přečtených slov
    * @param {Object|null} context Kontext pozice
    * @returns {number}
@@ -554,10 +532,6 @@ export class ReadingTracker {
   attributeWords(count, context = null) {
     if (!this.isActive || !count || count <= 0) return 0;
     this.recordActivity(true);
-
-    if (context && this._isBehindHighWaterMark(context)) {
-      return 0;
-    }
 
     const n = Math.max(0, Math.round(count));
     this.currentMinuteWords += n;
@@ -695,19 +669,15 @@ export class ReadingTracker {
     }
 
     // 2. Bez pravítka se načte celá stránka, pokud na ní uživatel strávil realistický čas (>= 3s):
-    // Zkontrolujeme, zda již nebyl blok akreditován nebo zda neleží za celkovým high-water markem knihy
-    if (this.creditedBlocks.has(blockId)) {
-      return 0; // Již přečteno a započteno
-    }
-
-    if (this._isBlockBehindHighWaterMark(blockId, this.currentChapterIndex, this.currentPageIndex)) {
-      this.creditedBlocks.add(blockId);
-      return 0; // Za high-water markem (již dříve přečteno)
+    if (this.creditedBlocks && this.creditedBlocks.has(blockId)) {
+      return 0; // Již v této relaci přečteno a započteno
     }
 
     // Dopředný postup do nepřečteného bloku (odečteme případná dílčí slova již započtená pravítkem na této straně)
     const wordsToAdd = Math.max(0, wordsOnPage - creditedSoFar);
-    this.creditedBlocks.add(blockId);
+    if (this.creditedBlocks) {
+      this.creditedBlocks.add(blockId);
+    }
     this._advanceHighWaterMark({ chapterIndex: this.currentChapterIndex, pageIndex: this.currentPageIndex, lineIndex: 9999 });
 
     if (wordsToAdd > 0) {
@@ -947,6 +917,17 @@ export class ReadingTracker {
     this.blockInterimWordsAttributed = 0;
     this.unreconciledRulerWords = 0;
     this.isContinuousTrackingActive = false;
+
+    // Reset akreditací v rámci nové čtecí relace (každá relace měří aktivitu čistě od 0)
+    this.creditedLines = new Set();
+    this.creditedWords = new Set();
+    this.creditedBlocks = new Set();
+    this.committedPageKeys = this.creditedBlocks;
+
+    // Reset mezipaměti přečtených řádků/slov v pravítku
+    if (this.app?.ruler && typeof this.app.ruler.resetSessionTracking === "function") {
+      this.app.ruler.resetSessionTracking();
+    }
 
     // Režimy pravítka a sledování slov
     this.rulerEnabled = !!this.rulerEnabled;

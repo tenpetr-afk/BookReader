@@ -9,7 +9,7 @@
  * - Plovoucí ovládací panel pro krokování po řádcích/slovech a automatické tempo
  */
 
-import { countWords, isValidWord } from "./text-parser.js?v=2.6.0";
+import { countWords, isValidWord } from "./text-parser.js?v=2.6.1";
 
 export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i horizontální odsazení v řádkovém režimu
 export const RULER_WAVE_WIDTH = 80; // px - fixní šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
@@ -252,28 +252,24 @@ export class ReadingRuler {
   }
 
   /**
+   * Resetuje paměť pravítka pro novou čtecí relaci
+   */
+  resetSessionTracking() {
+    if (this._completedLinesByBlock) this._completedLinesByBlock.clear();
+    if (this._wordsReadByBlock) this._wordsReadByBlock.clear();
+    this._completedLineIndices = new Set();
+    this._wordsReadOnPage = new Set();
+    this._activeReadingLineIndex = -1;
+    this._activeLineStartTime = 0;
+    this._lastWordLineIndex = -1;
+    this._lastWordIndex = -1;
+  }
+
+  /**
    * Resetuje paměť pravítka pro zadanou knihu
    */
   resetBookTracking(bookId = null) {
-    if (!bookId) {
-      if (this._completedLinesByBlock) this._completedLinesByBlock.clear();
-      if (this._wordsReadByBlock) this._wordsReadByBlock.clear();
-      this._completedLineIndices = new Set();
-      this._wordsReadOnPage = new Set();
-      return;
-    }
-    if (this._completedLinesByBlock) {
-      for (const k of this._completedLinesByBlock.keys()) {
-        if (k.startsWith(bookId)) this._completedLinesByBlock.delete(k);
-      }
-    }
-    if (this._wordsReadByBlock) {
-      for (const k of this._wordsReadByBlock.keys()) {
-        if (k.startsWith(bookId)) this._wordsReadByBlock.delete(k);
-      }
-    }
-    this._completedLineIndices = new Set();
-    this._wordsReadOnPage = new Set();
+    this.resetSessionTracking();
   }
 
   isVerticalMode() {

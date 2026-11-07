@@ -4,8 +4,8 @@
  * kapitol a převod interních obrázků a stylů na bezpečné Blob URL.
  */
 
-import { ZipArchive } from "./zip.js?v=2.6.0";
-import { extractTextFromNode, extractTextFromHtml, countWords } from "./text-parser.js?v=2.6.0";
+import { ZipArchive } from "./zip.js?v=2.6.1";
+import { extractTextFromNode, extractTextFromHtml, countWords } from "./text-parser.js?v=2.6.1";
 
 export class EpubParser {
   constructor(archive) {
