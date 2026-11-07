@@ -151,9 +151,9 @@ export class ReadingTracker {
    */
   initBookProgress(bookId, bookData = null) {
     if (!bookId) return;
-    this.creditedBlocks = new Set();
-    this.creditedLines = new Set();
-    this.creditedWords = new Set();
+    this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, bookId);
+    this.creditedLines = this._getOrCreateSet(this._bookCreditedLines, bookId);
+    this.creditedWords = this._getOrCreateSet(this._bookCreditedWords, bookId);
     this.chapterHighWaterScroll = this._getOrCreateMap(this._bookChapterScroll, bookId);
     this.committedPageKeys = this.creditedBlocks;
 
@@ -431,8 +431,12 @@ export class ReadingTracker {
     if (prevEnabled !== this.rulerEnabled) {
       const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
       const currentTotal = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
-      this.noRulerTotalWords = Math.max(this.noRulerTotalWords || 0, currentTotal);
-      this.sessionWordsRead = Math.max(this.noRulerTotalWords, currentTotal);
+      if (!this.rulerEnabled) {
+        this.noRulerTotalWords = Math.max(this.noRulerTotalWords || 0, currentTotal);
+        this.sessionWordsRead = Math.max(this.noRulerTotalWords, currentTotal);
+      } else {
+        this.sessionWordsRead = currentTotal;
+      }
     }
   }
 
@@ -451,7 +455,7 @@ export class ReadingTracker {
     this.recordActivity(true);
 
     if (context) {
-      const bookId = context.bookId || this.currentBookId;
+      const bookId = context.bookId || this.currentBookId || "doc";
       const chIdx = context.chapterIndex ?? this.currentChapterIndex ?? 0;
       const pgIdx = context.pageIndex ?? 0;
       const lnIdx = context.lineIndex ?? -1;
@@ -459,12 +463,12 @@ export class ReadingTracker {
       const wordKey = context.wordKey || `${bookId}_ch${chIdx}_p${pgIdx}_l${lnIdx}_w${wdIdx}`;
       const blockKey = context.blockKey || `${bookId}_ch${chIdx}_p${pgIdx}`;
 
-      if (!this.creditedWords) this.creditedWords = new Set();
-      if (!this.creditedBlocks) this.creditedBlocks = new Set();
+      if (!this.creditedWords) this.creditedWords = this._getOrCreateSet(this._bookCreditedWords, bookId);
+      if (!this.creditedBlocks) this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, bookId);
 
-      // Deduplikace v rámci aktuální relace
+      // Deduplikace v rámci knihy
       if (this.creditedWords.has(wordKey)) {
-        return 0; // Potlačeno: již přečteno v této relaci
+        return 0; // Již přečteno
       }
 
       this.creditedWords.add(wordKey);
@@ -495,19 +499,19 @@ export class ReadingTracker {
     this.recordActivity(true);
 
     if (context) {
-      const bookId = context.bookId || this.currentBookId;
+      const bookId = context.bookId || this.currentBookId || "doc";
       const chIdx = context.chapterIndex ?? this.currentChapterIndex ?? 0;
       const pgIdx = context.pageIndex ?? 0;
       const lnIdx = context.lineIndex ?? -1;
       const lineKey = context.lineKey || `${bookId}_ch${chIdx}_p${pgIdx}_l${lnIdx}`;
       const blockKey = context.blockKey || `${bookId}_ch${chIdx}_p${pgIdx}`;
 
-      if (!this.creditedLines) this.creditedLines = new Set();
-      if (!this.creditedBlocks) this.creditedBlocks = new Set();
+      if (!this.creditedLines) this.creditedLines = this._getOrCreateSet(this._bookCreditedLines, bookId);
+      if (!this.creditedBlocks) this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, bookId);
 
-      // Deduplikace v rámci aktuální relace: byl tento řádek již v této relaci akreditován?
+      // Deduplikace v rámci knihy
       if (this.creditedLines.has(lineKey)) {
-        return 0; // Již započteno v této relaci
+        return 0; // Již započteno
       }
 
       this.creditedLines.add(lineKey);
@@ -918,15 +922,17 @@ export class ReadingTracker {
     this.unreconciledRulerWords = 0;
     this.isContinuousTrackingActive = false;
 
-    // Reset akreditací v rámci nové čtecí relace (každá relace měří aktivitu čistě od 0)
-    this.creditedLines = new Set();
-    this.creditedWords = new Set();
-    this.creditedBlocks = new Set();
-    this.committedPageKeys = this.creditedBlocks;
-
-    // Reset mezipaměti přečtených řádků/slov v pravítku
-    if (this.app?.ruler && typeof this.app.ruler.resetSessionTracking === "function") {
-      this.app.ruler.resetSessionTracking();
+    // Zachování akreditací per kniha napříč otočením stran, kapitolami a idle pauzami
+    if (this.currentBookId) {
+      this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, this.currentBookId);
+      this.creditedLines = this._getOrCreateSet(this._bookCreditedLines, this.currentBookId);
+      this.creditedWords = this._getOrCreateSet(this._bookCreditedWords, this.currentBookId);
+      this.committedPageKeys = this.creditedBlocks;
+    } else {
+      if (!this.creditedBlocks) this.creditedBlocks = new Set();
+      if (!this.creditedLines) this.creditedLines = new Set();
+      if (!this.creditedWords) this.creditedWords = new Set();
+      this.committedPageKeys = this.creditedBlocks;
     }
 
     // Režimy pravítka a sledování slov
@@ -1035,7 +1041,7 @@ export class ReadingTracker {
           this.completedMinutesCount += 1;
 
           const completedSoFar = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
-          this.sessionWordsRead = Math.max(completedSoFar, Math.round(this.noRulerTotalWords || 0));
+          this.sessionWordsRead = this.rulerEnabled ? completedSoFar : Math.max(completedSoFar, Math.round(this.noRulerTotalWords || 0));
         }
 
         const totalActiveSeconds = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
@@ -1062,7 +1068,7 @@ export class ReadingTracker {
 
         const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
         const liveWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
-        const displayWords = Math.max(liveWords, Math.round(this.noRulerTotalWords || 0));
+        const displayWords = this.rulerEnabled ? liveWords : Math.max(liveWords, Math.round(this.noRulerTotalWords || 0));
         this.sessionWordsRead = displayWords;
 
         this.notifyListeners({
@@ -1144,7 +1150,7 @@ export class ReadingTracker {
 
     const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
     const rulerWords = completedWords + Math.max(0, Math.round(this.currentMinuteWords));
-    const effectiveWords = Math.max(rulerWords, Math.round(this.noRulerTotalWords || 0));
+    const effectiveWords = this.rulerEnabled ? rulerWords : Math.max(rulerWords, Math.round(this.noRulerTotalWords || 0));
 
     if (effectiveWords > 0) {
       return Math.min(MAX_VALID_WPM, Math.round((effectiveWords / totalActiveSeconds) * 60));
@@ -1203,7 +1209,7 @@ export class ReadingTracker {
     const completedWords = this.intra_session_samples.reduce((sum, s) => sum + Math.round(s.words || 0), 0);
     const partialWords = Math.max(0, Math.round(this.currentMinuteWords));
     const accumulatedWords = completedWords + partialWords;
-    wordsRead = Math.max(accumulatedWords, Math.round(this.noRulerTotalWords || 0));
+    wordsRead = this.rulerEnabled ? accumulatedWords : Math.max(accumulatedWords, Math.round(this.noRulerTotalWords || 0));
 
     avgWpm = (effectiveActiveSeconds >= 10 && wordsRead > 0)
       ? Math.min(MAX_VALID_WPM, Math.round((wordsRead / effectiveActiveSeconds) * 60))

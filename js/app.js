@@ -4434,7 +4434,7 @@ export class LuminaApp {
         tracker.initBookProgress(book.id, book);
       }
       if (this.ruler) {
-        this.ruler.resetBookTracking(book.id);
+        this.ruler.resetSessionTracking();
       }
       this._chapterDataCache = new Map();
       this._bionicChapterCache = new Map();
@@ -6006,6 +6006,9 @@ export class LuminaApp {
         }
         return;
       }
+      if (this.ruler && this.ruler.enabled && typeof this.ruler.finalizeCurrentPageProgress === "function") {
+        this.ruler.finalizeCurrentPageProgress();
+      }
       this.pdfLoader.goToPage(targetPage, explicitDirection);
       return;
     }
@@ -6029,12 +6032,16 @@ export class LuminaApp {
       return;
     }
     const oldIndex = this.currentPageIndex;
+    const isPageChanged = oldIndex !== pageIndex || explicitDirection !== null;
+
+    if (isPageChanged && this.ruler && this.ruler.enabled && typeof this.ruler.finalizeCurrentPageProgress === "function") {
+      this.ruler.finalizeCurrentPageProgress();
+    }
+
     this.currentPageIndex = Math.max(0, Math.min(this.totalPagesInChapter - 1, pageIndex));
     const { stageWidth, gap, exactStep } = this.getExactColumnStep();
     this.pageGap = gap;
     const offset = this.currentPageIndex * exactStep;
-
-    const isPageChanged = oldIndex !== this.currentPageIndex || explicitDirection !== null;
     const direction = explicitDirection !== null
       ? explicitDirection
       : (this.currentPageIndex > oldIndex ? 1 : (this.currentPageIndex < oldIndex ? -1 : 0));
@@ -6254,6 +6261,9 @@ export class LuminaApp {
       if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
       this.lastPageTurnTime = now;
       if (this.ruler && this.ruler.enabled) {
+        if (typeof this.ruler.finalizeCurrentPageProgress === "function") {
+          this.ruler.finalizeCurrentPageProgress();
+        }
         this.ruler.prepareForPageTransition(1);
       }
       await this.pdfLoader.nextPage();
@@ -6270,6 +6280,10 @@ export class LuminaApp {
       return;
     }
     this.lastPageTurnTime = now;
+
+    if (this.ruler && this.ruler.enabled && typeof this.ruler.finalizeCurrentPageProgress === "function") {
+      this.ruler.finalizeCurrentPageProgress();
+    }
 
     const stage = this.dom.pagedStage;
     if (stage) stage.classList.add("is-turning-page");
@@ -6362,6 +6376,9 @@ export class LuminaApp {
       if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
       this.lastPageTurnTime = now;
       if (this.ruler && this.ruler.enabled) {
+        if (typeof this.ruler.finalizeCurrentPageProgress === "function") {
+          this.ruler.finalizeCurrentPageProgress();
+        }
         this.ruler.prepareForPageTransition(-1);
       }
       await this.pdfLoader.prevPage();
@@ -6375,6 +6392,10 @@ export class LuminaApp {
     }
     if (now - this.lastPageTurnTime < this.PAGE_TURN_COOLDOWN) return;
     this.lastPageTurnTime = now;
+
+    if (this.ruler && this.ruler.enabled && typeof this.ruler.finalizeCurrentPageProgress === "function") {
+      this.ruler.finalizeCurrentPageProgress();
+    }
 
     const stage = this.dom.pagedStage;
     if (stage) stage.classList.add("is-turning-page");
@@ -6416,6 +6437,9 @@ export class LuminaApp {
 
   async navigateChapter(delta, targetPage = 0) {
     if (!this.currentParser) return;
+    if (this.ruler && this.ruler.enabled && typeof this.ruler.finalizeCurrentPageProgress === "function") {
+      this.ruler.finalizeCurrentPageProgress();
+    }
     let newIdx = this.currentChapterIndex + delta;
 
     // Při sekvenčním listování (delta = 1 nebo -1) přeskočit zcela prázdné položky spine bez textu a médií

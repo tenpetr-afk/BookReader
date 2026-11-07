@@ -91,6 +91,8 @@ export class ReadingRuler {
     this._rulerMode = "line"; // "line" | "word"
     this._activeReadingLineIndex = -1;
     this._activeLineStartTime = 0;
+    this._bookCompletedLines = new Map(); // bookId -> Map<blockKey, Set<lineIdx>>
+    this._bookWordsRead = new Map(); // bookId -> Map<blockKey, Set<`${lineIdx}:${wordIdx}`>>
     this._completedLinesByBlock = new Map(); // blockKey -> Set of completed line indices
     this._wordsReadByBlock = new Map(); // blockKey -> Set of `${lineIdx}:${wordIdx}`
     this._completedLineIndices = new Set();
@@ -237,14 +239,25 @@ export class ReadingRuler {
    * Zabraňuje vymazání již přečtených řádků při návratu na předchozí stranu nebo při překreslení řádků.
    */
   updateBlockTrackingContext() {
+    const bookId = this.app?.currentBook?.id || "doc";
+    if (!this._bookCompletedLines) this._bookCompletedLines = new Map();
+    if (!this._bookCompletedLines.has(bookId)) {
+      this._bookCompletedLines.set(bookId, new Map());
+    }
+    this._completedLinesByBlock = this._bookCompletedLines.get(bookId);
+
+    if (!this._bookWordsRead) this._bookWordsRead = new Map();
+    if (!this._bookWordsRead.has(bookId)) {
+      this._bookWordsRead.set(bookId, new Map());
+    }
+    this._wordsReadByBlock = this._bookWordsRead.get(bookId);
+
     const blockKey = this.getCurrentBlockKey();
-    if (!this._completedLinesByBlock) this._completedLinesByBlock = new Map();
     if (!this._completedLinesByBlock.has(blockKey)) {
       this._completedLinesByBlock.set(blockKey, new Set());
     }
     this._completedLineIndices = this._completedLinesByBlock.get(blockKey);
 
-    if (!this._wordsReadByBlock) this._wordsReadByBlock = new Map();
     if (!this._wordsReadByBlock.has(blockKey)) {
       this._wordsReadByBlock.set(blockKey, new Set());
     }
@@ -252,13 +265,10 @@ export class ReadingRuler {
   }
 
   /**
-   * Resetuje paměť pravítka pro novou čtecí relaci
+   * Resetuje efemérní čtecí kurzor pravítka pro novou čtecí relaci
+   * (NEMAŽE perzistentní množiny přečtených řádků a slov dané knihy).
    */
   resetSessionTracking() {
-    if (this._completedLinesByBlock) this._completedLinesByBlock.clear();
-    if (this._wordsReadByBlock) this._wordsReadByBlock.clear();
-    this._completedLineIndices = new Set();
-    this._wordsReadOnPage = new Set();
     this._activeReadingLineIndex = -1;
     this._activeLineStartTime = 0;
     this._lastWordLineIndex = -1;
@@ -266,9 +276,20 @@ export class ReadingRuler {
   }
 
   /**
-   * Resetuje paměť pravítka pro zadanou knihu
+   * Resetuje paměť pravítka pro zadanou knihu výhradně při explicitním resetu statistik.
    */
   resetBookTracking(bookId = null) {
+    const targetBookId = bookId || this.app?.currentBook?.id || "doc";
+    if (this._bookCompletedLines) {
+      this._bookCompletedLines.delete(targetBookId);
+    }
+    if (this._bookWordsRead) {
+      this._bookWordsRead.delete(targetBookId);
+    }
+    this._completedLinesByBlock = new Map();
+    this._wordsReadByBlock = new Map();
+    this._completedLineIndices = new Set();
+    this._wordsReadOnPage = new Set();
     this.resetSessionTracking();
   }
 
@@ -2219,6 +2240,9 @@ export class ReadingRuler {
     this.activeLineIndex = targetLineIdx;
     this._lastActiveLineIndex = targetLineIdx;
     this._lastActiveColumn = activeColumn;
+    this._activeReadingLineIndex = targetLineIdx;
+    this._activeLineStartTime = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    this.updateBlockTrackingContext();
     const targetLine = this.cachedLines[targetLineIdx];
     const isMediaLine = !!(targetLine && (targetLine.isMedia || !targetLine.hasText));
 
@@ -2319,6 +2343,9 @@ export class ReadingRuler {
     }
 
     this.activeLineIndex = targetLineIdx;
+    this._activeReadingLineIndex = targetLineIdx;
+    this._activeLineStartTime = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    this.updateBlockTrackingContext();
     const targetLine = (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) ? this.cachedLines[targetLineIdx] : null;
     const isMediaLine = !!(targetLine && (targetLine.isMedia || !targetLine.hasText));
 
@@ -4941,16 +4968,18 @@ export class ReadingRuler {
     }
   }
 
-  refreshLines() {
+  refreshLines(resetReadingIndices = false) {
     this._lastComputedLineGeom = null;
     this._lastEmptyDetectTime = 0;
     this._lastActiveLineIndex = -1;
     this._lastActiveColumn = null;
     this._clearWordCache();
-    this._activeReadingLineIndex = -1;
-    this._activeLineStartTime = 0;
-    this._lastWordLineIndex = -1;
-    this._lastWordIndex = -1;
+    if (resetReadingIndices) {
+      this._activeReadingLineIndex = -1;
+      this._activeLineStartTime = 0;
+      this._lastWordLineIndex = -1;
+      this._lastWordIndex = -1;
+    }
     this.updateBlockTrackingContext();
     return this.detectLines(true);
   }
@@ -5124,7 +5153,11 @@ export class ReadingRuler {
         }
       }
 
-      for (const cl of lineClusters) {
+      lineClusters.sort((a, b) => (a.top - b.top) || (a.left - b.left));
+
+      for (let cIdx = 0; cIdx < lineClusters.length; cIdx++) {
+        const cl = lineClusters[cIdx];
+        const isClusterContinuation = cIdx > 0;
         let rTop = cl.top;
         let rBottom = cl.bottom;
         let rHeight = rBottom - rTop;
@@ -5165,7 +5198,8 @@ export class ReadingRuler {
             width: rWidth,
             height: rHeight,
             centerX: rLeft + rWidth / 2,
-            centerY: rTop + rHeight / 2 + vScrollTop
+            centerY: rTop + rHeight / 2 + vScrollTop,
+            isContinuation: isClusterContinuation
           });
         }
       }
@@ -5259,28 +5293,56 @@ export class ReadingRuler {
     const mergedWords = [];
     for (let i = 0; i < words.length; i++) {
       const w = words[i];
-      // Pokud token neobsahuje žádné platné abecední znaky (samostatná interpunkce, symboly, závorky, pomlčky, čísla)
-      if (!isValidWord(w.text)) {
-        if (mergedWords.length > 0) {
-          const prev = mergedWords[mergedWords.length - 1];
-          const sameLine = Math.abs(w.centerY - prev.centerY) <= 8 || Math.abs(w.top - prev.top) <= 6;
-          const isAdjacent = w.left >= prev.left - 2 && (w.left - prev.right) <= 5;
-          if (sameLine && isAdjacent) {
-            prev.right = Math.max(prev.right, w.right);
-            prev.left = Math.min(prev.left, w.left);
-            prev.top = Math.min(prev.top, w.top);
-            prev.bottom = Math.max(prev.bottom, w.bottom);
-            prev.width = prev.right - prev.left;
-            prev.height = prev.bottom - prev.top;
-            prev.centerX = prev.left + prev.width / 2;
-            prev.centerY = prev.top + prev.height / 2;
-            prev.text = prev.text + w.text;
-            continue;
-          }
+      if (mergedWords.length === 0) {
+        if (isValidWord(w.text)) {
+          mergedWords.push(w);
         }
         continue;
       }
-      mergedWords.push(w);
+
+      const prev = mergedWords[mergedWords.length - 1];
+      const sameLine = Math.abs(w.centerY - prev.centerY) <= 8 || Math.abs(w.top - prev.top) <= 6;
+      const gap = w.left - prev.right;
+      const isHorizontallyAdjacent = w.left >= prev.left - 2;
+
+      if (!isValidWord(w.text)) {
+        // Punctuation, symbol or pure number: merge if adjacent to previous valid word on same line
+        if (sameLine && isHorizontallyAdjacent && gap <= 5) {
+          prev.right = Math.max(prev.right, w.right);
+          prev.left = Math.min(prev.left, w.left);
+          prev.top = Math.min(prev.top, w.top);
+          prev.bottom = Math.max(prev.bottom, w.bottom);
+          prev.width = prev.right - prev.left;
+          prev.height = prev.bottom - prev.top;
+          prev.centerX = prev.left + prev.width / 2;
+          prev.centerY = prev.top + prev.height / 2;
+          prev.text = prev.text + w.text;
+          if (w.isContinuation) prev.isContinuation = true;
+        }
+        continue;
+      }
+
+      // w is a valid word token (contains \p{L})
+      // Any two adjacent tokens on the same line with no whitespace between them
+      // (or separated only by an internal hyphen/apostrophe and horizontal distance <= 3px)
+      const hasHyphenOrApostrophe = /[-‐‑'’]$/u.test(prev.text) || /^[-‐‑'’]/u.test(w.text);
+      const isNoWhitespace = gap >= -3 && gap <= 1.5;
+      const isHyphenApostropheMerge = hasHyphenOrApostrophe && gap >= -3 && gap <= 3;
+
+      if (sameLine && isHorizontallyAdjacent && (isNoWhitespace || isHyphenApostropheMerge)) {
+        prev.right = Math.max(prev.right, w.right);
+        prev.left = Math.min(prev.left, w.left);
+        prev.top = Math.min(prev.top, w.top);
+        prev.bottom = Math.max(prev.bottom, w.bottom);
+        prev.width = prev.right - prev.left;
+        prev.height = prev.bottom - prev.top;
+        prev.centerX = prev.left + prev.width / 2;
+        prev.centerY = prev.top + prev.height / 2;
+        prev.text = prev.text + w.text;
+        if (w.isContinuation) prev.isContinuation = true;
+      } else {
+        mergedWords.push(w);
+      }
     }
 
     for (const w of mergedWords) {
@@ -5302,6 +5364,7 @@ export class ReadingRuler {
       w.lineIndex = bestCandIdx;
     }
 
+    candidateLines.sort((a, b) => a.index - b.index);
     for (const cand of candidateLines) {
       const clIdx = cand.index;
       const cl = cand.line;
@@ -5310,6 +5373,38 @@ export class ReadingRuler {
       cl.words = lineWords;
       cl.wordIndices = lineWords.map((_, idx) => idx);
       this._lineWordsCache.set(clIdx, lineWords);
+    }
+
+    // Spojování slov rozdělených koncem řádku s pomlčkou (hard-hyphenated line breaks)
+    for (let c = 0; c < candidateLines.length - 1; c++) {
+      const curCl = candidateLines[c].line;
+      const nextCl = candidateLines[c + 1].line;
+      if (curCl.words?.length > 0 && nextCl.words?.length > 0) {
+        const lastWord = curCl.words[curCl.words.length - 1];
+        const firstWord = nextCl.words[0];
+        if (/[-\u00AD\u2010\u2011]$/u.test(lastWord.text) && /^\p{L}/u.test(firstWord.text)) {
+          firstWord.isContinuation = true;
+        }
+      }
+    }
+
+    if (line.words?.length > 0) {
+      if (lineIdx > 0 && this.cachedLines[lineIdx - 1]?.words?.length > 0) {
+        const prevWords = this.cachedLines[lineIdx - 1].words;
+        const lastW = prevWords[prevWords.length - 1];
+        const firstW = line.words[0];
+        if (/[-\u00AD\u2010\u2011]$/u.test(lastW.text) && /^\p{L}/u.test(firstW.text)) {
+          firstW.isContinuation = true;
+        }
+      }
+      if (lineIdx + 1 < this.cachedLines.length && this.cachedLines[lineIdx + 1]?.words?.length > 0) {
+        const nextWords = this.cachedLines[lineIdx + 1].words;
+        const lastW = line.words[line.words.length - 1];
+        const firstW = nextWords[0];
+        if (/[-\u00AD\u2010\u2011]$/u.test(lastW.text) && /^\p{L}/u.test(firstW.text)) {
+          firstW.isContinuation = true;
+        }
+      }
     }
 
     return line.words || [];
@@ -5325,9 +5420,27 @@ export class ReadingRuler {
       return [];
     }
     const words = this.getWordsForLine(lineIdx);
+    if (lineIdx > 0) {
+      const prevWords = this.getWordsForLine(lineIdx - 1);
+      if (prevWords?.length > 0 && words?.length > 0) {
+        const lastW = prevWords[prevWords.length - 1];
+        const firstW = words[0];
+        if (/[-\u00AD\u2010\u2011]$/u.test(lastW.text) && /^\p{L}/u.test(firstW.text)) {
+          firstW.isContinuation = true;
+        }
+      }
+    }
+    if (lineIdx + 1 < this.cachedLines.length) {
+      const nextWords = this.getWordsForLine(lineIdx + 1);
+      if (words?.length > 0 && nextWords?.length > 0) {
+        const lastW = words[words.length - 1];
+        const firstW = nextWords[0];
+        if (/[-\u00AD\u2010\u2011]$/u.test(lastW.text) && /^\p{L}/u.test(firstW.text)) {
+          firstW.isContinuation = true;
+        }
+      }
+    }
     this.cachedWords = words;
-    if (lineIdx > 0) this.getWordsForLine(lineIdx - 1);
-    if (lineIdx + 1 < this.cachedLines.length) this.getWordsForLine(lineIdx + 1);
     return words;
   }
 
@@ -6720,27 +6833,6 @@ export class ReadingRuler {
     this.maskRightEl.classList.remove("is-snapped");
   }
 
-  _estimateLineWordsFallback(lineIdx) {
-    const l = (this.cachedLines && lineIdx >= 0 && lineIdx < this.cachedLines.length)
-      ? this.cachedLines[lineIdx]
-      : null;
-    if (!l || l.isMedia) return 0;
-
-    const pageWords = (this.app && typeof this.app.getVisibleWordsOnCurrentPage === "function")
-      ? this.app.getVisibleWordsOnCurrentPage()
-      : 250;
-    const totalLines = (this.cachedLines && this.cachedLines.length > 0) ? this.cachedLines.length : 25;
-    const avgWordsPerLine = Math.max(1, Math.min(25, Math.round(pageWords / totalLines)));
-
-    // Pokud má řádek čistý text odpovídající jednomu řádku (nikoliv celému odstavci)
-    if (l.text && typeof l.text === "string") {
-      const validCount = countWords(l.text);
-      if (validCount >= 1 && validCount <= 25) return validCount;
-    }
-
-    return avgWordsPerLine;
-  }
-
   _checkLineProgress(idx, isKeyboard = false) {
     if (this.rulerMode !== "line" || idx < 0) return;
 
@@ -6760,41 +6852,47 @@ export class ReadingRuler {
     const prevLineIdx = this._activeReadingLineIndex;
     const dwell = now - (this._activeLineStartTime || 0);
 
-    // Dwell time threshold:
-    // Pokud uživatel posunul kurzor myši příliš rychle (< 400ms) přes řádek,
-    // šlo o rychlý přelet kurzoru / chvění myši, nikoliv čtení.
-    // Klávesové šipky (isKeyboard = true) mají dwell ignorován (uživatel vědomě krokuje).
-    const isDwellSufficient = isKeyboard || dwell >= 400;
-
     if (!this._completedLineIndices) this._completedLineIndices = new Set();
+    if (!this._wordsReadOnPage) this._wordsReadOnPage = new Set();
 
-    if (idx > prevLineIdx) {
-      // Uživatel postoupil vpřed na další řádek.
-      // Započítá se POUZE předchozí řádek (prevLineIdx), na kterém čtenář skutečně setrval.
-      // Přeskočené řádky se nezapočítávají, protože na nich čtenář nestrávil žádný čas.
-      if (isDwellSufficient && !this._completedLineIndices.has(prevLineIdx)) {
-        this._completedLineIndices.add(prevLineIdx);
-        const lineWords = this.getWordsForLine(prevLineIdx);
-        const count = Array.isArray(lineWords) && lineWords.length > 0
-          ? lineWords.length
-          : this._estimateLineWordsFallback(prevLineIdx);
-        if (count > 0 && typeof this.onProgress === "function") {
-          const blockKey = this.getCurrentBlockKey();
-          const chapterIdx = this.app?.currentChapterIndex ?? 0;
-          const pageIdx = (this.isPdfMode || this.app?.isPdfMode)
-            ? (this.app?.pdfLoader?.currentPage || 1) - 1
-            : (this.app?.currentPageIndex ?? 0);
-          const lineKey = `${blockKey}_l${prevLineIdx}`;
-          const context = {
-            bookId: this.app?.currentBook?.id || null,
-            chapterIndex: chapterIdx,
-            pageIndex: pageIdx,
-            lineIndex: prevLineIdx,
-            blockKey,
-            lineKey
-          };
-          this.onProgress("line", count, context);
+    const allLineWords = this.getWordsForLine(prevLineIdx) || [];
+    const validWords = allLineWords.filter(w => !w.isContinuation);
+    const wordCount = validWords.length;
+
+    // Minimum dwell threshold škálovaný podle počtu slov na řádku (35ms na slovo, 80-250ms)
+    // Klávesové / krokovací posuny (isKeyboard = true) mají nulový dwell požadavek
+    const minDwell = Math.min(250, Math.max(80, wordCount * 35));
+    const isDwellSufficient = isKeyboard || dwell >= minDwell;
+
+    if (isDwellSufficient && !this._completedLineIndices.has(prevLineIdx)) {
+      this._completedLineIndices.add(prevLineIdx);
+
+      // Započítáme pouze platná slova daného řádku, která dosud nebyla započtena ve slovním režimu
+      let unreadCount = 0;
+      for (let w = 0; w < allLineWords.length; w++) {
+        const wordKey = `${prevLineIdx}:${w}`;
+        if (!allLineWords[w].isContinuation && !this._wordsReadOnPage.has(wordKey)) {
+          unreadCount++;
         }
+        this._wordsReadOnPage.add(wordKey);
+      }
+
+      if (unreadCount > 0 && typeof this.onProgress === "function") {
+        const blockKey = this.getCurrentBlockKey();
+        const chapterIdx = this.app?.currentChapterIndex ?? 0;
+        const pageIdx = (this.isPdfMode || this.app?.isPdfMode)
+          ? (this.app?.pdfLoader?.currentPage || 1) - 1
+          : (this.app?.currentPageIndex ?? 0);
+        const lineKey = `${blockKey}_l${prevLineIdx}`;
+        const context = {
+          bookId: this.app?.currentBook?.id || null,
+          chapterIndex: chapterIdx,
+          pageIndex: pageIdx,
+          lineIndex: prevLineIdx,
+          blockKey,
+          lineKey
+        };
+        this.onProgress("line", unreadCount, context);
       }
     }
 
@@ -6810,29 +6908,43 @@ export class ReadingRuler {
 
     if (this.rulerMode === "line" && this._activeReadingLineIndex >= 0) {
       if (!this._completedLineIndices) this._completedLineIndices = new Set();
+      if (!this._wordsReadOnPage) this._wordsReadOnPage = new Set();
+
+      const lineIdx = this._activeReadingLineIndex;
+      const allLineWords = this.getWordsForLine(lineIdx) || [];
+      const validWords = allLineWords.filter(w => !w.isContinuation);
+      const wordCount = validWords.length;
+      const minDwell = Math.min(250, Math.max(80, wordCount * 35));
       const dwell = now - (this._activeLineStartTime || 0);
-      if ((isKeyboard || dwell >= 400) && !this._completedLineIndices.has(this._activeReadingLineIndex)) {
-        this._completedLineIndices.add(this._activeReadingLineIndex);
-        const lineWords = this.getWordsForLine(this._activeReadingLineIndex);
-        const count = Array.isArray(lineWords) && lineWords.length > 0
-          ? lineWords.length
-          : this._estimateLineWordsFallback(this._activeReadingLineIndex);
-        if (count > 0 && typeof this.onProgress === "function") {
+
+      if ((isKeyboard || dwell >= minDwell) && !this._completedLineIndices.has(lineIdx)) {
+        this._completedLineIndices.add(lineIdx);
+
+        let unreadCount = 0;
+        for (let w = 0; w < allLineWords.length; w++) {
+          const wordKey = `${lineIdx}:${w}`;
+          if (!allLineWords[w].isContinuation && !this._wordsReadOnPage.has(wordKey)) {
+            unreadCount++;
+          }
+          this._wordsReadOnPage.add(wordKey);
+        }
+
+        if (unreadCount > 0 && typeof this.onProgress === "function") {
           const blockKey = this.getCurrentBlockKey();
           const chapterIdx = this.app?.currentChapterIndex ?? 0;
           const pageIdx = (this.isPdfMode || this.app?.isPdfMode)
             ? (this.app?.pdfLoader?.currentPage || 1) - 1
             : (this.app?.currentPageIndex ?? 0);
-          const lineKey = `${blockKey}_l${this._activeReadingLineIndex}`;
+          const lineKey = `${blockKey}_l${lineIdx}`;
           const context = {
             bookId: this.app?.currentBook?.id || null,
             chapterIndex: chapterIdx,
             pageIndex: pageIdx,
-            lineIndex: this._activeReadingLineIndex,
+            lineIndex: lineIdx,
             blockKey,
             lineKey
           };
-          this.onProgress("line", count, context);
+          this.onProgress("line", unreadCount, context);
         }
       }
     }
@@ -6850,76 +6962,65 @@ export class ReadingRuler {
 
     const curLineIdx = this.activeLineIndex >= 0 ? this.activeLineIndex : 0;
     if (!this._wordsReadOnPage) this._wordsReadOnPage = new Set();
+    if (!this._completedLineIndices) this._completedLineIndices = new Set();
 
-    // Prvotní umístění pravítka na slovo
-    if (this._lastWordLineIndex < 0 || this._lastWordIndex < 0) {
-      this._lastWordLineIndex = curLineIdx;
-      this._lastWordIndex = idx;
+    const words = this.getWordsForLine(curLineIdx) || [];
+    if (idx >= words.length) return;
+
+    const candidateWordIndices = [];
+    const isInitial = (this._lastWordLineIndex < 0 || this._lastWordIndex < 0);
+    const lineChanged = (curLineIdx !== this._lastWordLineIndex);
+
+    if (isInitial || lineChanged) {
+      candidateWordIndices.push(idx);
+    } else {
+      if (!isMovingLeft && idx >= this._lastWordIndex) {
+        for (let w = Math.max(0, this._lastWordIndex); w <= idx; w++) {
+          candidateWordIndices.push(w);
+        }
+      } else {
+        candidateWordIndices.push(idx);
+      }
+    }
+
+    this._lastWordLineIndex = curLineIdx;
+    this._lastWordIndex = idx;
+
+    // Pokud byl již celý řádek započten v řádkovém režimu, žádné slovo znovu nepočítáme
+    if (this._completedLineIndices.has(curLineIdx)) {
       return;
     }
 
-    let wordsPassedOver = 0;
+    for (const wIdx of candidateWordIndices) {
+      if (wIdx < 0 || wIdx >= words.length) continue;
+      const wObj = words[wIdx];
+      if (!wObj || wObj.isContinuation) continue;
 
-    if (curLineIdx > this._lastWordLineIndex) {
-      // 1. Dokončení předchozího řádku: pouze pokud jsme nestihli započíst při dopředném čtení (např. krok klávesnicí)
-      if (!isMovingLeft) {
-        const prevLineWords = this.getWordsForLine(this._lastWordLineIndex) || [];
-        for (let w = Math.max(0, this._lastWordIndex); w < prevLineWords.length; w++) {
-          const key = `${this._lastWordLineIndex}:${w}`;
-          if (!this._wordsReadOnPage.has(key)) {
-            this._wordsReadOnPage.add(key);
-            wordsPassedOver++;
-          }
-        }
-        for (let w = 0; w <= idx; w++) {
-          const key = `${curLineIdx}:${w}`;
-          if (!this._wordsReadOnPage.has(key)) {
-            this._wordsReadOnPage.add(key);
-            wordsPassedOver++;
-          }
-        }
+      const pageWordKey = `${curLineIdx}:${wIdx}`;
+      if (this._wordsReadOnPage.has(pageWordKey)) {
+        continue;
       }
+      this._wordsReadOnPage.add(pageWordKey);
 
-      this._lastWordLineIndex = curLineIdx;
-      this._lastWordIndex = idx;
-    } else if (curLineIdx === this._lastWordLineIndex) {
-      // Na stejném řádku:
-      if (!isMovingLeft && idx >= this._lastWordIndex) {
-        const startW = this._wordsReadOnPage.has(`${curLineIdx}:${this._lastWordIndex}`)
-          ? this._lastWordIndex + 1
-          : this._lastWordIndex;
-        for (let w = Math.max(0, startW); w <= idx; w++) {
-          const key = `${curLineIdx}:${w}`;
-          if (!this._wordsReadOnPage.has(key)) {
-            this._wordsReadOnPage.add(key);
-            wordsPassedOver++;
-          }
-        }
-        this._lastWordIndex = idx;
-      } else {
-        this._lastWordIndex = idx;
+      if (typeof this.onProgress === "function") {
+        const blockKey = this.getCurrentBlockKey();
+        const chapterIdx = this.app?.currentChapterIndex ?? 0;
+        const pageIdx = (this.isPdfMode || this.app?.isPdfMode)
+          ? (this.app?.pdfLoader?.currentPage || 1) - 1
+          : (this.app?.currentPageIndex ?? 0);
+        const bookId = this.app?.currentBook?.id || "doc";
+        const wordKey = `${bookId}_ch${chapterIdx}_p${pageIdx}_l${curLineIdx}_w${wIdx}`;
+        const context = {
+          bookId,
+          chapterIndex: chapterIdx,
+          pageIndex: pageIdx,
+          lineIndex: curLineIdx,
+          wordIndex: wIdx,
+          blockKey,
+          wordKey
+        };
+        this.onProgress("word", 1, context);
       }
-    } else {
-      // Návrat na předchozí řádek (nahoru): pouze aktualizujeme pozici bez zápočtu
-      this._lastWordLineIndex = curLineIdx;
-      this._lastWordIndex = idx;
-    }
-
-    if (wordsPassedOver > 0 && typeof this.onProgress === "function") {
-      const blockKey = this.getCurrentBlockKey();
-      const chapterIdx = this.app?.currentChapterIndex ?? 0;
-      const pageIdx = (this.isPdfMode || this.app?.isPdfMode)
-        ? (this.app?.pdfLoader?.currentPage || 1) - 1
-        : (this.app?.currentPageIndex ?? 0);
-      const context = {
-        bookId: this.app?.currentBook?.id || null,
-        chapterIndex: chapterIdx,
-        pageIndex: pageIdx,
-        lineIndex: curLineIdx,
-        wordIndex: idx,
-        blockKey
-      };
-      this.onProgress("word", wordsPassedOver, context);
     }
   }
 
@@ -7179,7 +7280,7 @@ export class ReadingRuler {
         }
 
         // Refresh lines for the active page:
-        this.refreshLines();
+        this.refreshLines(false);
 
         if (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) {
           const isVertical = this.isVerticalMode();
@@ -7197,6 +7298,10 @@ export class ReadingRuler {
             }
             this.currentY = this.targetY;
             this.isPageTransitioning = false;
+            this.activeLineIndex = 0;
+            this._activeReadingLineIndex = 0;
+            this._activeLineStartTime = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+            this.updateBlockTrackingContext();
             if (this.rulerEl) {
               this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
               this.rulerEl.classList.add("is-visible");
@@ -7230,6 +7335,10 @@ export class ReadingRuler {
           this.targetY = isBackward ? Math.round(bottomBound - this.height) : Math.round(topBound);
           this.currentY = this.targetY;
           this.isPageTransitioning = false;
+          this.activeLineIndex = 0;
+          this._activeReadingLineIndex = 0;
+          this._activeLineStartTime = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+          this.updateBlockTrackingContext();
           if (this.rulerEl) {
             this.rulerEl.classList.remove("is-page-transitioning", "is-hidden", "hidden");
             this.rulerEl.classList.add("is-visible");
@@ -7253,10 +7362,15 @@ export class ReadingRuler {
             : 0;
           this.activeLineIndex = targetLineIdx;
           this._postTransitionAnchorLineIndex = targetLineIdx;
+          this._activeReadingLineIndex = targetLineIdx;
+          this._activeLineStartTime = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+          this.updateBlockTrackingContext();
           const words = this.ensureActiveWords(targetLineIdx);
           if (words && words.length > 0) {
             const targetWordIdx = effectiveDirection >= 0 ? 0 : words.length - 1;
             this.activeWordIndex = targetWordIdx;
+            this._lastWordLineIndex = targetLineIdx;
+            this._lastWordIndex = targetWordIdx;
             this.setWordWindow(targetWordIdx);
 
             const targetWord = words[targetWordIdx];
@@ -7315,6 +7429,9 @@ export class ReadingRuler {
             : 0;
           this.activeLineIndex = targetLineIdx;
           this._postTransitionAnchorLineIndex = targetLineIdx;
+          this._activeReadingLineIndex = targetLineIdx;
+          this._activeLineStartTime = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+          this.updateBlockTrackingContext();
 
           if (this.cachedWords && this.cachedWords.length > 0) {
             if (effectiveDirection < 0) {
