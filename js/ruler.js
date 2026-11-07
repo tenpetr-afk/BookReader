@@ -9,6 +9,8 @@
  * - Plovoucí ovládací panel pro krokování po řádcích/slovech a automatické tempo
  */
 
+import { countWords, isValidWord } from "./text-parser.js?v=2.4.9";
+
 export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i horizontální odsazení v řádkovém režimu
 export const RULER_WAVE_WIDTH = 80; // px - fixní šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
 export const RULER_WAVE_HEIGHT = 12; // px - fixní hloubka vlnky indikátoru
@@ -1323,18 +1325,28 @@ export class ReadingRuler {
    */
   isPointerInStage(clientX, clientY) {
     if (clientX == null || clientY == null) return false;
+    const stage = document.getElementById("paged-viewport") || this.container || document.getElementById("paged-stage");
+    if (!stage) return false;
     let rect = this._cachedViewportRect;
     if (!rect || rect.width <= 50 || rect.height <= 50) {
-      const stage = document.getElementById("paged-viewport") || this.container || document.getElementById("paged-stage");
-      if (!stage) return false;
       rect = stage.getBoundingClientRect();
       this._cachedViewportRect = rect;
     }
-    return (
+    if (
       clientX >= rect.left &&
       clientX <= rect.right &&
       clientY >= rect.top &&
       clientY <= rect.bottom
+    ) {
+      return true;
+    }
+    const freshRect = stage.getBoundingClientRect();
+    this._cachedViewportRect = freshRect;
+    return (
+      clientX >= freshRect.left &&
+      clientX <= freshRect.right &&
+      clientY >= freshRect.top &&
+      clientY <= freshRect.bottom
     );
   }
 
@@ -1980,6 +1992,10 @@ export class ReadingRuler {
 
     this.cancelHold(false);
 
+    if (!this.cachedLines || this.cachedLines.length === 0) {
+      this.detectLines();
+    }
+
     this.holdStartX = clientX;
     this.holdStartY = clientY;
     this.holdStartTime = Date.now();
@@ -1996,7 +2012,7 @@ export class ReadingRuler {
 
     this.holdTimer = setTimeout(() => {
       this.triggerHoldSuccess(this.holdStartX, this.holdStartY);
-    }, 500);
+    }, 350);
   }
 
   triggerHoldSuccess(x, y) {
@@ -2022,8 +2038,8 @@ export class ReadingRuler {
       return;
     }
 
-    if (this.isVerticalMode() && this.followMode === "keyboard") {
-      this.reanchorAt(x, y);
+    if (this.followMode === "keyboard") {
+      this.repositionToTarget(x, y, this.holdPointerType);
       return;
     }
 
@@ -2094,11 +2110,125 @@ export class ReadingRuler {
   }
 
   /**
+   * Sjednocené přemístění a magnetické přichycení pravítka na řádek / slovo pod ukazatelem
+   * pro klávesový režim ("keyboard") napříč všemi vstupními zařízeními (myš, dotyk, Apple Pencil).
+   */
+  repositionToTarget(clientX, clientY, pointerType = null) {
+    if (!this.enabled) return;
+    if (this.isVerticalMode()) {
+      this.reanchorAt(clientX, clientY);
+      return;
+    }
+
+    if (!this.cachedLines || this.cachedLines.length === 0) {
+      this.detectLines();
+    }
+    if (!this.cachedLines || this.cachedLines.length === 0) return;
+
+    this.isLineLocked = false;
+    this.suppressLineAdvancement = false;
+    this.isNavigating = false;
+    this.isNavigatingPage = false;
+
+    const stageRect = (this.snapToLines && this._cachedStageRect)
+      ? this._cachedStageRect
+      : ((document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.() || { left: 0, width: window.innerWidth });
+    const stageCenterX = stageRect.left + stageRect.width / 2;
+    const isSpread = this.isSpreadActive();
+    const spreadInfo = isSpread ? (this._cachedSpreadInfo || this.getActiveSpreadInfo(null)) : null;
+    const isTwoCol = !this.isVerticalMode() && (!!this.isTwoCol || isSpread);
+    const splitX = (isSpread && spreadInfo) ? spreadInfo.midGap : ((isTwoCol && this.gapMiddle) ? this.gapMiddle : stageCenterX);
+    const activeColumn = isTwoCol ? ((clientX >= splitX) ? 1 : 0) : 0;
+
+    const candidates = [];
+    for (let i = 0; i < this.cachedLines.length; i++) {
+      const l = this.cachedLines[i];
+      if (l.columnIndex === activeColumn) {
+        candidates.push({ line: l, index: i });
+      }
+    }
+    const pool = candidates.length > 0 ? candidates : this.cachedLines.map((l, i) => ({ line: l, index: i }));
+    if (pool.length === 0) return;
+
+    let targetLineIdx = pool[0].index;
+    let minDiff = Infinity;
+    for (let i = 0; i < pool.length; i++) {
+      const l = pool[i].line;
+      const dy = clientY < l.top ? l.top - clientY : clientY > l.bottom ? clientY - l.bottom : 0;
+      const diff = dy * 2 + Math.abs(clientY - l.centerY);
+      if (diff < minDiff) {
+        minDiff = diff;
+        targetLineIdx = pool[i].index;
+      }
+    }
+
+    this.activeLineIndex = targetLineIdx;
+    this._lastActiveLineIndex = targetLineIdx;
+    this._lastActiveColumn = activeColumn;
+    const targetLine = this.cachedLines[targetLineIdx];
+    const isMediaLine = !!(targetLine && (targetLine.isMedia || !targetLine.hasText));
+
+    const geom = this.computeLineGeometry(targetLineIdx);
+    if (geom) {
+      this.height = geom.height;
+      this.targetY = geom.targetY;
+      this.currentY = this.targetY;
+    }
+
+    if (this.wordTracking && !isMediaLine) {
+      const words = this.ensureActiveWords(targetLineIdx);
+      let closestWordIdx = -1;
+      let minWordDist = Infinity;
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        const dy = clientY < w.top ? w.top - clientY : clientY > w.bottom ? clientY - w.bottom : 0;
+        const dx = clientX < w.left ? w.left - clientX : clientX > w.right ? clientX - w.right : 0;
+        const dist = dy * 3 + dx;
+        if (dist < minWordDist) {
+          minWordDist = dist;
+          closestWordIdx = i;
+        }
+      }
+      if (closestWordIdx >= 0) {
+        this.activeWordIndex = closestWordIdx;
+        this.setWordWindow(closestWordIdx);
+        const cw = words[closestWordIdx];
+        this.lastPointerX = cw ? cw.centerX : clientX;
+        this.lastPointerY = cw ? Math.round(cw.centerY) : clientY;
+      }
+      this.rulerEl.classList.add("word-tracking-mode");
+    } else {
+      this.activeWordIndex = -1;
+      this.rulerEl.classList.remove("word-tracking-mode");
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+      this.lastPointerX = targetLine ? targetLine.left : clientX;
+      this.lastPointerY = targetLine ? Math.round(targetLine.centerY) : clientY;
+    }
+
+    this.lastValidPointerX = this.lastPointerX;
+    this.lastValidPointerY = this.lastPointerY;
+
+    if (this.rulerEl) {
+      this.rulerEl.style.display = "block";
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
+      this.rulerEl.classList.remove("is-hidden", "hidden");
+      this.rulerEl.classList.add("is-visible");
+    }
+    this._snapRulerInstantOrAnimated();
+    this.applyPosition();
+  }
+
+  /**
    * Dynamicky přenastaví stacionární teleprompter kotvu pravítka (stationaryScreenY)
    * ve vertikálním režimu čtení na nově vybraný řádek (nebo slovo) pod ukazatelem.
    */
   reanchorAt(clientX, clientY) {
-    if (!this.enabled || !this.isVerticalMode()) return;
+    if (!this.enabled) return;
+    if (!this.isVerticalMode()) {
+      this.repositionToTarget(clientX, clientY);
+      return;
+    }
 
     if (this._programmaticScrollTimer) {
       clearTimeout(this._programmaticScrollTimer);
@@ -2396,13 +2526,22 @@ export class ReadingRuler {
 
       if (!this.enabled || this.isTouchSwiping || this.isSwipePageTransition || this.isLineLocked || this.isNavigating || this.isNavigatingPage || this.isPageTransitioning || Date.now() < this.navigatingPageLockoutEndTime || isDocTurning || isRecentSwipe) return;
 
-      // Pokud běží aktivní držení, zkontrolujeme prahový posun (tolerance 8px)
+      // Pokud běží aktivní držení, zkontrolujeme prahový posun (tolerance 18px pro touch/stylus, 8px pro myš)
       if (this.isHoldActive) {
         const dx = Math.abs(e.clientX - this.holdStartX);
         const dy = Math.abs(e.clientY - this.holdStartY);
-        if (Math.hypot(dx, dy) > 8 || dx > 8 || dy > 8) {
+        const maxHoldDist = (this.holdPointerType === "mouse") ? 8 : 18;
+        if (Math.hypot(dx, dy) > maxHoldDist || dx > maxHoldDist || dy > maxHoldDist) {
           this.cancelHold(false);
         }
+      }
+
+      // V klávesovém režimu po úspěšném přeskoku podržením plynule aktualizovat cíl, pokud uživatel pokračuje v tažení
+      if (this.followMode === "keyboard" && this.isHoldTriggered) {
+        if (!this.isUiControl(e.target) && this.isPointerInStage(e.clientX, e.clientY)) {
+          this.repositionToTarget(e.clientX, e.clientY, e.pointerType);
+        }
+        return;
       }
 
       if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
@@ -2578,8 +2717,8 @@ export class ReadingRuler {
       if (this.isHoldActive) {
         const holdDuration = Date.now() - (this.holdStartTime || 0);
         const dist = Math.hypot(deltaX, deltaY);
-        // Krokování tapem se spustí POUZE při čistém, stacionárním klepnutí (|deltaX| < 8px a |deltaY| < 8px)
-        const isTap = absX < 8 && absY < 8 && dist <= 8 && holdDuration < 500 && !this.isHoldTriggered;
+        // Krokování tapem se spustí POUZE při čistém, stacionárním klepnutí (|deltaX| < 8px a |deltaY| < 8px) a době kratší než hold timeout
+        const isTap = absX < 8 && absY < 8 && dist <= 8 && holdDuration < 350 && !this.isHoldTriggered;
 
         this.cancelHold(false);
 
@@ -2621,7 +2760,12 @@ export class ReadingRuler {
       this.touchHistory = [];
       this.touchStrokeStartTime = 0;
       if (this.isHoldActive) {
-        this.cancelHold(false);
+        const holdDuration = Date.now() - (this.holdStartTime || 0);
+        if (holdDuration >= 280 && !this.wasHoldAborted && this.isPointerInStage(this.holdStartX, this.holdStartY)) {
+          this.triggerHoldSuccess(this.holdStartX, this.holdStartY);
+        } else {
+          this.cancelHold(false);
+        }
       }
       this.isDraggingRuler = false;
       this.isPenTouching = false;
@@ -2888,26 +3032,65 @@ export class ReadingRuler {
       }, { passive: true });
     }
 
-    // Aktivní touchmove listener pro Apple Pencil na iPadOS Safari
+    // Aktivní touchmove listener pro Apple Pencil a dotyk na iPadOS Safari
     window.addEventListener("touchmove", (e) => {
-      if (!this.enabled || this.followMode !== "mouse") return;
+      if (!this.enabled) return;
       if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay || this.isUiControl(e.target)) return;
-      const touches = e.touches ? Array.from(e.touches) : [];
-      const stylusTouch = touches.find(t => t.touchType === "stylus");
-      if (stylusTouch && this.isPointerInStage(stylusTouch.clientX, stylusTouch.clientY)) {
-        if (e.cancelable) e.preventDefault();
-        this.lastPenTime = Date.now();
-        this.activePointerType = "pen";
-        this.schedulePointerUpdate(stylusTouch.clientX, stylusTouch.clientY, "pen");
+
+      // Režim klávesových šipek: potlačení nativního scrollování a výběru textu během podržení nebo tažení po přeskoku
+      if (this.followMode === "keyboard") {
+        if (this.isHoldActive) {
+          const touch = e.touches && e.touches[0];
+          if (touch) {
+            const dx = Math.abs(touch.clientX - this.holdStartX);
+            const dy = Math.abs(touch.clientY - this.holdStartY);
+            if (Math.hypot(dx, dy) <= 18) {
+              if (e.cancelable) e.preventDefault();
+              return;
+            } else {
+              this.cancelHold(false);
+            }
+          }
+        } else if (this.isHoldTriggered) {
+          const touch = e.touches && e.touches[0];
+          if (touch && this.isPointerInStage(touch.clientX, touch.clientY)) {
+            if (e.cancelable) e.preventDefault();
+            this.repositionToTarget(touch.clientX, touch.clientY, "touch");
+            return;
+          }
+        }
+      }
+
+      // Apple Pencil plynulé sledování v režimu sledování myši ("mouse")
+      if (this.followMode === "mouse") {
+        const touches = e.touches ? Array.from(e.touches) : [];
+        const stylusTouch = touches.find(t => t.touchType === "stylus");
+        if (stylusTouch && this.isPointerInStage(stylusTouch.clientX, stylusTouch.clientY)) {
+          if (e.cancelable) e.preventDefault();
+          this.lastPenTime = Date.now();
+          this.activePointerType = "pen";
+          this.schedulePointerUpdate(stylusTouch.clientX, stylusTouch.clientY, "pen");
+        }
       }
     }, { passive: false });
 
-    // Potlačení kontextového menu při podržení
+    // Potlačení kontextového menu při podržení a v klávesovém režimu
     window.addEventListener("contextmenu", (e) => {
       if (!this.enabled) return;
-      if (this.isHoldActive || this.isHoldTriggered || Date.now() < this.dragCooldownEndTime) {
+      if (this.followMode === "keyboard" || this.isHoldActive || this.isHoldTriggered || Date.now() < this.dragCooldownEndTime) {
         if (this.isPointerInStage(e.clientX, e.clientY)) {
           e.preventDefault();
+        }
+      }
+    });
+
+    // Zamezení nechtěného výběru textu v čtecí ploše během podržení nebo tažení pravítka
+    document.addEventListener("selectionchange", () => {
+      if (!this.enabled) return;
+      if (this.isHoldActive || this.isHoldTriggered) {
+        const sel = window.getSelection ? window.getSelection() : null;
+        if (sel && sel.rangeCount > 0) {
+          sel.removeAllRanges();
         }
       }
     });
@@ -5020,11 +5203,11 @@ export class ReadingRuler {
 
     try { range.detach(); } catch (e) {}
 
-    const punctOnlyRegex = /^[-–—­‐.,;!?]+$/;
     const mergedWords = [];
     for (let i = 0; i < words.length; i++) {
       const w = words[i];
-      if (punctOnlyRegex.test(w.text)) {
+      // Pokud token neobsahuje žádné platné abecední znaky (samostatná interpunkce, symboly, závorky, pomlčky, čísla)
+      if (!isValidWord(w.text)) {
         if (mergedWords.length > 0) {
           const prev = mergedWords[mergedWords.length - 1];
           const sameLine = Math.abs(w.centerY - prev.centerY) <= 8 || Math.abs(w.top - prev.top) <= 6;
@@ -5807,8 +5990,8 @@ export class ReadingRuler {
       return lastItem.index;
     }
 
-    // Pro ukazatele mimo režim sledování a mimo stylus (např. klávesový režim) standardní přímé přichytávání bez hystereze
-    if (!isPen && this.followMode !== "mouse") {
+    // Pro ukazatele mimo režim sledování myši (např. klávesový režim pro myš, dotyk i Apple Pencil) standardní přímé přichytávání bez hystereze
+    if (this.followMode !== "mouse") {
       let minDiff = Infinity;
       let closestIdx = pool[0].index;
       for (let i = 0; i < pool.length; i++) {
@@ -6498,8 +6681,8 @@ export class ReadingRuler {
 
     // Pokud má řádek čistý text odpovídající jednomu řádku (nikoliv celému odstavci)
     if (l.text && typeof l.text === "string") {
-      const cleanTokens = l.text.trim().split(/\s+/).filter(Boolean);
-      if (cleanTokens.length >= 1 && cleanTokens.length <= 25) return cleanTokens.length;
+      const validCount = countWords(l.text);
+      if (validCount >= 1 && validCount <= 25) return validCount;
     }
 
     return avgWordsPerLine;
@@ -7355,7 +7538,7 @@ export class ReadingRuler {
         const width = window.innerWidth || 1;
         relX = clientX / width;
       }
-      if (pointerType === "mouse" || (relX > 0.12 && relX < 0.80)) {
+      if (pointerType === "mouse" || pointerType === "pen" || (relX > 0.12 && relX < 0.80)) {
         this.reanchorAt(clientX, clientY);
         return true;
       }

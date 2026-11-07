@@ -2176,12 +2176,20 @@ body.ruler-cursor-hidden .ruler-quick-popover * {
   cursor: pointer !important;
 }
 
-/* Zamezení nechtěného označování textu při tažení tužkou přes čtecí plochu se zapnutým pravítkem */
+/* Zamezení nechtěného označování textu při tažení tužkou či podržení přes čtecí plochu se zapnutým pravítkem */
+body.ruler-active,
+body.ruler-active #paged-viewport,
+body.ruler-active #paged-viewport *,
+body.ruler-active #paged-stage,
+body.ruler-active #paged-stage *,
 body.ruler-active .reader-content,
 body.ruler-active .reader-content *,
 body.ruler-active .paged-content,
 body.ruler-active .paged-content *,
-body.ruler-active .paged-viewport {
+body.ruler-active .pdf-page-container,
+body.ruler-active .pdf-page-container *,
+body.ruler-active .textLayer,
+body.ruler-active .textLayer * {
   -webkit-user-select: none !important;
   user-select: none !important;
   -webkit-touch-callout: none !important;
@@ -2196,6 +2204,7 @@ body.ruler-holding,
 body.ruler-holding * {
   user-select: none !important;
   -webkit-user-select: none !important;
+  -webkit-touch-callout: none !important;
 }
 
 /* ==========================================================================

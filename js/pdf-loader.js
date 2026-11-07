@@ -8,6 +8,8 @@
  * - Navigaci po stranách (nextPage, prevPage, goToPage) s provázáním do globálního stavu čtečky.
  */
 
+import { extractTextFromPdfContent, extractTextFromNode, countWords } from "./text-parser.js?v=2.4.9";
+
 export class PDFLoader {
   constructor(app = null, containerElement = null) {
     this.app = app;
@@ -1371,15 +1373,8 @@ export class PDFLoader {
       this.textLayers.push(textLayerDiv);
 
       const textContent = await page.getTextContent();
-      let wordCount = 0;
-      if (textContent && Array.isArray(textContent.items)) {
-        for (const item of textContent.items) {
-          if (item && item.str) {
-            const matches = item.str.match(/[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g);
-            if (matches) wordCount += matches.length;
-          }
-        }
-      }
+      const pageText = extractTextFromPdfContent(textContent);
+      const wordCount = countWords(pageText);
 
       this.pageWordCounts.set(pageNum, wordCount);
       if (wordCount === 0 || this.isImageOnlyPdf) {
@@ -1436,11 +1431,11 @@ export class PDFLoader {
       || document.querySelector(`#reader-content .pdf-page-container[data-page-number="${pageNumber}"]`);
     const textLayer = pageEl?.querySelector(".textLayer");
     if (textLayer) {
-      const text = textLayer.textContent || "";
-      const matches = text.match(/[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g);
-      if (matches && matches.length > 0) {
-        this.pageWordCounts.set(pageNumber, matches.length);
-        return matches.length;
+      const text = extractTextFromNode(textLayer) || textLayer.textContent || "";
+      const wordsCount = countWords(text);
+      if (wordsCount > 0) {
+        this.pageWordCounts.set(pageNumber, wordsCount);
+        return wordsCount;
       }
     }
 
@@ -1494,9 +1489,9 @@ export class PDFLoader {
     const activeSlot = this.pageContainer || document.querySelector("#reader-content .pdf-page-container");
     const textLayer = activeSlot?.querySelector(".textLayer");
     if (textLayer) {
-      const text = textLayer.textContent || "";
-      const matches = text.match(/[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g);
-      if (matches && matches.length > 0) return matches.length;
+      const text = extractTextFromNode(textLayer) || textLayer.textContent || "";
+      const matchesCount = countWords(text);
+      if (matchesCount > 0) return matchesCount;
     }
     return this.getWordsForPage(this.currentPage);
   }
@@ -1668,15 +1663,8 @@ export class PDFLoader {
           try {
             const page = await this.pdfDoc.getPage(pNum);
             const content = await page.getTextContent();
-            words = 0;
-            if (content && Array.isArray(content.items)) {
-              for (const item of content.items) {
-                if (item?.str) {
-                  const m = item.str.match(/[^\s\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF\u2060]+/g);
-                  if (m) words += m.length;
-                }
-              }
-            }
+            const pageText = extractTextFromPdfContent(content);
+            words = countWords(pageText);
             this.pageWordCounts.set(pNum, words);
             if (typeof page.cleanup === "function") page.cleanup();
           } catch (e) {

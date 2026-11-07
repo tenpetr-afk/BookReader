@@ -16,6 +16,8 @@ FILES_TO_UPDATE = [
     "js/epub-parser.js",
     "js/storage.js",
     "js/pdf-loader.js",
+    "js/ruler.js",
+    "js/text-parser.js",
 ]
 
 def bump_version(new_version: str):

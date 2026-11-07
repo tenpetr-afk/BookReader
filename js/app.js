@@ -12,6 +12,7 @@ import { ReadingRuler } from "./ruler.js?v=2.4.9";
 import { StatsCharts } from "./charts.js?v=2.4.9";
 import { supabaseSync } from "./supabase-sync.js?v=2.4.9";
 import { supabase } from "./supabase-client.js?v=2.4.9";
+import * as TextParser from "./text-parser.js?v=2.4.9";
 
 export const APP_VERSION = "v2.4.9";
 
@@ -8297,7 +8298,10 @@ function bootstrapLumina() {
     if (typeof window !== "undefined") window.__luminaAppInitialized = true;
     try {
       const app = new LuminaApp();
-      if (typeof window !== "undefined") window.luminaApp = app;
+      if (typeof window !== "undefined") {
+        window.luminaApp = app;
+        window.TextParser = TextParser;
+      }
       app.init().catch(err => {
         console.error("[LuminaApp] Kritická neošetřená chyba v app.init():", err);
       });

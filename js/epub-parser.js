@@ -5,6 +5,7 @@
  */
 
 import { ZipArchive } from "./zip.js?v=2.4.9";
+import { extractTextFromNode, extractTextFromHtml, countWords } from "./text-parser.js?v=2.4.9";
 
 export class EpubParser {
   constructor(archive) {
@@ -446,13 +447,9 @@ export class EpubParser {
       break;
     }
 
-    // Spočítáme slova
-    const cleanText = body.innerText || body.textContent || "";
-    const words = cleanText
-      .trim()
-      .split(/\s+/)
-      .filter(w => w.length > 0);
-    const wordCount = words.length;
+    // Spočítáme slova s dehyphenací na přelomu řádků a striktní validací slov
+    const cleanText = extractTextFromNode(body);
+    const wordCount = countWords(cleanText);
     const hasMedia = body.querySelectorAll("img, image, svg, canvas, video, audio, table").length > 0;
     const isBlank = wordCount === 0 && !hasMedia;
 
@@ -502,14 +499,9 @@ export class EpubParser {
           continue;
         }
         const rawHtml = await this.archive.getFileAsText(spineEntry.fullPath);
-        // Bleskově vyčistíme skripty, styly a html značky bez dekódování obrázků
-        const cleanText = rawHtml
-          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
-          .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/&[a-z0-9#]+;/gi, " ");
-        const words = cleanText.trim().split(/\s+/).filter(w => w.length > 0);
-        const count = words.length;
+        // Vyčistíme text kapitoly pro statistiky včetně dehyphenace a striktní validace slov
+        const cleanText = extractTextFromHtml(rawHtml);
+        const count = countWords(cleanText);
         chapterWords.push(count);
         totalWords += count;
       } catch (e) {
