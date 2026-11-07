@@ -1740,10 +1740,10 @@ body.is-turning-page .ruler-mask.is-visible {
   max-height: min(580px, calc(100vh - 85px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: var(--bg-card, var(--bg-surface-elevated, var(--bg-surface, #ffffff)));
+  background: var(--bg-card, var(--bg-surface-elevated, var(--bg-surface, #ffffff))) !important;
   color: var(--text-main);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg, 16px);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -1754,12 +1754,43 @@ body.is-turning-page .ruler-mask.is-visible {
   gap: 0.85rem;
   box-sizing: border-box;
   transform-origin: bottom right;
+  opacity: 1 !important;
   transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 [data-theme="dark"] .ruler-quick-popover,
-[data-theme="oled"] .ruler-quick-popover {
+.theme-dark .ruler-quick-popover {
+  background: #1e293b !important;
+  color: #f8fafc !important;
   box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="oled"] .ruler-quick-popover,
+.theme-oled .ruler-quick-popover {
+  background: #121214 !important;
+  color: #f5f5f5 !important;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="sepia"] .ruler-quick-popover,
+.theme-sepia .ruler-quick-popover {
+  background: #faf4e6 !important;
+  color: #382b20 !important;
+  box-shadow: 0 12px 36px rgba(80, 60, 40, 0.16), 0 2px 8px rgba(80, 60, 40, 0.08);
+}
+
+[data-theme="warm"] .ruler-quick-popover,
+.theme-warm .ruler-quick-popover {
+  background: #fff8e7 !important;
+  color: #2c2523 !important;
+  box-shadow: 0 12px 36px rgba(80, 60, 40, 0.16), 0 2px 8px rgba(80, 60, 40, 0.08);
+}
+
+[data-theme="light"] .ruler-quick-popover,
+.theme-light .ruler-quick-popover {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .ruler-quick-popover::-webkit-scrollbar {
@@ -3241,6 +3272,12 @@ body.is-pdf-mode:not(.mode-vertical) .paged-content {
 
 body.ui-liquid-glass #settings-drawer.drawer-panel,
 body.ui-liquid-glass #settings-drawer {
+  bottom: -120px !important;
+  height: calc(52vh + 120px) !important;
+  height: calc(52dvh + 120px) !important;
+  max-height: calc(52vh + 120px) !important;
+  max-height: calc(52dvh + 120px) !important;
+  padding-bottom: calc(max(0.75rem, env(safe-area-inset-bottom)) + 120px) !important;
   background: var(--lq-glass-bg) !important;
   backdrop-filter: blur(28px) saturate(190%) !important;
   -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
@@ -3250,31 +3287,46 @@ body.ui-liquid-glass #settings-drawer {
   box-shadow: var(--lq-glass-rim), 0 -16px 45px rgba(0, 0, 0, 0.25) !important;
 }
 
-.ui-liquid-glass #ruler-quick-popover,
-.ui-liquid-glass .ruler-quick-popover,
-body.ui-liquid-glass #ruler-quick-popover,
-body.ui-liquid-glass .ruler-quick-popover {
-  backdrop-filter: blur(28px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
-  border: 1px solid var(--lq-glass-border) !important;
-  border-top-color: var(--lq-glass-border-top) !important;
-  border-bottom-color: var(--lq-glass-border-bottom, var(--lq-glass-border)) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.20), var(--lq-chromatic-rim), 0 20px 50px -8px rgba(0, 0, 0, 0.45), 0 8px 24px -4px rgba(0, 0, 0, 0.28) !important;
-  border-radius: 20px !important;
-  color: var(--lq-glass-text) !important;
-  transform: none;
-  will-change: auto;
-}
-
+/* Ruler Quick Popover — 100% neprůhledné solidní pozadí (žádné prosvítání textu za panelem ani při najetí myší) */
 .ui-liquid-glass #ruler-quick-popover,
 .ui-liquid-glass .ruler-quick-popover,
 body.ui-liquid-glass #ruler-quick-popover,
 body.ui-liquid-glass .ruler-quick-popover,
+.ui-liquid-glass #ruler-quick-popover:hover,
+.ui-liquid-glass .ruler-quick-popover:hover,
+body.ui-liquid-glass #ruler-quick-popover:hover,
+body.ui-liquid-glass .ruler-quick-popover:hover {
+  background: var(--bg-card, #ffffff) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  border-top-color: var(--lq-glass-border-top) !important;
+  border-bottom-color: var(--lq-glass-border-bottom, var(--lq-glass-border)) !important;
+  box-shadow: var(--lq-glass-rim), 0 20px 50px -8px rgba(0, 0, 0, 0.45), 0 8px 24px -4px rgba(0, 0, 0, 0.28) !important;
+  border-radius: 20px !important;
+  color: var(--lq-glass-text) !important;
+  opacity: 1 !important;
+  transform: none;
+  will-change: auto;
+}
+
 body.theme-light.ui-liquid-glass #ruler-quick-popover,
 body.theme-light.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="light"] body.ui-liquid-glass #ruler-quick-popover,
-html[data-theme="light"] body.ui-liquid-glass .ruler-quick-popover {
-  background: rgba(255, 255, 255, 0.78) !important;
+html[data-theme="light"] body.ui-liquid-glass .ruler-quick-popover,
+[data-theme="light"] #ruler-quick-popover,
+[data-theme="light"] .ruler-quick-popover,
+body.theme-light.ui-liquid-glass #ruler-quick-popover:hover,
+body.theme-light.ui-liquid-glass .ruler-quick-popover:hover,
+html[data-theme="light"] body.ui-liquid-glass #ruler-quick-popover:hover,
+html[data-theme="light"] body.ui-liquid-glass .ruler-quick-popover:hover,
+[data-theme="light"] #ruler-quick-popover:hover,
+[data-theme="light"] .ruler-quick-popover:hover {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
 }
 
 body.theme-warm.ui-liquid-glass #ruler-quick-popover,
@@ -3282,8 +3334,18 @@ body.theme-warm.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="warm"] body.ui-liquid-glass #ruler-quick-popover,
 html[data-theme="warm"] body.ui-liquid-glass .ruler-quick-popover,
 [data-theme="warm"] #ruler-quick-popover,
-[data-theme="warm"] .ruler-quick-popover {
-  background: rgba(255, 248, 235, 0.82) !important;
+[data-theme="warm"] .ruler-quick-popover,
+body.theme-warm.ui-liquid-glass #ruler-quick-popover:hover,
+body.theme-warm.ui-liquid-glass .ruler-quick-popover:hover,
+html[data-theme="warm"] body.ui-liquid-glass #ruler-quick-popover:hover,
+html[data-theme="warm"] body.ui-liquid-glass .ruler-quick-popover:hover,
+[data-theme="warm"] #ruler-quick-popover:hover,
+[data-theme="warm"] .ruler-quick-popover:hover {
+  background: #fff8e7 !important;
+  color: #2c2523 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
 }
 
 body.theme-sepia.ui-liquid-glass #ruler-quick-popover,
@@ -3291,8 +3353,18 @@ body.theme-sepia.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="sepia"] body.ui-liquid-glass #ruler-quick-popover,
 html[data-theme="sepia"] body.ui-liquid-glass .ruler-quick-popover,
 [data-theme="sepia"] #ruler-quick-popover,
-[data-theme="sepia"] .ruler-quick-popover {
-  background: rgba(250, 242, 226, 0.82) !important;
+[data-theme="sepia"] .ruler-quick-popover,
+body.theme-sepia.ui-liquid-glass #ruler-quick-popover:hover,
+body.theme-sepia.ui-liquid-glass .ruler-quick-popover:hover,
+html[data-theme="sepia"] body.ui-liquid-glass #ruler-quick-popover:hover,
+html[data-theme="sepia"] body.ui-liquid-glass .ruler-quick-popover:hover,
+[data-theme="sepia"] #ruler-quick-popover:hover,
+[data-theme="sepia"] .ruler-quick-popover:hover {
+  background: #faf4e6 !important;
+  color: #382b20 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
 }
 
 body.theme-dark.ui-liquid-glass #ruler-quick-popover,
@@ -3300,8 +3372,22 @@ body.theme-dark.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover,
 html[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover,
 [data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover,
-[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover {
-  background: rgba(18, 24, 38, 0.76) !important;
+[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover,
+[data-theme="dark"] #ruler-quick-popover,
+[data-theme="dark"] .ruler-quick-popover,
+body.theme-dark.ui-liquid-glass #ruler-quick-popover:hover,
+body.theme-dark.ui-liquid-glass .ruler-quick-popover:hover,
+html[data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover:hover,
+html[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover:hover,
+[data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover:hover,
+[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover:hover,
+[data-theme="dark"] #ruler-quick-popover:hover,
+[data-theme="dark"] .ruler-quick-popover:hover {
+  background: #1e293b !important;
+  color: #f8fafc !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
 }
 
 body.theme-oled.ui-liquid-glass #ruler-quick-popover,
@@ -3309,8 +3395,22 @@ body.theme-oled.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="oled"] body.ui-liquid-glass #ruler-quick-popover,
 html[data-theme="oled"] body.ui-liquid-glass .ruler-quick-popover,
 [data-theme="oled"] body.ui-liquid-glass #ruler-quick-popover,
-[data-theme="oled"] body.ui-liquid-glass .ruler-quick-popover {
-  background: rgba(14, 14, 16, 0.78) !important;
+[data-theme="oled"] body.ui-liquid-glass .ruler-quick-popover,
+[data-theme="oled"] #ruler-quick-popover,
+[data-theme="oled"] .ruler-quick-popover,
+body.theme-oled.ui-liquid-glass #ruler-quick-popover:hover,
+body.theme-oled.ui-liquid-glass .ruler-quick-popover:hover,
+html[data-theme="oled"] body.ui-liquid-glass #ruler-quick-popover:hover,
+html[data-theme="oled"] body.ui-liquid-glass .ruler-quick-popover:hover,
+[data-theme="oled"] body.ui-liquid-glass #ruler-quick-popover:hover,
+[data-theme="oled"] body.ui-liquid-glass .ruler-quick-popover:hover,
+[data-theme="oled"] #ruler-quick-popover:hover,
+[data-theme="oled"] .ruler-quick-popover:hover {
+  background: #121214 !important;
+  color: #f5f5f5 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
 }
 
 body.ui-liquid-glass .settings-modal .modal-content,
@@ -3330,6 +3430,7 @@ body.ui-liquid-glass #stats-modal .modal-content {
 
 #ruler-quick-popover:not(.is-hidden),
 .ruler-quick-popover:not(.is-hidden) {
+  opacity: 1 !important;
   transform: none !important;
 }
 
