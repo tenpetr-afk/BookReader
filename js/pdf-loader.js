@@ -8,7 +8,7 @@
  * - Navigaci po stranách (nextPage, prevPage, goToPage) s provázáním do globálního stavu čtečky.
  */
 
-import { extractTextFromPdfContent, extractTextFromNode, countWords } from "./text-parser.js?v=2.4.9";
+import { extractTextFromPdfContent, extractTextFromNode, countWords } from "./text-parser.js?v=2.6.0";
 
 export class PDFLoader {
   constructor(app = null, containerElement = null) {
@@ -1697,7 +1697,7 @@ export class PDFLoader {
           document.body.classList.add("is-scanned-pdf");
         }
         try {
-          const { storage } = await import("./storage.js?v=2.4.9");
+          const { storage } = await import("./storage.js?v=2.6.0");
           const storedBook = await storage.getBook(bookId);
           if (storedBook) {
             storedBook.totalWords = this.app.currentBook.totalWords;

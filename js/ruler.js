@@ -9,7 +9,7 @@
  * - Plovoucí ovládací panel pro krokování po řádcích/slovech a automatické tempo
  */
 
-import { countWords, isValidWord } from "./text-parser.js?v=2.4.9";
+import { countWords, isValidWord } from "./text-parser.js?v=2.6.0";
 
 export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i horizontální odsazení v řádkovém režimu
 export const RULER_WAVE_WIDTH = 80; // px - fixní šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
@@ -91,6 +91,8 @@ export class ReadingRuler {
     this._rulerMode = "line"; // "line" | "word"
     this._activeReadingLineIndex = -1;
     this._activeLineStartTime = 0;
+    this._completedLinesByBlock = new Map(); // blockKey -> Set of completed line indices
+    this._wordsReadByBlock = new Map(); // blockKey -> Set of `${lineIdx}:${wordIdx}`
     this._completedLineIndices = new Set();
     this._lastWordLineIndex = -1;
     this._lastWordIndex = -1;
@@ -214,6 +216,64 @@ export class ReadingRuler {
 
     this.createDomElements();
     this.attachEvents();
+  }
+
+  /**
+   * Získá stabilní kanonický klíč aktuálního čtecího bloku / stránky
+   */
+  getCurrentBlockKey() {
+    const bookId = this.app?.currentBook?.id || "doc";
+    if (this.isPdfMode || this.app?.isPdfMode) {
+      const pageNum = this.app?.pdfLoader?.currentPage || 1;
+      return `${bookId}_pdf_p${pageNum}`;
+    }
+    const chapterIdx = this.app?.currentChapterIndex ?? 0;
+    const pageIdx = this.app?.currentPageIndex ?? 0;
+    return `${bookId}_ch${chapterIdx}_p${pageIdx}`;
+  }
+
+  /**
+   * Propojí aktivní sledování řádků a slov s perzistentní pamětí aktuálního bloku.
+   * Zabraňuje vymazání již přečtených řádků při návratu na předchozí stranu nebo při překreslení řádků.
+   */
+  updateBlockTrackingContext() {
+    const blockKey = this.getCurrentBlockKey();
+    if (!this._completedLinesByBlock) this._completedLinesByBlock = new Map();
+    if (!this._completedLinesByBlock.has(blockKey)) {
+      this._completedLinesByBlock.set(blockKey, new Set());
+    }
+    this._completedLineIndices = this._completedLinesByBlock.get(blockKey);
+
+    if (!this._wordsReadByBlock) this._wordsReadByBlock = new Map();
+    if (!this._wordsReadByBlock.has(blockKey)) {
+      this._wordsReadByBlock.set(blockKey, new Set());
+    }
+    this._wordsReadOnPage = this._wordsReadByBlock.get(blockKey);
+  }
+
+  /**
+   * Resetuje paměť pravítka pro zadanou knihu
+   */
+  resetBookTracking(bookId = null) {
+    if (!bookId) {
+      if (this._completedLinesByBlock) this._completedLinesByBlock.clear();
+      if (this._wordsReadByBlock) this._wordsReadByBlock.clear();
+      this._completedLineIndices = new Set();
+      this._wordsReadOnPage = new Set();
+      return;
+    }
+    if (this._completedLinesByBlock) {
+      for (const k of this._completedLinesByBlock.keys()) {
+        if (k.startsWith(bookId)) this._completedLinesByBlock.delete(k);
+      }
+    }
+    if (this._wordsReadByBlock) {
+      for (const k of this._wordsReadByBlock.keys()) {
+        if (k.startsWith(bookId)) this._wordsReadByBlock.delete(k);
+      }
+    }
+    this._completedLineIndices = new Set();
+    this._wordsReadOnPage = new Set();
   }
 
   isVerticalMode() {
@@ -371,10 +431,8 @@ export class ReadingRuler {
     } else {
       this._activeReadingLineIndex = -1;
       this._activeLineStartTime = 0;
-      this._completedLineIndices = new Set();
       this._lastWordLineIndex = -1;
       this._lastWordIndex = -1;
-      this._wordsReadOnPage = new Set();
     }
     this.isPageTransitioning = true;
     this.isSwipePageTransition = true;
@@ -4895,10 +4953,9 @@ export class ReadingRuler {
     this._clearWordCache();
     this._activeReadingLineIndex = -1;
     this._activeLineStartTime = 0;
-    this._completedLineIndices = new Set();
     this._lastWordLineIndex = -1;
     this._lastWordIndex = -1;
-    this._wordsReadOnPage = new Set();
+    this.updateBlockTrackingContext();
     return this.detectLines(true);
   }
 
@@ -6691,6 +6748,8 @@ export class ReadingRuler {
   _checkLineProgress(idx, isKeyboard = false) {
     if (this.rulerMode !== "line" || idx < 0) return;
 
+    this.updateBlockTrackingContext();
+
     const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
 
     if (this._activeReadingLineIndex < 0) {
@@ -6724,7 +6783,21 @@ export class ReadingRuler {
           ? lineWords.length
           : this._estimateLineWordsFallback(prevLineIdx);
         if (count > 0 && typeof this.onProgress === "function") {
-          this.onProgress("line", count);
+          const blockKey = this.getCurrentBlockKey();
+          const chapterIdx = this.app?.currentChapterIndex ?? 0;
+          const pageIdx = (this.isPdfMode || this.app?.isPdfMode)
+            ? (this.app?.pdfLoader?.currentPage || 1) - 1
+            : (this.app?.currentPageIndex ?? 0);
+          const lineKey = `${blockKey}_l${prevLineIdx}`;
+          const context = {
+            bookId: this.app?.currentBook?.id || null,
+            chapterIndex: chapterIdx,
+            pageIndex: pageIdx,
+            lineIndex: prevLineIdx,
+            blockKey,
+            lineKey
+          };
+          this.onProgress("line", count, context);
         }
       }
     }
@@ -6737,6 +6810,8 @@ export class ReadingRuler {
     const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     const isKeyboard = this.followMode === "keyboard";
 
+    this.updateBlockTrackingContext();
+
     if (this.rulerMode === "line" && this._activeReadingLineIndex >= 0) {
       if (!this._completedLineIndices) this._completedLineIndices = new Set();
       const dwell = now - (this._activeLineStartTime || 0);
@@ -6747,21 +6822,35 @@ export class ReadingRuler {
           ? lineWords.length
           : this._estimateLineWordsFallback(this._activeReadingLineIndex);
         if (count > 0 && typeof this.onProgress === "function") {
-          this.onProgress("line", count);
+          const blockKey = this.getCurrentBlockKey();
+          const chapterIdx = this.app?.currentChapterIndex ?? 0;
+          const pageIdx = (this.isPdfMode || this.app?.isPdfMode)
+            ? (this.app?.pdfLoader?.currentPage || 1) - 1
+            : (this.app?.currentPageIndex ?? 0);
+          const lineKey = `${blockKey}_l${this._activeReadingLineIndex}`;
+          const context = {
+            bookId: this.app?.currentBook?.id || null,
+            chapterIndex: chapterIdx,
+            pageIndex: pageIdx,
+            lineIndex: this._activeReadingLineIndex,
+            blockKey,
+            lineKey
+          };
+          this.onProgress("line", count, context);
         }
       }
     }
 
     this._activeReadingLineIndex = -1;
     this._activeLineStartTime = 0;
-    this._completedLineIndices = new Set();
     this._lastWordLineIndex = -1;
     this._lastWordIndex = -1;
-    this._wordsReadOnPage = new Set();
   }
 
   _checkWordProgress(idx, isMovingLeft = false) {
     if (this.rulerMode !== "word" || idx < 0) return;
+
+    this.updateBlockTrackingContext();
 
     const curLineIdx = this.activeLineIndex >= 0 ? this.activeLineIndex : 0;
     if (!this._wordsReadOnPage) this._wordsReadOnPage = new Set();
@@ -6821,7 +6910,20 @@ export class ReadingRuler {
     }
 
     if (wordsPassedOver > 0 && typeof this.onProgress === "function") {
-      this.onProgress("word", wordsPassedOver);
+      const blockKey = this.getCurrentBlockKey();
+      const chapterIdx = this.app?.currentChapterIndex ?? 0;
+      const pageIdx = (this.isPdfMode || this.app?.isPdfMode)
+        ? (this.app?.pdfLoader?.currentPage || 1) - 1
+        : (this.app?.currentPageIndex ?? 0);
+      const context = {
+        bookId: this.app?.currentBook?.id || null,
+        chapterIndex: chapterIdx,
+        pageIndex: pageIdx,
+        lineIndex: curLineIdx,
+        wordIndex: idx,
+        blockKey
+      };
+      this.onProgress("word", wordsPassedOver, context);
     }
   }
 
@@ -6993,10 +7095,9 @@ export class ReadingRuler {
     if (isPageChanged) {
       this._activeReadingLineIndex = -1;
       this._activeLineStartTime = 0;
-      this._completedLineIndices = new Set();
       this._lastWordLineIndex = -1;
       this._lastWordIndex = -1;
-      this._wordsReadOnPage = new Set();
+      this.updateBlockTrackingContext();
     }
 
     if (this._canonicalColTopOffsets) {

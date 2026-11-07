@@ -4,17 +4,17 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.4.9";
-import { EpubParser } from "./epub-parser.js?v=2.4.9";
-import { PDFLoader } from "./pdf-loader.js?v=2.4.9";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.4.9";
-import { ReadingRuler } from "./ruler.js?v=2.4.9";
-import { StatsCharts } from "./charts.js?v=2.4.9";
-import { supabaseSync } from "./supabase-sync.js?v=2.4.9";
-import { supabase } from "./supabase-client.js?v=2.4.9";
-import * as TextParser from "./text-parser.js?v=2.4.9";
+import { storage, computeFileHash } from "./storage.js?v=2.6.0";
+import { EpubParser } from "./epub-parser.js?v=2.6.0";
+import { PDFLoader } from "./pdf-loader.js?v=2.6.0";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.6.0";
+import { ReadingRuler } from "./ruler.js?v=2.6.0";
+import { StatsCharts } from "./charts.js?v=2.6.0";
+import { supabaseSync } from "./supabase-sync.js?v=2.6.0";
+import { supabase } from "./supabase-client.js?v=2.6.0";
+import * as TextParser from "./text-parser.js?v=2.6.0";
 
-export const APP_VERSION = "v2.4.9";
+export const APP_VERSION = "v2.6.0";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -488,7 +488,7 @@ export class LuminaApp {
   }
 
   initRuler() {
-    this.ruler = new ReadingRuler(this.dom.pagedStage);
+    this.ruler = new ReadingRuler(this.dom.pagedStage, this);
     this.ruler.app = this;
     this.ruler.readingMode = this.readingMode;
 
@@ -505,19 +505,20 @@ export class LuminaApp {
       tracker.setRulerState(this.ruler.enabled, initialModeType);
     }
 
-    // Kontinuální akreditace slov při posunu pravítka po řádcích a slovech
+    // Kontinuální akreditace slov při posunu pravítka po řádcích a slovech s deduplikací a high-water markem
     this.wordsCreditedOnCurrentPage = 0;
-    this.ruler.onProgress = (type, count) => {
-      if (count > 0) {
-        this.wordsCreditedOnCurrentPage = (this.wordsCreditedOnCurrentPage || 0) + count;
-        if (typeof tracker !== "undefined") {
-          if (type === "line") {
-            tracker.recordLineCompleted(count);
-          } else if (type === "word") {
-            tracker.recordWordByWord(count);
-          } else {
-            tracker.attributeWords(count);
-          }
+    this.ruler.onProgress = (type, count, context = null) => {
+      if (count > 0 && typeof tracker !== "undefined") {
+        let creditedWords = 0;
+        if (type === "line") {
+          creditedWords = tracker.recordLineCompleted(count, context);
+        } else if (type === "word") {
+          creditedWords = tracker.recordWordByWord(count, context);
+        } else {
+          creditedWords = tracker.attributeWords(count, context);
+        }
+        if (creditedWords > 0) {
+          this.wordsCreditedOnCurrentPage = (this.wordsCreditedOnCurrentPage || 0) + creditedWords;
         }
       }
     };
@@ -2969,7 +2970,10 @@ export class LuminaApp {
           existingIds.forEach(id => storage.addDeletedSessionId(id));
 
           tracker.stopSession();
-          tracker.creditedBlocks.clear();
+          if (this.currentBook) {
+            tracker.resetBookProgress(this.currentBook.id);
+            if (this.ruler) this.ruler.resetBookTracking(this.currentBook.id);
+          }
 
           // 3. Cloudový soft-delete všech relací a nulování reading_stats_summary
           if (supabaseSync && supabaseSync.isOnline()) {
@@ -4422,6 +4426,12 @@ export class LuminaApp {
 
     try {
       this.currentBook = book;
+      if (typeof tracker !== "undefined") {
+        tracker.initBookProgress(book.id, book);
+      }
+      if (this.ruler) {
+        this.ruler.resetBookTracking(book.id);
+      }
       this._chapterDataCache = new Map();
       this._bionicChapterCache = new Map();
       this._cachedColumnStep = null;
@@ -4759,6 +4769,9 @@ export class LuminaApp {
     }
     computedProgress = Math.max(0, Math.min(100, Math.round(computedProgress)));
 
+    const hwm = (typeof tracker !== "undefined" && tracker.highWaterMark) ? { ...tracker.highWaterMark } : null;
+    const blocksArray = (typeof tracker !== "undefined" && tracker.creditedBlocks) ? Array.from(tracker.creditedBlocks) : [];
+
     const progressData = {
       currentChapterIndex: this.currentChapterIndex || 0,
       currentPageIndex: pageIndex,
@@ -4768,7 +4781,9 @@ export class LuminaApp {
       progressPercent: computedProgress,
       currentPage: currBookPageNum,
       numPages: totalBookPagesNum,
-      lastReadAt: Date.now()
+      lastReadAt: Date.now(),
+      highWaterMark: hwm,
+      creditedBlocks: blocksArray
     };
 
     // Synchronizace parametrů v paměti aplikace
@@ -4781,6 +4796,8 @@ export class LuminaApp {
     this.currentBook.currentPage = currBookPageNum;
     this.currentBook.numPages = totalBookPagesNum;
     this.currentBook.lastReadAt = progressData.lastReadAt;
+    this.currentBook.highWaterMark = hwm;
+    this.currentBook.creditedBlocks = blocksArray;
 
     if (this.isVerticalReadingMode() && this.dom.pagedViewport) {
       if (this.isPdfMode) {
@@ -6092,7 +6109,8 @@ export class LuminaApp {
           direction: direction,
           isReflow: !!options.isReflow,
           isInitialLoad: !!options.isInitialLoad,
-          isNavigationJump: !!options.isNavigationJump
+          isNavigationJump: !!options.isNavigationJump,
+          bookData: this.currentBook
         });
       }
 
@@ -6597,10 +6615,16 @@ export class LuminaApp {
             if (wordsScrolled >= 1) {
               this._maxVScrollByChapter.set(activeIdx, chapterScrollRatio);
               if (wordsScrolled <= 650) {
+                const scrollContext = {
+                  chapterIndex: activeIdx,
+                  scrollRatio: chapterScrollRatio,
+                  deltaRatio: deltaRatio,
+                  bookId: this.currentBook?.id
+                };
                 if (typeof tracker.attributeScrollWords === "function") {
-                  tracker.attributeScrollWords(wordsScrolled);
+                  tracker.attributeScrollWords(wordsScrolled, scrollContext);
                 } else {
-                  tracker.attributeWords(wordsScrolled);
+                  tracker.attributeWords(wordsScrolled, scrollContext);
                 }
               }
             }

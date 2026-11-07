@@ -4,7 +4,7 @@
  * odhaduje zbývající čas a ukládá detailní čtecí relace s časovou osou WPM.
  */
 
-import { storage } from "./storage.js?v=2.4.9";
+import { storage } from "./storage.js?v=2.6.0";
 
 export const MIN_VALID_WPM = 40;
 export const MAX_VALID_WPM = 650;
@@ -67,6 +67,18 @@ export class ReadingTracker {
 
     // Sledování čtení na úrovni bloků a deduplikace pravítka vs. otáčení stran vs. vertikální scroll
     this.creditedBlocks = new Set(); // Množina klíčů bloků již akreditovaných pro danou knihu
+    this.creditedLines = new Set(); // Množina klíčů řádků již akreditovaných pro danou knihu
+    this.creditedWords = new Set(); // Množina klíčů slov již akreditovaných pro danou knihu
+    this.chapterHighWaterScroll = new Map(); // chapterIndex -> maxScrollRatio
+    this.highWaterMark = null; // { chapterIndex, pageIndex, lineIndex, wordIndex, scrollRatio }
+
+    // Paměť deduplikace a high-water marku per kniha
+    this._bookCreditedBlocks = new Map();
+    this._bookCreditedLines = new Map();
+    this._bookCreditedWords = new Map();
+    this._bookChapterScroll = new Map();
+    this._bookHighWaterMarks = new Map();
+
     this.currentReadingBlockId = null; // e.g. `${bookId}_ch${chapterIndex}_p${pageIndex}`
     this.blockEnterTimestamp = null; // Čas příchodu na aktuální blok
     this.blockEnterActiveSec = 0; // Aktivní sekundy při vstupu na blok
@@ -117,6 +129,184 @@ export class ReadingTracker {
     const num = Number(timeoutMs);
     if (Number.isFinite(num) && num >= 15000 && num <= 120000) {
       this.idleTimeoutMs = Math.round(num);
+    }
+  }
+
+  _getOrCreateSet(map, key) {
+    if (!map.has(key)) {
+      map.set(key, new Set());
+    }
+    return map.get(key);
+  }
+
+  _getOrCreateMap(map, key) {
+    if (!map.has(key)) {
+      map.set(key, new Map());
+    }
+    return map.get(key);
+  }
+
+  /**
+   * Inicializuje nebo přepne perzistentní postup a množiny akreditovaných bloků/řádků pro konkrétní knihu.
+   */
+  initBookProgress(bookId, bookData = null) {
+    if (!bookId) return;
+    this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, bookId);
+    this.creditedLines = this._getOrCreateSet(this._bookCreditedLines, bookId);
+    this.creditedWords = this._getOrCreateSet(this._bookCreditedWords, bookId);
+    this.chapterHighWaterScroll = this._getOrCreateMap(this._bookChapterScroll, bookId);
+    this.committedPageKeys = this.creditedBlocks;
+
+    if (!this._bookHighWaterMarks.has(bookId)) {
+      if (bookData?.highWaterMark) {
+        this.highWaterMark = { ...bookData.highWaterMark };
+      } else if (bookData && (bookData.currentChapterIndex > 0 || bookData.currentPageIndex > 0 || bookData.wordsRead > 0)) {
+        this.highWaterMark = {
+          chapterIndex: bookData.currentChapterIndex || 0,
+          pageIndex: bookData.currentPageIndex || 0,
+          lineIndex: -1,
+          wordIndex: -1,
+          scrollRatio: bookData.scrollPercent || 0
+        };
+      } else {
+        this.highWaterMark = null;
+      }
+      this._bookHighWaterMarks.set(bookId, this.highWaterMark);
+    } else {
+      this.highWaterMark = this._bookHighWaterMarks.get(bookId);
+    }
+
+    if (bookData?.creditedBlocks && Array.isArray(bookData.creditedBlocks)) {
+      for (const b of bookData.creditedBlocks) {
+        this.creditedBlocks.add(b);
+      }
+    }
+  }
+
+  /**
+   * Resetuje perzistentní postup pro konkrétní knihu (např. při resetu statistik).
+   */
+  resetBookProgress(bookId) {
+    if (!bookId) return;
+    this._bookCreditedBlocks.delete(bookId);
+    this._bookCreditedLines.delete(bookId);
+    this._bookCreditedWords.delete(bookId);
+    this._bookChapterScroll.delete(bookId);
+    this._bookHighWaterMarks.delete(bookId);
+    if (this.currentBookId === bookId) {
+      this.creditedBlocks = new Set();
+      this.creditedLines = new Set();
+      this.creditedWords = new Set();
+      this.chapterHighWaterScroll = new Map();
+      this.highWaterMark = null;
+      this.committedPageKeys = this.creditedBlocks;
+    }
+  }
+
+  /**
+   * Porovná dvě čtecí pozice v dokumentu:
+   * Vrací < 0 pokud posA < posB, 0 pokud posA == posB, > 0 pokud posA > posB.
+   */
+  comparePositions(posA, posB) {
+    if (!posA && !posB) return 0;
+    if (!posA) return -1;
+    if (!posB) return 1;
+
+    const chA = Number(posA.chapterIndex ?? 0);
+    const chB = Number(posB.chapterIndex ?? 0);
+    if (chA !== chB) {
+      return chA - chB;
+    }
+
+    // Shodná kapitola: zkontrolujeme pageIndex
+    const hasPgA = posA.pageIndex !== undefined && posA.pageIndex !== null;
+    const hasPgB = posB.pageIndex !== undefined && posB.pageIndex !== null;
+    if (hasPgA && hasPgB) {
+      const pgA = Number(posA.pageIndex);
+      const pgB = Number(posB.pageIndex);
+      if (pgA !== pgB) {
+        return pgA - pgB;
+      }
+
+      // Shodná stránka: zkontrolujeme lineIndex
+      const hasLnA = posA.lineIndex !== undefined && posA.lineIndex !== null && posA.lineIndex >= 0;
+      const hasLnB = posB.lineIndex !== undefined && posB.lineIndex !== null && posB.lineIndex >= 0;
+      if (hasLnA && hasLnB) {
+        const lnA = Number(posA.lineIndex);
+        const lnB = Number(posB.lineIndex);
+        if (lnA !== lnB) {
+          return lnA - lnB;
+        }
+
+        // Shodný řádek: zkontrolujeme wordIndex
+        const hasWdA = posA.wordIndex !== undefined && posA.wordIndex !== null && posA.wordIndex >= 0;
+        const hasWdB = posB.wordIndex !== undefined && posB.wordIndex !== null && posB.wordIndex >= 0;
+        if (hasWdA && hasWdB) {
+          return Number(posA.wordIndex) - Number(posB.wordIndex);
+        }
+      }
+    }
+
+    // Vertikální mód nebo kontinuální posuvník: zkontrolujeme scrollRatio
+    const hasRatioA = typeof posA.scrollRatio === "number" && !isNaN(posA.scrollRatio);
+    const hasRatioB = typeof posB.scrollRatio === "number" && !isNaN(posB.scrollRatio);
+    if (hasRatioA && hasRatioB) {
+      const diff = posA.scrollRatio - posB.scrollRatio;
+      if (Math.abs(diff) > 0.005) {
+        return diff > 0 ? 1 : -1;
+      }
+    }
+
+    return 0;
+  }
+
+  /**
+   * Zjistí, zda se zadaná pozice nachází za high-water markem (již dříve přečtený text).
+   */
+  _isBehindHighWaterMark(pos) {
+    if (!this.highWaterMark || !pos) return false;
+    return this.comparePositions(pos, this.highWaterMark) <= 0;
+  }
+
+  /**
+   * Zjistí, zda je celý zadaný blok/stránka za high-water markem.
+   */
+  _isBlockBehindHighWaterMark(blockId, chapterIndex, pageIndex) {
+    if (!this.highWaterMark) return false;
+    const ch = chapterIndex ?? this.currentChapterIndex ?? 0;
+    const pg = pageIndex ?? 0;
+    if (ch < this.highWaterMark.chapterIndex) return true;
+    if (ch === this.highWaterMark.chapterIndex) {
+      if (this.highWaterMark.pageIndex !== undefined && pg < this.highWaterMark.pageIndex) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Posune dopředný high-water mark na novou pozici, pokud je vyšší než stávající.
+   */
+  _advanceHighWaterMark(pos) {
+    if (!pos) return;
+    if (!this.highWaterMark || this.comparePositions(pos, this.highWaterMark) > 0) {
+      this.highWaterMark = {
+        chapterIndex: pos.chapterIndex ?? this.currentChapterIndex ?? 0,
+        pageIndex: pos.pageIndex ?? 0,
+        lineIndex: pos.lineIndex ?? -1,
+        wordIndex: pos.wordIndex ?? -1,
+        scrollRatio: pos.scrollRatio ?? this.currentScrollPercent ?? 0
+      };
+      if (this.currentBookId) {
+        this._bookHighWaterMarks.set(this.currentBookId, this.highWaterMark);
+      }
+      if (typeof pos.scrollRatio === "number") {
+        const ch = pos.chapterIndex ?? this.currentChapterIndex ?? 0;
+        const curMax = this.chapterHighWaterScroll.get(ch) || 0;
+        if (pos.scrollRatio > curMax) {
+          this.chapterHighWaterScroll.set(ch, pos.scrollRatio);
+        }
+      }
     }
   }
 
@@ -264,50 +454,156 @@ export class ReadingTracker {
    * Režim slovo za slovem (Word-by-word mode):
    * Započítává přesně tolik slov, přes kolik pravítko přejede.
    * Načtená slova se přičítají do aktuálního minutového bucketu (započítání 1x za minutu).
+   * Automaticky deduplikuje slova a potlačuje přírůstky při couvání nebo čtení za high-water markem.
    * @param {number} count Počet přejetých slov
+   * @param {Object|null} context Kontext pozice: { bookId, chapterIndex, pageIndex, lineIndex, wordIndex, wordKey, blockKey }
+   * @returns {number} Počet skutečně započtených nových slov
    */
-  recordWordByWord(count) {
-    if (!this.isActive || !count || count <= 0) return;
+  recordWordByWord(count, context = null) {
+    if (!this.isActive || !count || count <= 0) return 0;
+    // Vždy zaznamenáme aktivitu uživatele – čas čtení běží dál i při opětovném čtení
     this.recordActivity(true);
+
+    if (context) {
+      const bookId = context.bookId || this.currentBookId;
+      const chIdx = context.chapterIndex ?? this.currentChapterIndex ?? 0;
+      const pgIdx = context.pageIndex ?? 0;
+      const lnIdx = context.lineIndex ?? -1;
+      const wdIdx = context.wordIndex ?? -1;
+      const wordKey = context.wordKey || `${bookId}_ch${chIdx}_p${pgIdx}_l${lnIdx}_w${wdIdx}`;
+      const blockKey = context.blockKey || `${bookId}_ch${chIdx}_p${pgIdx}`;
+
+      // 1. Deduplikace: bylo toto slovo již akreditováno?
+      if (this.creditedWords.has(wordKey)) {
+        return 0; // Potlačeno: již přečteno
+      }
+
+      // 2. High-water mark: nachází se slovo za nejvyšším dosaženým bodem čtení?
+      const pos = { chapterIndex: chIdx, pageIndex: pgIdx, lineIndex: lnIdx, wordIndex: wdIdx };
+      if (this._isBehindHighWaterMark(pos)) {
+        this.creditedWords.add(wordKey);
+        this.creditedBlocks.add(blockKey);
+        return 0; // Potlačeno: couvnuto / re-reading dříve přečteného textu
+      }
+
+      // Dopředný postup do nepřečteného textu
+      this.creditedWords.add(wordKey);
+      this.creditedBlocks.add(blockKey);
+      this._advanceHighWaterMark(pos);
+    }
+
     const n = Math.max(0, Math.round(count));
     this.currentMinuteWords += n;
+    this.wordsCreditedOnCurrentPage = (this.wordsCreditedOnCurrentPage || 0) + n;
+    return n;
   }
 
   /**
    * Řádkový režim (Line mode):
    * Započítává slova řádek po řádku – při přepnutí na další řádek se započítá předchozí řádek.
    * Aktuálně čtený řádek se započte až v další minutě (při opuštění řádku).
+   * Automaticky deduplikuje řádky a potlačuje přírůstky při couvání nahoru nebo čtení za high-water markem.
    * @param {number} count Počet slov na dokončeném řádku
+   * @param {Object|null} context Kontext pozice: { bookId, chapterIndex, pageIndex, lineIndex, lineKey, blockKey }
+   * @returns {number} Počet skutečně započtených nových slov
    */
-  recordLineCompleted(count) {
-    if (!this.isActive || !count || count <= 0) return;
+  recordLineCompleted(count, context = null) {
+    if (!this.isActive || !count || count <= 0) return 0;
+    // Vždy zaznamenáme aktivitu uživatele – čas čtení běží dál i při opětovném čtení
     this.recordActivity(true);
+
+    if (context) {
+      const bookId = context.bookId || this.currentBookId;
+      const chIdx = context.chapterIndex ?? this.currentChapterIndex ?? 0;
+      const pgIdx = context.pageIndex ?? 0;
+      const lnIdx = context.lineIndex ?? -1;
+      const lineKey = context.lineKey || `${bookId}_ch${chIdx}_p${pgIdx}_l${lnIdx}`;
+      const blockKey = context.blockKey || `${bookId}_ch${chIdx}_p${pgIdx}`;
+
+      // 1. Deduplikace: byl tento řádek již akreditován?
+      if (this.creditedLines.has(lineKey)) {
+        return 0; // Potlačeno: již dříve přečtený řádek
+      }
+
+      // 2. High-water mark: nachází se řádek za nejvyšším dosaženým bodem čtení?
+      const pos = { chapterIndex: chIdx, pageIndex: pgIdx, lineIndex: lnIdx };
+      if (this._isBehindHighWaterMark(pos)) {
+        this.creditedLines.add(lineKey);
+        this.creditedBlocks.add(blockKey);
+        return 0; // Potlačeno: couvnuto / re-reading dříve přečteného textu
+      }
+
+      // Dopředný postup do nepřečteného textu
+      this.creditedLines.add(lineKey);
+      this.creditedBlocks.add(blockKey);
+      this._advanceHighWaterMark(pos);
+    }
+
     const n = Math.max(0, Math.round(count));
     this.currentMinuteWords += n;
+    this.wordsCreditedOnCurrentPage = (this.wordsCreditedOnCurrentPage || 0) + n;
+    return n;
   }
 
   /**
-   * Generické započtení slov (kompatibilita)
+   * Generické započtení slov (kompatibilita) s ochranou proti re-readingu
    * @param {number} count Počet přečtených slov
+   * @param {Object|null} context Kontext pozice
+   * @returns {number}
    */
-  attributeWords(count) {
-    if (!this.isActive || !count || count <= 0) return;
+  attributeWords(count, context = null) {
+    if (!this.isActive || !count || count <= 0) return 0;
     this.recordActivity(true);
+
+    if (context && this._isBehindHighWaterMark(context)) {
+      return 0;
+    }
+
     const n = Math.max(0, Math.round(count));
     this.currentMinuteWords += n;
     this.noRulerTotalWords += n;
+    return n;
   }
 
   /**
-   * Přičte slova posunutá při vertikálním skrolování (pouze když není aktivní pravítko)
+   * Přičte slova posunutá při vertikálním skrolování (pouze když není aktivní pravítko).
+   * Automaticky potlačuje přičítání při scrollování nahoru nebo přes již odscrollovaný rozsah.
    * @param {number} count Počet odskrolovaných slov
+   * @param {Object|null} context { chapterIndex, scrollRatio, deltaRatio, bookId }
+   * @returns {number}
    */
-  attributeScrollWords(count) {
-    if (!this.isActive || !count || count <= 0) return;
+  attributeScrollWords(count, context = null) {
+    if (!this.isActive || !count || count <= 0) return 0;
     this.recordActivity(true);
+
+    // Pokud je aktivní pravítko, slova se měří výhradně pravítkem (ochrana proti double-countingu)
+    if (this.rulerEnabled) {
+      return 0;
+    }
+
+    if (context && typeof context.chapterIndex === "number" && typeof context.scrollRatio === "number") {
+      const chIdx = context.chapterIndex;
+      const scrollRatio = context.scrollRatio;
+      const prevMax = this.chapterHighWaterScroll.get(chIdx) || 0;
+
+      // Scrollování nahoru nebo v rámci již přečteného rozsahu v kapitole:
+      if (scrollRatio <= prevMax) {
+        return 0; // Potlačeno
+      }
+
+      // Celá předchozí kapitola za celkovým high-water markem:
+      if (this.highWaterMark && chIdx < this.highWaterMark.chapterIndex) {
+        return 0; // Potlačeno
+      }
+
+      this.chapterHighWaterScroll.set(chIdx, scrollRatio);
+      this._advanceHighWaterMark({ chapterIndex: chIdx, scrollRatio });
+    }
+
     const n = Math.max(0, Math.round(count));
     this.currentMinuteWords += n;
     this.noRulerTotalWords += n;
+    return n;
   }
 
   /**
@@ -398,15 +694,27 @@ export class ReadingTracker {
       return 0;
     }
 
-    // 2. Bez pravítka se načte celá stránka, pokud na ní uživatel strávil realistický čas (>= 3s)
-    if (!this.creditedBlocks.has(blockId)) {
-      this.creditedBlocks.add(blockId);
-      this.currentMinuteWords += wordsOnPage;
-      this.noRulerTotalWords += wordsOnPage;
-      return wordsOnPage;
+    // 2. Bez pravítka se načte celá stránka, pokud na ní uživatel strávil realistický čas (>= 3s):
+    // Zkontrolujeme, zda již nebyl blok akreditován nebo zda neleží za celkovým high-water markem knihy
+    if (this.creditedBlocks.has(blockId)) {
+      return 0; // Již přečteno a započteno
     }
 
-    return 0;
+    if (this._isBlockBehindHighWaterMark(blockId, this.currentChapterIndex, this.currentPageIndex)) {
+      this.creditedBlocks.add(blockId);
+      return 0; // Za high-water markem (již dříve přečteno)
+    }
+
+    // Dopředný postup do nepřečteného bloku (odečteme případná dílčí slova již započtená pravítkem na této straně)
+    const wordsToAdd = Math.max(0, wordsOnPage - creditedSoFar);
+    this.creditedBlocks.add(blockId);
+    this._advanceHighWaterMark({ chapterIndex: this.currentChapterIndex, pageIndex: this.currentPageIndex, lineIndex: 9999 });
+
+    if (wordsToAdd > 0) {
+      this.currentMinuteWords += wordsToAdd;
+      this.noRulerTotalWords += wordsToAdd;
+    }
+    return wordsToAdd;
   }
 
   // Alias pro zpětnou kompatibilitu
@@ -418,7 +726,7 @@ export class ReadingTracker {
    * Zaznamená přechod na novou stránku / sloupec.
    * Vyhodnotí dwell time na předchozí stránce a zahájí sledování nové stránky.
    * Nikdy nepřičítá slova při reflow (resize, font, okraje), navigaci ani při počátečním načtení dokumentu.
-   * @param {Object} pageInfo { bookId, bookTitle, chapterIndex, pageIndex, visibleWords, isReflow, isInitialLoad, isNavigationJump }
+   * @param {Object} pageInfo { bookId, bookTitle, chapterIndex, pageIndex, visibleWords, isReflow, isInitialLoad, isNavigationJump, bookData }
    */
   onPageChange(pageInfo) {
     if (!pageInfo || !pageInfo.bookId) return;
@@ -439,13 +747,12 @@ export class ReadingTracker {
     const isNavigationJump = !!pageInfo.isNavigationJump;
     const isVerticalScroll = !!pageInfo.isVerticalScroll;
 
-    // Pokud uživatel změnil knihu, nejprve uložíme běžící relaci a vyresetujeme akreditované bloky
+    // Pokud uživatel změnil knihu, nejprve uložíme běžící relaci a inicializujeme postup nové knihy
     if (this.currentBookId !== bookId) {
       this.flushSession();
       this.currentBookId = bookId;
       this.currentBookTitle = title;
-      this.creditedBlocks = new Set();
-      this.committedPageKeys = this.creditedBlocks;
+      this.initBookProgress(bookId, pageInfo.bookData || null);
       this.startNewContiguousSession(chapterIndex, visibleWords, 0);
     }
 
@@ -479,6 +786,7 @@ export class ReadingTracker {
       this.blockInterimWordsAttributed = 0;
       this.isContinuousTrackingActive = false;
       this.currentChapterIndex = chapterIndex;
+      this.currentPageIndex = pageIndex;
       return;
     }
 
@@ -500,8 +808,8 @@ export class ReadingTracker {
       this.blockDirectWordsAttributed = 0;
       this.blockInterimWordsAttributed = 0;
       this.isContinuousTrackingActive = false;
-      this.creditedBlocks.delete(newBlockId);
       this.currentChapterIndex = chapterIndex;
+      this.currentPageIndex = pageIndex;
       this.recordActivity(true);
       return;
     }
@@ -541,6 +849,7 @@ export class ReadingTracker {
     this.isContinuousTrackingActive = false;
     this.blockInterimWordsAttributed = 0;
     this.currentChapterIndex = chapterIndex;
+    this.currentPageIndex = pageIndex;
     this.recordActivity(true);
 
     this.notifyListeners({
@@ -576,6 +885,7 @@ export class ReadingTracker {
 
       this.currentBookId = bookId;
       this.currentBookTitle = resolvedTitle || "Kniha";
+      this.initBookProgress(bookId);
       this.startNewContiguousSession(resolvedIndex, resolvedWords, resolvedScroll);
     } else {
       // Stejná kniha (např. přechod mezi kapitolami v rámci jedné souvislé relace)
@@ -604,6 +914,7 @@ export class ReadingTracker {
     this.sessionDailySecondsCommitted = 0;
     this.chapterAccumulatedWords = 0;
     this.currentChapterIndex = chapterIndex;
+    this.currentPageIndex = 0;
     this.currentChapterWords = chapterWords || 1;
     this.chapterInitialScrollPercent = scrollPercent;
     this.currentScrollPercent = scrollPercent;
@@ -636,9 +947,6 @@ export class ReadingTracker {
     this.blockInterimWordsAttributed = 0;
     this.unreconciledRulerWords = 0;
     this.isContinuousTrackingActive = false;
-    if (initialBlockId) {
-      this.creditedBlocks.delete(initialBlockId);
-    }
 
     // Režimy pravítka a sledování slov
     this.rulerEnabled = !!this.rulerEnabled;
@@ -1075,11 +1383,16 @@ export class ReadingTracker {
             totalWordsRead = Math.min(book.totalWords, totalWordsRead);
           }
 
+          const hwm = this.highWaterMark ? { ...this.highWaterMark } : null;
+          const blocksArray = Array.from(this.creditedBlocks || []);
+
           await storage.updateBookProgress(bookId, {
             currentChapterIndex: this.currentChapterIndex,
             scrollPercent: this.currentScrollPercent,
             wordsRead: totalWordsRead,
-            lastWpm: avgWpm
+            lastWpm: avgWpm,
+            highWaterMark: hwm,
+            creditedBlocks: blocksArray
           });
         }
 
@@ -1106,9 +1419,13 @@ export class ReadingTracker {
       }
       if (bookId) {
         try {
+          const hwm = this.highWaterMark ? { ...this.highWaterMark } : null;
+          const blocksArray = Array.from(this.creditedBlocks || []);
           await storage.updateBookProgress(bookId, {
             currentChapterIndex: this.currentChapterIndex,
-            scrollPercent: this.currentScrollPercent
+            scrollPercent: this.currentScrollPercent,
+            highWaterMark: hwm,
+            creditedBlocks: blocksArray
           });
         } catch (_) {}
       }
@@ -1158,8 +1475,6 @@ export class ReadingTracker {
   stopSession() {
     this.flushSession();
     if (this.timerInterval) clearInterval(this.timerInterval);
-    this.creditedBlocks.clear();
-    this.committedPageKeys.clear();
     this.currentBookId = null;
     this.currentBookTitle = "";
     this.isActive = false;
