@@ -151,11 +151,15 @@ export class ReadingTracker {
    */
   initBookProgress(bookId, bookData = null) {
     if (!bookId) return;
-    this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, bookId);
-    this.creditedLines = this._getOrCreateSet(this._bookCreditedLines, bookId);
-    this.creditedWords = this._getOrCreateSet(this._bookCreditedWords, bookId);
-    this.chapterHighWaterScroll = this._getOrCreateMap(this._bookChapterScroll, bookId);
+    this.creditedBlocks = new Set();
+    this.creditedLines = new Set();
+    this.creditedWords = new Set();
     this.committedPageKeys = this.creditedBlocks;
+    this.chapterHighWaterScroll = new Map();
+    this._bookCreditedBlocks.set(bookId, this.creditedBlocks);
+    this._bookCreditedLines.set(bookId, this.creditedLines);
+    this._bookCreditedWords.set(bookId, this.creditedWords);
+    this._bookChapterScroll.set(bookId, this.chapterHighWaterScroll);
 
     if (!this._bookHighWaterMarks.has(bookId)) {
       if (bookData?.highWaterMark) {
@@ -410,7 +414,7 @@ export class ReadingTracker {
     this.currentPageKey = null;
     this.blockVisibleWords = 0;
     this.currentPageVisibleWords = 0;
-    this.blockEnterActiveSec = 0;
+    this.blockEnterActiveSec = null;
     this.currentPageActiveSeconds = 0;
     this.wordsCreditedOnCurrentPage = 0;
     this.blockDirectWordsAttributed = 0;
@@ -463,12 +467,12 @@ export class ReadingTracker {
       const wordKey = context.wordKey || `${bookId}_ch${chIdx}_p${pgIdx}_l${lnIdx}_w${wdIdx}`;
       const blockKey = context.blockKey || `${bookId}_ch${chIdx}_p${pgIdx}`;
 
-      if (!this.creditedWords) this.creditedWords = this._getOrCreateSet(this._bookCreditedWords, bookId);
-      if (!this.creditedBlocks) this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, bookId);
+      if (!this.creditedWords) this.creditedWords = new Set();
+      if (!this.creditedBlocks) this.creditedBlocks = new Set();
 
-      // Deduplikace v rámci knihy
+      // Deduplikace v rámci aktuální relace
       if (this.creditedWords.has(wordKey)) {
-        return 0; // Již přečteno
+        return 0; // Již přečteno v této relaci
       }
 
       this.creditedWords.add(wordKey);
@@ -506,12 +510,12 @@ export class ReadingTracker {
       const lineKey = context.lineKey || `${bookId}_ch${chIdx}_p${pgIdx}_l${lnIdx}`;
       const blockKey = context.blockKey || `${bookId}_ch${chIdx}_p${pgIdx}`;
 
-      if (!this.creditedLines) this.creditedLines = this._getOrCreateSet(this._bookCreditedLines, bookId);
-      if (!this.creditedBlocks) this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, bookId);
+      if (!this.creditedLines) this.creditedLines = new Set();
+      if (!this.creditedBlocks) this.creditedBlocks = new Set();
 
-      // Deduplikace v rámci knihy
+      // Deduplikace v rámci aktuální relace
       if (this.creditedLines.has(lineKey)) {
-        return 0; // Již započteno
+        return 0; // Již započteno v této relaci
       }
 
       this.creditedLines.add(lineKey);
@@ -545,7 +549,7 @@ export class ReadingTracker {
 
   /**
    * Přičte slova posunutá při vertikálním skrolování (pouze když není aktivní pravítko).
-   * Automaticky potlačuje přičítání při scrollování nahoru nebo přes již odscrollovaný rozsah.
+   * Automaticky potlačuje přičítání při scrollování nahoru nebo přes již odscrollovaný rozsah v této relaci.
    * @param {number} count Počet odskrolovaných slov
    * @param {Object|null} context { chapterIndex, scrollRatio, deltaRatio, bookId }
    * @returns {number}
@@ -564,13 +568,8 @@ export class ReadingTracker {
       const scrollRatio = context.scrollRatio;
       const prevMax = this.chapterHighWaterScroll.get(chIdx) || 0;
 
-      // Scrollování nahoru nebo v rámci již přečteného rozsahu v kapitole:
+      // Scrollování nahoru nebo v rámci již přečteného rozsahu v kapitole v rámci této relace:
       if (scrollRatio <= prevMax) {
-        return 0; // Potlačeno
-      }
-
-      // Celá předchozí kapitola za celkovým high-water markem:
-      if (this.highWaterMark && chIdx < this.highWaterMark.chapterIndex) {
         return 0; // Potlačeno
       }
 
@@ -637,7 +636,7 @@ export class ReadingTracker {
     const interimAttributed = Math.max(0, this.blockInterimWordsAttributed || 0);
     const startActiveSec = (this.blockEnterActiveSec !== null && this.blockEnterActiveSec !== undefined)
       ? this.blockEnterActiveSec
-      : 0;
+      : null;
     const pageActiveSec = this.currentPageActiveSeconds || 0;
 
     // Reset stavu stránky
@@ -646,6 +645,7 @@ export class ReadingTracker {
     this.currentPageStartTime = null;
     this.currentReadingBlockId = null;
     this.currentPageActiveSeconds = 0;
+    this.blockEnterActiveSec = null;
     this.wordsCreditedOnCurrentPage = 0;
     this.blockDirectWordsAttributed = 0;
     this.blockInterimWordsAttributed = 0;
@@ -662,14 +662,21 @@ export class ReadingTracker {
 
     const wallDwellSeconds = Math.max(0, (now - enterTime) / 1000);
     const currentTotalActiveSec = ((this.completedMinutesCount - 1) * 60) + this.currentMinuteActiveSeconds;
-    const activeDwellSeconds = Math.max(pageActiveSec, Math.max(0, currentTotalActiveSec - startActiveSec));
+    const activeDwellSeconds = (startActiveSec !== null)
+      ? Math.max(pageActiveSec, Math.max(0, currentTotalActiveSec - startActiveSec))
+      : pageActiveSec;
     const effectiveDwellSeconds = activeDwellSeconds > 0
       ? Math.max(activeDwellSeconds, Math.min(wallDwellSeconds, 12))
       : (wallDwellSeconds < 60 ? wallDwellSeconds : 0);
 
-    // 1. Ochrana proti rychlému skimmingu (< 3s) a listování zpět:
-    if (effectiveDwellSeconds < MIN_PAGE_DWELL_SEC || direction < 0 || isFlushing) {
+    // 1. Ochrana proti rychlému skimmingu (< 3s), listování zpět nebo při flush:
+    if (effectiveDwellSeconds < MIN_PAGE_DWELL_SEC || direction <= 0 || isFlushing) {
       return 0;
+    }
+
+    // Ochrana obnovené počáteční stránky: vyžaduje aktivní setrvání (>= 3s) a vědomý dopředný posun (direction > 0)
+    if (this._isInitialBlockPending) {
+      this._isInitialBlockPending = false;
     }
 
     // 2. Bez pravítka se načte celá stránka, pokud na ní uživatel strávil realistický čas (>= 3s):
@@ -761,11 +768,15 @@ export class ReadingTracker {
       this.isContinuousTrackingActive = false;
       this.currentChapterIndex = chapterIndex;
       this.currentPageIndex = pageIndex;
+      if (isNavigationJump) {
+        this._isInitialBlockPending = true;
+      }
+      this.lastActivityTime = now;
       return;
     }
 
     // Pokud jde o prvotní načtení knihy / kapitoly (document load):
-    // Okamžitě inicializujeme čtecí blok pro plynulou aktivitu od první sekundy
+    // Okamžitě inicializujeme čtecí blok pro plynulou aktivitu od první sekundy bez předčasného započtení slov
     if (isInitialLoad) {
       this.cancelCurrentPageDwell();
       this.currentReadingBlockId = newBlockId;
@@ -784,7 +795,8 @@ export class ReadingTracker {
       this.isContinuousTrackingActive = false;
       this.currentChapterIndex = chapterIndex;
       this.currentPageIndex = pageIndex;
-      this.recordActivity(true);
+      this._isInitialBlockPending = true;
+      this.lastActivityTime = now;
       return;
     }
 
@@ -906,14 +918,13 @@ export class ReadingTracker {
     this.validReadingTimeMs = 0;
     this.validWordsRead = 0;
 
-    // Sledování stránek a dwell time: bezpečně inicializujeme počáteční blok, aby ticker mohl začít okamžitě
+    // Sledování stránek a dwell time: bezpečně inicializujeme počáteční stav bez předsudku o konkrétní straně
     const initialWords = (chapterWords >= 40 && chapterWords <= 650) ? chapterWords : 250;
-    const initialBlockId = this.currentBookId ? `${this.currentBookId}_ch${chapterIndex}_p0` : null;
-    this.currentReadingBlockId = initialBlockId;
-    this.currentPageKey = initialBlockId;
-    this.blockEnterTimestamp = now;
-    this.pageEnterTimestamp = now;
-    this.blockEnterActiveSec = 0;
+    this.currentReadingBlockId = null;
+    this.currentPageKey = null;
+    this.blockEnterTimestamp = null;
+    this.pageEnterTimestamp = null;
+    this.blockEnterActiveSec = null;
     this.blockVisibleWords = initialWords;
     this.currentPageVisibleWords = initialWords;
     this.wordsCreditedOnCurrentPage = 0;
@@ -921,18 +932,19 @@ export class ReadingTracker {
     this.blockInterimWordsAttributed = 0;
     this.unreconciledRulerWords = 0;
     this.isContinuousTrackingActive = false;
+    this._isInitialBlockPending = true;
 
-    // Zachování akreditací per kniha napříč otočením stran, kapitolami a idle pauzami
+    // Deduplikace slov, řádků a bloků striktně vázaná na aktivní relaci čtení
+    this.creditedBlocks = new Set();
+    this.creditedLines = new Set();
+    this.creditedWords = new Set();
+    this.committedPageKeys = this.creditedBlocks;
+    this.chapterHighWaterScroll = new Map();
     if (this.currentBookId) {
-      this.creditedBlocks = this._getOrCreateSet(this._bookCreditedBlocks, this.currentBookId);
-      this.creditedLines = this._getOrCreateSet(this._bookCreditedLines, this.currentBookId);
-      this.creditedWords = this._getOrCreateSet(this._bookCreditedWords, this.currentBookId);
-      this.committedPageKeys = this.creditedBlocks;
-    } else {
-      if (!this.creditedBlocks) this.creditedBlocks = new Set();
-      if (!this.creditedLines) this.creditedLines = new Set();
-      if (!this.creditedWords) this.creditedWords = new Set();
-      this.committedPageKeys = this.creditedBlocks;
+      this._bookCreditedBlocks.set(this.currentBookId, this.creditedBlocks);
+      this._bookCreditedLines.set(this.currentBookId, this.creditedLines);
+      this._bookCreditedWords.set(this.currentBookId, this.creditedWords);
+      this._bookChapterScroll.set(this.currentBookId, this.chapterHighWaterScroll);
     }
 
     // Režimy pravítka a sledování slov
@@ -1371,15 +1383,13 @@ export class ReadingTracker {
           }
 
           const hwm = this.highWaterMark ? { ...this.highWaterMark } : null;
-          const blocksArray = Array.from(this.creditedBlocks || []);
 
           await storage.updateBookProgress(bookId, {
             currentChapterIndex: this.currentChapterIndex,
             scrollPercent: this.currentScrollPercent,
             wordsRead: totalWordsRead,
             lastWpm: avgWpm,
-            highWaterMark: hwm,
-            creditedBlocks: blocksArray
+            highWaterMark: hwm
           });
         }
 
@@ -1407,12 +1417,10 @@ export class ReadingTracker {
       if (bookId) {
         try {
           const hwm = this.highWaterMark ? { ...this.highWaterMark } : null;
-          const blocksArray = Array.from(this.creditedBlocks || []);
           await storage.updateBookProgress(bookId, {
             currentChapterIndex: this.currentChapterIndex,
             scrollPercent: this.currentScrollPercent,
-            highWaterMark: hwm,
-            creditedBlocks: blocksArray
+            highWaterMark: hwm
           });
         } catch (_) {}
       }
@@ -1429,7 +1437,7 @@ export class ReadingTracker {
     this.validWordsRead = 0;
     this.currentReadingBlockId = null;
     this.blockEnterTimestamp = null;
-    this.blockEnterActiveSec = 0;
+    this.blockEnterActiveSec = null;
     this.currentPageActiveSeconds = 0;
     this.blockVisibleWords = 0;
     this.wordsCreditedOnCurrentPage = 0;
@@ -1457,15 +1465,34 @@ export class ReadingTracker {
   }
 
   /**
-   * Ukončí měření čtení (např. při návratu do knihovny)
+   * Ukončí měření čtení (např. při návratu do knihovny) a purguje aktivní sledovací paměť
    */
   stopSession() {
     this.flushSession();
     if (this.timerInterval) clearInterval(this.timerInterval);
     this.currentBookId = null;
     this.currentBookTitle = "";
+    this.currentSessionId = null;
     this.isActive = false;
     this.isIdle = false;
+    this.creditedBlocks = new Set();
+    this.creditedLines = new Set();
+    this.creditedWords = new Set();
+    this.committedPageKeys = this.creditedBlocks;
+    this.chapterHighWaterScroll = new Map();
+    this.currentReadingBlockId = null;
+    this.currentPageKey = null;
+    this.wordsCreditedOnCurrentPage = 0;
+    this.blockVisibleWords = 0;
+    this.currentPageVisibleWords = 0;
+    this.blockDirectWordsAttributed = 0;
+    this.blockInterimWordsAttributed = 0;
+    this.unreconciledRulerWords = 0;
+    this._isInitialBlockPending = false;
+    this._bookCreditedBlocks.clear();
+    this._bookCreditedLines.clear();
+    this._bookCreditedWords.clear();
+    this._bookChapterScroll.clear();
   }
 
   subscribe(listener) {

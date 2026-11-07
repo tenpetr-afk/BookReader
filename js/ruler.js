@@ -265,10 +265,40 @@ export class ReadingRuler {
   }
 
   /**
-   * Resetuje efemérní čtecí kurzor pravítka pro novou čtecí relaci
-   * (NEMAŽE perzistentní množiny přečtených řádků a slov dané knihy).
+   * Resetuje paměť pravítka a čtecí kurzor pro novou čtecí relaci.
+   * Všechny množiny přečtených řádků a slov jsou vyčištěny, aby bylo čtení v nově zahájené relaci plně započitatelné.
    */
   resetSessionTracking() {
+    if (this._bookCompletedLines) {
+      this._bookCompletedLines.clear();
+    } else {
+      this._bookCompletedLines = new Map();
+    }
+    if (this._bookWordsRead) {
+      this._bookWordsRead.clear();
+    } else {
+      this._bookWordsRead = new Map();
+    }
+    if (this._completedLinesByBlock) {
+      this._completedLinesByBlock.clear();
+    } else {
+      this._completedLinesByBlock = new Map();
+    }
+    if (this._wordsReadByBlock) {
+      this._wordsReadByBlock.clear();
+    } else {
+      this._wordsReadByBlock = new Map();
+    }
+    if (this._completedLineIndices) {
+      this._completedLineIndices.clear();
+    } else {
+      this._completedLineIndices = new Set();
+    }
+    if (this._wordsReadOnPage) {
+      this._wordsReadOnPage.clear();
+    } else {
+      this._wordsReadOnPage = new Set();
+    }
     this._activeReadingLineIndex = -1;
     this._activeLineStartTime = 0;
     this._lastWordLineIndex = -1;
@@ -286,10 +316,6 @@ export class ReadingRuler {
     if (this._bookWordsRead) {
       this._bookWordsRead.delete(targetBookId);
     }
-    this._completedLinesByBlock = new Map();
-    this._wordsReadByBlock = new Map();
-    this._completedLineIndices = new Set();
-    this._wordsReadOnPage = new Set();
     this.resetSessionTracking();
   }
 
