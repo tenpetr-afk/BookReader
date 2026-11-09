@@ -604,6 +604,8 @@ export class ReadingRuler {
     this._scrollRafPending = false;
     this._isVerticalScrolling = false;
     this.rafPointerPending = false;
+    this.isSwipePageTransition = false;
+    this.isTouchSwiping = false;
   }
 
   forceReleaseNavigationLocks() {
@@ -1706,12 +1708,20 @@ export class ReadingRuler {
     if (e.sourceCapabilities?.firesTouchEvents) return true;
     const now = Date.now();
     const isTouchActive = !!(this.isTouchActive || this.isTouchSwiping || (this.touchStrokeStartTime && this.touchStrokeStartTime > 0));
+
+    // If e.pointerType === "mouse" and no touch is currently contacting the screen,
+    // allow legitimate mouse and trackpad moves to register and unblock tracking.
+    const isMoveEvent = !e.type || e.type === "pointermove" || e.type === "mousemove";
+    if (e.pointerType === "mouse" && !isTouchActive && isMoveEvent) {
+      return false;
+    }
+
     const recentTouch = (now - (this.lastTouchEndTime || 0) < 200);
     const recentSwipe = (now - (this.lastSwipeTime || 0) < 200);
     const recentTap = (now - (this.lastTouchTapTime || 0) < 350);
     const recentPenFlick = (now - (this.lastFlickNavigationTime || 0) < 200);
     const appSwipe = !!(this.app && this.app.lastSwipeTime && (now - this.app.lastSwipeTime < 200));
-    const inSwipeTransition = !!(this.isSwipePageTransition || (this.app && this.app.isSwipeTransitioning));
+    const inSwipeTransition = !(!isTouchActive && e.pointerType === "mouse") && !!(this.isSwipePageTransition || (this.app && this.app.isSwipeTransitioning));
     return isTouchActive || recentTouch || recentSwipe || recentTap || recentPenFlick || appSwipe || inSwipeTransition;
   }
 
@@ -1989,6 +1999,30 @@ export class ReadingRuler {
       return;
     }
 
+    // Auto-recover lingering transition flags on valid mouse move when resting
+    if (pointerType === "mouse" && !this.isTouchActive && !this.isTouchSwiping) {
+      const now = Date.now();
+      const lockElapsed = (!this.navigatingPageLockoutEndTime || now >= this.navigatingPageLockoutEndTime);
+      const stage = this.getStageElement();
+      const stageRect = stage ? stage.getBoundingClientRect() : null;
+      const isInsideStage = !stageRect || (clientX >= stageRect.left && clientX <= stageRect.right && clientY >= stageRect.top && clientY <= stageRect.bottom);
+      const content = document.getElementById("reader-content");
+      const isAnimating = document.body.classList.contains("is-turning-page") ||
+        (stage && stage.classList.contains("is-turning-page")) ||
+        (content && content.classList.contains("is-turning-page")) ||
+        !!(this.app && this.app.isNavigating);
+
+      if (lockElapsed && isInsideStage && !isAnimating) {
+        if (this.isSwipePageTransition || this.isPageTransitioning || this.isTouchSwiping || this.isLineLocked || this.suppressLineAdvancement) {
+          this.isSwipePageTransition = false;
+          this.isTouchSwiping = false;
+          this.isPageTransitioning = false;
+          this.isLineLocked = false;
+          this.suppressLineAdvancement = false;
+        }
+      }
+    }
+
     // Zamezení sledování během swipování prstem nebo přechodu strany
     if (this.isTouchSwiping || this.isSwipePageTransition) {
       return;
@@ -2025,6 +2059,28 @@ export class ReadingRuler {
       this.pointerRafId = null;
       if (!this.enabled || this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay) {
         return;
+      }
+      if (this.pendingPointerType === "mouse" && !this.isTouchActive && !this.isTouchSwiping) {
+        const now = Date.now();
+        const lockElapsed = (!this.navigatingPageLockoutEndTime || now >= this.navigatingPageLockoutEndTime);
+        const stage = this.getStageElement();
+        const stageRect = stage ? stage.getBoundingClientRect() : null;
+        const isInsideStage = !stageRect || (this.pendingPointerX == null || (this.pendingPointerX >= stageRect.left && this.pendingPointerX <= stageRect.right && this.pendingPointerY >= stageRect.top && this.pendingPointerY <= stageRect.bottom));
+        const content = document.getElementById("reader-content");
+        const isAnimating = document.body.classList.contains("is-turning-page") ||
+          (stage && stage.classList.contains("is-turning-page")) ||
+          (content && content.classList.contains("is-turning-page")) ||
+          !!(this.app && this.app.isNavigating);
+
+        if (lockElapsed && isInsideStage && !isAnimating) {
+          if (this.isSwipePageTransition || this.isPageTransitioning || this.isTouchSwiping || this.isLineLocked || this.suppressLineAdvancement) {
+            this.isSwipePageTransition = false;
+            this.isTouchSwiping = false;
+            this.isPageTransitioning = false;
+            this.isLineLocked = false;
+            this.suppressLineAdvancement = false;
+          }
+        }
       }
       if (this.isTouchSwiping || this.isSwipePageTransition) {
         return;
@@ -2623,6 +2679,30 @@ export class ReadingRuler {
           return;
         }
         this.updateCursorVisibility(e.clientX, e.clientY, "mouse", e.target);
+
+        // Auto-recover lingering transition flags on valid mouse move when resting
+        if (!this.isTouchActive && !this.isTouchSwiping) {
+          const now = Date.now();
+          const lockElapsed = (!this.navigatingPageLockoutEndTime || now >= this.navigatingPageLockoutEndTime);
+          const stage = this.getStageElement();
+          const stageRect = stage ? stage.getBoundingClientRect() : null;
+          const isInsideStage = !stageRect || (e.clientX >= stageRect.left && e.clientX <= stageRect.right && e.clientY >= stageRect.top && e.clientY <= stageRect.bottom);
+          const content = document.getElementById("reader-content");
+          const isAnimating = document.body.classList.contains("is-turning-page") ||
+            (stage && stage.classList.contains("is-turning-page")) ||
+            (content && content.classList.contains("is-turning-page")) ||
+            !!(this.app && this.app.isNavigating);
+
+          if (lockElapsed && isInsideStage && !isAnimating) {
+            if (this.isSwipePageTransition || this.isPageTransitioning || this.isTouchSwiping || this.isLineLocked || this.suppressLineAdvancement) {
+              this.isSwipePageTransition = false;
+              this.isTouchSwiping = false;
+              this.isPageTransitioning = false;
+              this.isLineLocked = false;
+              this.suppressLineAdvancement = false;
+            }
+          }
+        }
       }
 
       const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 200) || (Date.now() - (this.lastTouchEndTime || 0) < 200);
@@ -6278,6 +6358,33 @@ export class ReadingRuler {
    */
   handlePointerMove(clientX, clientY, pointerType = null) {
     if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay) return;
+
+    const pType = pointerType || this.activePointerType || (Date.now() - this.lastPenTime < 500 ? "pen" : "mouse");
+
+    // Auto-recover lingering transition flags on valid mouse move when resting
+    if (pType === "mouse" && !this.isTouchActive && !this.isTouchSwiping) {
+      const now = Date.now();
+      const lockElapsed = (!this.navigatingPageLockoutEndTime || now >= this.navigatingPageLockoutEndTime);
+      const stage = this.getStageElement();
+      const stageRect = stage ? stage.getBoundingClientRect() : null;
+      const isInsideStage = !stageRect || (clientX >= stageRect.left && clientX <= stageRect.right && clientY >= stageRect.top && clientY <= stageRect.bottom);
+      const content = document.getElementById("reader-content");
+      const isAnimating = document.body.classList.contains("is-turning-page") ||
+        (stage && stage.classList.contains("is-turning-page")) ||
+        (content && content.classList.contains("is-turning-page")) ||
+        !!(this.app && this.app.isNavigating);
+
+      if (lockElapsed && isInsideStage && !isAnimating) {
+        if (this.isSwipePageTransition || this.isPageTransitioning || this.isTouchSwiping || this.isLineLocked || this.suppressLineAdvancement) {
+          this.isSwipePageTransition = false;
+          this.isTouchSwiping = false;
+          this.isPageTransitioning = false;
+          this.isLineLocked = false;
+          this.suppressLineAdvancement = false;
+        }
+      }
+    }
+
     if (this.isTouchSwiping || this.isSwipePageTransition) return;
     if (pointerType === "mouse" && this.isSyntheticMouseEvent({ pointerType: "mouse" })) {
       return;
@@ -7246,6 +7353,8 @@ export class ReadingRuler {
         this.isLineLocked = false;
         this.suppressLineAdvancement = false;
         this.isPageTransitioning = false;
+        this.isSwipePageTransition = false;
+        this.isTouchSwiping = false;
         this._postTransitionAnchorLineIndex = null;
         this.lineLockTimer = null;
         const s = this.getStageElement();
@@ -7267,6 +7376,9 @@ export class ReadingRuler {
     } else {
       this.isLineLocked = false;
       this.suppressLineAdvancement = false;
+      this.isPageTransitioning = false;
+      this.isSwipePageTransition = false;
+      this.isTouchSwiping = false;
       this._postTransitionAnchorLineIndex = null;
       this.navigatingPageLockoutEndTime = 0;
     }
@@ -7294,6 +7406,9 @@ export class ReadingRuler {
       if (!isPageChanged) {
         this.isLineLocked = false;
         this.suppressLineAdvancement = false;
+        this.isPageTransitioning = false;
+        this.isSwipePageTransition = false;
+        this.isTouchSwiping = false;
         this._postTransitionAnchorLineIndex = null;
         this.navigatingPageLockoutEndTime = 0;
       }
@@ -7549,6 +7664,9 @@ export class ReadingRuler {
       }
 
       requestAnimationFrame(() => {
+        this.isSwipePageTransition = false;
+        this.isTouchSwiping = false;
+        this.isPageTransitioning = false;
         if (stage) stage.classList.remove("is-turning-page");
         document.body.classList.remove("is-turning-page");
         if (content) content.classList.remove("is-turning-page");

@@ -1446,6 +1446,7 @@ export class LuminaApp {
 
     if (this.dom.pagedViewport) {
       this.dom.pagedViewport.addEventListener("touchstart", (e) => {
+        this._activeTouchCount = e.touches ? e.touches.length : 1;
         if (this.isVerticalReadingMode()) return;
         if (this.isUiOrOverlayEvent(e)) {
           isSwiping = false;
@@ -1481,7 +1482,12 @@ export class LuminaApp {
         isSwiping = true;
       }, { passive: true });
 
+      this.dom.pagedViewport.addEventListener("touchmove", (e) => {
+        this._activeTouchCount = e.touches ? e.touches.length : 0;
+      }, { passive: true });
+
       this.dom.pagedViewport.addEventListener("touchcancel", () => {
+        this._activeTouchCount = 0;
         isSwiping = false;
         if (this.ruler) {
           this.ruler.isTouchSwiping = false;
@@ -1489,6 +1495,7 @@ export class LuminaApp {
       }, { passive: true });
 
       this.dom.pagedViewport.addEventListener("touchend", (e) => {
+        this._activeTouchCount = e.touches ? e.touches.length : 0;
         if (this.isVerticalReadingMode()) return;
         if (this.isUiOrOverlayEvent(e)) {
           isSwiping = false;
@@ -1700,6 +1707,21 @@ export class LuminaApp {
           if (e.pointerType === "pen" || (this.ruler && typeof this.ruler.isPenEvent === "function" && this.ruler.isPenEvent(e))) {
             return;
           }
+
+          const isMove = (eventType === "pointermove" || eventType === "mousemove");
+          const isMouse = (e.pointerType === "mouse" || (!e.pointerType && eventType === "mousemove"));
+          const isMouseFollow = !!(this.ruler?.enabled && this.ruler.followMode === "mouse");
+          const hasMultiTouch = (this._activeTouchCount || 0) > 1 || (e.touches && e.touches.length > 1);
+
+          // Crucially: never completely suppress pointermove or mousemove for mouse pointer types
+          // when the ruler is enabled in mouse follow mode, unless an actual multi-touch swipe
+          // gesture is actively in progress with multiple touches on screen.
+          // Once the page transition DOM transform is applied, trackpad and mouse movement
+          // events are immediately permitted to bubble to window so the ruler resumes tracking.
+          if (isMove && isMouse && isMouseFollow && !hasMultiTouch) {
+            return;
+          }
+
           const now = Date.now();
           const isSwipeTransition = (
             (this.ruler && (this.ruler.isTouchSwiping || this.ruler.isSwipePageTransition)) ||
@@ -1711,6 +1733,9 @@ export class LuminaApp {
           if (isSwipeTransition) {
             // Zachytíme a zrušíme syntetické události emulované WebKitem dříve, než zasáhnou reader-content nebo window
             if (e.pointerType === "mouse" || !e.pointerType) {
+              if (isMove && isMouse && isMouseFollow && !hasMultiTouch) {
+                return;
+              }
               e.stopPropagation();
               e.stopImmediatePropagation();
               if (e.cancelable && (e.type === "click" || e.type === "pointerdown" || e.type === "mousedown")) {
@@ -4634,14 +4659,7 @@ export class LuminaApp {
     if (this.ruler && this.ruler.enabled) {
       this.ruler.onPageChange(direction, isPageChanged, true);
     }
-    if (isPageChanged) {
-      if (this.navigatingPageTimer) clearTimeout(this.navigatingPageTimer);
-      this.navigatingPageTimer = setTimeout(() => {
-        this.releaseNavigationLocks();
-      }, 200);
-    } else {
-      this.releaseNavigationLocks();
-    }
+    this.releaseNavigationLocks();
   }
 
   async renderPdfToc() {
@@ -5987,7 +6005,10 @@ export class LuminaApp {
   }
 
   releaseNavigationLocks() {
-    clearTimeout(this._navSafetyTimer);
+    if (this._navSafetyTimer) {
+      clearTimeout(this._navSafetyTimer);
+      this._navSafetyTimer = null;
+    }
     if (this.navigatingPageTimer) {
       clearTimeout(this.navigatingPageTimer);
       this.navigatingPageTimer = null;
@@ -5999,7 +6020,7 @@ export class LuminaApp {
     if (stage) stage.classList.remove("is-turning-page");
     if (this.dom.readerContent) this.dom.readerContent.classList.remove("is-turning-page");
     document.body.classList.remove("is-turning-page");
-    if (this.ruler && this.ruler.enabled) {
+    if (this.ruler && typeof this.ruler.forceReleaseNavigationLocks === "function") {
       this.ruler.forceReleaseNavigationLocks();
     }
   }
@@ -6017,6 +6038,7 @@ export class LuminaApp {
         if (this.ruler && this.ruler.enabled) {
           this.ruler.applyPosition();
         }
+        this.releaseNavigationLocks();
         return;
       }
       if (this.ruler && this.ruler.enabled && !isInitial && !isNavJump && typeof this.ruler.finalizeCurrentPageProgress === "function") {
@@ -6234,7 +6256,11 @@ export class LuminaApp {
               });
             });
           }
+        } else {
+          this.releaseNavigationLocks();
         }
+      } else {
+        this.releaseNavigationLocks();
       }
 
       requestAnimationFrame(() => {
