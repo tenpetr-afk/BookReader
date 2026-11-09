@@ -13,6 +13,7 @@ export class StatsCharts {
    */
   static renderDailyActivityChart(container, data) {
     if (!container) return;
+    container.style.minHeight = "180px";
     container.innerHTML = "";
 
     const width = container.clientWidth || 500;
@@ -149,6 +150,7 @@ export class StatsCharts {
    */
   static renderWpmProgressChart(container, history, avgWpm = 0) {
     if (!container) return;
+    container.style.minHeight = "210px";
     container.innerHTML = "";
 
     // Jeden bod pro každou platnou čtecí relaci s jejím skutečným přepočteným avg_wpm
@@ -1160,10 +1162,40 @@ export class StatsCharts {
     svg.addEventListener("touchstart", handleTouch, { passive: true });
     svg.addEventListener("touchmove", handleTouch, { passive: true });
 
+    // Prevence odcizení focusu a rozbití scrollu v modálu při kliku/tapnutí na graf:
+    // V prohlížečích (WebKit/Blink) vede focus na vnořený SVG prvek (<g tabindex="0">)
+    // k nativnímu scrollIntoView, který kvůli chybějícímu standardnímu CSS box modelu u SVG
+    // chybně posune nadřazený HTML kontejner (.modal-body) na scrollTop = 0.
+    const preventFocusScroll = (e) => {
+      if (e && e.cancelable && (!e.target || !e.target.closest("button, a, input, select"))) {
+        e.preventDefault();
+      }
+    };
+
+    svg.addEventListener("pointerdown", preventFocusScroll);
+    svg.addEventListener("mousedown", preventFocusScroll);
+
+    let lastKnownScrollTop = null;
+    const scrollParent = container.closest(".modal-body, .modal-content");
+    if (scrollParent) {
+      container.addEventListener("keydown", (e) => {
+        if (e.key === "Tab") {
+          lastKnownScrollTop = scrollParent.scrollTop;
+        }
+      });
+    }
+
     // Přímé eventy na bodech pro přístupnost (klávesnice / hover / klik)
     points.forEach((p, idx) => {
+      p.element.addEventListener("pointerdown", preventFocusScroll);
+      p.element.addEventListener("mousedown", preventFocusScroll);
       p.element.addEventListener("mouseenter", () => activatePoint(idx));
-      p.element.addEventListener("focus", () => activatePoint(idx));
+      p.element.addEventListener("focus", () => {
+        activatePoint(idx);
+        if (scrollParent && lastKnownScrollTop !== null && scrollParent.scrollTop !== lastKnownScrollTop) {
+          scrollParent.scrollTop = lastKnownScrollTop;
+        }
+      });
       p.element.addEventListener("blur", () => deactivatePoint());
       if (p.onClick) {
         p.element.addEventListener("click", (e) => {

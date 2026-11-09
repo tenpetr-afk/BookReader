@@ -338,6 +338,7 @@ export class LuminaApp {
       tabBtnReading: document.getElementById("tab-btn-reading"),
       tabPaneReading: document.getElementById("tab-pane-reading"),
       statsModal: document.getElementById("stats-modal"),
+      statsModalBody: document.querySelector("#stats-modal .modal-body"),
       btnCloseStats: document.getElementById("btn-close-stats"),
 
       // Statistiky elementy
@@ -7508,6 +7509,9 @@ export class LuminaApp {
 
   updateDailyChartUI(stats) {
     if (!stats) return;
+    const modalBody = this.dom.statsModalBody || this.dom.statsModal?.querySelector(".modal-body");
+    const preservedScrollTop = modalBody ? modalBody.scrollTop : null;
+
     if (this.dom.dailyChartContainer && stats.last7Days) {
       StatsCharts.renderDailyActivityChart(this.dom.dailyChartContainer, stats.last7Days);
     }
@@ -7515,10 +7519,22 @@ export class LuminaApp {
       this.dom.dailyRangeBadge.textContent = stats.dailyWindow.label;
     }
     if (this.dom.btnDailyPrev && stats.dailyWindow) {
-      this.dom.btnDailyPrev.disabled = !stats.dailyWindow.hasEarlier;
+      const willBeDisabled = !stats.dailyWindow.hasEarlier;
+      if (willBeDisabled && document.activeElement === this.dom.btnDailyPrev) {
+        this.dom.btnDailyPrev.blur();
+      }
+      this.dom.btnDailyPrev.disabled = willBeDisabled;
     }
     if (this.dom.btnDailyNext && stats.dailyWindow) {
-      this.dom.btnDailyNext.disabled = !stats.dailyWindow.hasLater;
+      const willBeDisabled = !stats.dailyWindow.hasLater;
+      if (willBeDisabled && document.activeElement === this.dom.btnDailyNext) {
+        this.dom.btnDailyNext.blur();
+      }
+      this.dom.btnDailyNext.disabled = willBeDisabled;
+    }
+
+    if (modalBody && preservedScrollTop !== null && modalBody.scrollTop !== preservedScrollTop) {
+      modalBody.scrollTop = preservedScrollTop;
     }
   }
 
@@ -7528,6 +7544,9 @@ export class LuminaApp {
     const newOffset = Math.min(0, this._dailyChartWeekOffset + delta);
     if (newOffset === this._dailyChartWeekOffset && delta > 0) return;
     this._dailyChartWeekOffset = newOffset;
+
+    const modalBody = this.dom.statsModalBody || this.dom.statsModal?.querySelector(".modal-body");
+    const preservedScrollTop = modalBody ? modalBody.scrollTop : null;
 
     try {
       const stats = await ReadingTracker.computeGlobalStats(null, null, {
@@ -7539,6 +7558,9 @@ export class LuminaApp {
         this._lastStats.dailyWindow = stats.dailyWindow;
       }
       this.updateDailyChartUI(stats);
+      if (modalBody && preservedScrollTop !== null && modalBody.scrollTop !== preservedScrollTop) {
+        modalBody.scrollTop = preservedScrollTop;
+      }
     } catch (err) {
       console.warn("[LuminaApp] Chyba při posunu denního grafu:", err);
     }
@@ -7546,6 +7568,9 @@ export class LuminaApp {
 
   updateWpmChartUI(stats) {
     if (!stats) return;
+    const modalBody = this.dom.statsModalBody || this.dom.statsModal?.querySelector(".modal-body");
+    const preservedScrollTop = modalBody ? modalBody.scrollTop : null;
+
     const batchAvg = stats.wpmPagination?.batchAvgWpm ?? stats.batchAvgWpm ?? stats.averageWpm;
     if (this.dom.wpmChartContainer && stats.wpmHistory) {
       StatsCharts.renderWpmProgressChart(this.dom.wpmChartContainer, stats.wpmHistory, batchAvg);
@@ -7554,10 +7579,22 @@ export class LuminaApp {
       this.dom.wpmRangeBadge.textContent = stats.wpmPagination.rangeLabel;
     }
     if (this.dom.btnWpmPrev && stats.wpmPagination) {
-      this.dom.btnWpmPrev.disabled = !stats.wpmPagination.hasOlder;
+      const willBeDisabled = !stats.wpmPagination.hasOlder;
+      if (willBeDisabled && document.activeElement === this.dom.btnWpmPrev) {
+        this.dom.btnWpmPrev.blur();
+      }
+      this.dom.btnWpmPrev.disabled = willBeDisabled;
     }
     if (this.dom.btnWpmNext && stats.wpmPagination) {
-      this.dom.btnWpmNext.disabled = !stats.wpmPagination.hasNewer;
+      const willBeDisabled = !stats.wpmPagination.hasNewer;
+      if (willBeDisabled && document.activeElement === this.dom.btnWpmNext) {
+        this.dom.btnWpmNext.blur();
+      }
+      this.dom.btnWpmNext.disabled = willBeDisabled;
+    }
+
+    if (modalBody && preservedScrollTop !== null && modalBody.scrollTop !== preservedScrollTop) {
+      modalBody.scrollTop = preservedScrollTop;
     }
   }
 
@@ -7567,6 +7604,9 @@ export class LuminaApp {
     const newOffset = Math.max(0, this._wpmChartBatchOffset + delta);
     if (newOffset === this._wpmChartBatchOffset && delta < 0) return;
     this._wpmChartBatchOffset = newOffset;
+
+    const modalBody = this.dom.statsModalBody || this.dom.statsModal?.querySelector(".modal-body");
+    const preservedScrollTop = modalBody ? modalBody.scrollTop : null;
 
     try {
       const stats = await ReadingTracker.computeGlobalStats(null, null, {
@@ -7578,6 +7618,9 @@ export class LuminaApp {
         this._lastStats.wpmPagination = stats.wpmPagination;
       }
       this.updateWpmChartUI(stats);
+      if (modalBody && preservedScrollTop !== null && modalBody.scrollTop !== preservedScrollTop) {
+        modalBody.scrollTop = preservedScrollTop;
+      }
     } catch (err) {
       console.warn("[LuminaApp] Chyba při posunu WPM grafu:", err);
     }

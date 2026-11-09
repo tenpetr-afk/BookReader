@@ -3287,6 +3287,9 @@ export class ReadingRuler {
       if (!this.enabled || this.isLineLocked) {
         return;
       }
+      if (this.isPopoverOrDrawerOpen()) {
+        return;
+      }
       if (this.isVerticalMode() && this.followMode === "mouse") {
         if (e.clientX != null) {
           this.lastPointerX = e.clientX;
@@ -3398,6 +3401,7 @@ export class ReadingRuler {
     const onScroll = () => {
       if (!this.enabled || !this.isVerticalMode()) return;
       if (this._isProgrammaticScroll) return;
+      if (this.isPopoverOrDrawerOpen()) return;
 
       this.handleVerticalScroll();
     };

@@ -1553,6 +1553,7 @@ body.settings-sheet-open .drawer-backdrop {
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
   overscroll-behavior: contain;
+  scroll-behavior: auto;
 }
 
 .stats-grid {
@@ -1826,6 +1827,14 @@ body.settings-sheet-open .drawer-backdrop {
   width: 100%;
 }
 
+#wpm-chart-container {
+  min-height: 210px;
+}
+
+#daily-chart-container {
+  min-height: 180px;
+}
+
 .session-chart-container {
   min-height: 200px;
   position: relative;
@@ -1903,6 +1912,7 @@ body.settings-sheet-open .drawer-backdrop {
 .chart-bar-group {
   outline: none;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .chart-bar-rect {
