@@ -1518,7 +1518,11 @@ export class ReadingTracker {
    * total_reading_seconds = sum of duration across all sessions
    * global_avg_wpm = total_reading_seconds > 0 ? Math.round((total_words_read / total_reading_seconds) * 60) : 0
    */
-  static async computeGlobalStats(customSessions = null, customBooks = null) {
+  static async computeGlobalStats(customSessions = null, customBooks = null, options = {}) {
+    if (customSessions !== null && !Array.isArray(customSessions) && typeof customSessions === "object") {
+      options = customSessions;
+      customSessions = null;
+    }
     const rawSessions = customSessions !== null ? customSessions : ((typeof storage !== "undefined" && storage.getAllReadingSessions) ? await storage.getAllReadingSessions() : []);
     const books = customBooks !== null ? customBooks : ((typeof storage !== "undefined" && storage.getAllBooks) ? await storage.getAllBooks() : []);
     const deletedSet = new Set((typeof storage !== "undefined" && typeof storage.getDeletedSessionIds === "function") ? storage.getDeletedSessionIds() : []);
@@ -1643,13 +1647,19 @@ export class ReadingTracker {
       }
     }
 
-    // Statistiky za posledních 7 dní v lokálním čase
+    // Parametrizované statistiky pro 7-denní okno v lokálním čase s podporou posunu týdnů
+    const rawWeekOffset = Number(options?.weekOffset ?? 0);
+    const weekOffset = Math.min(0, isNaN(rawWeekOffset) ? 0 : rawWeekOffset);
+    const shiftDays = Math.abs(weekOffset) * 7;
+
     const last7Days = [];
     const now = new Date();
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i - shiftDays);
       const dateStr = getLocalDateKey(d);
       const dayName = d.toLocaleDateString("cs-CZ", { weekday: "short" });
+      const dayNum = d.getDate();
+      const monthNum = d.getMonth() + 1;
 
       const dEntry = dailyMap.get(dateStr);
       const daySeconds = dEntry ? dEntry.activeSeconds : 0;
@@ -1658,26 +1668,84 @@ export class ReadingTracker {
       last7Days.push({
         date: dateStr,
         label: dayName,
+        dayNumber: dayNum,
+        fullDate: `${dayNum}. ${monthNum}.`,
         seconds: daySeconds,
         minutes: Math.round(daySeconds / 60),
         words: dayWords
       });
     }
 
-    // Historie WPM: jeden bod pro každou platnou čtecí relaci v chronologickém pořadí s jejím skutečným přepočteným avg_wpm
+    // Určení počátečního a koncového data zobrazeného 7-denního okna
+    const windowStartDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6 - shiftDays);
+    const windowEndDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 0 - shiftDays);
+    const windowStartKey = getLocalDateKey(windowStartDate);
+    const windowEndKey = getLocalDateKey(windowEndDate);
+
+    // Formátování lidsky srozumitelného popisku rozsahu dat
+    let dateRangeLabel = "";
+    if (weekOffset === 0) {
+      dateRangeLabel = "Aktuální týden";
+    } else {
+      const startDay = windowStartDate.getDate();
+      const startMo = windowStartDate.getMonth() + 1;
+      const startYr = windowStartDate.getFullYear();
+      const endDay = windowEndDate.getDate();
+      const endMo = windowEndDate.getMonth() + 1;
+      const endYr = windowEndDate.getFullYear();
+      const currentYr = now.getFullYear();
+
+      if (startYr !== currentYr || endYr !== currentYr) {
+        dateRangeLabel = `${startDay}. ${startMo}. ${startYr} – ${endDay}. ${endMo}. ${endYr}`;
+      } else {
+        dateRangeLabel = `${startDay}. ${startMo}. – ${endDay}. ${endMo}.`;
+      }
+    }
+
+    // Kontrola hranic navigace týdnů
+    const hasLaterWeek = weekOffset < 0;
+    let hasEarlierWeek = false;
+    for (const [key, entry] of dailyMap.entries()) {
+      if (key < windowStartKey && entry.activeSeconds > 0) {
+        hasEarlierWeek = true;
+        break;
+      }
+    }
+    if (!hasEarlierWeek) {
+      for (const s of allSessions) {
+        const sKey = getLocalDateKey(s.date || s.startTime || s.timestamp);
+        if (sKey < windowStartKey && (s.duration || s.durationSeconds || 0) > 0) {
+          hasEarlierWeek = true;
+          break;
+        }
+      }
+    }
+
+    const dailyWindow = {
+      weekOffset,
+      startDate: windowStartKey,
+      endDate: windowEndKey,
+      label: dateRangeLabel,
+      hasEarlier: hasEarlierWeek,
+      hasLater: hasLaterWeek,
+      days: last7Days,
+      totalMinutes: last7Days.reduce((acc, d) => acc + d.minutes, 0),
+      totalWords: last7Days.reduce((acc, d) => acc + d.words, 0)
+    };
+
+    // Historie WPM: všechny platné chronologické relace s podporou stránkování po dávkách (defaultně 20 relací)
     const chronologicalSessions = [...allSessions].sort((a, b) => {
       const ta = a.timestamp || (a.startTime ? new Date(a.startTime).getTime() : 0);
       const tb = b.timestamp || (b.startTime ? new Date(b.startTime).getTime() : 0);
       return ta - tb;
     });
 
-    const wpmHistory = chronologicalSessions
+    const allValidWpmSessions = chronologicalSessions
       .filter(s => {
         const rawSpeed = s.avg_wpm ?? s.avgWpm ?? s.wpm ?? 0;
         const dur = s.duration ?? s.durationSeconds ?? s.activeSeconds ?? 0;
         return rawSpeed > 0 && rawSpeed <= MAX_VALID_WPM && dur >= MIN_SESSION_DURATION_SEC;
       })
-      .slice(-20)
       .map((s, idx) => ({
         index: idx + 1,
         sessionId: s.sessionId || s.id,
@@ -1693,6 +1761,57 @@ export class ReadingTracker {
         bookTitle: s.bookTitle || "Kniha"
       }));
 
+    const totalWpmSessions = allValidWpmSessions.length;
+    const pageSize = Math.max(1, Number(options?.pageSize || 20));
+    const maxBatchOffset = Math.max(0, Math.ceil(totalWpmSessions / pageSize) - 1);
+    const requestedBatchOffset = Math.max(0, Number(options?.wpmBatchOffset ?? options?.wpmOffset ?? 0));
+    const clampedBatchOffset = Math.min(requestedBatchOffset, maxBatchOffset);
+
+    let wpmHistory = [];
+    let wpmStartIndex = 0;
+    let wpmEndIndex = 0;
+    let hasOlderWpm = false;
+    let hasNewerWpm = false;
+    let wpmRangeLabel = "Žádné relace";
+    let batchAvgWpm = 0;
+
+    if (totalWpmSessions > 0) {
+      wpmEndIndex = Math.max(0, totalWpmSessions - clampedBatchOffset * pageSize);
+      wpmStartIndex = Math.max(0, wpmEndIndex - pageSize);
+      wpmHistory = allValidWpmSessions.slice(wpmStartIndex, wpmEndIndex);
+
+      hasOlderWpm = wpmStartIndex > 0;
+      hasNewerWpm = clampedBatchOffset > 0;
+
+      const startNum = wpmStartIndex + 1;
+      const endNum = wpmEndIndex;
+      if (startNum === endNum) {
+        wpmRangeLabel = `Relace ${endNum} z ${totalWpmSessions}`;
+      } else {
+        wpmRangeLabel = `Relace ${startNum}–${endNum} z ${totalWpmSessions}`;
+      }
+
+      const batchWpms = wpmHistory.map(h => h.wpm).filter(w => w > 0);
+      batchAvgWpm = batchWpms.length > 0
+        ? Math.round(batchWpms.reduce((acc, v) => acc + v, 0) / batchWpms.length)
+        : global_avg_wpm;
+    }
+
+    const wpmPagination = {
+      batchOffset: clampedBatchOffset,
+      maxBatchOffset,
+      pageSize,
+      totalSessions: totalWpmSessions,
+      startIndex: wpmStartIndex,
+      endIndex: wpmEndIndex,
+      startNumber: totalWpmSessions > 0 ? wpmStartIndex + 1 : 0,
+      endNumber: wpmEndIndex,
+      hasOlder: hasOlderWpm,
+      hasNewer: hasNewerWpm,
+      rangeLabel: wpmRangeLabel,
+      batchAvgWpm
+    };
+
     return {
       totalTimeFormatted: ReadingTracker.formatDuration(total_reading_seconds),
       totalSeconds: total_reading_seconds,
@@ -1703,11 +1822,15 @@ export class ReadingTracker {
       averageWpm: global_avg_wpm,
       avgWpm: global_avg_wpm,
       global_avg_wpm,
+      batchAvgWpm,
       streak,
       totalBooks: books.length,
       finishedBooks: books.filter(b => (b.progressPercent || 0) >= 100).length,
       last7Days,
+      dailyWindow,
       wpmHistory,
+      allValidWpmSessions,
+      wpmPagination,
       sessions: allSessions,
       dailySessions
     };

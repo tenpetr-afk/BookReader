@@ -36,8 +36,8 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/opendyslexic@5.1.0/700.css" />
 
   <!-- Styly aplikace -->
-  <link rel="stylesheet" href="./css/style.css?v=2.6.1" />
-  <link rel="stylesheet" href="./css/reader.css?v=2.6.1" />
+  <link rel="stylesheet" href="./css/style.css?v=2.6.5" />
+  <link rel="stylesheet" href="./css/reader.css?v=2.6.5" />
 </head>
 <body class="show-footer-bar">
 
@@ -765,8 +765,19 @@
         </div>
 
         <!-- Graf vývoje rychlosti WPM -->
-        <div class="chart-section">
-          <div class="chart-title">Vývoj rychlosti čtení v čase (WPM)</div>
+        <div class="chart-section" id="wpm-chart-section">
+          <div class="chart-header">
+            <div class="chart-title">Vývoj rychlosti čtení v čase (WPM)</div>
+            <div class="chart-nav-cluster" role="toolbar" aria-label="Navigace historie rychlosti čtení">
+              <button id="btn-wpm-prev" class="chart-nav-btn" aria-label="Starší relace" title="Zobrazit starší relace" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+              </button>
+              <span id="wpm-range-badge" class="chart-nav-badge" aria-live="polite">Relace 1–20</span>
+              <button id="btn-wpm-next" class="chart-nav-btn" aria-label="Novější relace" title="Zobrazit novější relace" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </button>
+            </div>
+          </div>
           <div id="wpm-chart-container"></div>
         </div>
 
@@ -820,9 +831,20 @@
           </details>
         </div>
 
-        <!-- Graf času čtení za posledních 7 dní -->
-        <div class="chart-section">
-          <div class="chart-title">Aktivní čas čtení za posledních 7 dní (v minutách)</div>
+        <!-- Graf času čtení za 7 dní -->
+        <div class="chart-section" id="daily-chart-section">
+          <div class="chart-header">
+            <div class="chart-title">Aktivní čas čtení za 7 dní (v minutách)</div>
+            <div class="chart-nav-cluster" role="toolbar" aria-label="Navigace historie denní aktivity čtení">
+              <button id="btn-daily-prev" class="chart-nav-btn" aria-label="Předchozí týden" title="Předchozí týden" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+              </button>
+              <span id="daily-range-badge" class="chart-nav-badge" aria-live="polite">Aktuální týden</span>
+              <button id="btn-daily-next" class="chart-nav-btn" aria-label="Následující týden" title="Následující týden" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </button>
+            </div>
+          </div>
           <div id="daily-chart-container"></div>
         </div>
 
@@ -850,6 +872,6 @@
   <div id="toast-notification" class="toast" role="status" aria-live="polite"></div>
 
   <!-- Hlavní aplikační skript -->
-  <script type="module" src="./js/app.js?v=2.6.1"></script>
+  <script type="module" src="./js/app.js?v=2.6.5"></script>
 </body>
 </html>

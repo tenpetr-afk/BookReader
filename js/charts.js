@@ -27,15 +27,16 @@ export class StatsCharts {
       const minutes = typeof d.minutes === "number" ? d.minutes : Math.round((d.seconds || 0) / 60);
       return {
         ...d,
-        minutes
+        minutes: Math.max(0, minutes)
       };
     });
 
+    const totalMinutes = normalizedData.reduce((acc, d) => acc + d.minutes, 0);
     const maxMinutes = Math.max(30, ...normalizedData.map(d => d.minutes));
     const barWidth = Math.min(36, Math.max(16, (chartW / (normalizedData.length || 1)) * 0.55));
     const step = chartW / (normalizedData.length || 1);
 
-    let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" class="stats-svg-chart" role="img" aria-label="Aktivita čtení za posledních 7 dní">
+    let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" class="stats-svg-chart" role="img" aria-label="Aktivita čtení">
       <defs>
         <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="#38bdf8" />
@@ -57,18 +58,33 @@ export class StatsCharts {
     // Sloupce
     normalizedData.forEach((d, i) => {
       const x = padding.left + i * step + (step - barWidth) / 2;
-      const barH = Math.max(3, (d.minutes / maxMinutes) * chartH);
+      const barH = d.minutes > 0 ? Math.max(3, (d.minutes / maxMinutes) * chartH) : 0;
       const y = padding.top + chartH - barH;
 
       svg += `
         <g class="chart-bar-group" tabindex="0" role="graphics-symbol" aria-label="${StatsCharts._escapeHtml(d.label)}: ${d.minutes} minut (${d.words || 0} slov)" data-idx="${i}">
-          <rect x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="4" fill="url(#barGrad)" class="chart-bar-rect">
-          </rect>
+          ${barH > 0
+            ? `<rect x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="4" fill="url(#barGrad)" class="chart-bar-rect"></rect>`
+            : `<rect x="${x}" y="${padding.top + chartH - 2}" width="${barWidth}" height="2" rx="1" fill="currentColor" opacity="0.15" class="chart-bar-rect chart-bar-zero"></rect>`
+          }
           <text x="${x + barWidth / 2}" y="${height - 10}" font-size="11" fill="currentColor" opacity="0.75" text-anchor="middle" pointer-events="none">${d.label}</text>
           ${d.minutes > 0 ? `<text x="${x + barWidth / 2}" y="${y - 6}" font-size="10" font-weight="bold" fill="currentColor" opacity="0.85" text-anchor="middle" pointer-events="none">${d.minutes}</text>` : ""}
         </g>
       `;
     });
+
+    // Prázdný stav, pokud v celém týdnu nebyla zaznamenána žádná aktivita čtení
+    if (totalMinutes === 0 && normalizedData.length > 0) {
+      const msgY = padding.top + chartH / 2;
+      svg += `
+        <g class="chart-week-empty-overlay" pointer-events="none">
+          <rect x="${padding.left + 20}" y="${msgY - 14}" width="${chartW - 40}" height="28" rx="6" fill="var(--bg-surface-elevated, #1e293b)" opacity="0.85" />
+          <text x="${padding.left + chartW / 2}" y="${msgY + 4}" font-size="11" fill="currentColor" opacity="0.65" text-anchor="middle" font-weight="500">
+            V tomto týdnu nebyla zaznamenána žádná aktivita čtení
+          </text>
+        </g>
+      `;
+    }
 
     svg += `</svg>`;
     container.innerHTML = svg;
@@ -99,10 +115,11 @@ export class StatsCharts {
           const wordCount = d.words || 0;
           const wordDeclension = wordCount === 1 ? "slovo" : (wordCount >= 2 && wordCount <= 4 ? "slova" : "slov");
           const avgWpm = minCount > 0 && wordCount > 0 ? Math.round(wordCount / minCount) : 0;
+          const badgeLabel = d.fullDate ? `${d.label} (${d.fullDate})` : d.label;
 
           return {
             title: "Aktivita čtení",
-            badge: d.label,
+            badge: badgeLabel,
             badgeType: "info",
             value: String(minCount),
             unit: minDeclension,
@@ -166,11 +183,11 @@ export class StatsCharts {
     const chartH = height - padding.top - padding.bottom;
 
     const wpms = validHistory.map(h => Math.round(h.wpm));
-    const effectiveAvgWpm = avgWpm > 0
-      ? Math.round(avgWpm)
-      : Math.round(wpms.reduce((acc, v) => acc + v, 0) / wpms.length);
+    // Výpočet průměru striktně z aktuálně zobrazené dávky relací
+    const batchAvgWpm = wpms.length > 0 ? Math.round(wpms.reduce((acc, v) => acc + v, 0) / wpms.length) : 0;
+    const effectiveAvgWpm = (typeof avgWpm === "number" && avgWpm > 0) ? Math.round(avgWpm) : batchAvgWpm;
 
-    // Dynamické meze osy Y zahrnující všechny body i celkový průměr s čistým odsazením
+    // Dynamické meze osy Y zahrnující všechny body i průměr dávky s čistým odsazením
     const dataMin = Math.min(...wpms, effectiveAvgWpm);
     const dataMax = Math.max(...wpms, effectiveAvgWpm);
     const minWpm = Math.max(0, Math.floor((dataMin * 0.85) / 20) * 20);

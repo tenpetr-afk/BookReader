@@ -6404,7 +6404,6 @@ export class ReadingRuler {
     }
 
     const effectiveClientY = clientY;
-    const pType = pointerType || this.activePointerType || (Date.now() - this.lastPenTime < 500 ? "pen" : "mouse");
 
     const isMovingLeft = (this.lastValidPointerX !== null && clientX !== null)
       ? (clientX < this.lastValidPointerX - 10)

@@ -4,17 +4,17 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.6.1";
-import { EpubParser } from "./epub-parser.js?v=2.6.1";
-import { PDFLoader } from "./pdf-loader.js?v=2.6.1";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.6.1";
-import { ReadingRuler } from "./ruler.js?v=2.6.1";
-import { StatsCharts } from "./charts.js?v=2.6.1";
-import { supabaseSync } from "./supabase-sync.js?v=2.6.1";
-import { supabase } from "./supabase-client.js?v=2.6.1";
-import * as TextParser from "./text-parser.js?v=2.6.1";
+import { storage, computeFileHash } from "./storage.js?v=2.6.5";
+import { EpubParser } from "./epub-parser.js?v=2.6.5";
+import { PDFLoader } from "./pdf-loader.js?v=2.6.5";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.6.5";
+import { ReadingRuler } from "./ruler.js?v=2.6.5";
+import { StatsCharts } from "./charts.js?v=2.6.5";
+import { supabaseSync } from "./supabase-sync.js?v=2.6.5";
+import { supabase } from "./supabase-client.js?v=2.6.5";
+import * as TextParser from "./text-parser.js?v=2.6.5";
 
-export const APP_VERSION = "v2.6.1";
+export const APP_VERSION = "v2.6.5";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -74,6 +74,10 @@ export class LuminaApp {
     this._isLoadingNextChapter = false;
     this._isLoadingPrevChapter = false;
     this._isModeTransitioning = false;
+
+    // Stavové proměnné pro navigaci a stránkování grafů statistik
+    this._dailyChartWeekOffset = 0;
+    this._wpmChartBatchOffset = 0;
 
     // DOM elementy
     this.dom = {};
@@ -346,6 +350,14 @@ export class LuminaApp {
       btnExportData: document.getElementById("btn-export-data"),
       btnRecalcStats: document.getElementById("btn-recalc-stats"),
       btnResetStats: document.getElementById("btn-reset-stats"),
+
+      // Ovládací prvky navigace grafů
+      btnDailyPrev: document.getElementById("btn-daily-prev"),
+      btnDailyNext: document.getElementById("btn-daily-next"),
+      dailyRangeBadge: document.getElementById("daily-range-badge"),
+      btnWpmPrev: document.getElementById("btn-wpm-prev"),
+      btnWpmNext: document.getElementById("btn-wpm-next"),
+      wpmRangeBadge: document.getElementById("wpm-range-badge"),
 
       // Intra-session analytics elementy
       sessionAnalyticsSection: document.getElementById("session-analytics-section"),
@@ -2957,6 +2969,8 @@ export class LuminaApp {
         try {
           this.dom.btnRecalcStats.disabled = true;
           this.dom.btnRecalcStats.textContent = "⏳ Přepočítávám...";
+          this._dailyChartWeekOffset = 0;
+          this._wpmChartBatchOffset = 0;
           const res = await storage.recalculateAndNormalizeStats();
           if (supabaseSync && supabaseSync.isOnline()) {
             try {
@@ -2986,6 +3000,8 @@ export class LuminaApp {
         if (!confirmed) return;
         try {
           this.dom.btnResetStats.disabled = true;
+          this._dailyChartWeekOffset = 0;
+          this._wpmChartBatchOffset = 0;
 
           // 1. Získat ID všech stávajících relací pro tombstones
           let existingIds = [];
@@ -3041,6 +3057,30 @@ export class LuminaApp {
       });
     }
 
+    // Navigace historie denní aktivity (předchozí / následující týden)
+    if (this.dom.btnDailyPrev) {
+      this.dom.btnDailyPrev.addEventListener("click", () => {
+        this.navigateDailyChart(-1);
+      });
+    }
+    if (this.dom.btnDailyNext) {
+      this.dom.btnDailyNext.addEventListener("click", () => {
+        this.navigateDailyChart(1);
+      });
+    }
+
+    // Navigace historie rychlosti WPM (starší / novější relace)
+    if (this.dom.btnWpmPrev) {
+      this.dom.btnWpmPrev.addEventListener("click", () => {
+        this.navigateWpmChart(1);
+      });
+    }
+    if (this.dom.btnWpmNext) {
+      this.dom.btnWpmNext.addEventListener("click", () => {
+        this.navigateWpmChart(-1);
+      });
+    }
+
     // Přeškálování SVG grafů při změně velikosti okna
     let resizeTimer = null;
     window.addEventListener("resize", () => {
@@ -3048,8 +3088,8 @@ export class LuminaApp {
         if (resizeTimer) clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
           if (this._lastStats) {
-            if (this.dom.dailyChartContainer) StatsCharts.renderDailyActivityChart(this.dom.dailyChartContainer, this._lastStats.last7Days);
-            if (this.dom.wpmChartContainer) StatsCharts.renderWpmProgressChart(this.dom.wpmChartContainer, this._lastStats.wpmHistory, this._lastStats.averageWpm);
+            this.updateDailyChartUI(this._lastStats);
+            this.updateWpmChartUI(this._lastStats);
           }
           if (this._selectedSessionId && this._availableSessions) {
             const session = this._availableSessions.find(s => (s.sessionId === this._selectedSessionId || s.id === this._selectedSessionId));
@@ -7435,9 +7475,16 @@ export class LuminaApp {
     }
   }
 
-  async refreshStatsUI() {
+  async refreshStatsUI(resetOffsets = true) {
     try {
-      const stats = await ReadingTracker.computeGlobalStats();
+      if (resetOffsets) {
+        this._dailyChartWeekOffset = 0;
+        this._wpmChartBatchOffset = 0;
+      }
+      const stats = await ReadingTracker.computeGlobalStats(null, null, {
+        weekOffset: this._dailyChartWeekOffset,
+        wpmBatchOffset: this._wpmChartBatchOffset
+      });
       this._lastStats = stats;
 
       if (this.dom.statTotalTime) this.dom.statTotalTime.textContent = stats.totalTimeFormatted;
@@ -7448,14 +7495,91 @@ export class LuminaApp {
       if (this.dom.statTotalWords) this.dom.statTotalWords.textContent = stats.totalWords.toLocaleString("cs-CZ");
       if (this.dom.statStreak) this.dom.statStreak.textContent = `${stats.streak} ${stats.streak === 1 ? "den" : (stats.streak >= 2 && stats.streak <= 4 ? "dny" : "dní")}`;
 
-      // Vykreslení globálních grafů
-      if (this.dom.dailyChartContainer) StatsCharts.renderDailyActivityChart(this.dom.dailyChartContainer, stats.last7Days);
-      if (this.dom.wpmChartContainer) StatsCharts.renderWpmProgressChart(this.dom.wpmChartContainer, stats.wpmHistory, stats.averageWpm);
+      // Aktualizace a vykreslení obou grafů a jejich ovládacích prvků navigace
+      this.updateDailyChartUI(stats);
+      this.updateWpmChartUI(stats);
 
       // Načtení detailních čtecích relací a vykreslení intra-session časové osy
       await this.initSessionAnalytics();
     } catch (err) {
       console.warn("[LuminaApp] Varování při obnově statistik UI:", err);
+    }
+  }
+
+  updateDailyChartUI(stats) {
+    if (!stats) return;
+    if (this.dom.dailyChartContainer && stats.last7Days) {
+      StatsCharts.renderDailyActivityChart(this.dom.dailyChartContainer, stats.last7Days);
+    }
+    if (this.dom.dailyRangeBadge && stats.dailyWindow) {
+      this.dom.dailyRangeBadge.textContent = stats.dailyWindow.label;
+    }
+    if (this.dom.btnDailyPrev && stats.dailyWindow) {
+      this.dom.btnDailyPrev.disabled = !stats.dailyWindow.hasEarlier;
+    }
+    if (this.dom.btnDailyNext && stats.dailyWindow) {
+      this.dom.btnDailyNext.disabled = !stats.dailyWindow.hasLater;
+    }
+  }
+
+  async navigateDailyChart(delta) {
+    // delta < 0: posun do minulosti (předchozí týden)
+    // delta > 0: posun k přítomnosti (následující týden)
+    const newOffset = Math.min(0, this._dailyChartWeekOffset + delta);
+    if (newOffset === this._dailyChartWeekOffset && delta > 0) return;
+    this._dailyChartWeekOffset = newOffset;
+
+    try {
+      const stats = await ReadingTracker.computeGlobalStats(null, null, {
+        weekOffset: this._dailyChartWeekOffset,
+        wpmBatchOffset: this._wpmChartBatchOffset
+      });
+      if (this._lastStats) {
+        this._lastStats.last7Days = stats.last7Days;
+        this._lastStats.dailyWindow = stats.dailyWindow;
+      }
+      this.updateDailyChartUI(stats);
+    } catch (err) {
+      console.warn("[LuminaApp] Chyba při posunu denního grafu:", err);
+    }
+  }
+
+  updateWpmChartUI(stats) {
+    if (!stats) return;
+    const batchAvg = stats.wpmPagination?.batchAvgWpm ?? stats.batchAvgWpm ?? stats.averageWpm;
+    if (this.dom.wpmChartContainer && stats.wpmHistory) {
+      StatsCharts.renderWpmProgressChart(this.dom.wpmChartContainer, stats.wpmHistory, batchAvg);
+    }
+    if (this.dom.wpmRangeBadge && stats.wpmPagination) {
+      this.dom.wpmRangeBadge.textContent = stats.wpmPagination.rangeLabel;
+    }
+    if (this.dom.btnWpmPrev && stats.wpmPagination) {
+      this.dom.btnWpmPrev.disabled = !stats.wpmPagination.hasOlder;
+    }
+    if (this.dom.btnWpmNext && stats.wpmPagination) {
+      this.dom.btnWpmNext.disabled = !stats.wpmPagination.hasNewer;
+    }
+  }
+
+  async navigateWpmChart(delta) {
+    // delta > 0: starší relace (batchOffset se zvyšuje)
+    // delta < 0: novější relace (batchOffset se snižuje)
+    const newOffset = Math.max(0, this._wpmChartBatchOffset + delta);
+    if (newOffset === this._wpmChartBatchOffset && delta < 0) return;
+    this._wpmChartBatchOffset = newOffset;
+
+    try {
+      const stats = await ReadingTracker.computeGlobalStats(null, null, {
+        weekOffset: this._dailyChartWeekOffset,
+        wpmBatchOffset: this._wpmChartBatchOffset
+      });
+      if (this._lastStats) {
+        this._lastStats.wpmHistory = stats.wpmHistory;
+        this._lastStats.wpmPagination = stats.wpmPagination;
+      }
+      this.updateWpmChartUI(stats);
+    } catch (err) {
+      console.warn("[LuminaApp] Chyba při posunu WPM grafu:", err);
     }
   }
 
@@ -7466,6 +7590,10 @@ export class LuminaApp {
     }
     if (this.dom.statsModal) this.dom.statsModal.classList.add("open");
 
+    // Výchozí nastavení offsetů grafů na aktuální data při každém otevření modálu
+    this._dailyChartWeekOffset = 0;
+    this._wpmChartBatchOffset = 0;
+
     // Pojistka integrity dat: detekce a automatická oprava poškozených nebo nafouknutých hodnot
     try {
       await storage.sanitizeCorruptedStats();
@@ -7473,7 +7601,7 @@ export class LuminaApp {
       console.warn("Chyba při auto-normalizaci statistik:", e);
     }
 
-    await this.refreshStatsUI();
+    await this.refreshStatsUI(true);
     this._statsNeedRefresh = false;
   }
 

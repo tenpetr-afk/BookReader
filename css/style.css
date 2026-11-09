@@ -1606,6 +1606,96 @@ body.settings-sheet-open .drawer-backdrop {
   margin-bottom: 1rem;
 }
 
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.chart-header .chart-title {
+  margin-bottom: 0;
+}
+
+.chart-nav-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.2rem 0.3rem;
+  background: var(--bg-surface, rgba(0, 0, 0, 0.25));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full, 9999px);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.chart-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-main);
+  border-radius: var(--radius-full, 9999px);
+  cursor: pointer;
+  transition: background-color 0.18s ease, color 0.18s ease, opacity 0.18s ease, transform 0.1s ease;
+  user-select: none;
+}
+
+.chart-nav-btn:hover:not(:disabled) {
+  background-color: var(--bg-surface-hover, rgba(255, 255, 255, 0.12));
+  color: var(--color-primary);
+}
+
+.chart-nav-btn:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.chart-nav-btn:disabled {
+  opacity: 0.28;
+  cursor: default;
+  pointer-events: none;
+  transform: none;
+  color: var(--text-muted);
+}
+
+.chart-nav-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 0 0.5rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+  letter-spacing: 0.01em;
+}
+
+.chart-bar-zero {
+  transition: opacity 0.2s ease;
+}
+
+.chart-week-empty-overlay text {
+  user-select: none;
+}
+
+@media (max-width: 540px) {
+  .chart-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .chart-nav-cluster {
+    align-self: flex-start;
+  }
+}
+
 .chart-empty-state {
   text-align: center;
   padding: 2.5rem 1rem;
