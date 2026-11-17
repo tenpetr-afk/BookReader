@@ -237,6 +237,7 @@ export class ReadingRuler {
       activeColumn: 0,
       scrollDetectAccum: 0,
       wordFloatLeft: null,
+      waveCenterX: null,
       wordWrapOverflow: 0
     };
 
@@ -2571,6 +2572,7 @@ export class ReadingRuler {
     if (!keepColumn) {
       tp.activeColumn = 0;
       tp.wordFloatLeft = null;
+      tp.waveCenterX = null;
     }
   }
 
@@ -2912,15 +2914,24 @@ export class ReadingRuler {
     tp.scrollDetectAccum = 0;
     tp.wordWrapOverflow = 0;
     tp.activeColumn = this._getFallbackActiveColumn();
-    if (this.wordTracking && tp.wordFloatLeft == null && Number.isFinite(this.wordLeft)) {
+    if (this.wordTracking) {
       const curIdx = (this.activeLineIndex >= 0 && this.cachedLines && this.activeLineIndex < this.cachedLines.length)
         ? this.activeLineIndex
         : -1;
       const lineWords = curIdx >= 0 ? this.ensureActiveWords(curIdx) : null;
-      if (lineWords && lineWords.length > 0 && this.activeWordIndex >= 0 && this.activeWordIndex < lineWords.length) {
-        tp.wordFloatLeft = lineWords[this.activeWordIndex].left;
-      } else {
-        tp.wordFloatLeft = this.wordLeft;
+      if (tp.wordFloatLeft == null && Number.isFinite(this.wordLeft)) {
+        if (lineWords && lineWords.length > 0 && this.activeWordIndex >= 0 && this.activeWordIndex < lineWords.length) {
+          tp.wordFloatLeft = lineWords[this.activeWordIndex].left - 3;
+        } else {
+          tp.wordFloatLeft = this.wordLeft;
+        }
+      }
+      if (tp.waveCenterX == null) {
+        if (Number.isFinite(this.lastPointerX)) {
+          tp.waveCenterX = this.lastPointerX;
+        } else if (lineWords && lineWords.length > 0) {
+          tp.waveCenterX = lineWords[0].left;
+        }
       }
     }
     this.activePointerType = "touch";
@@ -3045,10 +3056,10 @@ export class ReadingRuler {
     }
   }
 
-  _computeTrackpadWordPreview(lineWords, wIdx, textMaxX) {
+  _computeTrackpadWordPreview(lineWords, wIdx, textMaxX, padX = 3) {
     if (!lineWords || wIdx < 0 || wIdx >= lineWords.length) return 0;
     const w = lineWords[wIdx];
-    const firstW = Math.max(4, w.width);
+    const firstW = Math.max(4, Math.round(w.width + padX * 2));
     let nextWLast = null;
     let prevCandLeft = w.left;
     for (let offset = 1; offset <= 2; offset++) {
@@ -3060,53 +3071,58 @@ export class ReadingRuler {
       nextWLast = nw;
     }
     if (!nextWLast) return 0;
-    const clampedTargetRight = Math.min(nextWLast.right, textMaxX);
-    return Math.max(0, clampedTargetRight - w.left - firstW);
+    const rawTargetRight = Math.round(nextWLast.right + padX);
+    const clampedTargetRight = Math.min(rawTargetRight, textMaxX);
+    const stableLeft = Math.round(w.left - padX);
+    return Math.max(0, clampedTargetRight - stableLeft - firstW);
   }
 
   _applyContinuousWordGeometryAtLeft(lineWords, rawLeft, activeLine = null, isMovingLeft = false) {
-    let textMinX = activeLine ? (activeLine.textLeft ?? activeLine.left ?? 0) : 0;
-    let textMaxX = activeLine ? (activeLine.textRight ?? activeLine.right ?? window.innerWidth) : window.innerWidth;
+    const padX = 3;
+    let textMinX = activeLine ? Math.round((activeLine.textLeft ?? activeLine.left ?? 0) - padX) : 0;
+    let textMaxX = activeLine ? Math.round((activeLine.textRight ?? activeLine.right ?? window.innerWidth) + padX) : window.innerWidth;
     if (lineWords && lineWords.length > 0) {
-      textMinX = lineWords[0].left;
-      textMaxX = lineWords[lineWords.length - 1].right;
+      textMinX = Math.round(lineWords[0].left - padX);
+      textMaxX = Math.round(lineWords[lineWords.length - 1].right + padX);
     }
 
     let continuousWidth = Number.isFinite(this.activeWordWidth) && this.activeWordWidth > 0 ? this.activeWordWidth : 60;
     let rawPreviewW = 0;
 
     if (lineWords && lineWords.length > 0) {
-      const firstAnchor = lineWords[0].left;
+      const firstAnchor = lineWords[0].left - padX;
       const lastIdx = lineWords.length - 1;
-      const lastAnchor = lineWords[lastIdx].left;
+      const lastAnchor = lineWords[lastIdx].left - padX;
 
       if (rawLeft <= firstAnchor || lineWords.length === 1) {
-        continuousWidth = Math.max(4, lineWords[0].width);
-        rawPreviewW = this._computeTrackpadWordPreview(lineWords, 0, textMaxX);
+        continuousWidth = Math.max(4, Math.round(lineWords[0].width + padX * 2));
+        rawPreviewW = this._computeTrackpadWordPreview(lineWords, 0, textMaxX, padX);
         this.activeWordIndex = 0;
       } else if (rawLeft >= lastAnchor) {
-        continuousWidth = Math.max(4, lineWords[lastIdx].width);
-        rawPreviewW = this._computeTrackpadWordPreview(lineWords, lastIdx, textMaxX);
+        continuousWidth = Math.max(4, Math.round(lineWords[lastIdx].width + padX * 2));
+        rawPreviewW = this._computeTrackpadWordPreview(lineWords, lastIdx, textMaxX, padX);
         this.activeWordIndex = lastIdx;
       } else {
         let segIdx = 0;
         for (let k = 0; k < lineWords.length - 1; k++) {
-          if (rawLeft >= lineWords[k].left && rawLeft <= lineWords[k + 1].left) {
+          if (rawLeft >= (lineWords[k].left - padX) && rawLeft <= (lineWords[k + 1].left - padX)) {
             segIdx = k;
             break;
           }
         }
         const itemA = lineWords[segIdx];
         const itemB = lineWords[segIdx + 1];
-        const span = itemB.left - itemA.left;
-        const t = span > 0 ? Math.max(0, Math.min(1, (rawLeft - itemA.left) / span)) : 0;
+        const leftA = itemA.left - padX;
+        const leftB = itemB.left - padX;
+        const span = leftB - leftA;
+        const t = span > 0 ? Math.max(0, Math.min(1, (rawLeft - leftA) / span)) : 0;
 
-        const widthA = Math.max(4, itemA.width);
-        const widthB = Math.max(4, itemB.width);
+        const widthA = Math.max(4, itemA.width + padX * 2);
+        const widthB = Math.max(4, itemB.width + padX * 2);
         continuousWidth = widthA + t * (widthB - widthA);
 
-        const prevA = this._computeTrackpadWordPreview(lineWords, segIdx, textMaxX);
-        const prevB = this._computeTrackpadWordPreview(lineWords, segIdx + 1, textMaxX);
+        const prevA = this._computeTrackpadWordPreview(lineWords, segIdx, textMaxX, padX);
+        const prevB = this._computeTrackpadWordPreview(lineWords, segIdx + 1, textMaxX, padX);
         rawPreviewW = prevA + t * (prevB - prevA);
 
         this.activeWordIndex = (t < 0.5) ? segIdx : (segIdx + 1);
@@ -3114,8 +3130,8 @@ export class ReadingRuler {
       this._checkWordProgress(this.activeWordIndex, isMovingLeft);
     }
 
-    // Clamp based strictly on the active highlight reaching the true right edge of the line's text,
-    // never allowing the look-ahead preview tail to cause a premature line wrap.
+    // Clamp strictly to [textMinX, textMaxX - continuousWidth] with outward padX matching mouse mode,
+    // never allowing look-ahead preview tail to cause premature stopping before the last character.
     const maxLeft = Math.max(textMinX, textMaxX - continuousWidth);
     const clampedLeft = Math.max(textMinX, Math.min(maxLeft, rawLeft));
     const remainingRightSpace = Math.max(0, textMaxX - (clampedLeft + continuousWidth));
@@ -3124,6 +3140,7 @@ export class ReadingRuler {
 
     if (this._trackpad) {
       this._trackpad.wordFloatLeft = clampedLeft;
+      this._trackpad.waveCenterX = clampedLeft + continuousWidth / 2;
     }
 
     this.activeWordWidth = Math.round(continuousWidth);
@@ -3160,6 +3177,51 @@ export class ReadingRuler {
     return { clampedLeft, textMinX, maxLeft, overflow: rawLeft - clampedLeft };
   }
 
+  _applyContinuousBottomCoverWaveAtX(lineWords, rawCenterX, activeLine = null, isMovingLeft = false) {
+    let minCenterX = activeLine ? (activeLine.textLeft ?? activeLine.left ?? 0) : 0;
+    let maxCenterX = activeLine ? (activeLine.textRight ?? activeLine.right ?? window.innerWidth) : window.innerWidth;
+    if (lineWords && lineWords.length > 0) {
+      minCenterX = lineWords[0].left;
+      maxCenterX = lineWords[lineWords.length - 1].right;
+    }
+
+    const clampedCenterX = Math.max(minCenterX, Math.min(maxCenterX, rawCenterX));
+
+    if (lineWords && lineWords.length > 0) {
+      let closestIdx = 0;
+      let minDist = Infinity;
+      for (let i = 0; i < lineWords.length; i++) {
+        const w = lineWords[i];
+        const d = clampedCenterX < w.left ? (w.left - clampedCenterX) : clampedCenterX > w.right ? (clampedCenterX - w.right) : 0;
+        if (d < minDist) {
+          minDist = d;
+          closestIdx = i;
+        }
+      }
+      this.activeWordIndex = closestIdx;
+      this._checkWordProgress(closestIdx, isMovingLeft);
+      this.wordLeft = Math.round(lineWords[closestIdx].left - 3);
+      this.activeWordWidth = Math.round(lineWords[closestIdx].width + 6);
+    }
+
+    if (this._trackpad) {
+      this._trackpad.waveCenterX = clampedCenterX;
+      this._trackpad.wordFloatLeft = clampedCenterX - (this.activeWordWidth || 40) / 2;
+    }
+
+    const vp = this.isVerticalMode() ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
+    this.lastPointerX = Math.round(clampedCenterX);
+    if (activeLine) {
+      this.lastPointerY = this.isVerticalMode()
+        ? Math.round(activeLine.centerY - (vp ? vp.scrollTop : 0))
+        : activeLine.centerY;
+    }
+    this.lastValidPointerX = this.lastPointerX;
+    this.lastValidPointerY = this.lastPointerY;
+
+    return clampedCenterX;
+  }
+
   _applyTrackpadContinuousWordX(dx) {
     const tp = this._trackpad;
     if (!tp || !this.cachedLines || this.cachedLines.length === 0) return;
@@ -3173,11 +3235,6 @@ export class ReadingRuler {
     const lineWords = this.ensureActiveWords(curIdx);
     if (!lineWords || lineWords.length === 0) return;
 
-    const startLeft = Number.isFinite(tp.wordFloatLeft)
-      ? tp.wordFloatLeft
-      : lineWords[0].left;
-    const rawLeft = startLeft + dx;
-
     const geom = this.computeLineGeometry(curIdx);
     if (geom) {
       this.height = geom.height;
@@ -3185,9 +3242,22 @@ export class ReadingRuler {
       this.currentY = geom.targetY;
     }
 
-    // Clamp strictly within [textMinX, maxLeft] of the current line with zero overshoot memory
-    // so reversing direction from either line edge responds immediately on the first pixel.
-    this._applyContinuousWordGeometryAtLeft(lineWords, rawLeft, curLine, dx < 0);
+    const isBottomCover = (this.style === "bottom-cover" || this.mode === "bottom-cover");
+    if (isBottomCover) {
+      const startCenterX = Number.isFinite(tp.waveCenterX)
+        ? tp.waveCenterX
+        : (Number.isFinite(this.lastPointerX) ? this.lastPointerX : lineWords[0].left);
+      this._applyContinuousBottomCoverWaveAtX(lineWords, startCenterX + dx, curLine, dx < 0);
+    } else {
+      const padX = 3;
+      const startLeft = Number.isFinite(tp.wordFloatLeft)
+        ? tp.wordFloatLeft
+        : (lineWords[0].left - padX);
+      // Clamp strictly within [textMinX, maxLeft] of the current line with zero overshoot memory
+      // so reversing direction from either line edge responds immediately on the first pixel.
+      this._applyContinuousWordGeometryAtLeft(lineWords, startLeft + dx, curLine, dx < 0);
+    }
+
     tp.wordWrapOverflow = 0;
     this.rulerEl?.classList.add("word-tracking-mode");
     this._snapRulerInstantOrAnimated();
@@ -3327,8 +3397,13 @@ export class ReadingRuler {
     }
 
     if (words && words.length > 0) {
-      // Position flush at the exact left starting edge of the new line's text (respecting indentation)
-      this._applyContinuousWordGeometryAtLeft(words, words[0].left, nextLine, dir < 0);
+      const isBottomCover = (this.style === "bottom-cover" || this.mode === "bottom-cover");
+      if (isBottomCover) {
+        this._applyContinuousBottomCoverWaveAtX(words, words[0].left, nextLine, dir < 0);
+      } else {
+        // Position flush at the exact outward-padded starting edge of the new line's text (matching mouse mode)
+        this._applyContinuousWordGeometryAtLeft(words, words[0].left - 3, nextLine, dir < 0);
+      }
       this.rulerEl?.classList.add("word-tracking-mode");
     } else {
       this.activeWordIndex = -1;
