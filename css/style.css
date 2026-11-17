@@ -222,13 +222,14 @@ body {
 #drawer-pdf-auto-height-row.is-hidden,
 #popover-ruler-mode-section.is-hidden,
 #drawer-word-tracking-section.is-hidden,
-[data-ruler-follow="keyboard"].is-hidden {
+[data-ruler-follow="keyboard"].is-hidden,
+[data-ruler-follow="trackpad"].is-hidden,
+.popover-styles-grid .popover-style-btn.is-hidden {
   display: none !important;
 }
 
-#popover-follow-section.is-image-only .popover-styles-grid,
-#settings-follow-section.is-image-only .popover-segmented-control,
-#settings-follow-section.is-image-only > div:last-child {
+#popover-follow-section.is-single-follow .popover-styles-grid,
+#settings-follow-section.is-single-follow .popover-segmented-control {
   grid-template-columns: 1fr !important;
 }
 
@@ -5376,16 +5377,20 @@ body.ui-liquid-glass .popover-slider-wrapper .slider-input.is-active::-moz-range
   transform: scale(1) translateZ(0) !important;
 }
 
+.popover-segmented-control.columns-1 {
+  grid-template-columns: 1fr;
+}
+
 .popover-segmented-control.columns-2 {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .popover-segmented-control.columns-3 {
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .popover-segmented-control.columns-4 {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .popover-segmented-control.columns-4 .segment-btn {

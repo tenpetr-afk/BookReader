@@ -4,7 +4,7 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash } from "./storage.js?v=2.6.5";
+import { storage, computeFileHash, isTouchCapableDevice } from "./storage.js?v=2.6.5";
 import { EpubParser } from "./epub-parser.js?v=2.6.5";
 import { PDFLoader } from "./pdf-loader.js?v=2.6.5";
 import { tracker, ReadingTracker } from "./tracker.js?v=2.6.5";
@@ -221,6 +221,22 @@ export class LuminaApp {
   setupEventListeners() {
     this.bindEvents();
     this.initSegmentedBubbles();
+    this.updateRulerFollowModeUI();
+    try {
+      const handleTouchCapChange = () => {
+        this.updateRulerFollowModeUI();
+        this.syncAllSegmentedBubbles(true);
+      };
+      ["(pointer: coarse)", "(any-pointer: coarse)"].forEach((mqQuery) => {
+        const mq = window.matchMedia?.(mqQuery);
+        if (!mq) return;
+        if (typeof mq.addEventListener === "function") {
+          mq.addEventListener("change", handleTouchCapChange);
+        } else if (typeof mq.addListener === "function") {
+          mq.addListener(handleTouchCapChange);
+        }
+      });
+    } catch (_) {}
     // Automatická synchronizace grafické výplně tekutého skla pro všechny posuvníky
     document.addEventListener("input", (e) => {
       if (e.target && e.target.type === "range") {
@@ -475,6 +491,10 @@ export class LuminaApp {
       // Notifikace / Toast
       toast: document.getElementById("toast-notification")
     };
+  }
+
+  isTouchCapableDevice() {
+    return isTouchCapableDevice();
   }
 
   isInteractiveOrUiElement(target) {
@@ -911,17 +931,23 @@ export class LuminaApp {
       this.dom.sliderRulerOpacity.value = Math.round(s.ruler.dimOpacity * 100);
       if (this.dom.valRulerOpacity) this.dom.valRulerOpacity.textContent = `${Math.round(s.ruler.dimOpacity * 100)}%`;
     }
+    if (!s.ruler) s.ruler = {};
+    if (!["mouse", "keyboard", "trackpad"].includes(s.ruler.followMode)) {
+      s.ruler.followMode = "mouse";
+    }
+    if (s.ruler.followMode === "trackpad" && !this.isTouchCapableDevice()) {
+      s.ruler.followMode = "mouse";
+      if (this.ruler && this.ruler.followMode === "trackpad") {
+        this.ruler.setFollowMode("mouse");
+      }
+    }
     if (this.dom.rulerFollowSelect) {
       this.dom.rulerFollowSelect.value = s.ruler.followMode;
     }
     if (this.dom.popoverRulerFollowSelect) {
       this.dom.popoverRulerFollowSelect.value = s.ruler.followMode;
     }
-    if (this.dom.rulerFollowButtons) {
-      this.dom.rulerFollowButtons.forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.rulerFollow === s.ruler.followMode);
-      });
-    }
+    this.updateRulerFollowModeUI();
     this.setPdfRulerUIVisibility(this.isPdfMode);
     if (this.isPdfMode && this.currentBook?.pdfRulerConfig) {
       this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
@@ -1350,7 +1376,11 @@ export class LuminaApp {
           return;
         }
         if (this.ruler && this.ruler.enabled) {
-          if (this.ruler.followMode === "mouse") {
+          if (this.ruler.followMode === "trackpad" && this.ruler.wasRecentlyTrackpadDragging?.()) {
+            e.preventDefault();
+            return;
+          }
+          if (this.ruler.followMode === "mouse" || this.ruler.followMode === "trackpad") {
             lastTapTime = Date.now();
             if (this.ruler) {
               this.ruler.lastTouchEndTime = Date.now();
@@ -1421,7 +1451,11 @@ export class LuminaApp {
         return;
       }
       if (this.ruler && this.ruler.enabled) {
-        if (this.ruler.followMode === "mouse") {
+        if (this.ruler.followMode === "trackpad" && this.ruler.wasRecentlyTrackpadDragging?.()) {
+          e.preventDefault();
+          return;
+        }
+        if (this.ruler.followMode === "mouse" || this.ruler.followMode === "trackpad") {
           lastTapTime = Date.now();
           if (this.ruler) {
             this.ruler.lastTouchEndTime = Date.now();
@@ -1471,11 +1505,21 @@ export class LuminaApp {
         }
         if (e.touches.length !== 1) {
           isSwiping = false;
+          touchStartTime = 0;
           return;
         }
-        // Apple Pencil v režimu sledování myši nesmí zahajovat swipe
-        if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
+        // Apple Pencil v režimu sledování myši či trackpadu nesmí zahajovat swipe
+        if (this.ruler?.enabled && (this.ruler.followMode === "mouse" || this.ruler.followMode === "trackpad") && this.ruler.isPenEvent(e)) {
           isSwiping = false;
+          touchStartTime = 0;
+          return;
+        }
+        // V režimu virtuálního trackpadu jedno-prstový tah ovládá pravítko – potlačit swipe
+        if (this.ruler?.enabled && this.ruler.followMode === "trackpad") {
+          isSwiping = false;
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
+          touchStartTime = Date.now();
           return;
         }
         if (this.ruler) {
@@ -1532,6 +1576,82 @@ export class LuminaApp {
           e.stopPropagation();
           return;
         }
+        // Stylus v režimu sledování myši či trackpadu nesmí otáčet stránky ani krokovat
+        if (this.ruler?.enabled && (this.ruler.followMode === "mouse" || this.ruler.followMode === "trackpad") && this.ruler.isPenEvent(e)) {
+          isSwiping = false;
+          if (this.ruler) this.ruler.isTouchSwiping = false;
+          return;
+        }
+
+        // V režimu virtuálního trackpadu potlačit horizontální swipe – povolit pouze čistý stacionární tap
+        if (this.ruler?.enabled && this.ruler.followMode === "trackpad") {
+          isSwiping = false;
+          this.ruler.isTouchSwiping = false;
+          if (this.ruler.wasRecentlyTrackpadDragging?.()) {
+            if (e.cancelable) e.preventDefault();
+            return;
+          }
+          if (e.changedTouches.length === 1 && touchStartTime > 0) {
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+            const absDeltaX = Math.abs(touchEndX - touchStartX);
+            const absDeltaY = Math.abs(touchEndY - touchStartY);
+            const dist = Math.hypot(touchEndX - touchStartX, touchEndY - touchStartY);
+            const duration = Date.now() - touchStartTime;
+            touchStartTime = 0;
+            if (absDeltaX < 10 && absDeltaY < 10 && dist < 10 && duration < 350) {
+              if (this.dom.readerFloatingDock && !this.dom.readerFloatingDock.classList.contains("is-hidden")) {
+                this.closeFloatingDock();
+                if (e.cancelable) e.preventDefault();
+                return;
+              }
+              if (e.target && (e.target.closest("a, button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
+                return;
+              }
+              if (this.isCenterTap(touchEndX, touchEndY)) {
+                lastTapTime = Date.now();
+                this.toggleReaderChrome();
+                if (e.cancelable) e.preventDefault();
+                return;
+              }
+              const width = window.innerWidth || document.documentElement.clientWidth;
+              if (touchEndX < width * 0.2) {
+                lastTapTime = Date.now();
+                this.ruler.lastSwipeTime = lastTapTime;
+                this.ruler.lastTouchEndTime = lastTapTime;
+                this.ruler.isTouchActive = false;
+                this.ruler.isTouchSwiping = false;
+                this.ruler.isSwipePageTransition = true;
+                this.ruler._postTransitionAnchorLineIndex = -1;
+                this.ruler.flickResyncTopLine = true;
+                this.ruler.isLineLocked = true;
+                this.ruler.suppressLineAdvancement = true;
+                this.ruler.lockAdvancement(200, -1);
+                if (e.cancelable) e.preventDefault();
+                this.prevPage();
+                return;
+              } else if (touchEndX > width * 0.8) {
+                lastTapTime = Date.now();
+                this.ruler.lastSwipeTime = lastTapTime;
+                this.ruler.lastTouchEndTime = lastTapTime;
+                this.ruler.isTouchActive = false;
+                this.ruler.isTouchSwiping = false;
+                this.ruler.isSwipePageTransition = true;
+                this.ruler._postTransitionAnchorLineIndex = 0;
+                this.ruler.flickResyncTopLine = true;
+                this.ruler.isLineLocked = true;
+                this.ruler.suppressLineAdvancement = true;
+                this.ruler.lockAdvancement(200, 1);
+                if (e.cancelable) e.preventDefault();
+                this.nextPage();
+                return;
+              }
+            }
+          }
+          touchStartTime = 0;
+          return;
+        }
+
         if (!isSwiping || e.changedTouches.length !== 1) {
           isSwiping = false;
           if (this.ruler) this.ruler.isTouchSwiping = false;
@@ -1539,11 +1659,6 @@ export class LuminaApp {
         }
         isSwiping = false;
         if (this.ruler) this.ruler.isTouchSwiping = false;
-
-        // Stylus v režimu sledování myši nesmí otáčet stránky ani krokovat
-        if (this.ruler?.enabled && this.ruler.followMode === "mouse" && this.ruler.isPenEvent(e)) {
-          return;
-        }
 
         const touchEndX = e.changedTouches[0].clientX;
         const touchEndY = e.changedTouches[0].clientY;
@@ -1735,6 +1850,16 @@ export class LuminaApp {
             return;
           }
 
+          const isTrackpadDragBlock = !!(this.ruler?.enabled && this.ruler.followMode === "trackpad" && this.ruler.wasRecentlyTrackpadDragging?.());
+          if (isTrackpadDragBlock && (e.type === "click" || e.pointerType === "mouse" || !e.pointerType)) {
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            if (e.cancelable && (e.type === "click" || e.type === "pointerdown" || e.type === "mousedown")) {
+              e.preventDefault();
+            }
+            return;
+          }
+
           const now = Date.now();
           const isSwipeTransition = (
             (this.ruler && (this.ruler.isTouchSwiping || this.ruler.isSwipePageTransition)) ||
@@ -1776,8 +1901,9 @@ export class LuminaApp {
         const isRecentTouch = (now - lastTapTime < 350) ||
           (now - (this.ruler?.lastTouchTapTime || 0) < 350) ||
           (now - (this.ruler?.lastTouchEndTime || 0) < 200);
+        const isRecentTrackpadDrag = !!(this.ruler?.enabled && this.ruler.followMode === "trackpad" && this.ruler.wasRecentlyTrackpadDragging?.());
 
-        if (isRecentSwipe || isRecentTouch || this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
+        if (isRecentSwipe || isRecentTouch || isRecentTrackpadDrag || this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
           return;
         }
         if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
@@ -1786,7 +1912,7 @@ export class LuminaApp {
 
         // Klepnutí doprostřed obrazovky přepne zobrazení hlavičky a spodní lišty
         if (this.isCenterTap(e.clientX, e.clientY)) {
-          if (!this.ruler || !this.ruler.enabled || this.ruler.followMode === "mouse") {
+          if (!this.ruler || !this.ruler.enabled || this.ruler.followMode === "mouse" || this.ruler.followMode === "trackpad") {
             lastTapTime = Date.now();
             this.toggleReaderChrome();
             return;
@@ -1794,7 +1920,7 @@ export class LuminaApp {
         }
 
         if (!this.ruler || !this.ruler.enabled) return;
-        if (this.ruler.followMode === "mouse") {
+        if (this.ruler.followMode === "mouse" || this.ruler.followMode === "trackpad") {
           return;
         }
         if (this.ruler.isHoldTriggered) {
@@ -2450,10 +2576,13 @@ export class LuminaApp {
     if (this.dom.popoverRulerFollowSelect) {
       this.dom.popoverRulerFollowSelect.addEventListener("change", (e) => {
         e.stopPropagation();
-        const val = e.target.value;
+        let val = e.target.value;
+        if (val === "trackpad" && !this.isTouchCapableDevice()) val = "mouse";
+        if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") val = "mouse";
         this.settings.ruler.followMode = val;
         this.ruler.setFollowMode(val);
         if (this.dom.rulerFollowSelect) this.dom.rulerFollowSelect.value = val;
+        this.updateRulerFollowModeUI();
         this.updateTouchZonesUI();
         storage.saveSettings(this.settings);
       });
@@ -2845,11 +2974,15 @@ export class LuminaApp {
 
     if (this.dom.rulerFollowSelect) {
       this.dom.rulerFollowSelect.addEventListener("change", (e) => {
-        const val = e.target.value;
+        let val = e.target.value;
+        if (val === "trackpad" && !this.isTouchCapableDevice()) val = "mouse";
+        if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") val = "mouse";
         this.settings.ruler.followMode = val;
         this.ruler.setFollowMode(val);
         if (this.dom.popoverRulerFollowSelect) this.dom.popoverRulerFollowSelect.value = val;
-        this.applySettings();
+        this.updateRulerFollowModeUI();
+        this.updateRulerToggleButtonUI();
+        this.updateTouchZonesUI();
         storage.saveSettings(this.settings);
       });
     }
@@ -2857,14 +2990,20 @@ export class LuminaApp {
     if (this.dom.rulerFollowButtons) {
       this.dom.rulerFollowButtons.forEach(btn => {
         bindRulerSettingAction(btn, (e) => {
-          if (e) e.stopPropagation();
+          if (e) {
+            e.stopPropagation();
+            if (e.cancelable) e.preventDefault();
+          }
           const val = btn.dataset.rulerFollow;
           if (!val) return;
           if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") return;
+          if (val === "trackpad" && !this.isTouchCapableDevice()) return;
           this.settings.ruler.followMode = val;
           this.ruler.setFollowMode(val);
-          this.applySettings();
+          this.updateRulerFollowModeUI();
+          this.updateRulerToggleButtonUI();
           this.updateTouchZonesUI();
+          this.syncAllSegmentedBubbles(false);
           storage.saveSettings(this.settings);
         });
       });
@@ -3723,6 +3862,7 @@ export class LuminaApp {
       this.ruler.setImageOnlyPdf(flag);
     }
 
+    const isTouch = this.isTouchCapableDevice();
     if (flag) {
       if (!this._savedRulerSettings) {
         this._savedRulerSettings = {
@@ -3736,7 +3876,9 @@ export class LuminaApp {
       this.settings.ruler.snapToLines = false;
       this.settings.ruler.pdfAutoHeight = false;
       this.settings.ruler.wordTracking = false;
-      this.settings.ruler.followMode = "mouse";
+      if (this.settings.ruler.followMode === "keyboard" || (this.settings.ruler.followMode === "trackpad" && !isTouch)) {
+        this.settings.ruler.followMode = "mouse";
+      }
     } else {
       if (this._savedRulerSettings) {
         this.settings.ruler.snapToLines = this._savedRulerSettings.snapToLines;
@@ -3747,8 +3889,13 @@ export class LuminaApp {
       } else {
         if (this.settings.ruler.snapToLines === false) this.settings.ruler.snapToLines = true;
         if (this.settings.ruler.pdfAutoHeight === false) this.settings.ruler.pdfAutoHeight = true;
-        this.settings.ruler.followMode = "mouse";
         this.settings.ruler.wordTracking = false;
+      }
+      if (!["mouse", "keyboard", "trackpad"].includes(this.settings.ruler.followMode)) {
+        this.settings.ruler.followMode = "mouse";
+      }
+      if (this.settings.ruler.followMode === "trackpad" && !isTouch) {
+        this.settings.ruler.followMode = "mouse";
       }
     }
 
@@ -3758,11 +3905,7 @@ export class LuminaApp {
     document.querySelectorAll("#setting-ruler-snap, #ruler-snap-setting, #popover-ruler-snap, #popover-ruler-snap-toggle, [data-ruler-snap='toggle']").forEach(el => this.setSwitchState(el, snapVal));
     if (this.dom.rulerWordTrackingSetting) this.setSwitchState(this.dom.rulerWordTrackingSetting, !!this.settings.ruler.wordTracking);
 
-    if (this.dom.rulerFollowButtons) {
-      this.dom.rulerFollowButtons.forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.rulerFollow === this.settings.ruler.followMode);
-      });
-    }
+    this.updateRulerFollowModeUI(flag);
 
     const currentHeight = this.currentBook?.pdfRulerConfig?.height || this.ruler?.getPdfRulerHeight?.() || 32;
     this.updatePdfAutoHeightUI(flag ? false : (this.settings.ruler.pdfAutoHeight !== false), currentHeight);
@@ -3956,29 +4099,63 @@ export class LuminaApp {
       drawerWordTracking.classList.toggle("is-hidden", isImageOnly);
     }
 
-    // 7. Způsob pohybu: Klávesové šipky: skrýt/zakázat pro image-only PDF, ponechat pouze kurzor myši
+    // 7. Způsob pohybu: Klávesové šipky (skryto pro image-only PDF) a Trackpad (pouze pro dotyková zařízení)
+    this.updateRulerFollowModeUI(isImageOnly);
+  }
+
+  updateRulerFollowModeUI(isImageOnly = null) {
+    const activeImageOnly = isImageOnly !== null
+      ? !!isImageOnly
+      : (!!this.isPdfMode && !!this.isImageOnlyPdf);
+    const isTouch = this.isTouchCapableDevice();
+    document.body.classList.toggle("is-touch-device", isTouch);
+
+    if (!this.settings.ruler) this.settings.ruler = {};
+    if (!["mouse", "keyboard", "trackpad"].includes(this.settings.ruler.followMode)) {
+      this.settings.ruler.followMode = "mouse";
+    }
+    if (this.settings.ruler.followMode === "trackpad" && !isTouch) {
+      this.settings.ruler.followMode = "mouse";
+      if (this.ruler && this.ruler.followMode === "trackpad") {
+        this.ruler.setFollowMode("mouse");
+      }
+    }
+
+    const showKeyboard = !activeImageOnly;
+    const showTrackpad = isTouch;
+    const visibleCount = 1 + (showKeyboard ? 1 : 0) + (showTrackpad ? 1 : 0);
+    const effectiveMode = (activeImageOnly && this.settings.ruler.followMode === "keyboard")
+      ? "mouse"
+      : this.settings.ruler.followMode;
+
     const popoverFollowSection = this.dom.popoverFollowSection || document.getElementById("popover-follow-section");
     const settingsFollowSection = this.dom.settingsFollowSection || document.getElementById("settings-follow-section");
-    if (popoverFollowSection) popoverFollowSection.classList.toggle("is-image-only", isImageOnly);
-    if (settingsFollowSection) settingsFollowSection.classList.toggle("is-image-only", isImageOnly);
 
-    document.querySelectorAll("[data-ruler-follow='keyboard']").forEach(btn => {
-      btn.classList.toggle("is-hidden", isImageOnly);
-      btn.disabled = isImageOnly;
-      if (isImageOnly) {
-        btn.classList.remove("active");
+    [popoverFollowSection, settingsFollowSection].forEach((section) => {
+      if (!section) return;
+      section.classList.toggle("is-image-only", activeImageOnly);
+      section.classList.toggle("is-single-follow", visibleCount === 1);
+      const control = section.querySelector(".popover-styles-grid, .popover-segmented-control");
+      if (control) {
+        control.classList.remove("columns-1", "columns-2", "columns-3");
+        control.classList.add(`columns-${visibleCount}`);
       }
     });
 
-    if (isImageOnly) {
-      document.querySelectorAll("[data-ruler-follow='mouse']").forEach(btn => {
-        btn.classList.add("active");
-      });
-    } else {
-      document.querySelectorAll("[data-ruler-follow]").forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.rulerFollow === this.settings.ruler.followMode);
-      });
-    }
+    document.querySelectorAll("[data-ruler-follow='keyboard']").forEach((btn) => {
+      btn.classList.toggle("is-hidden", !showKeyboard);
+      btn.disabled = !showKeyboard;
+    });
+
+    document.querySelectorAll("[data-ruler-follow='trackpad']").forEach((btn) => {
+      btn.classList.toggle("is-hidden", !showTrackpad);
+      btn.disabled = !showTrackpad;
+    });
+
+    document.querySelectorAll("[data-ruler-follow]").forEach((btn) => {
+      const isActive = !btn.classList.contains("is-hidden") && btn.dataset.rulerFollow === effectiveMode;
+      btn.classList.toggle("active", isActive);
+    });
   }
 
   async updatePdfRulerHeight(height) {
@@ -6346,7 +6523,11 @@ export class LuminaApp {
         }
         this.ruler.prepareForPageTransition(1);
       }
-      await this.pdfLoader.nextPage();
+      const moved = await this.pdfLoader.nextPage();
+      if (!moved && this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks();
+        this.ruler.applyPosition();
+      }
       return;
     }
     console.log(`[LuminaReader] nextPage() called, currentPageIndex: ${this.currentPageIndex}, totalPagesInChapter: ${this.totalPagesInChapter}`);
@@ -6461,7 +6642,11 @@ export class LuminaApp {
         }
         this.ruler.prepareForPageTransition(-1);
       }
-      await this.pdfLoader.prevPage();
+      const moved = await this.pdfLoader.prevPage();
+      if (!moved && this.ruler && this.ruler.enabled) {
+        this.ruler.forceReleaseNavigationLocks();
+        this.ruler.applyPosition();
+      }
       return;
     }
     console.log(`[LuminaReader] prevPage() called, currentPageIndex: ${this.currentPageIndex}`);

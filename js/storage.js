@@ -8,6 +8,28 @@ const DB_NAME = "LuminaReaderDB";
 const DB_VERSION = 2;
 
 /**
+ * Zjistí, zda zařízení podporuje dotykový vstup (iPad, tablet, mobilní telefon).
+ * @returns {boolean}
+ */
+export function isTouchCapableDevice() {
+  if (typeof window === "undefined") return false;
+  try {
+    const hasTouchPoints = typeof navigator !== "undefined" && (
+      (navigator.maxTouchPoints || 0) > 0 ||
+      (navigator.msMaxTouchPoints || 0) > 0
+    );
+    const hasTouchEvent = "ontouchstart" in window || (typeof DocumentTouch !== "undefined" && document instanceof DocumentTouch);
+    const hasCoarsePointer = typeof window.matchMedia === "function" && (
+      window.matchMedia("(pointer: coarse)").matches ||
+      window.matchMedia("(any-pointer: coarse)").matches
+    );
+    return !!(hasTouchPoints || hasTouchEvent || hasCoarsePointer);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
  * Vypočítá deterministický SHA-256 hash z prvních 64 KB souboru a jeho celkové velikosti.
  * @param {File|Blob|ArrayBuffer|Uint8Array} file
  * @returns {Promise<string>}
@@ -1272,7 +1294,7 @@ export class StorageManager {
         wordTracking: false, // Sledování jednotlivých slov
         color: "amber", // amber, cyan, emerald, lavender, slate
         dimOpacity: 0.65,
-        followMode: "mouse" // mouse, keyboard, auto
+        followMode: "mouse" // mouse, keyboard, trackpad
       }
     };
 
@@ -1347,7 +1369,10 @@ export class StorageManager {
         } else if (merged.ruler.style !== "off") {
           merged.ruler.lastActiveStyle = merged.ruler.style;
         }
-        if (merged.ruler.followMode !== "keyboard") {
+        if (!["mouse", "keyboard", "trackpad"].includes(merged.ruler.followMode)) {
+          merged.ruler.followMode = "mouse";
+        }
+        if (merged.ruler.followMode === "trackpad" && !isTouchCapableDevice()) {
           merged.ruler.followMode = "mouse";
         }
         const savedSnap = localStorage.getItem("rulerSnapToLines");
@@ -1445,6 +1470,12 @@ export class StorageManager {
       if (settings?.ruler) {
         settings.ruler.snapToLines = settings.ruler.snapToLines !== false;
         settings.ruler.autoHeight = true;
+        if (!["mouse", "keyboard", "trackpad"].includes(settings.ruler.followMode)) {
+          settings.ruler.followMode = "mouse";
+        }
+        if (settings.ruler.followMode === "trackpad" && !isTouchCapableDevice()) {
+          settings.ruler.followMode = "mouse";
+        }
         localStorage.setItem("rulerSnapToLines", String(settings.ruler.snapToLines));
         if (settings.ruler.pdfAutoHeight !== undefined) {
           localStorage.setItem("rulerPdfAutoHeight", String(settings.ruler.pdfAutoHeight !== false));

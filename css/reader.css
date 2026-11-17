@@ -1303,16 +1303,37 @@ body:not(.in-reader-view):not(.ruler-active) .ruler-floating-controls {
               opacity 0.2s ease;
 }
 
-/* V režimu sledování myši zakázat přechody pro okamžité 1:1 sledování bez zpoždění a zadrhávání */
-body.ruler-mouse-follow-active .reading-ruler {
+/* V režimu sledování myši a virtuálního trackpadu zakázat přechody pro okamžité 1:1 sledování bez zpoždění a zadrhávání */
+body.ruler-mouse-follow-active .reading-ruler,
+body.ruler-trackpad-active .reading-ruler {
   transition: none !important;
 }
 body.ruler-mouse-follow-active .reading-ruler.word-tracking-mode,
-body.ruler-mouse-follow-active .ruler-mask.is-snapped {
+body.ruler-mouse-follow-active .ruler-mask.is-snapped,
+body.ruler-trackpad-active .reading-ruler.word-tracking-mode,
+body.ruler-trackpad-active .ruler-mask.is-snapped {
   transition: none !important;
 }
-body.ruler-mouse-follow-active .ruler-mask {
+body.ruler-mouse-follow-active .ruler-mask,
+body.ruler-trackpad-active .ruler-mask {
   transition: opacity 0.2s ease !important;
+}
+
+/* Režim virtuálního trackpadu: jedno-prstový tah ve čtecí ploše patří výhradně pravítku */
+body.ruler-trackpad-active #paged-viewport,
+body.ruler-trackpad-active .paged-viewport,
+body.ruler-trackpad-active #paged-stage,
+body.ruler-trackpad-active .paged-stage,
+body.ruler-trackpad-active #reader-content,
+body.ruler-trackpad-active .paged-content,
+body.ruler-trackpad-active .pdf-page-container,
+body.ruler-trackpad-active .pdf-page-container canvas,
+body.ruler-trackpad-active .page-touch-zone {
+  touch-action: none !important;
+  overscroll-behavior: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
 }
 
 /* Ve vertikálním režimu čtení zakázat veškeré CSS transition animace pro okamžitý 1:1 snap bez zpoždění */
@@ -1737,6 +1758,7 @@ body.is-turning-page .ruler-mask.is-visible {
   top: auto;
   right: 0;
   width: 320px;
+  max-width: calc(100vw - 24px);
   max-height: min(580px, calc(100vh - 85px));
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1882,20 +1904,25 @@ body.is-turning-page .ruler-mask.is-visible {
 }
 
 .popover-segmented-control.is-single-segment,
-.popover-segmented-control:has(.segment-btn.is-hidden) {
+.popover-segmented-control.columns-1 {
   grid-template-columns: 1fr;
 }
 
 .popover-segmented-control.columns-2 {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .popover-segmented-control.columns-3 {
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .popover-segmented-control.columns-4 {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+#settings-follow-section .popover-segmented-control.columns-3 .segment-btn {
+  padding: 0.45rem 0.25rem;
+  font-size: clamp(0.68rem, 3vw, 0.8rem);
 }
 
 .popover-segmented-control.columns-4 .segment-btn {
@@ -2000,9 +2027,8 @@ body.is-turning-page .ruler-mask.is-visible {
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
-#popover-follow-section.is-image-only .popover-styles-grid,
-#settings-follow-section.is-image-only .popover-segmented-control,
-#settings-follow-section.is-image-only > div:last-child {
+#popover-follow-section.is-single-follow .popover-styles-grid,
+#settings-follow-section.is-single-follow .popover-segmented-control {
   grid-template-columns: 1fr !important;
 }
 
@@ -2012,16 +2038,35 @@ body.is-turning-page .ruler-mask.is-visible {
 #drawer-pdf-auto-height-row.is-hidden,
 #popover-ruler-mode-section.is-hidden,
 #drawer-word-tracking-section.is-hidden,
-[data-ruler-follow="keyboard"].is-hidden {
+[data-ruler-follow="keyboard"].is-hidden,
+[data-ruler-follow="trackpad"].is-hidden,
+.popover-styles-grid .popover-style-btn.is-hidden {
   display: none !important;
 }
 
+.popover-styles-grid.columns-1 {
+  grid-template-columns: 1fr;
+}
+
+.popover-styles-grid.columns-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .popover-styles-grid.columns-3 {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ruler-quick-popover:has(#popover-follow-section .popover-styles-grid.columns-3) {
+  width: min(356px, calc(100vw - 24px));
+}
+
+#popover-follow-section .popover-styles-grid.columns-3 .popover-style-btn {
+  padding: 0.45rem 0.2rem;
+  font-size: clamp(0.66rem, 2.9vw, 0.75rem);
 }
 
 .popover-styles-grid.columns-4 {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .popover-styles-grid.columns-4 .popover-style-btn {
