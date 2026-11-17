@@ -2913,7 +2913,15 @@ export class ReadingRuler {
     tp.wordWrapOverflow = 0;
     tp.activeColumn = this._getFallbackActiveColumn();
     if (this.wordTracking && tp.wordFloatLeft == null && Number.isFinite(this.wordLeft)) {
-      tp.wordFloatLeft = this.wordLeft;
+      const curIdx = (this.activeLineIndex >= 0 && this.cachedLines && this.activeLineIndex < this.cachedLines.length)
+        ? this.activeLineIndex
+        : -1;
+      const lineWords = curIdx >= 0 ? this.ensureActiveWords(curIdx) : null;
+      if (lineWords && lineWords.length > 0 && this.activeWordIndex >= 0 && this.activeWordIndex < lineWords.length) {
+        tp.wordFloatLeft = lineWords[this.activeWordIndex].left;
+      } else {
+        tp.wordFloatLeft = this.wordLeft;
+      }
     }
     this.activePointerType = "touch";
 
@@ -3037,10 +3045,10 @@ export class ReadingRuler {
     }
   }
 
-  _computeTrackpadWordPreview(lineWords, wIdx, textMaxX, padX = 3) {
+  _computeTrackpadWordPreview(lineWords, wIdx, textMaxX) {
     if (!lineWords || wIdx < 0 || wIdx >= lineWords.length) return 0;
     const w = lineWords[wIdx];
-    const firstW = w.width + padX * 2;
+    const firstW = Math.max(4, w.width);
     let nextWLast = null;
     let prevCandLeft = w.left;
     for (let offset = 1; offset <= 2; offset++) {
@@ -3052,70 +3060,67 @@ export class ReadingRuler {
       nextWLast = nw;
     }
     if (!nextWLast) return 0;
-    const rawTargetRight = nextWLast.right + padX;
-    const clampedTargetRight = Math.min(rawTargetRight, textMaxX);
-    const stableLeft = w.left - padX;
-    return Math.max(0, clampedTargetRight - stableLeft - firstW);
+    const clampedTargetRight = Math.min(nextWLast.right, textMaxX);
+    return Math.max(0, clampedTargetRight - w.left - firstW);
   }
 
   _applyContinuousWordGeometryAtLeft(lineWords, rawLeft, activeLine = null, isMovingLeft = false) {
-    const padX = 3;
-    let textMinX = activeLine && activeLine.left != null ? (activeLine.left - padX) : 0;
-    let textMaxX = activeLine && activeLine.right != null ? (activeLine.right + padX) : window.innerWidth;
+    let textMinX = activeLine ? (activeLine.textLeft ?? activeLine.left ?? 0) : 0;
+    let textMaxX = activeLine ? (activeLine.textRight ?? activeLine.right ?? window.innerWidth) : window.innerWidth;
     if (lineWords && lineWords.length > 0) {
-      textMinX = lineWords[0].left - padX;
-      textMaxX = lineWords[lineWords.length - 1].right + padX;
+      textMinX = lineWords[0].left;
+      textMaxX = lineWords[lineWords.length - 1].right;
     }
 
     let continuousWidth = Number.isFinite(this.activeWordWidth) && this.activeWordWidth > 0 ? this.activeWordWidth : 60;
-    let previewW = 0;
+    let rawPreviewW = 0;
 
     if (lineWords && lineWords.length > 0) {
-      const firstAnchor = lineWords[0].left - padX;
+      const firstAnchor = lineWords[0].left;
       const lastIdx = lineWords.length - 1;
-      const lastAnchor = lineWords[lastIdx].left - padX;
+      const lastAnchor = lineWords[lastIdx].left;
 
       if (rawLeft <= firstAnchor || lineWords.length === 1) {
-        continuousWidth = lineWords[0].width + padX * 2;
-        previewW = this._computeTrackpadWordPreview(lineWords, 0, textMaxX, padX);
+        continuousWidth = Math.max(4, lineWords[0].width);
+        rawPreviewW = this._computeTrackpadWordPreview(lineWords, 0, textMaxX);
         this.activeWordIndex = 0;
       } else if (rawLeft >= lastAnchor) {
-        continuousWidth = lineWords[lastIdx].width + padX * 2;
-        previewW = this._computeTrackpadWordPreview(lineWords, lastIdx, textMaxX, padX);
+        continuousWidth = Math.max(4, lineWords[lastIdx].width);
+        rawPreviewW = this._computeTrackpadWordPreview(lineWords, lastIdx, textMaxX);
         this.activeWordIndex = lastIdx;
       } else {
         let segIdx = 0;
         for (let k = 0; k < lineWords.length - 1; k++) {
-          const leftK = lineWords[k].left - padX;
-          const leftNext = lineWords[k + 1].left - padX;
-          if (rawLeft >= leftK && rawLeft <= leftNext) {
+          if (rawLeft >= lineWords[k].left && rawLeft <= lineWords[k + 1].left) {
             segIdx = k;
             break;
           }
         }
         const itemA = lineWords[segIdx];
         const itemB = lineWords[segIdx + 1];
-        const leftA = itemA.left - padX;
-        const leftB = itemB.left - padX;
-        const span = leftB - leftA;
-        const t = span > 0 ? Math.max(0, Math.min(1, (rawLeft - leftA) / span)) : 0;
+        const span = itemB.left - itemA.left;
+        const t = span > 0 ? Math.max(0, Math.min(1, (rawLeft - itemA.left) / span)) : 0;
 
-        const widthA = itemA.width + padX * 2;
-        const widthB = itemB.width + padX * 2;
+        const widthA = Math.max(4, itemA.width);
+        const widthB = Math.max(4, itemB.width);
         continuousWidth = widthA + t * (widthB - widthA);
 
-        const prevA = this._computeTrackpadWordPreview(lineWords, segIdx, textMaxX, padX);
-        const prevB = this._computeTrackpadWordPreview(lineWords, segIdx + 1, textMaxX, padX);
-        previewW = prevA + t * (prevB - prevA);
+        const prevA = this._computeTrackpadWordPreview(lineWords, segIdx, textMaxX);
+        const prevB = this._computeTrackpadWordPreview(lineWords, segIdx + 1, textMaxX);
+        rawPreviewW = prevA + t * (prevB - prevA);
 
         this.activeWordIndex = (t < 0.5) ? segIdx : (segIdx + 1);
       }
       this._checkWordProgress(this.activeWordIndex, isMovingLeft);
     }
 
-    const totalW = Math.max(12, continuousWidth + previewW);
-    const maxLeft = Math.max(textMinX, textMaxX - totalW);
+    // Clamp based strictly on the active highlight reaching the true right edge of the line's text,
+    // never allowing the look-ahead preview tail to cause a premature line wrap.
+    const maxLeft = Math.max(textMinX, textMaxX - continuousWidth);
     const clampedLeft = Math.max(textMinX, Math.min(maxLeft, rawLeft));
+    const remainingRightSpace = Math.max(0, textMaxX - (clampedLeft + continuousWidth));
+    const previewW = Math.min(rawPreviewW, remainingRightSpace);
+    const totalW = Math.max(4, continuousWidth + previewW);
 
     if (this._trackpad) {
       this._trackpad.wordFloatLeft = clampedLeft;
@@ -3169,6 +3174,8 @@ export class ReadingRuler {
       if (Math.abs(tp.wordWrapOverflow) >= 6) {
         const dir = tp.wordWrapOverflow > 0 ? 1 : -1;
         tp.wordWrapOverflow = 0;
+        tp.pendingDx = 0;
+        tp.accumX = 0;
         const wrapped = this._wrapTrackpadWordLine(dir);
         if (!wrapped) {
           tp.boundaryPushY += dir * Math.max(8, Math.abs(dx));
@@ -3188,6 +3195,8 @@ export class ReadingRuler {
       if (Math.abs(tp.wordWrapOverflow) >= 6) {
         const dir = tp.wordWrapOverflow > 0 ? 1 : -1;
         tp.wordWrapOverflow = 0;
+        tp.pendingDx = 0;
+        tp.accumX = 0;
         if (!this._wrapTrackpadWordLine(dir)) {
           tp.boundaryPushY += dir * Math.max(8, Math.abs(dx));
           if (Math.abs(tp.boundaryPushY) >= 52) {
@@ -3200,10 +3209,9 @@ export class ReadingRuler {
       return;
     }
 
-    const padX = 3;
     const startLeft = Number.isFinite(tp.wordFloatLeft)
       ? tp.wordFloatLeft
-      : (Number.isFinite(this.wordLeft) ? this.wordLeft : (lineWords[0].left - padX));
+      : lineWords[0].left;
     const rawLeft = startLeft + dx;
 
     const geom = this.computeLineGeometry(curIdx);
@@ -3232,7 +3240,10 @@ export class ReadingRuler {
 
     if (Math.abs(tp.wordWrapOverflow) >= 4) {
       const wrapDir = tp.wordWrapOverflow > 0 ? 1 : -1;
+      // Consume and discard any leftover horizontal drag overflow on wrap
       tp.wordWrapOverflow = 0;
+      tp.pendingDx = 0;
+      tp.accumX = 0;
       const wrapped = this._wrapTrackpadWordLine(wrapDir);
       if (!wrapped) {
         tp.boundaryPushY += wrapDir * Math.max(8, Math.abs(res.overflow));
@@ -3335,10 +3346,9 @@ export class ReadingRuler {
       return true;
     }
 
-    const padX = 3;
     const edgeLeft = dir > 0
-      ? (lineWords[0].left - padX)
-      : (lineWords[lineWords.length - 1].right + padX);
+      ? lineWords[0].left
+      : Math.max(lineWords[0].left, lineWords[lineWords.length - 1].right - Math.max(4, lineWords[lineWords.length - 1].width));
     this._applyContinuousWordGeometryAtLeft(lineWords, edgeLeft, targetLine, dir < 0);
     this.rulerEl?.classList.add("word-tracking-mode");
     this._snapRulerInstantOrAnimated();
@@ -3476,10 +3486,10 @@ export class ReadingRuler {
     }
 
     if (words && words.length > 0) {
-      const padX = 3;
+      const lastWord = words[words.length - 1];
       const targetLeft = (!colChanged && refLeft != null)
         ? refLeft
-        : (dir > 0 ? (words[0].left - padX) : (words[words.length - 1].right + padX));
+        : (dir > 0 ? words[0].left : Math.max(words[0].left, lastWord.right - Math.max(4, lastWord.width)));
       this._applyContinuousWordGeometryAtLeft(words, targetLeft, nextLine, dir < 0);
       this.rulerEl?.classList.add("word-tracking-mode");
     } else {
