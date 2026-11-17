@@ -1319,15 +1319,20 @@ body.ruler-trackpad-active .ruler-mask {
   transition: opacity 0.2s ease !important;
 }
 
-/* Režim virtuálního trackpadu: jedno-prstový tah ve čtecí ploše patří výhradně pravítku */
+/* Režim virtuálního trackpadu: jedno-prstový tah i Apple Pencil ve čtecí ploše patří výhradně pravítku */
 body.ruler-trackpad-active #paged-viewport,
 body.ruler-trackpad-active .paged-viewport,
 body.ruler-trackpad-active #paged-stage,
 body.ruler-trackpad-active .paged-stage,
 body.ruler-trackpad-active #reader-content,
+body.ruler-trackpad-active #reader-content *,
 body.ruler-trackpad-active .paged-content,
+body.ruler-trackpad-active .paged-content *,
+body.ruler-trackpad-active .pdf-page-slot,
 body.ruler-trackpad-active .pdf-page-container,
-body.ruler-trackpad-active .pdf-page-container canvas,
+body.ruler-trackpad-active .pdf-page-container *,
+body.ruler-trackpad-active .textLayer,
+body.ruler-trackpad-active .textLayer *,
 body.ruler-trackpad-active .page-touch-zone {
   touch-action: none !important;
   overscroll-behavior: none !important;

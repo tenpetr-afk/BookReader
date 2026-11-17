@@ -2016,6 +2016,9 @@ export class ReadingRuler {
    * Plynulá aktualizace pozice pravítka synchronizovaná s obnovovací frekvencí displeje (120Hz ProMotion)
    */
   schedulePointerUpdate(clientX, clientY, pointerType = "mouse") {
+    if (this.followMode === "trackpad") {
+      return;
+    }
     if (this.isPopoverOrDrawerOpen()) {
       this._trackingSuspendedByOverlay = true;
       if (this.pointerRafId) {
@@ -3713,19 +3716,30 @@ export class ReadingRuler {
         this._trackingSuspendedByOverlay = false;
       }
 
-      if (e.pointerType === "pen") {
-        if (this.followMode === "trackpad") {
+      if (this.followMode === "trackpad") {
+        if (e.pointerType === "pen" || e.pointerType === "touch") {
           if (e.isPrimary === false) {
             this._cancelTrackpadTouch();
             return;
           }
-          this.lastPenTime = Date.now();
-          this.isPenTouching = true;
+          if (this._trackpad?.active) {
+            if (this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId) {
+              return;
+            }
+            this._cancelTrackpadTouch();
+          }
+          if (e.pointerType === "pen") {
+            this.lastPenTime = Date.now();
+            this.isPenTouching = true;
+          }
           this.isTouchActive = true;
           this.isTouchSwiping = false;
           this._startTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY, e.target);
-          return;
         }
+        return;
+      }
+
+      if (e.pointerType === "pen") {
         this.lastPenTime = Date.now();
         this.isPenTouching = true;
         this.savePenDetails(e);
@@ -3738,16 +3752,6 @@ export class ReadingRuler {
           this.flickHandledInStroke = false;
         }
       } else if (e.pointerType === "touch") {
-        if (this.followMode === "trackpad") {
-          if (e.isPrimary === false) {
-            this._cancelTrackpadTouch();
-            return;
-          }
-          this.isTouchActive = true;
-          this.isTouchSwiping = false;
-          this._startTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY, e.target);
-          return;
-        }
         this.isTouchActive = true;
         const now = performance.now();
         this.touchStrokeStartTime = now;
@@ -3823,6 +3827,35 @@ export class ReadingRuler {
       if (this.isPopoverOrDrawerOpen()) {
         this.isPenTouching = false;
         this._trackingSuspendedByOverlay = true;
+        if (this.followMode === "trackpad" && this._trackpad?.active) {
+          this._cancelTrackpadTouch();
+        }
+        return;
+      }
+
+      if (this.followMode === "trackpad") {
+        const isPenHover = (e.pointerType === "pen" && e.buttons === 0 && (!e.pressure || e.pressure <= 0));
+        if (e.pointerType === "pen" || e.pointerType === "touch") {
+          if (isPenHover) {
+            if (this._trackpad?.active && this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId) {
+              this.isTouchActive = false;
+              this.isPenTouching = false;
+              this.isTouchSwiping = false;
+              this.isDraggingRuler = false;
+              this._endTrackpadTouch("pointer", e.pointerId);
+            }
+            return;
+          }
+          if (!this.enabled) return;
+          if (!this._trackpad?.active && this.isUiControl(e.target)) {
+            this.isPenTouching = false;
+            this._trackingSuspendedByOverlay = true;
+            return;
+          }
+          if (this._trackpad?.active && this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId) {
+            this._moveTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY);
+          }
+        }
         return;
       }
 
@@ -3841,12 +3874,6 @@ export class ReadingRuler {
       }
 
       if (e.pointerType === "pen") {
-        if (this.followMode === "trackpad") {
-          if (this._trackpad?.active && this._trackpad.source === "pointer") {
-            this._moveTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY);
-          }
-          return;
-        }
         this.lastPenTime = Date.now();
         this.savePenDetails(e);
 
@@ -3915,14 +3942,6 @@ export class ReadingRuler {
         }
       }
 
-      if (this.followMode === "trackpad" && (e.pointerType === "touch" || e.pointerType === "pen")) {
-        if (!this.enabled) return;
-        if (this._trackpad?.active && this._trackpad.source === "pointer") {
-          this._moveTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY);
-        }
-        return;
-      }
-
       const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 200) || (Date.now() - (this.lastTouchEndTime || 0) < 200);
       const isDocTurning = document.body.classList.contains("is-turning-page") ||
         document.body.classList.contains("is-chapter-loading") ||
@@ -3980,22 +3999,27 @@ export class ReadingRuler {
     };
 
     const onPointerUp = (e) => {
-      if (this.followMode === "trackpad" && (e.pointerType === "touch" || e.pointerType === "pen")) {
-        this.isTouchActive = false;
-        this.isPenTouching = false;
-        this.isTouchSwiping = false;
-        this.isDraggingRuler = false;
-        const now = Date.now();
-        this.lastTouchEndTime = now;
-        if (e.pointerType === "pen") {
-          this.lastPenTime = now;
+      if (this.followMode === "trackpad") {
+        if (e.pointerType === "touch" || e.pointerType === "pen") {
+          const isPrimaryActive = !this._trackpad?.active || (this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId);
+          if (isPrimaryActive) {
+            this.isTouchActive = false;
+            this.isPenTouching = false;
+            this.isTouchSwiping = false;
+            this.isDraggingRuler = false;
+            const now = Date.now();
+            this.lastTouchEndTime = now;
+            if (e.pointerType === "pen") {
+              this.lastPenTime = now;
+            }
+          }
+          this._endTrackpadTouch("pointer", e.pointerId);
+          this.touchHistory = [];
+          this.touchStrokeStartTime = 0;
+          this.penHistory = [];
+          this.penStrokeStartTime = 0;
+          this.flickHandledInStroke = false;
         }
-        this._endTrackpadTouch("pointer", e.pointerId);
-        this.touchHistory = [];
-        this.touchStrokeStartTime = 0;
-        this.penHistory = [];
-        this.penStrokeStartTime = 0;
-        this.flickHandledInStroke = false;
         return;
       }
       if (this.isUiControl(e.target)) {
@@ -4183,8 +4207,20 @@ export class ReadingRuler {
       }
     };
 
-    const onPointerCancel = () => {
-      this._cancelTrackpadTouch();
+    const onPointerCancel = (e) => {
+      if (this.followMode === "trackpad") {
+        if (e && (e.pointerType === "touch" || e.pointerType === "pen")) {
+          const isMatchingPointer = !this._trackpad?.active || (this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId);
+          if (!isMatchingPointer && e.isPrimary === false) {
+            return;
+          }
+          this._cancelTrackpadTouch("pointer", e.pointerId);
+        } else {
+          this._cancelTrackpadTouch();
+        }
+      } else {
+        this._cancelTrackpadTouch();
+      }
       this.isTouchActive = false;
       this.lastTouchEndTime = Date.now();
       this.isPenTouching = false;
@@ -4225,6 +4261,7 @@ export class ReadingRuler {
     window.addEventListener("pointerleave", onPointerLeaveWindow, { passive: true });
     document.addEventListener("mouseleave", onPointerLeaveWindow, { passive: true });
     window.addEventListener("blur", () => {
+      this._cancelTrackpadTouch();
       this._relativeTrackingActive = false;
       this._verticalScrollAnchorPending = false;
       this._scrollAnchorPhysicalY = null;
@@ -4475,6 +4512,9 @@ export class ReadingRuler {
         this._cancelTrackpadTouch();
         return;
       }
+      // When PointerEvents are supported (including iPadOS Safari for both finger and Apple Pencil),
+      // pointerdown/pointermove/pointerup own the active trackpad contact to prevent duplicate processing.
+      if (window.PointerEvent) return;
       if (e.touches && e.touches.length === 1) {
         const touch = e.touches[0];
         if (!this._trackpad?.active) {
@@ -4511,7 +4551,8 @@ export class ReadingRuler {
 
     const onWindowTouchMove = (e) => {
       if (!this.enabled) return;
-      if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay || this.isUiControl(e.target)) return;
+      if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay) return;
+      if (this.isUiControl(e.target) && !this._trackpad?.active) return;
 
       if (this.followMode === "trackpad") {
         const touches = e.touches ? Array.from(e.touches) : [];
@@ -7594,7 +7635,7 @@ export class ReadingRuler {
     }
 
     // Pro ukazatele mimo režim sledování myši (např. klávesový režim) standardní přímé přichytávání bez hystereze
-    if (this.followMode !== "mouse" && !(this.followMode === "trackpad" && isPen)) {
+    if (this.followMode !== "mouse") {
       let minDiff = Infinity;
       let closestIdx = pool[0].index;
       for (let i = 0; i < pool.length; i++) {
@@ -7688,6 +7729,7 @@ export class ReadingRuler {
    * Zpracuje pohyb ukazatele (myši nebo prstu)
    */
   handlePointerMove(clientX, clientY, pointerType = null) {
+    if (this.followMode === "trackpad") return;
     if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay) return;
 
     const pType = pointerType || this.activePointerType || (Date.now() - this.lastPenTime < 500 ? "pen" : "mouse");
@@ -7938,7 +7980,7 @@ export class ReadingRuler {
             this.targetY = geom.targetY;
             this.currentY = this.targetY;
           }
-          if (this.followMode === "mouse" || (this.followMode === "trackpad" && isPen)) {
+          if (this.followMode === "mouse") {
             this.rulerEl.classList.remove("is-snapped");
             if (this.wordWaveEl) this.wordWaveEl.classList.remove("is-snapped");
             if (this.maskTopEl) this.maskTopEl.classList.remove("is-snapped");
@@ -8022,7 +8064,7 @@ export class ReadingRuler {
             this.targetY = geom.targetY;
             this.currentY = this.targetY;
           }
-          if (this.followMode === "mouse" || (this.followMode === "trackpad" && isPen)) {
+          if (this.followMode === "mouse") {
             this.rulerEl.classList.remove("is-snapped");
             if (this.maskTopEl) this.maskTopEl.classList.remove("is-snapped");
             if (this.maskBottomEl) this.maskBottomEl.classList.remove("is-snapped");
@@ -8083,12 +8125,12 @@ export class ReadingRuler {
           closestIdx = 0;
         }
 
-        if (this.followMode !== "mouse" && !(this.followMode === "trackpad" && isPen)) {
+        if (this.followMode !== "mouse") {
           this.setWordWindow(closestIdx, isMovingLeft);
         }
 
-        // V režimu sledování myši (mouse-follow) nebo Apple Pencilu zajistit plynulý spojitý horizontální pohyb bez magnetického přichytávání a bez trhání zpět
-        if (this.followMode === "mouse" || (this.followMode === "trackpad" && isPen)) {
+        // V režimu sledování myši (mouse-follow) zajistit plynulý spojitý horizontální pohyb bez magnetického přichytávání a bez trhání zpět
+        if (this.followMode === "mouse") {
           const geom = this.computeLineGeometry(this.activeLineIndex);
           if (geom) {
             this.height = geom.height;
@@ -8208,7 +8250,7 @@ export class ReadingRuler {
         }
 
         this.rulerEl.classList.add("word-tracking-mode");
-        if (this.followMode === "mouse" || (this.followMode === "trackpad" && isPen)) {
+        if (this.followMode === "mouse") {
           this.rulerEl.classList.remove("is-snapped");
           if (this.wordWaveEl) this.wordWaveEl.classList.remove("is-snapped");
           this.maskTopEl.classList.remove("is-snapped");
@@ -8270,7 +8312,7 @@ export class ReadingRuler {
       }
 
       this.currentY = this.targetY;
-      if (this.followMode === "mouse" || (this.followMode === "trackpad" && isPen)) {
+      if (this.followMode === "mouse") {
         this.rulerEl.classList.remove("is-snapped");
         if (this.wordWaveEl) this.wordWaveEl.classList.remove("is-snapped");
         this.maskTopEl.classList.remove("is-snapped");
@@ -10607,7 +10649,7 @@ export class ReadingRuler {
         const rulerWidth = Math.round(colWidth);
 
         let currentPointerX;
-        if (this.followMode === "mouse" || (this.followMode === "trackpad" && (this.activePointerType === "pen" || this.wordTracking))) {
+        if (this.followMode === "mouse" || (this.followMode === "trackpad" && this.wordTracking)) {
           // Režim sledování kurzoru / Apple Pencil / plynulý 1:1 trackpad: pozice následuje X bez skokového resetu na slovo
           if (Number.isFinite(this.lastPointerX)) {
             currentPointerX = this.lastPointerX;
