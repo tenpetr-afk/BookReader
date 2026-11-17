@@ -3077,14 +3077,56 @@ export class ReadingRuler {
     return Math.max(0, clampedTargetRight - stableLeft - firstW);
   }
 
-  _applyContinuousWordGeometryAtLeft(lineWords, rawLeft, activeLine = null, isMovingLeft = false) {
-    const padX = 3;
-    let textMinX = activeLine ? Math.round((activeLine.textLeft ?? activeLine.left ?? 0) - padX) : 0;
-    let textMaxX = activeLine ? Math.round((activeLine.textRight ?? activeLine.right ?? window.innerWidth) + padX) : window.innerWidth;
-    if (lineWords && lineWords.length > 0) {
-      textMinX = Math.round(lineWords[0].left - padX);
-      textMaxX = Math.round(lineWords[lineWords.length - 1].right + padX);
+  _getTrackpadWordColumnBounds(activeLine, lineWords, geom = null) {
+    let colLeft = geom && Number.isFinite(geom.left)
+      ? geom.left
+      : (activeLine && Number.isFinite(activeLine.columnLeft) ? activeLine.columnLeft : null);
+    let colWidth = geom && Number.isFinite(geom.width)
+      ? geom.width
+      : (activeLine && Number.isFinite(activeLine.columnWidth) ? activeLine.columnWidth : null);
+
+    if (colLeft == null || colWidth == null || colWidth < 50) {
+      const isTwoCol = !this.isVerticalMode() && (!!this.isTwoCol || this.isSpreadActive());
+      const colIdx = activeLine?.columnIndex === 1 ? 1 : 0;
+      if (isTwoCol) {
+        colLeft = colIdx === 1 ? (this.column1Left ?? this.stageLeft ?? 20) : (this.column0Left ?? this.stageLeft ?? 20);
+        colWidth = colIdx === 1 ? (this.column1Width ?? this.column0Width ?? 300) : (this.column0Width ?? 300);
+      } else {
+        colLeft = this.column0Left ?? this.textBlockLeft;
+        colWidth = this.column0Width ?? this.textBlockWidth;
+      }
     }
+
+    if (colLeft == null || colWidth == null || !Number.isFinite(colLeft) || !Number.isFinite(colWidth) || colWidth < 50) {
+      const stageRect = this.getStageElement()?.getBoundingClientRect?.();
+      colLeft = stageRect && stageRect.width > 50 ? stageRect.left : (this.stageLeft ?? 20);
+      colWidth = stageRect && stageRect.width > 50 ? stageRect.width : (this.stageWidth ?? Math.max(120, window.innerWidth - 40));
+    }
+
+    if (Number.isFinite(this._rulerLeft) && Number.isFinite(this._rulerWidth) && this._rulerWidth >= 50 && !this.wordTracking) {
+      colLeft = this._rulerLeft;
+      colWidth = this._rulerWidth;
+    }
+
+    const colRight = colLeft + colWidth;
+    const wordsMinLeft = (lineWords && lineWords.length > 0) ? lineWords[0].left : colLeft;
+    const wordsMaxRight = (lineWords && lineWords.length > 0) ? lineWords[lineWords.length - 1].right : colRight;
+    return {
+      colLeft: Math.round(Math.min(colLeft, wordsMinLeft)),
+      colRight: Math.round(Math.max(colRight, wordsMaxRight)),
+      wordsMinLeft,
+      wordsMaxRight
+    };
+  }
+
+  _applyContinuousWordGeometryAtLeft(lineWords, rawLeft, activeLine = null, isMovingLeft = false, geom = null) {
+    const padX = 3;
+    const colBounds = this._getTrackpadWordColumnBounds(activeLine, lineWords, geom);
+    const fullMinX = Math.round(colBounds.colLeft - padX);
+    const fullMaxX = Math.round(Math.max(colBounds.colRight, colBounds.wordsMaxRight + padX));
+    const wordsMaxX = (lineWords && lineWords.length > 0)
+      ? Math.round(lineWords[lineWords.length - 1].right + padX)
+      : fullMaxX;
 
     let continuousWidth = Number.isFinite(this.activeWordWidth) && this.activeWordWidth > 0 ? this.activeWordWidth : 60;
     let rawPreviewW = 0;
@@ -3096,11 +3138,11 @@ export class ReadingRuler {
 
       if (rawLeft <= firstAnchor || lineWords.length === 1) {
         continuousWidth = Math.max(4, Math.round(lineWords[0].width + padX * 2));
-        rawPreviewW = this._computeTrackpadWordPreview(lineWords, 0, textMaxX, padX);
+        rawPreviewW = this._computeTrackpadWordPreview(lineWords, 0, wordsMaxX, padX);
         this.activeWordIndex = 0;
       } else if (rawLeft >= lastAnchor) {
         continuousWidth = Math.max(4, Math.round(lineWords[lastIdx].width + padX * 2));
-        rawPreviewW = this._computeTrackpadWordPreview(lineWords, lastIdx, textMaxX, padX);
+        rawPreviewW = this._computeTrackpadWordPreview(lineWords, lastIdx, wordsMaxX, padX);
         this.activeWordIndex = lastIdx;
       } else {
         let segIdx = 0;
@@ -3121,8 +3163,8 @@ export class ReadingRuler {
         const widthB = Math.max(4, itemB.width + padX * 2);
         continuousWidth = widthA + t * (widthB - widthA);
 
-        const prevA = this._computeTrackpadWordPreview(lineWords, segIdx, textMaxX, padX);
-        const prevB = this._computeTrackpadWordPreview(lineWords, segIdx + 1, textMaxX, padX);
+        const prevA = this._computeTrackpadWordPreview(lineWords, segIdx, wordsMaxX, padX);
+        const prevB = this._computeTrackpadWordPreview(lineWords, segIdx + 1, wordsMaxX, padX);
         rawPreviewW = prevA + t * (prevB - prevA);
 
         this.activeWordIndex = (t < 0.5) ? segIdx : (segIdx + 1);
@@ -3130,11 +3172,11 @@ export class ReadingRuler {
       this._checkWordProgress(this.activeWordIndex, isMovingLeft);
     }
 
-    // Clamp strictly to [textMinX, textMaxX - continuousWidth] with outward padX matching mouse mode,
-    // never allowing look-ahead preview tail to cause premature stopping before the last character.
-    const maxLeft = Math.max(textMinX, textMaxX - continuousWidth);
-    const clampedLeft = Math.max(textMinX, Math.min(maxLeft, rawLeft));
-    const remainingRightSpace = Math.max(0, textMaxX - (clampedLeft + continuousWidth));
+    // Allow the highlight block to glide freely across the full column width (including trailing empty space)
+    // while keeping the outward left padX so the first letter is always enclosed.
+    const maxLeft = Math.max(fullMinX, fullMaxX - continuousWidth);
+    const clampedLeft = Math.max(fullMinX, Math.min(maxLeft, rawLeft));
+    const remainingRightSpace = Math.max(0, wordsMaxX - (clampedLeft + continuousWidth));
     const previewW = Math.min(rawPreviewW, remainingRightSpace);
     const totalW = Math.max(4, continuousWidth + previewW);
 
@@ -3174,16 +3216,13 @@ export class ReadingRuler {
     this.lastValidPointerX = this.lastPointerX;
     this.lastValidPointerY = this.lastPointerY;
 
-    return { clampedLeft, textMinX, maxLeft, overflow: rawLeft - clampedLeft };
+    return { clampedLeft, textMinX: fullMinX, maxLeft, overflow: rawLeft - clampedLeft };
   }
 
-  _applyContinuousBottomCoverWaveAtX(lineWords, rawCenterX, activeLine = null, isMovingLeft = false) {
-    let minCenterX = activeLine ? (activeLine.textLeft ?? activeLine.left ?? 0) : 0;
-    let maxCenterX = activeLine ? (activeLine.textRight ?? activeLine.right ?? window.innerWidth) : window.innerWidth;
-    if (lineWords && lineWords.length > 0) {
-      minCenterX = lineWords[0].left;
-      maxCenterX = lineWords[lineWords.length - 1].right;
-    }
+  _applyContinuousBottomCoverWaveAtX(lineWords, rawCenterX, activeLine = null, isMovingLeft = false, geom = null) {
+    const colBounds = this._getTrackpadWordColumnBounds(activeLine, lineWords, geom);
+    const minCenterX = colBounds.colLeft;
+    const maxCenterX = colBounds.colRight;
 
     const clampedCenterX = Math.max(minCenterX, Math.min(maxCenterX, rawCenterX));
 
@@ -3247,15 +3286,15 @@ export class ReadingRuler {
       const startCenterX = Number.isFinite(tp.waveCenterX)
         ? tp.waveCenterX
         : (Number.isFinite(this.lastPointerX) ? this.lastPointerX : lineWords[0].left);
-      this._applyContinuousBottomCoverWaveAtX(lineWords, startCenterX + dx, curLine, dx < 0);
+      this._applyContinuousBottomCoverWaveAtX(lineWords, startCenterX + dx, curLine, dx < 0, geom);
     } else {
       const padX = 3;
       const startLeft = Number.isFinite(tp.wordFloatLeft)
         ? tp.wordFloatLeft
         : (lineWords[0].left - padX);
-      // Clamp strictly within [textMinX, maxLeft] of the current line with zero overshoot memory
-      // so reversing direction from either line edge responds immediately on the first pixel.
-      this._applyContinuousWordGeometryAtLeft(lineWords, startLeft + dx, curLine, dx < 0);
+      // Clamp strictly within full column width with zero overshoot memory
+      // so reversing direction from either edge responds immediately on the first pixel.
+      this._applyContinuousWordGeometryAtLeft(lineWords, startLeft + dx, curLine, dx < 0, geom);
     }
 
     tp.wordWrapOverflow = 0;
@@ -3399,10 +3438,10 @@ export class ReadingRuler {
     if (words && words.length > 0) {
       const isBottomCover = (this.style === "bottom-cover" || this.mode === "bottom-cover");
       if (isBottomCover) {
-        this._applyContinuousBottomCoverWaveAtX(words, words[0].left, nextLine, dir < 0);
+        this._applyContinuousBottomCoverWaveAtX(words, words[0].left, nextLine, dir < 0, geom);
       } else {
         // Position flush at the exact outward-padded starting edge of the new line's text (matching mouse mode)
-        this._applyContinuousWordGeometryAtLeft(words, words[0].left - 3, nextLine, dir < 0);
+        this._applyContinuousWordGeometryAtLeft(words, words[0].left - 3, nextLine, dir < 0, geom);
       }
       this.rulerEl?.classList.add("word-tracking-mode");
     } else {
@@ -3675,6 +3714,18 @@ export class ReadingRuler {
       }
 
       if (e.pointerType === "pen") {
+        if (this.followMode === "trackpad") {
+          if (e.isPrimary === false) {
+            this._cancelTrackpadTouch();
+            return;
+          }
+          this.lastPenTime = Date.now();
+          this.isPenTouching = true;
+          this.isTouchActive = true;
+          this.isTouchSwiping = false;
+          this._startTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY, e.target);
+          return;
+        }
         this.lastPenTime = Date.now();
         this.isPenTouching = true;
         this.savePenDetails(e);
@@ -3754,12 +3805,6 @@ export class ReadingRuler {
       }
 
       if (this.followMode === "trackpad") {
-        if (e.pointerType === "pen") {
-          this.activePointerId = e.pointerId;
-          this.activePointerType = "pen";
-          this.isDraggingRuler = false;
-          this.schedulePointerUpdate(e.clientX, e.clientY, "pen");
-        }
         return;
       }
 
@@ -3796,6 +3841,12 @@ export class ReadingRuler {
       }
 
       if (e.pointerType === "pen") {
+        if (this.followMode === "trackpad") {
+          if (this._trackpad?.active && this._trackpad.source === "pointer") {
+            this._moveTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY);
+          }
+          return;
+        }
         this.lastPenTime = Date.now();
         this.savePenDetails(e);
 
@@ -3864,7 +3915,7 @@ export class ReadingRuler {
         }
       }
 
-      if (this.followMode === "trackpad" && e.pointerType === "touch") {
+      if (this.followMode === "trackpad" && (e.pointerType === "touch" || e.pointerType === "pen")) {
         if (!this.enabled) return;
         if (this._trackpad?.active && this._trackpad.source === "pointer") {
           this._moveTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY);
@@ -3924,25 +3975,27 @@ export class ReadingRuler {
       }
 
       if (this.followMode === "trackpad") {
-        if (e.pointerType === "pen") {
-          if (!this.isUiControl(e.target) && this.isPointerInStage(e.clientX, e.clientY)) {
-            this.activePointerType = "pen";
-            this.schedulePointerUpdate(e.clientX, e.clientY, "pen");
-          }
-        }
         return;
       }
     };
 
     const onPointerUp = (e) => {
-      if (this.followMode === "trackpad" && e.pointerType === "touch") {
+      if (this.followMode === "trackpad" && (e.pointerType === "touch" || e.pointerType === "pen")) {
         this.isTouchActive = false;
+        this.isPenTouching = false;
         this.isTouchSwiping = false;
         this.isDraggingRuler = false;
-        this.lastTouchEndTime = Date.now();
+        const now = Date.now();
+        this.lastTouchEndTime = now;
+        if (e.pointerType === "pen") {
+          this.lastPenTime = now;
+        }
         this._endTrackpadTouch("pointer", e.pointerId);
         this.touchHistory = [];
         this.touchStrokeStartTime = 0;
+        this.penHistory = [];
+        this.penStrokeStartTime = 0;
+        this.flickHandledInStroke = false;
         return;
       }
       if (this.isUiControl(e.target)) {
@@ -4424,7 +4477,6 @@ export class ReadingRuler {
       }
       if (e.touches && e.touches.length === 1) {
         const touch = e.touches[0];
-        if (touch.touchType === "stylus") return;
         if (!this._trackpad?.active) {
           this._startTrackpadTouch("touch", touch.identifier, touch.clientX, touch.clientY, e.target);
         }
@@ -4467,17 +4519,9 @@ export class ReadingRuler {
           this._cancelTrackpadTouch();
           return;
         }
-        const stylusTouch = touches.find(t => t.touchType === "stylus");
-        if (stylusTouch && this.isPointerInStage(stylusTouch.clientX, stylusTouch.clientY)) {
-          if (e.cancelable) e.preventDefault();
-          this.lastPenTime = Date.now();
-          this.activePointerType = "pen";
-          this.schedulePointerUpdate(stylusTouch.clientX, stylusTouch.clientY, "pen");
-          return;
-        }
         const tp = this._trackpad;
         if (tp && tp.active) {
-          const finger = touches.find(t => (tp.source === "touch" ? t.identifier === tp.touchId : t.touchType !== "stylus")) || touches[0];
+          const finger = touches.find(t => (tp.source === "touch" ? t.identifier === tp.touchId : true)) || touches[0];
           if (finger) {
             if (e.cancelable) e.preventDefault();
             if (tp.source === "touch") {
