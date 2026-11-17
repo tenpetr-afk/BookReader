@@ -771,9 +771,36 @@ export class LuminaApp {
         observer.observe(c, { attributes: true, attributeFilter: ["class"], subtree: true });
       });
     }
-    window.addEventListener("resize", () => {
+    const handleViewportChange = () => {
+      this.syncRulerPopoverPlacement();
       this.syncAllSegmentedBubbles(true);
-    }, { passive: true });
+      requestAnimationFrame(() => {
+        this.syncAllSegmentedBubbles(true);
+      });
+    };
+    window.addEventListener("resize", handleViewportChange, { passive: true });
+    window.addEventListener("orientationchange", handleViewportChange, { passive: true });
+  }
+
+  /**
+   * Na mobilních obrazovkách (<= 680px) odpojí #ruler-quick-popover od úzkého kontejneru
+   * pilulky v patičce do document.body, aby position: fixed vždy vycházel přímo z viewportu.
+   * Na desktopu a širších tabletech jej vrací zpět do původního rodiče.
+   */
+  syncRulerPopoverPlacement() {
+    const popover = this.dom?.rulerQuickPopover;
+    if (!popover) return;
+    if (!this._rulerPopoverOriginParent && popover.parentElement && popover.parentElement !== document.body) {
+      this._rulerPopoverOriginParent = popover.parentElement;
+    }
+    const isMobile = window.matchMedia && window.matchMedia("(max-width: 680px)").matches;
+    if (isMobile) {
+      if (popover.parentElement !== document.body) {
+        document.body.appendChild(popover);
+      }
+    } else if (this._rulerPopoverOriginParent && popover.parentElement !== this._rulerPopoverOriginParent) {
+      this._rulerPopoverOriginParent.appendChild(popover);
+    }
   }
 
   updateRangeFill(input) {
@@ -2262,8 +2289,10 @@ export class LuminaApp {
               this.dom.btnReaderMenuFab.setAttribute("aria-expanded", "false");
             }
           }
+          this.syncRulerPopoverPlacement();
           this.dom.rulerQuickPopover.classList.remove("is-hidden");
           this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "true");
+          if (this.dom.rulerSplitPill) this.dom.rulerSplitPill.classList.add("is-popover-open");
           this.updateRulerToggleButtonUI();
           this.updateRulerSettingsVisibility(this.settings?.ruler?.style || this.settings?.ruler?.mode, this.settings?.ruler?.focusMode, this.isPdfMode);
           this.setPdfRulerUIVisibility(this.isPdfMode);
@@ -2271,12 +2300,17 @@ export class LuminaApp {
             this.syncPdfRulerUI(this.currentBook.pdfRulerConfig);
           }
           this.syncAllRangeFills();
+          this.syncAllSegmentedBubbles(true);
           requestAnimationFrame(() => {
             this.syncAllSegmentedBubbles(true);
+            requestAnimationFrame(() => {
+              this.syncAllSegmentedBubbles(true);
+            });
           });
         } else {
           this.dom.rulerQuickPopover.classList.add("is-hidden");
           this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+          if (this.dom.rulerSplitPill) this.dom.rulerSplitPill.classList.remove("is-popover-open");
         }
       });
 
@@ -2299,6 +2333,7 @@ export class LuminaApp {
         e.stopPropagation();
         this.dom.rulerQuickPopover.classList.add("is-hidden");
         if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+        if (this.dom.rulerSplitPill) this.dom.rulerSplitPill.classList.remove("is-popover-open");
         // Krátký navigační zámek aby zavírací klik nespustil otočení stránky ani krokování pravítka
         this.isNavigating = true;
         setTimeout(() => { this.isNavigating = false; }, 300);
@@ -2314,6 +2349,7 @@ export class LuminaApp {
         e.stopPropagation();
         this.dom.rulerQuickPopover.classList.add("is-hidden");
         if (this.dom.btnRulerQuickMenu) this.dom.btnRulerQuickMenu.setAttribute("aria-expanded", "false");
+        if (this.dom.rulerSplitPill) this.dom.rulerSplitPill.classList.remove("is-popover-open");
         this.isNavigating = true;
         setTimeout(() => { this.isNavigating = false; }, 300);
       }, { capture: true, passive: false });

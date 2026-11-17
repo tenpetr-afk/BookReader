@@ -418,16 +418,24 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 .paged-footer-bar:has(#ruler-quick-popover:not(.is-hidden)),
 .footer-actions-group:has(#ruler-quick-popover:not(.is-hidden)),
 .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)),
+.ruler-split-pill.is-popover-open,
 #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)),
+#ruler-toggle-btn.is-popover-open,
 body.ui-liquid-glass #paged-footer-bar:has(#ruler-quick-popover:not(.is-hidden)),
 body.ui-liquid-glass .paged-footer-bar:has(#ruler-quick-popover:not(.is-hidden)),
 body.ui-liquid-glass .footer-actions-group:has(#ruler-quick-popover:not(.is-hidden)),
 body.ui-liquid-glass .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)),
-body.ui-liquid-glass #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)) {
+body.ui-liquid-glass .ruler-split-pill.is-popover-open,
+body.ui-liquid-glass #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)),
+body.ui-liquid-glass #ruler-toggle-btn.is-popover-open,
+body.ui-liquid-glass.mode-vertical .footer-actions-group:has(#ruler-quick-popover:not(.is-hidden)),
+.ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)):hover,
+.ruler-split-pill.is-popover-open:hover {
   z-index: 100 !important;
   overflow: visible !important;
   transform: none !important;
   will-change: auto !important;
+  filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
@@ -3961,11 +3969,13 @@ body.ui-liquid-glass .pill-scrubber-tooltip {
     position: fixed !important;
     left: max(12px, env(safe-area-inset-left, 0px)) !important;
     right: max(12px, env(safe-area-inset-right, 0px)) !important;
-    width: auto !important;
-    max-width: none !important;
+    width: calc(100vw - max(12px, env(safe-area-inset-left, 0px)) - max(12px, env(safe-area-inset-right, 0px))) !important;
+    max-width: calc(100vw - max(12px, env(safe-area-inset-left, 0px)) - max(12px, env(safe-area-inset-right, 0px))) !important;
+    box-sizing: border-box !important;
     top: auto !important;
-    bottom: calc(var(--footer-height, 56px) + env(safe-area-inset-bottom, 0px) + 10px) !important;
-    max-height: calc(100dvh - var(--footer-height, 56px) - env(safe-area-inset-bottom, 0px) - env(safe-area-inset-top, 0px) - 24px) !important;
+    bottom: calc(var(--footer-height, 56px) + 10px) !important;
+    max-height: calc(100vh - var(--footer-height, 56px) - env(safe-area-inset-top, 0px) - 24px) !important;
+    max-height: calc(100dvh - var(--footer-height, 56px) - env(safe-area-inset-top, 0px) - 24px) !important;
     overflow-y: auto !important;
     overflow-x: hidden !important;
     transform-origin: bottom center !important;
@@ -3976,10 +3986,36 @@ body.ui-liquid-glass .pill-scrubber-tooltip {
   #ruler-quick-popover .popover-styles-grid,
   #ruler-quick-popover .popover-colors-row,
   #ruler-quick-popover .popover-slider-wrapper,
-  #ruler-quick-popover .popover-row-between {
+  #ruler-quick-popover .popover-row-between,
+  #ruler-quick-popover #popover-pdf-height-container {
     width: 100%;
     max-width: 100%;
     min-width: 0;
+    box-sizing: border-box;
+  }
+
+  #ruler-quick-popover .popover-row-between {
+    gap: 0.5rem;
+  }
+
+  #ruler-quick-popover .popover-row-between .popover-section-label {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  #ruler-quick-popover .popover-row-between .switch-control,
+  #ruler-quick-popover .popover-row-between .popover-val-badge {
+    flex-shrink: 0;
+  }
+
+  #ruler-quick-popover .popover-styles-grid .popover-style-btn,
+  #ruler-quick-popover .popover-segmented-control .segment-btn {
+    min-width: 0;
+  }
+
+  #ruler-quick-popover .popover-slider-wrapper .slider-input {
+    width: 100%;
+    display: block;
     box-sizing: border-box;
   }
 

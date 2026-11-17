@@ -5010,25 +5010,39 @@ body.ui-liquid-glass #ruler-toggle-btn:hover {
 
 /* Když je otevřený popover pravítka, zamezit jakémukoliv hýbání či škálování pilulky a vypnout její backdrop filter, aby popover mohl čistě blurrovat text za sebou */
 body.ui-liquid-glass .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)),
+body.ui-liquid-glass .ruler-split-pill.is-popover-open,
 body.ui-liquid-glass #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)),
+body.ui-liquid-glass #ruler-toggle-btn.is-popover-open,
 .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)),
-#ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)) {
+.ruler-split-pill.is-popover-open,
+#ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)),
+#ruler-toggle-btn.is-popover-open {
   transform: none !important;
   will-change: auto !important;
+  filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
 body.ui-liquid-glass .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)):hover,
+body.ui-liquid-glass .ruler-split-pill.is-popover-open:hover,
 body.ui-liquid-glass #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)):hover,
+body.ui-liquid-glass #ruler-toggle-btn.is-popover-open:hover,
 .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)):hover,
+.ruler-split-pill.is-popover-open:hover,
 #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)):hover,
+#ruler-toggle-btn.is-popover-open:hover,
 body.ui-liquid-glass .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)):active,
+body.ui-liquid-glass .ruler-split-pill.is-popover-open:active,
 body.ui-liquid-glass #ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)):active,
+body.ui-liquid-glass #ruler-toggle-btn.is-popover-open:active,
 .ruler-split-pill:has(#ruler-quick-popover:not(.is-hidden)):active,
-#ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)):active {
+.ruler-split-pill.is-popover-open:active,
+#ruler-toggle-btn:has(#ruler-quick-popover:not(.is-hidden)):active,
+#ruler-toggle-btn.is-popover-open:active {
   transform: none !important;
   will-change: auto !important;
+  filter: none !important;
 }
 
 body.ui-liquid-glass .ruler-split-pill:active:not(:has(#ruler-quick-popover:not(.is-hidden))),
