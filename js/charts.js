@@ -17,8 +17,11 @@ export class StatsCharts {
     container.innerHTML = "";
 
     const width = container.clientWidth || 500;
+    const isCompact = width < 480;
     const height = 180;
-    const padding = { top: 20, right: 15, bottom: 30, left: 35 };
+    const padding = isCompact
+      ? { top: 22, right: 8, bottom: 28, left: 30 }
+      : { top: 20, right: 15, bottom: 30, left: 35 };
 
     const chartW = width - padding.left - padding.right;
     const chartH = height - padding.top - padding.bottom;
@@ -34,10 +37,10 @@ export class StatsCharts {
 
     const totalMinutes = normalizedData.reduce((acc, d) => acc + d.minutes, 0);
     const maxMinutes = Math.max(30, ...normalizedData.map(d => d.minutes));
-    const barWidth = Math.min(36, Math.max(16, (chartW / (normalizedData.length || 1)) * 0.55));
+    const barWidth = Math.min(36, Math.max(isCompact ? 14 : 16, (chartW / (normalizedData.length || 1)) * 0.55));
     const step = chartW / (normalizedData.length || 1);
 
-    let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" class="stats-svg-chart" role="img" aria-label="Aktivita čtení">
+    let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" class="stats-svg-chart" role="img" aria-label="Aktivita čtení">
       <defs>
         <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="#38bdf8" />
@@ -52,7 +55,7 @@ export class StatsCharts {
       const yPos = padding.top + chartH - (i / gridSteps) * chartH;
       svg += `
         <line x1="${padding.left}" y1="${yPos}" x2="${width - padding.right}" y2="${yPos}" stroke="currentColor" stroke-opacity="0.08" stroke-dasharray="3,3" />
-        <text x="${padding.left - 8}" y="${yPos + 4}" font-size="11" fill="currentColor" opacity="0.5" text-anchor="end">${yVal}m</text>
+        <text x="${padding.left - 8}" y="${yPos + 4}" font-size="${isCompact ? 10 : 11}" fill="currentColor" opacity="0.5" text-anchor="end">${yVal}m</text>
       `;
     }
 
@@ -68,8 +71,8 @@ export class StatsCharts {
             ? `<rect x="${x}" y="${y}" width="${barWidth}" height="${barH}" rx="4" fill="url(#barGrad)" class="chart-bar-rect"></rect>`
             : `<rect x="${x}" y="${padding.top + chartH - 2}" width="${barWidth}" height="2" rx="1" fill="currentColor" opacity="0.15" class="chart-bar-rect chart-bar-zero"></rect>`
           }
-          <text x="${x + barWidth / 2}" y="${height - 10}" font-size="11" fill="currentColor" opacity="0.75" text-anchor="middle" pointer-events="none">${d.label}</text>
-          ${d.minutes > 0 ? `<text x="${x + barWidth / 2}" y="${y - 6}" font-size="10" font-weight="bold" fill="currentColor" opacity="0.85" text-anchor="middle" pointer-events="none">${d.minutes}</text>` : ""}
+          <text x="${x + barWidth / 2}" y="${height - 10}" font-size="${isCompact ? 10 : 11}" fill="currentColor" opacity="0.75" text-anchor="middle" pointer-events="none">${d.label}</text>
+          ${d.minutes > 0 ? `<text x="${x + barWidth / 2}" y="${y - 6}" font-size="${isCompact ? 9.5 : 10}" font-weight="bold" fill="currentColor" opacity="0.85" text-anchor="middle" pointer-events="none">${d.minutes}</text>` : ""}
         </g>
       `;
     });
@@ -77,11 +80,15 @@ export class StatsCharts {
     // Prázdný stav, pokud v celém týdnu nebyla zaznamenána žádná aktivita čtení
     if (totalMinutes === 0 && normalizedData.length > 0) {
       const msgY = padding.top + chartH / 2;
+      const boxMargin = isCompact ? 6 : 20;
+      const emptyMsg = isCompact && chartW < 280
+        ? "Žádná aktivita čtení v tomto týdnu"
+        : "V tomto týdnu nebyla zaznamenána žádná aktivita čtení";
       svg += `
         <g class="chart-week-empty-overlay" pointer-events="none">
-          <rect x="${padding.left + 20}" y="${msgY - 14}" width="${chartW - 40}" height="28" rx="6" fill="var(--bg-surface-elevated, #1e293b)" opacity="0.85" />
-          <text x="${padding.left + chartW / 2}" y="${msgY + 4}" font-size="11" fill="currentColor" opacity="0.65" text-anchor="middle" font-weight="500">
-            V tomto týdnu nebyla zaznamenána žádná aktivita čtení
+          <rect x="${padding.left + boxMargin}" y="${msgY - 14}" width="${Math.max(80, chartW - boxMargin * 2)}" height="28" rx="6" fill="var(--bg-surface-elevated, #1e293b)" opacity="0.85" />
+          <text x="${padding.left + chartW / 2}" y="${msgY + 4}" font-size="${isCompact ? 10 : 11}" fill="currentColor" opacity="0.65" text-anchor="middle" font-weight="500">
+            ${emptyMsg}
           </text>
         </g>
       `;
@@ -178,8 +185,11 @@ export class StatsCharts {
     }
 
     const width = container.clientWidth || 500;
+    const isCompact = width < 480;
     const height = 210;
-    const padding = { top: 25, right: 25, bottom: 38, left: 45 };
+    const padding = isCompact
+      ? { top: 32, right: 12, bottom: 34, left: 34 }
+      : { top: 25, right: 25, bottom: 38, left: 45 };
 
     const chartW = width - padding.left - padding.right;
     const chartH = height - padding.top - padding.bottom;
@@ -208,7 +218,7 @@ export class StatsCharts {
 
     let points = validHistory.map((h, i) => `${getX(i).toFixed(1)},${getY(Math.round(h.wpm)).toFixed(1)}`).join(" ");
 
-    let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" class="stats-svg-chart" role="img" aria-label="Globální historie rychlosti čtení">
+    let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" class="stats-svg-chart" role="img" aria-label="Globální historie rychlosti čtení">
       <defs>
         <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="#10b981" stop-opacity="0.35" />
@@ -218,10 +228,19 @@ export class StatsCharts {
 
     // Vodorovná čára pro průměrné WPM
     const avgY = getY(effectiveAvgWpm);
-    svg += `
-      <line x1="${padding.left}" y1="${avgY}" x2="${width - padding.right}" y2="${avgY}" stroke="#f59e0b" stroke-dasharray="4,4" stroke-width="1.5" opacity="0.7"/>
-      <text x="${width - padding.right}" y="${avgY - 6}" font-size="10" fill="#f59e0b" font-weight="600" text-anchor="end">Průměr: ${effectiveAvgWpm} WPM</text>
-    `;
+    if (isCompact) {
+      const legendX = width - padding.right;
+      svg += `
+        <line x1="${padding.left}" y1="${avgY}" x2="${width - padding.right}" y2="${avgY}" stroke="#f59e0b" stroke-dasharray="4,4" stroke-width="1.5" opacity="0.75"/>
+        <line x1="${Math.max(padding.left, legendX - 104)}" y1="9" x2="${Math.max(padding.left + 12, legendX - 91)}" y2="9" stroke="#f59e0b" stroke-dasharray="3,2" stroke-width="1.75" opacity="0.9"/>
+        <text x="${legendX}" y="12" font-size="9.5" fill="#f59e0b" font-weight="700" text-anchor="end">Průměr: ${effectiveAvgWpm} WPM</text>
+      `;
+    } else {
+      svg += `
+        <line x1="${padding.left}" y1="${avgY}" x2="${width - padding.right}" y2="${avgY}" stroke="#f59e0b" stroke-dasharray="4,4" stroke-width="1.5" opacity="0.7"/>
+        <text x="${width - padding.right}" y="${avgY - 6}" font-size="10" fill="#f59e0b" font-weight="600" text-anchor="end">Průměr: ${effectiveAvgWpm} WPM</text>
+      `;
+    }
 
     // Plocha pod křivkou
     if (validHistory.length > 1) {
@@ -253,8 +272,8 @@ export class StatsCharts {
 
     // Osa Y popisky
     svg += `
-      <text x="${padding.left - 8}" y="${getY(maxWpm) + 4}" font-size="10" fill="currentColor" opacity="0.5" font-variant-numeric="tabular-nums" text-anchor="end">${maxWpm}</text>
-      <text x="${padding.left - 8}" y="${getY(minWpm) + 4}" font-size="10" fill="currentColor" opacity="0.5" font-variant-numeric="tabular-nums" text-anchor="end">${minWpm}</text>
+      <text x="${padding.left - 8}" y="${getY(maxWpm) + 4}" font-size="${isCompact ? 9.5 : 10}" fill="currentColor" opacity="0.5" font-variant-numeric="tabular-nums" text-anchor="end">${maxWpm}</text>
+      <text x="${padding.left - 8}" y="${getY(minWpm) + 4}" font-size="${isCompact ? 9.5 : 10}" fill="currentColor" opacity="0.5" font-variant-numeric="tabular-nums" text-anchor="end">${minWpm}</text>
     `;
 
     // Osa X popisky (datum a čas čtecích relací bez překrývání)
@@ -294,7 +313,9 @@ export class StatsCharts {
     };
 
     // Vzorkování popisků pro osu X podle šířky kontejneru
-    const maxLabels = Math.min(6, Math.max(2, Math.floor(chartW / 75)));
+    const maxLabels = isCompact
+      ? Math.min(4, Math.max(2, Math.floor(chartW / 68)))
+      : Math.min(6, Math.max(2, Math.floor(chartW / 75)));
     const labelIndices = new Set();
     if (validHistory.length <= maxLabels) {
       validHistory.forEach((_, i) => labelIndices.add(i));
@@ -318,7 +339,7 @@ export class StatsCharts {
       svg += `
         <line x1="${cx}" y1="${padding.top}" x2="${cx}" y2="${padding.top + chartH}" stroke="currentColor" stroke-opacity="0.04" stroke-dasharray="2,2" />
         <line x1="${cx}" y1="${padding.top + chartH}" x2="${cx}" y2="${padding.top + chartH + 4}" stroke="currentColor" stroke-opacity="0.25" />
-        <text x="${cx}" y="${height - 12}" font-size="10" fill="currentColor" opacity="0.65" font-variant-numeric="tabular-nums" text-anchor="${textAnchor}">${label}</text>
+        <text x="${cx}" y="${height - 10}" font-size="${isCompact ? 9.5 : 10}" fill="currentColor" opacity="0.65" font-variant-numeric="tabular-nums" text-anchor="${textAnchor}">${label}</text>
       `;
     });
 
@@ -562,8 +583,11 @@ export class StatsCharts {
       const rangeY = maxY - minY || 100;
 
       const width = container.clientWidth || 560;
+      const isCompact = width < 480;
       const height = 210;
-      const padding = { top: 28, right: 30, bottom: 38, left: 48 };
+      const padding = isCompact
+        ? { top: 34, right: 12, bottom: 34, left: 34 }
+        : { top: 28, right: 30, bottom: 38, left: 48 };
 
       const chartW = width - padding.left - padding.right;
       const chartH = height - padding.top - padding.bottom;
@@ -640,7 +664,7 @@ export class StatsCharts {
       // Uzavřená plocha pod křivkou pro gradient
       const areaPath = `${curvePath} L ${points[points.length - 1].x.toFixed(1)},${padding.top + chartH} L ${points[0].x.toFixed(1)},${padding.top + chartH} Z`;
 
-      let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" class="stats-svg-chart timeline-svg-chart" role="img" aria-label="Graf rychlosti v čase relace">
+      let svg = `<svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" class="stats-svg-chart timeline-svg-chart" role="img" aria-label="Graf rychlosti v čase relace">
         <defs>
           <linearGradient id="sessionTimelineGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.38" />
@@ -660,19 +684,23 @@ export class StatsCharts {
         const yPos = padding.top + chartH - (i / yGridSteps) * chartH;
         svg += `
           <line x1="${padding.left}" y1="${yPos}" x2="${width - padding.right}" y2="${yPos}" stroke="currentColor" stroke-opacity="0.08" stroke-dasharray="3,3" />
-          <text x="${padding.left - 8}" y="${yPos + 4}" font-size="10.5" fill="currentColor" opacity="0.55" font-variant-numeric="tabular-nums" text-anchor="end">${val}</text>
+          <text x="${padding.left - 8}" y="${yPos + 4}" font-size="${isCompact ? 9.5 : 10.5}" fill="currentColor" opacity="0.55" font-variant-numeric="tabular-nums" text-anchor="end">${val}</text>
         `;
       }
 
       // 2. Vertikální mřížka a popisky osy X po 1-minutových intervalech (1 min, 2 min, 3 min, ...)
       const totalMinutesFloor = Math.max(1, Math.floor(maxElapsed / 60));
-      const maxTickLabels = Math.min(8, Math.max(3, Math.floor(chartW / 65)));
+      const maxTickLabels = Math.min(8, Math.max(3, Math.floor(chartW / (isCompact ? 58 : 65))));
       const minuteStep = Math.max(1, Math.ceil(totalMinutesFloor / maxTickLabels));
       const xTicks = [];
       for (let m = minuteStep; m <= totalMinutesFloor; m += minuteStep) {
         xTicks.push({ sec: m * 60, label: `${m} min` });
       }
-      if (xTicks.length === 0 || (maxElapsed - xTicks[xTicks.length - 1].sec) >= 30) {
+      const hasRoomForEndTick = xTicks.length === 0 || (
+        (maxElapsed - xTicks[xTicks.length - 1].sec) >= 30 &&
+        (getX(maxElapsed) - getX(xTicks[xTicks.length - 1].sec)) >= (isCompact ? 42 : 45)
+      );
+      if (hasRoomForEndTick) {
         const endMin = Math.floor(maxElapsed / 60);
         const endSec = Math.round(maxElapsed % 60);
         const endLabel = endMin > 0
@@ -685,7 +713,7 @@ export class StatsCharts {
         const xPos = getX(tick.sec);
         svg += `
           <line x1="${xPos}" y1="${padding.top}" x2="${xPos}" y2="${padding.top + chartH}" stroke="currentColor" stroke-opacity="0.05" stroke-dasharray="2,2" />
-          <text x="${xPos}" y="${height - 12}" font-size="10" fill="currentColor" opacity="0.65" font-variant-numeric="tabular-nums" text-anchor="${textAnchorMiddle(tick.sec, maxElapsed)}">${tick.label}</text>
+          <text x="${xPos}" y="${height - 10}" font-size="${isCompact ? 9.5 : 10}" fill="currentColor" opacity="0.65" font-variant-numeric="tabular-nums" text-anchor="${textAnchorMiddle(tick.sec, maxElapsed)}">${tick.label}</text>
         `;
       }
 
@@ -695,12 +723,42 @@ export class StatsCharts {
         return "middle";
       }
 
+      // Nalezení bodu se špičkovou rychlostí (Peak WPM) před umístěním popisku průměru
+      let peakPoint = null;
+      for (const pt of points) {
+        if (!pt.isAnchor) {
+          const ptVal = Number(pt.wpm || 0);
+          const curPeakVal = peakPoint ? Number(peakPoint.wpm || 0) : -1;
+          if (!peakPoint || ptVal > curPeakVal) {
+            peakPoint = pt;
+          }
+        }
+      }
+
       // 3. Oranžová přerušovaná čára průměrné rychlosti (Průměr: X WPM) na přesné hodnotě session.avg_wpm
       const avgY = getY(avgWpm);
-      svg += `
-        <line x1="${padding.left}" y1="${avgY}" x2="${width - padding.right}" y2="${avgY}" stroke="#f59e0b" stroke-dasharray="4,4" stroke-width="1.5" opacity="0.85" />
-        <text x="${width - padding.right}" y="${Math.max(padding.top + 10, avgY - 6)}" font-size="10" fill="#f59e0b" font-weight="700" text-anchor="end">Průměr: ${avgWpm} WPM</text>
-      `;
+      if (isCompact) {
+        const peakNearTopRight = peakPoint && peakPoint.y < padding.top + 22 && peakPoint.x > padding.left + chartW * 0.5;
+        const avgLabelText = `Průměr: ${avgWpm} WPM`;
+        svg += `<line x1="${padding.left}" y1="${avgY}" x2="${width - padding.right}" y2="${avgY}" stroke="#f59e0b" stroke-dasharray="4,4" stroke-width="1.5" opacity="0.85" />`;
+        if (peakNearTopRight) {
+          svg += `
+            <line x1="${padding.left}" y1="9" x2="${padding.left + 12}" y2="9" stroke="#f59e0b" stroke-dasharray="3,2" stroke-width="1.75" opacity="0.95" />
+            <text x="${padding.left + 16}" y="12" font-size="9.5" fill="#f59e0b" font-weight="700" text-anchor="start">${avgLabelText}</text>
+          `;
+        } else {
+          const legendX = width - padding.right;
+          svg += `
+            <line x1="${Math.max(padding.left, legendX - 104)}" y1="9" x2="${Math.max(padding.left + 12, legendX - 91)}" y2="9" stroke="#f59e0b" stroke-dasharray="3,2" stroke-width="1.75" opacity="0.95" />
+            <text x="${legendX}" y="12" font-size="9.5" fill="#f59e0b" font-weight="700" text-anchor="end">${avgLabelText}</text>
+          `;
+        }
+      } else {
+        svg += `
+          <line x1="${padding.left}" y1="${avgY}" x2="${width - padding.right}" y2="${avgY}" stroke="#f59e0b" stroke-dasharray="4,4" stroke-width="1.5" opacity="0.85" />
+          <text x="${width - padding.right}" y="${Math.max(padding.top + 10, avgY - 6)}" font-size="10" fill="#f59e0b" font-weight="700" text-anchor="end">Průměr: ${avgWpm} WPM</text>
+        `;
+      }
 
       // 4. Vyplněná plocha pod křivkou
       svg += `<path d="${areaPath}" fill="url(#sessionTimelineGrad)" />`;
@@ -713,19 +771,7 @@ export class StatsCharts {
         <line class="chart-crosshair" x1="0" y1="${padding.top}" x2="0" y2="${padding.top + chartH}" stroke="currentColor" stroke-opacity="0.18" stroke-dasharray="3,3" stroke-width="1.2" opacity="0" pointer-events="none" />
       `;
 
-      // 6. Nalezení bodu se špičkovou rychlostí (Peak WPM) mezi reálnými vzorky výhradně z vykreslených hodnot s.wpm
-      let peakPoint = null;
-      for (const pt of points) {
-        if (!pt.isAnchor) {
-          const ptVal = Number(pt.wpm || 0);
-          const curPeakVal = peakPoint ? Number(peakPoint.wpm || 0) : -1;
-          if (!peakPoint || ptVal > curPeakVal) {
-            peakPoint = pt;
-          }
-        }
-      }
-
-      // 7. Vykreslení interaktivních 1-minutových bodů s počtem přečtených slov v dané minutě a WPM
+      // 6. Vykreslení interaktivních 1-minutových bodů s počtem přečtených slov v dané minutě a WPM
       points.forEach((pt, idx) => {
         if (pt.isAnchor) return; // Ukotvovací pomocné body nevykreslují kruhový bod
 
@@ -737,12 +783,27 @@ export class StatsCharts {
         const labelText = `${minNum}. minuta: ${wordsInMin} slov (${displayWpm} WPM)`;
 
         if (isPeak) {
+          let peakTextAnchor = "middle";
+          let peakLabelX = pt.x;
+          if (isCompact) {
+            if (pt.x < padding.left + 32) {
+              peakTextAnchor = "start";
+              peakLabelX = Math.max(padding.left, pt.x - 4);
+            } else if (pt.x > width - padding.right - 32) {
+              peakTextAnchor = "end";
+              peakLabelX = Math.min(width - padding.right, pt.x + 4);
+            }
+          }
+          const peakLabelY = isCompact
+            ? (pt.y - 10 >= padding.top + 4 ? pt.y - 10 : pt.y + 16)
+            : Math.max(padding.top + 8, pt.y - 10);
+
           svg += `
             <g class="chart-point-group chart-peak-marker" tabindex="0" role="graphics-symbol" aria-label="Špička – ${labelText}" data-idx="${idx}">
               <circle cx="${pt.x}" cy="${pt.y}" r="16" fill="transparent" class="chart-hit-area" />
               <circle cx="${pt.x}" cy="${pt.y}" r="8" fill="rgba(236, 72, 153, 0.25)" class="chart-point-halo chart-peak-halo" filter="url(#glowEffect)" />
               <circle cx="${pt.x}" cy="${pt.y}" r="4.5" fill="#ffffff" stroke="#ec4899" stroke-width="2.5" class="chart-point-marker chart-peak-point" />
-              <text x="${pt.x}" y="${Math.max(padding.top + 8, pt.y - 10)}" font-size="10" font-weight="800" fill="#ec4899" text-anchor="middle" pointer-events="none">${displayWpm} WPM</text>
+              <text x="${peakLabelX}" y="${peakLabelY}" font-size="${isCompact ? 9.5 : 10}" font-weight="800" fill="#ec4899" text-anchor="${peakTextAnchor}" pointer-events="none">${displayWpm} WPM</text>
             </g>
           `;
         } else {

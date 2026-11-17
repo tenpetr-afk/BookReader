@@ -3951,6 +3951,45 @@ body.ui-liquid-glass .pill-scrubber-tooltip {
   border-radius: 9999px !important;
 }
 
+/* Mobilní rozložení rychlého nastavení pravítka (#ruler-quick-popover) */
+@media (max-width: 680px) {
+  #ruler-quick-popover,
+  .ruler-quick-popover,
+  .ruler-quick-popover:has(#popover-follow-section .popover-styles-grid.columns-3),
+  body.ui-liquid-glass #ruler-quick-popover,
+  body.ui-liquid-glass .ruler-quick-popover {
+    position: fixed !important;
+    left: max(12px, env(safe-area-inset-left, 0px)) !important;
+    right: max(12px, env(safe-area-inset-right, 0px)) !important;
+    width: auto !important;
+    max-width: none !important;
+    top: auto !important;
+    bottom: calc(var(--footer-height, 56px) + env(safe-area-inset-bottom, 0px) + 10px) !important;
+    max-height: calc(100dvh - var(--footer-height, 56px) - env(safe-area-inset-bottom, 0px) - env(safe-area-inset-top, 0px) - 24px) !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    transform-origin: bottom center !important;
+  }
+
+  #ruler-quick-popover .popover-section,
+  #ruler-quick-popover .popover-segmented-control,
+  #ruler-quick-popover .popover-styles-grid,
+  #ruler-quick-popover .popover-colors-row,
+  #ruler-quick-popover .popover-slider-wrapper,
+  #ruler-quick-popover .popover-row-between {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  #ruler-quick-popover .popover-colors-row {
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+}
+
+
 
 
 
