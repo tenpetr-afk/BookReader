@@ -3168,46 +3168,10 @@ export class ReadingRuler {
       ? this.activeLineIndex
       : 0;
     const curLine = this.cachedLines[curIdx];
-
-    if (curLine && curLine.isMedia) {
-      tp.wordWrapOverflow += dx;
-      if (Math.abs(tp.wordWrapOverflow) >= 6) {
-        const dir = tp.wordWrapOverflow > 0 ? 1 : -1;
-        tp.wordWrapOverflow = 0;
-        tp.pendingDx = 0;
-        tp.accumX = 0;
-        const wrapped = this._wrapTrackpadWordLine(dir);
-        if (!wrapped) {
-          tp.boundaryPushY += dir * Math.max(8, Math.abs(dx));
-          if (Math.abs(tp.boundaryPushY) >= 52) {
-            this._tryTriggerBoundaryTurn(dir);
-          }
-        } else {
-          tp.boundaryPushY = 0;
-        }
-      }
-      return;
-    }
+    if (curLine && curLine.isMedia) return;
 
     const lineWords = this.ensureActiveWords(curIdx);
-    if (!lineWords || lineWords.length === 0) {
-      tp.wordWrapOverflow += dx;
-      if (Math.abs(tp.wordWrapOverflow) >= 6) {
-        const dir = tp.wordWrapOverflow > 0 ? 1 : -1;
-        tp.wordWrapOverflow = 0;
-        tp.pendingDx = 0;
-        tp.accumX = 0;
-        if (!this._wrapTrackpadWordLine(dir)) {
-          tp.boundaryPushY += dir * Math.max(8, Math.abs(dx));
-          if (Math.abs(tp.boundaryPushY) >= 52) {
-            this._tryTriggerBoundaryTurn(dir);
-          }
-        } else {
-          tp.boundaryPushY = 0;
-        }
-      }
-      return;
-    }
+    if (!lineWords || lineWords.length === 0) return;
 
     const startLeft = Number.isFinite(tp.wordFloatLeft)
       ? tp.wordFloatLeft
@@ -3221,141 +3185,14 @@ export class ReadingRuler {
       this.currentY = geom.targetY;
     }
 
-    const res = this._applyContinuousWordGeometryAtLeft(lineWords, rawLeft, curLine, dx < 0);
+    // Clamp strictly within [textMinX, maxLeft] of the current line with zero overshoot memory
+    // so reversing direction from either line edge responds immediately on the first pixel.
+    this._applyContinuousWordGeometryAtLeft(lineWords, rawLeft, curLine, dx < 0);
+    tp.wordWrapOverflow = 0;
     this.rulerEl?.classList.add("word-tracking-mode");
     this._snapRulerInstantOrAnimated();
     this.disableWordTransition();
     this.applyPosition();
-
-    if (Math.abs(res.overflow) < 0.05) {
-      tp.wordWrapOverflow = 0;
-      tp.boundaryPushY = 0;
-      return;
-    }
-
-    if ((tp.wordWrapOverflow * res.overflow) < 0) {
-      tp.wordWrapOverflow = 0;
-    }
-    tp.wordWrapOverflow += res.overflow;
-
-    if (Math.abs(tp.wordWrapOverflow) >= 4) {
-      const wrapDir = tp.wordWrapOverflow > 0 ? 1 : -1;
-      // Consume and discard any leftover horizontal drag overflow on wrap
-      tp.wordWrapOverflow = 0;
-      tp.pendingDx = 0;
-      tp.accumX = 0;
-      const wrapped = this._wrapTrackpadWordLine(wrapDir);
-      if (!wrapped) {
-        tp.boundaryPushY += wrapDir * Math.max(8, Math.abs(res.overflow));
-        if (Math.abs(tp.boundaryPushY) >= 52) {
-          this._tryTriggerBoundaryTurn(wrapDir);
-        }
-      } else {
-        tp.boundaryPushY = 0;
-      }
-    }
-  }
-
-  _wrapTrackpadWordLine(dir) {
-    if (!this.cachedLines || this.cachedLines.length === 0) return false;
-    const isVertical = this.isVerticalMode();
-    const vp = isVertical ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
-    const curIdx = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
-      ? this.activeLineIndex
-      : 0;
-    const curLine = this.cachedLines[curIdx];
-    let targetLineIdx = curIdx + dir;
-
-    if (targetLineIdx < 0 || targetLineIdx >= this.cachedLines.length) {
-      if (isVertical && vp) {
-        const maxScrollTop = Math.max(0, vp.scrollHeight - vp.clientHeight);
-        const canScrollMore = dir > 0 ? (vp.scrollTop < maxScrollTop - 1) : (vp.scrollTop > 1);
-        if (canScrollMore) {
-          const anchorCenterY = curLine ? curLine.centerY : (vp.scrollTop + vp.clientHeight * 0.5);
-          const scrollJump = dir * Math.max(48, this._getTrackpadLinePitch() * 2);
-          this._applyVerticalScrollDelta(vp, scrollJump);
-          if (typeof this.app?.checkVerticalInfiniteScroll === "function") {
-            this.app.checkVerticalInfiniteScroll();
-          }
-          this.detectLines(true);
-          let nextIdx = -1;
-          if (dir > 0) {
-            nextIdx = this.cachedLines.findIndex(l => l.centerY > anchorCenterY + 4);
-          } else {
-            for (let i = this.cachedLines.length - 1; i >= 0; i--) {
-              if (this.cachedLines[i].centerY < anchorCenterY - 4) {
-                nextIdx = i;
-                break;
-              }
-            }
-          }
-          if (nextIdx >= 0) {
-            targetLineIdx = nextIdx;
-          } else {
-            return true;
-          }
-        } else {
-          return true;
-        }
-      } else {
-        return false;
-      }
-    }
-
-    const targetLine = this.cachedLines[targetLineIdx];
-    if (!targetLine) return false;
-    this.activeLineIndex = targetLineIdx;
-    this._trackpad.activeColumn = targetLine.columnIndex ?? 0;
-
-    if (targetLine.isMedia) {
-      this.activeWordIndex = -1;
-      this._trackpad.wordFloatLeft = targetLine.left ?? 100;
-      this.rulerEl?.classList.remove("word-tracking-mode");
-      const geom = this.computeLineGeometry(targetLineIdx);
-      if (geom) {
-        this.height = geom.height;
-        this.targetY = geom.targetY;
-        this.currentY = geom.targetY;
-      }
-      this.lastPointerX = targetLine.left != null ? targetLine.left : 100;
-      this.lastPointerY = isVertical ? Math.round(targetLine.centerY - (vp ? vp.scrollTop : 0)) : targetLine.centerY;
-      this.lastValidPointerX = this.lastPointerX;
-      this.lastValidPointerY = this.lastPointerY;
-      this._snapRulerInstantOrAnimated();
-      this.applyPosition();
-      this._ensureTrackpadLineVisibleInViewport(targetLine, this.height);
-      return true;
-    }
-
-    const lineWords = this.ensureActiveWords(targetLineIdx);
-    const geom = this.computeLineGeometry(targetLineIdx);
-    if (geom) {
-      this.height = geom.height;
-      this.targetY = geom.targetY;
-      this.currentY = geom.targetY;
-    }
-
-    if (!lineWords || lineWords.length === 0) {
-      this.activeWordIndex = -1;
-      this._trackpad.wordFloatLeft = targetLine.left ?? 100;
-      this.rulerEl?.classList.remove("word-tracking-mode");
-      this._checkLineProgress(targetLineIdx, false);
-      this._snapRulerInstantOrAnimated();
-      this.applyPosition();
-      this._ensureTrackpadLineVisibleInViewport(targetLine, this.height);
-      return true;
-    }
-
-    const edgeLeft = dir > 0
-      ? lineWords[0].left
-      : Math.max(lineWords[0].left, lineWords[lineWords.length - 1].right - Math.max(4, lineWords[lineWords.length - 1].width));
-    this._applyContinuousWordGeometryAtLeft(lineWords, edgeLeft, targetLine, dir < 0);
-    this.rulerEl?.classList.add("word-tracking-mode");
-    this._snapRulerInstantOrAnimated();
-    this.disableWordTransition();
-    this.applyPosition();
-    this._ensureTrackpadLineVisibleInViewport(targetLine, this.height);
-    return true;
   }
 
   _applyTrackpadWordDelta(dx, dy) {
@@ -3365,13 +3202,19 @@ export class ReadingRuler {
     const absX = Math.abs(dx);
     const absY = Math.abs(dy);
 
-    if (absX > 0.05) {
+    const isHorizontalDominant = absX >= absY * 1.35 && absX > 0.2;
+    const isVerticalDominant = absY >= absX * 1.35 && absY > 0.2;
+
+    if (isHorizontalDominant) {
+      tp.accumY = 0;
       this._applyTrackpadContinuousWordX(dx);
+      return;
     }
 
-    if (absX >= absY * 1.5) {
-      tp.accumY = 0;
-      return;
+    if (!isVerticalDominant && absX > 0.05) {
+      this._applyTrackpadContinuousWordX(dx);
+    } else if (isVerticalDominant && absX > 1.5) {
+      this._applyTrackpadContinuousWordX(dx);
     }
 
     if (absY > 0.05) {
@@ -3407,9 +3250,6 @@ export class ReadingRuler {
       : (dir > 0 ? -1 : this.cachedLines.length);
     const curLine = (curIdx >= 0 && curIdx < this.cachedLines.length) ? this.cachedLines[curIdx] : null;
     const tp = this._trackpad;
-    const refLeft = (tp && Number.isFinite(tp.wordFloatLeft))
-      ? tp.wordFloatLeft
-      : (Number.isFinite(this.wordLeft) ? this.wordLeft : null);
 
     let nextIdx = curIdx + dir;
     if (nextIdx < 0 || nextIdx >= this.cachedLines.length) {
@@ -3450,11 +3290,12 @@ export class ReadingRuler {
 
     const nextLine = this.cachedLines[nextIdx];
     if (!nextLine) return false;
-    const colChanged = curLine && ((curLine.columnIndex ?? 0) !== (nextLine.columnIndex ?? 0));
     this.activeLineIndex = nextIdx;
     if (tp) {
       tp.activeColumn = nextLine.columnIndex ?? 0;
       tp.wordWrapOverflow = 0;
+      tp.pendingDx = 0;
+      tp.accumX = 0;
     }
 
     if (nextLine.isMedia) {
@@ -3486,14 +3327,12 @@ export class ReadingRuler {
     }
 
     if (words && words.length > 0) {
-      const lastWord = words[words.length - 1];
-      const targetLeft = (!colChanged && refLeft != null)
-        ? refLeft
-        : (dir > 0 ? words[0].left : Math.max(words[0].left, lastWord.right - Math.max(4, lastWord.width)));
-      this._applyContinuousWordGeometryAtLeft(words, targetLeft, nextLine, dir < 0);
+      // Position flush at the exact left starting edge of the new line's text (respecting indentation)
+      this._applyContinuousWordGeometryAtLeft(words, words[0].left, nextLine, dir < 0);
       this.rulerEl?.classList.add("word-tracking-mode");
     } else {
       this.activeWordIndex = -1;
+      if (tp) tp.wordFloatLeft = nextLine.textLeft ?? nextLine.left ?? 100;
       this.rulerEl?.classList.remove("word-tracking-mode");
       this._checkLineProgress(nextIdx, false);
     }
