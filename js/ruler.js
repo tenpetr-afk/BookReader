@@ -1042,12 +1042,7 @@ export class ReadingRuler {
       if (words && words.length > 0) {
         this.activeWordIndex = 0;
         this.setWordWindow(0);
-        if (this._trackpad) {
-          this._trackpad.wordWrap = null;
-          this._trackpad.wordWrapOverflow = 0;
-          this._trackpad.wordFloatLeft = words[0].left - 3;
-          this._trackpad.waveCenterX = words[0].centerX ?? words[0].left;
-        }
+        this._initTrackpadWordAnchor(targetLine, words);
       } else {
         this.activeWordIndex = -1;
       }
@@ -2784,6 +2779,7 @@ export class ReadingRuler {
           if (words && words.length > 0) {
             this.activeWordIndex = 0;
             this.setWordWindow(0);
+            this._initTrackpadWordAnchor(closestIdx, words);
             this.rulerEl?.classList.add("word-tracking-mode");
           }
         }
@@ -3307,6 +3303,34 @@ export class ReadingRuler {
       };
     }
     return null;
+  }
+
+  _getInitialBottomCoverWaveCenterX(lineIdx, lineWords = null) {
+    const words = (lineWords && lineWords.length > 0) ? lineWords : this.ensureActiveWords(lineIdx);
+    if (!words || words.length === 0) return 100;
+    const wordBounds = this._getLineWordBounds(lineIdx, words);
+    const halfWave = Math.round((RULER_WAVE_WIDTH || 80) / 2);
+    return wordBounds
+      ? (wordBounds.left + Math.min(halfWave, Math.floor(wordBounds.width / 2)))
+      : (words[0].centerX ?? words[0].left);
+  }
+
+  _initTrackpadWordAnchor(lineIdx, words, { syncPointer = true } = {}) {
+    if (!words || words.length === 0) return;
+    const isBottomCoverTrackpad = (this.style === "bottom-cover" || this.mode === "bottom-cover") && this.followMode === "trackpad";
+    const initWaveX = isBottomCoverTrackpad
+      ? this._getInitialBottomCoverWaveCenterX(lineIdx, words)
+      : (words[0].centerX ?? words[0].left);
+    if (syncPointer && isBottomCoverTrackpad) {
+      this.lastPointerX = Math.round(initWaveX);
+      this.lastValidPointerX = this.lastPointerX;
+    }
+    if (this._trackpad && (syncPointer || isBottomCoverTrackpad)) {
+      this._trackpad.wordWrap = null;
+      this._trackpad.wordWrapOverflow = 0;
+      this._trackpad.wordFloatLeft = words[0].left - 3;
+      this._trackpad.waveCenterX = initWaveX;
+    }
   }
 
   _applyContinuousBottomCoverWaveAtX(lineWords, rawCenterX, activeLine = null, isMovingLeft = false, geom = null) {
@@ -3978,11 +4002,7 @@ export class ReadingRuler {
     if (words && words.length > 0) {
       const isBottomCover = (this.style === "bottom-cover" || this.mode === "bottom-cover");
       if (isBottomCover) {
-        const wordBounds = this._getLineWordBounds(nextIdx, words);
-        const halfWave = Math.round((RULER_WAVE_WIDTH || 80) / 2);
-        const startX = wordBounds
-          ? (wordBounds.left + Math.min(halfWave, Math.floor(wordBounds.width / 2)))
-          : words[0].left;
+        const startX = this._getInitialBottomCoverWaveCenterX(nextIdx, words);
         this._applyContinuousBottomCoverWaveAtX(words, startX, nextLine, dir < 0, geom);
       } else {
         // Position flush at the exact outward-padded starting edge of the new line's text (matching mouse mode)
@@ -11290,6 +11310,7 @@ export class ReadingRuler {
     this.rulerEl.style.setProperty("transition", "none", "important");
     if (activeWordWrap && activeStyle === "bottom-cover") {
       const hex = colorHexMap[this.color] || "#f59e0b";
+      const glowRgb = colorGlowMap[this.color] || "245, 158, 11";
       const fromScreenBottom = isVertical ? Math.round(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom);
       const toScreenBottom = isVertical ? Math.round(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom);
 
@@ -11322,8 +11343,14 @@ export class ReadingRuler {
       }
 
       if (this.secondaryRulerEl) {
+        const toClipL = activeWordWrap.toWaveClipLeft || 0;
+        const toClipR = activeWordWrap.toWaveClipRight || 0;
+        const waveW = RULER_WAVE_WIDTH || 80;
+        const hasVisibleIncomingWave = (waveW - toClipL - toClipR) > 0;
+
         this.secondaryRulerEl.classList.remove("is-hidden", "is-page-transitioning", "mode-off", "is-snapped");
-        this.secondaryRulerEl.classList.add("is-visible", "word-tracking-mode", "is-wrap-transitioning");
+        this.secondaryRulerEl.classList.add("is-visible", "word-tracking-mode");
+        this.secondaryRulerEl.classList.toggle("is-wrap-transitioning", !hasVisibleIncomingWave);
         this.secondaryRulerEl.style.setProperty("transition", "none", "important");
         this.secondaryRulerEl.style.top = "0px";
         this.secondaryRulerEl.style.left = "0px";
@@ -11332,11 +11359,11 @@ export class ReadingRuler {
         this.secondaryRulerEl.style.maxWidth = `${activeWordWrap.toBarWidth}px`;
         this.secondaryRulerEl.style.height = "2px";
         this.secondaryRulerEl.style.transform = `translate3d(${activeWordWrap.toBarLeft}px, ${toScreenBottom}px, 0)`;
-        this.secondaryRulerEl.style.setProperty("background-color", "transparent", "important");
+        this.secondaryRulerEl.style.setProperty("background-color", hasVisibleIncomingWave ? hex : "transparent", "important");
         this.secondaryRulerEl.style.setProperty("color", hex, "important");
         this.secondaryRulerEl.style.border = "none";
         this.secondaryRulerEl.style.outline = "none";
-        this.secondaryRulerEl.style.setProperty("box-shadow", "none", "important");
+        this.secondaryRulerEl.style.setProperty("box-shadow", hasVisibleIncomingWave ? `0 1px 4px rgba(${glowRgb}, 0.45)` : "none", "important");
         this.secondaryRulerEl.style.opacity = "1";
         this.secondaryRulerEl.style.visibility = "visible";
         this.secondaryRulerEl.style.display = "block";
@@ -11344,8 +11371,6 @@ export class ReadingRuler {
         this.secondaryRulerEl.style.contain = "none";
         this.secondaryRulerEl.style.setProperty("z-index", "20", "important");
         if (this.secondaryWordWaveEl) {
-          const toClipL = activeWordWrap.toWaveClipLeft || 0;
-          const toClipR = activeWordWrap.toWaveClipRight || 0;
           this.secondaryWordWaveEl.style.setProperty("transition", "none", "important");
           this.secondaryWordWaveEl.style.transform = `translate3d(${activeWordWrap.toWaveX}px, 0, 0)`;
           this.secondaryWordWaveEl.style.clipPath = (toClipL > 0 || toClipR > 0) ? `inset(0 ${toClipR}px -20px ${toClipL}px)` : "none";
@@ -11823,6 +11848,7 @@ export class ReadingRuler {
         this.lastPointerY = targetWord ? (isVertical ? Math.round(targetWord.centerY - vScrollTop) : targetWord.centerY) : 150;
         this.lastValidPointerX = this.lastPointerX;
         this.lastValidPointerY = this.lastPointerY;
+        this._initTrackpadWordAnchor(lineIdx, words);
         this.rulerEl.classList.add("word-tracking-mode");
         this._snapRulerInstantOrAnimated();
       }
@@ -12653,12 +12679,7 @@ export class ReadingRuler {
       if (words && words.length > 0) {
         this.activeWordIndex = 0;
         this.setWordWindow(0);
-        if (this._trackpad) {
-          this._trackpad.wordWrap = null;
-          this._trackpad.wordWrapOverflow = 0;
-          this._trackpad.wordFloatLeft = words[0].left - 3;
-          this._trackpad.waveCenterX = words[0].centerX ?? words[0].left;
-        }
+        this._initTrackpadWordAnchor(targetLine, words);
       } else {
         this.activeWordIndex = -1;
       }
