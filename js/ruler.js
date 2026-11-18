@@ -23,6 +23,8 @@ export class ReadingRuler {
     this.overlayContainer = null;
     this.rulerEl = null;
     this.wordWaveEl = null;
+    this.secondaryRulerEl = null;
+    this.secondaryWordWaveEl = null;
     this.maskTopEl = null;
     this.maskBottomEl = null;
     this.maskLeftEl = null;
@@ -238,7 +240,8 @@ export class ReadingRuler {
       scrollDetectAccum: 0,
       wordFloatLeft: null,
       waveCenterX: null,
-      wordWrapOverflow: 0
+      wordWrapOverflow: 0,
+      wordWrap: null
     };
 
     this.createDomElements();
@@ -1116,6 +1119,18 @@ export class ReadingRuler {
     this.wordWaveEl.innerHTML = `<svg viewBox="0 0 80 12" width="80" height="12" preserveAspectRatio="none"><path d="M 0,0 C 20,0 24,12 40,12 C 56,12 60,0 80,0 Z" fill="currentColor" /></svg>`;
     this.rulerEl.appendChild(this.wordWaveEl);
 
+    this.secondaryRulerEl = document.createElement("div");
+    this.secondaryRulerEl.className = `reading-ruler reading-ruler-secondary mode-${this.mode} color-${this.color} is-hidden`;
+    this.secondaryRulerEl.setAttribute("aria-hidden", "true");
+    this.secondaryRulerEl.style.willChange = "transform";
+    this.secondaryRulerEl.style.contain = this.mode === "bottom-cover" ? "none" : "paint";
+
+    this.secondaryWordWaveEl = document.createElement("div");
+    this.secondaryWordWaveEl.className = "ruler-word-wave";
+    this.secondaryWordWaveEl.setAttribute("aria-hidden", "true");
+    this.secondaryWordWaveEl.innerHTML = `<svg viewBox="0 0 80 12" width="80" height="12" preserveAspectRatio="none"><path d="M 0,0 C 20,0 24,12 40,12 C 56,12 60,0 80,0 Z" fill="currentColor" /></svg>`;
+    this.secondaryRulerEl.appendChild(this.secondaryWordWaveEl);
+
     this.maskTopEl = document.createElement("div");
     this.maskTopEl.className = "ruler-mask ruler-mask-top is-hidden";
     this.maskTopEl.style.willChange = "transform";
@@ -1174,6 +1189,7 @@ export class ReadingRuler {
     if (this.maskRightEl && !this.overlayContainer.contains(this.maskRightEl)) this.overlayContainer.appendChild(this.maskRightEl);
     if (this.maskInactiveSpreadEl && !this.overlayContainer.contains(this.maskInactiveSpreadEl)) this.overlayContainer.appendChild(this.maskInactiveSpreadEl);
     if (this.rulerEl && !this.overlayContainer.contains(this.rulerEl)) this.overlayContainer.appendChild(this.rulerEl);
+    if (this.secondaryRulerEl && !this.overlayContainer.contains(this.secondaryRulerEl)) this.overlayContainer.appendChild(this.secondaryRulerEl);
     return this.overlayContainer;
   }
 
@@ -2549,6 +2565,27 @@ export class ReadingRuler {
     return (Date.now() - (tp.lastDragEndAt || 0)) < windowMs;
   }
 
+  _hideSecondaryRuler() {
+    if (this.secondaryRulerEl) {
+      this.secondaryRulerEl.classList.remove("is-visible", "word-tracking-mode", "no-preview");
+      this.secondaryRulerEl.classList.add("is-hidden");
+      this.secondaryRulerEl.style.setProperty("display", "none", "important");
+      this.secondaryRulerEl.style.setProperty("opacity", "0", "important");
+      this.secondaryRulerEl.style.setProperty("visibility", "hidden", "important");
+    }
+    if (this.secondaryWordWaveEl) {
+      this.secondaryWordWaveEl.style.display = "none";
+    }
+  }
+
+  _clearTrackpadWordWrap() {
+    if (this._trackpad) {
+      this._trackpad.wordWrap = null;
+      this._trackpad.wordWrapOverflow = 0;
+    }
+    this._hideSecondaryRuler();
+  }
+
   _resetTrackpadState({ keepColumn = true } = {}) {
     const tp = this._trackpad;
     if (!tp) return;
@@ -2571,11 +2608,11 @@ export class ReadingRuler {
     tp.pendingDy = 0;
     tp.boundaryPushY = 0;
     tp.scrollDetectAccum = 0;
-    tp.wordWrapOverflow = 0;
     if (!keepColumn) {
       tp.activeColumn = 0;
       tp.wordFloatLeft = null;
       tp.waveCenterX = null;
+      this._clearTrackpadWordWrap();
     }
   }
 
@@ -3264,40 +3301,432 @@ export class ReadingRuler {
     return clampedCenterX;
   }
 
+  _findAdjacentTrackpadTextLine(curIdx, dir) {
+    if (!this.cachedLines || this.cachedLines.length === 0) return null;
+    const step = dir >= 0 ? 1 : -1;
+    let idx = curIdx + step;
+    while (idx >= 0 && idx < this.cachedLines.length) {
+      const candidate = this.cachedLines[idx];
+      if (candidate && !candidate.isMedia) {
+        const words = this.ensureActiveWords(idx);
+        if (words && words.length > 0) {
+          return idx;
+        }
+      }
+      idx += step;
+    }
+    return null;
+  }
+
+  _getTrackpadLineRulerBox(lineIdx, geom = null, lineWords = null) {
+    const line = (this.cachedLines && lineIdx >= 0 && lineIdx < this.cachedLines.length)
+      ? this.cachedLines[lineIdx]
+      : null;
+    const g = geom || this.computeLineGeometry(lineIdx);
+    const colBounds = this._getTrackpadWordColumnBounds(line, lineWords, g);
+    const isVertical = this.isVerticalMode();
+    const isTwoCol = !isVertical && this.isTwoCol;
+    const isSpread = !isVertical && this.isSpreadActive();
+
+    let barLeft = line ? (line.columnLeft ?? line.left) : null;
+    let barWidth = line ? (line.columnWidth ?? line.width) : null;
+
+    if (this.isPdfMode) {
+      if (g && Number.isFinite(g.left) && Number.isFinite(g.width)) {
+        barLeft = g.left;
+        barWidth = g.width;
+      }
+    } else if (isSpread) {
+      const spreadInfo = this.getActiveSpreadInfo(line);
+      if (spreadInfo) {
+        const cRect = spreadInfo.activeRect;
+        const padding = 12;
+        const pageCol = this.getPageTextColumnBounds(line);
+        if (pageCol && pageCol.width > 50) {
+          barLeft = Math.max(Math.round(cRect.left), Math.round(pageCol.left));
+          barWidth = Math.min(Math.round(pageCol.width), Math.round(cRect.right - barLeft));
+        } else if (line && line.textLeft != null && line.textRight != null && line.textRight > line.textLeft) {
+          barLeft = Math.max(Math.round(cRect.left), Math.round(line.textLeft - padding));
+          const colR = Math.min(Math.round(cRect.right), Math.round(line.textRight + padding));
+          barWidth = Math.max(50, colR - barLeft);
+        } else if (line && line.left != null && line.width != null) {
+          barLeft = Math.max(Math.round(cRect.left), Math.round(line.left));
+          barWidth = Math.min(Math.round(line.width), Math.round(cRect.right - barLeft));
+        } else {
+          barLeft = Math.round(cRect.left + padding);
+          barWidth = Math.round(cRect.width - padding * 2);
+        }
+      }
+    }
+
+    if (barLeft == null || barWidth == null || !Number.isFinite(barLeft) || !Number.isFinite(barWidth) || barWidth < 50) {
+      if (isTwoCol) {
+        const colIdx = (line && line.columnIndex === 1) ? 1 : 0;
+        barLeft = colIdx === 1 ? this.column1Left : this.column0Left;
+        barWidth = colIdx === 1 ? this.column1Width : this.column0Width;
+      }
+      if (barLeft == null || barWidth == null || !Number.isFinite(barLeft) || !Number.isFinite(barWidth) || barWidth < 50) {
+        barLeft = colBounds.colLeft;
+        barWidth = Math.max(50, colBounds.colRight - colBounds.colLeft);
+      }
+    }
+
+    barLeft = Math.round(barLeft);
+    barWidth = Math.max(50, Math.round(barWidth));
+    const barRight = barLeft + barWidth;
+    const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
+    const docLineTop = (g && Number.isFinite(g.lineTop)) ? g.lineTop : (line?.lineTop ?? line?.top ?? 150);
+    const docLineBottom = (g && Number.isFinite(g.lineBottom)) ? g.lineBottom : (line?.lineBottom ?? line?.bottom ?? (docLineTop + h));
+
+    return {
+      barLeft,
+      barRight,
+      barWidth,
+      colBounds,
+      docLineTop,
+      docLineBottom,
+      lineH: Math.max(1, Math.round(docLineBottom - docLineTop)),
+      colIndex: line?.columnIndex ?? 0
+    };
+  }
+
   _applyTrackpadContinuousWordX(dx) {
     const tp = this._trackpad;
     if (!tp || !this.cachedLines || this.cachedLines.length === 0) return;
 
-    const curIdx = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
+    let curIdx = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
       ? this.activeLineIndex
       : 0;
-    const curLine = this.cachedLines[curIdx];
+    let curLine = this.cachedLines[curIdx];
     if (curLine && curLine.isMedia) return;
 
-    const lineWords = this.ensureActiveWords(curIdx);
+    let lineWords = this.ensureActiveWords(curIdx);
     if (!lineWords || lineWords.length === 0) return;
 
-    const geom = this.computeLineGeometry(curIdx);
+    let geom = this.computeLineGeometry(curIdx);
+    const isBottomCover = (this.style === "bottom-cover" || this.mode === "bottom-cover");
+    const isHighlight = (this.style === "highlight" || this.mode === "highlight");
+    const padX = 3;
+
+    if (isBottomCover) {
+      const WAVE_WIDTH = RULER_WAVE_WIDTH || 80;
+      const halfWave = Math.round(WAVE_WIDTH / 2);
+      let rawCenterX = (Number.isFinite(tp.waveCenterX)
+        ? tp.waveCenterX
+        : (Number.isFinite(this.lastPointerX) ? this.lastPointerX : lineWords[0].left)) + dx;
+
+      let safety = 0;
+      while (safety++ < 8) {
+        const curBox = this._getTrackpadLineRulerBox(curIdx, geom, lineWords);
+        const wrapLeftStart = curBox.barLeft + halfWave;
+        const wrapRightStart = Math.max(wrapLeftStart, curBox.barRight - halfWave);
+
+        if (rawCenterX > wrapRightStart) {
+          const nextIdx = this._findAdjacentTrackpadTextLine(curIdx, 1);
+          if (nextIdx == null) {
+            // Page end boundary: clamp cleanly
+            tp.wordWrap = null;
+            this._applyContinuousBottomCoverWaveAtX(lineWords, Math.min(curBox.barRight, rawCenterX), curLine, dx < 0, geom);
+            break;
+          }
+          const exitPx = rawCenterX - wrapRightStart;
+          const nextLine = this.cachedLines[nextIdx];
+          const nextWords = this.ensureActiveWords(nextIdx);
+          const nextGeom = this.computeLineGeometry(nextIdx);
+          const nextBox = this._getTrackpadLineRulerBox(nextIdx, nextGeom, nextWords);
+
+          if (exitPx >= WAVE_WIDTH) {
+            const rem = exitPx - WAVE_WIDTH;
+            this.activeLineIndex = nextIdx;
+            tp.activeColumn = nextLine?.columnIndex ?? 0;
+            this._checkLineProgress(nextIdx, false);
+            curIdx = nextIdx;
+            curLine = nextLine;
+            lineWords = nextWords;
+            geom = nextGeom;
+            rawCenterX = nextBox.barLeft + halfWave + rem;
+            tp.wordWrap = null;
+            continue;
+          }
+
+          // Active forward wrap-around split across curIdx -> nextIdx
+          tp.waveCenterX = rawCenterX;
+          tp.wordFloatLeft = rawCenterX - (this.activeWordWidth || 40) / 2;
+          this.activeWordIndex = lineWords.length - 1;
+          this._checkWordProgress(this.activeWordIndex, false);
+          this.lastPointerX = Math.round(rawCenterX);
+          this.lastValidPointerX = this.lastPointerX;
+          tp.wordWrap = {
+            style: "bottom-cover",
+            dir: 1,
+            fromLineIdx: curIdx,
+            toLineIdx: nextIdx,
+            fromBarLeft: curBox.barLeft,
+            fromBarWidth: curBox.barWidth,
+            fromDocTop: curBox.docLineTop,
+            fromDocBottom: curBox.docLineBottom,
+            fromLineH: curBox.lineH,
+            fromColIndex: curBox.colIndex,
+            toBarLeft: nextBox.barLeft,
+            toBarWidth: nextBox.barWidth,
+            toDocTop: nextBox.docLineTop,
+            toDocBottom: nextBox.docLineBottom,
+            toLineH: nextBox.lineH,
+            toColIndex: nextBox.colIndex,
+            fromWaveX: Math.round((rawCenterX - curBox.barLeft) - halfWave),
+            toWaveX: Math.round(exitPx - WAVE_WIDTH)
+          };
+          break;
+        } else if (rawCenterX < wrapLeftStart) {
+          const prevIdx = this._findAdjacentTrackpadTextLine(curIdx, -1);
+          if (prevIdx == null) {
+            // Page start boundary: clamp cleanly
+            tp.wordWrap = null;
+            this._applyContinuousBottomCoverWaveAtX(lineWords, Math.max(curBox.barLeft, rawCenterX), curLine, dx < 0, geom);
+            break;
+          }
+          const exitPx = wrapLeftStart - rawCenterX;
+          const prevLine = this.cachedLines[prevIdx];
+          const prevWords = this.ensureActiveWords(prevIdx);
+          const prevGeom = this.computeLineGeometry(prevIdx);
+          const prevBox = this._getTrackpadLineRulerBox(prevIdx, prevGeom, prevWords);
+
+          if (exitPx >= WAVE_WIDTH) {
+            const rem = exitPx - WAVE_WIDTH;
+            this.activeLineIndex = prevIdx;
+            tp.activeColumn = prevLine?.columnIndex ?? 0;
+            curIdx = prevIdx;
+            curLine = prevLine;
+            lineWords = prevWords;
+            geom = prevGeom;
+            rawCenterX = prevBox.barRight - halfWave - rem;
+            tp.wordWrap = null;
+            continue;
+          }
+
+          // Active backward wrap-around split across curIdx -> prevIdx
+          tp.waveCenterX = rawCenterX;
+          tp.wordFloatLeft = rawCenterX - (this.activeWordWidth || 40) / 2;
+          this.activeWordIndex = 0;
+          this._checkWordProgress(0, true);
+          this.lastPointerX = Math.round(rawCenterX);
+          this.lastValidPointerX = this.lastPointerX;
+          tp.wordWrap = {
+            style: "bottom-cover",
+            dir: -1,
+            fromLineIdx: curIdx,
+            toLineIdx: prevIdx,
+            fromBarLeft: curBox.barLeft,
+            fromBarWidth: curBox.barWidth,
+            fromDocTop: curBox.docLineTop,
+            fromDocBottom: curBox.docLineBottom,
+            fromLineH: curBox.lineH,
+            fromColIndex: curBox.colIndex,
+            toBarLeft: prevBox.barLeft,
+            toBarWidth: prevBox.barWidth,
+            toDocTop: prevBox.docLineTop,
+            toDocBottom: prevBox.docLineBottom,
+            toLineH: prevBox.lineH,
+            toColIndex: prevBox.colIndex,
+            fromWaveX: Math.round(-exitPx),
+            toWaveX: Math.round(prevBox.barWidth - exitPx)
+          };
+          break;
+        } else {
+          tp.wordWrap = null;
+          this._applyContinuousBottomCoverWaveAtX(lineWords, rawCenterX, curLine, dx < 0, geom);
+          break;
+        }
+      }
+    } else if (isHighlight) {
+      let rawLeft = (Number.isFinite(tp.wordFloatLeft)
+        ? tp.wordFloatLeft
+        : (lineWords[0].left - padX)) + dx;
+
+      let safety = 0;
+      while (safety++ < 8) {
+        const curBox = this._getTrackpadLineRulerBox(curIdx, geom, lineWords);
+        const colBounds = curBox.colBounds;
+        const fullMinX = Math.round(colBounds.colLeft - padX);
+        const fullMaxX = Math.round(Math.max(colBounds.colRight, colBounds.wordsMaxRight + padX));
+        const lastWord = lineWords[lineWords.length - 1];
+        const lastWordW = Math.max(4, Math.round(lastWord.width + padX * 2));
+        const firstWord = lineWords[0];
+        const firstWordW = Math.max(4, Math.round(firstWord.width + padX * 2));
+        const wrapRightStartLeft = Math.max(fullMinX, fullMaxX - lastWordW);
+
+        if (rawLeft > wrapRightStartLeft) {
+          const nextIdx = this._findAdjacentTrackpadTextLine(curIdx, 1);
+          if (nextIdx == null) {
+            tp.wordWrap = null;
+            this._applyContinuousWordGeometryAtLeft(lineWords, rawLeft, curLine, dx < 0, geom);
+            break;
+          }
+          const exitPx = rawLeft - wrapRightStartLeft;
+          const wrapSpan = Math.max(12, lastWordW);
+          const nextLine = this.cachedLines[nextIdx];
+          const nextWords = this.ensureActiveWords(nextIdx);
+          const nextGeom = this.computeLineGeometry(nextIdx);
+          const nextBox = this._getTrackpadLineRulerBox(nextIdx, nextGeom, nextWords);
+          const nextStartLeft = Math.round(nextWords[0].left - padX);
+
+          if (exitPx >= wrapSpan) {
+            const rem = exitPx - wrapSpan;
+            this.activeLineIndex = nextIdx;
+            tp.activeColumn = nextLine?.columnIndex ?? 0;
+            this._checkLineProgress(nextIdx, false);
+            curIdx = nextIdx;
+            curLine = nextLine;
+            lineWords = nextWords;
+            geom = nextGeom;
+            rawLeft = nextStartLeft + rem;
+            tp.wordWrap = null;
+            continue;
+          }
+
+          const t = Math.max(0, Math.min(1, exitPx / wrapSpan));
+          const fromLeft = Math.round(rawLeft);
+          const fromWidth = Math.max(1, Math.round(fullMaxX - rawLeft));
+
+          const nextFirstW = Math.max(4, Math.round(nextWords[0].width + padX * 2));
+          const nextWordsMaxX = Math.round(nextWords[nextWords.length - 1].right + padX);
+          const nextPreviewW = this._computeTrackpadWordPreview(nextWords, 0, nextWordsMaxX, padX);
+          const nextRemSpace = Math.max(0, nextWordsMaxX - (nextStartLeft + nextFirstW));
+          const nextTotalW = Math.max(4, nextFirstW + Math.min(nextPreviewW, nextRemSpace));
+          const toWidth = Math.max(1, Math.round(t * nextTotalW));
+          const toSolidRatio = Math.min(100, (nextFirstW / toWidth) * 100);
+          const toNoPreview = toWidth <= nextFirstW;
+
+          tp.wordFloatLeft = rawLeft;
+          tp.waveCenterX = rawLeft + lastWordW / 2;
+          this.activeWordIndex = lineWords.length - 1;
+          this._checkWordProgress(this.activeWordIndex, false);
+          this.lastPointerX = Math.round(fromLeft + fromWidth / 2);
+          this.lastValidPointerX = this.lastPointerX;
+
+          tp.wordWrap = {
+            style: "highlight",
+            dir: 1,
+            fromLineIdx: curIdx,
+            toLineIdx: nextIdx,
+            fromBarLeft: curBox.barLeft,
+            fromBarWidth: curBox.barWidth,
+            fromDocTop: curBox.docLineTop,
+            fromDocBottom: curBox.docLineBottom,
+            fromLineH: curBox.lineH,
+            fromColIndex: curBox.colIndex,
+            toBarLeft: nextBox.barLeft,
+            toBarWidth: nextBox.barWidth,
+            toDocTop: nextBox.docLineTop,
+            toDocBottom: nextBox.docLineBottom,
+            toLineH: nextBox.lineH,
+            toColIndex: nextBox.colIndex,
+            fromLeft,
+            fromWidth,
+            fromSolidRatio: 100,
+            fromNoPreview: true,
+            toLeft: nextStartLeft,
+            toWidth,
+            toSolidRatio,
+            toNoPreview
+          };
+          break;
+        } else if (rawLeft < fullMinX) {
+          const prevIdx = this._findAdjacentTrackpadTextLine(curIdx, -1);
+          if (prevIdx == null) {
+            tp.wordWrap = null;
+            this._applyContinuousWordGeometryAtLeft(lineWords, rawLeft, curLine, dx < 0, geom);
+            break;
+          }
+          const exitPx = fullMinX - rawLeft;
+          const wrapSpan = Math.max(12, firstWordW);
+          const prevLine = this.cachedLines[prevIdx];
+          const prevWords = this.ensureActiveWords(prevIdx);
+          const prevGeom = this.computeLineGeometry(prevIdx);
+          const prevBox = this._getTrackpadLineRulerBox(prevIdx, prevGeom, prevWords);
+          const prevColBounds = prevBox.colBounds;
+          const prevFullMaxX = Math.round(Math.max(prevColBounds.colRight, prevColBounds.wordsMaxRight + padX));
+          const prevLastWord = prevWords[prevWords.length - 1];
+          const prevLastW = Math.max(4, Math.round(prevLastWord.width + padX * 2));
+          const prevEndLeft = Math.max(Math.round(prevColBounds.colLeft - padX), prevFullMaxX - prevLastW);
+
+          if (exitPx >= wrapSpan) {
+            const rem = exitPx - wrapSpan;
+            this.activeLineIndex = prevIdx;
+            tp.activeColumn = prevLine?.columnIndex ?? 0;
+            curIdx = prevIdx;
+            curLine = prevLine;
+            lineWords = prevWords;
+            geom = prevGeom;
+            rawLeft = prevEndLeft - rem;
+            tp.wordWrap = null;
+            continue;
+          }
+
+          const t = Math.max(0, Math.min(1, exitPx / wrapSpan));
+          const curWordsMaxX = Math.round(lastWord.right + padX);
+          const curPreviewW = this._computeTrackpadWordPreview(lineWords, 0, curWordsMaxX, padX);
+          const curRemSpace = Math.max(0, curWordsMaxX - (fullMinX + firstWordW));
+          const curTotalW = Math.max(4, firstWordW + Math.min(curPreviewW, curRemSpace));
+          const fromWidth = Math.max(1, Math.round((1 - t) * curTotalW));
+          const fromSolidRatio = Math.min(100, (firstWordW / fromWidth) * 100);
+          const fromNoPreview = fromWidth <= firstWordW;
+
+          const toWidth = Math.max(1, Math.round(t * prevLastW));
+          const toLeft = Math.round(prevFullMaxX - toWidth);
+
+          tp.wordFloatLeft = rawLeft;
+          tp.waveCenterX = rawLeft + firstWordW / 2;
+          this.activeWordIndex = 0;
+          this._checkWordProgress(0, true);
+          this.lastPointerX = Math.round(fullMinX + fromWidth / 2);
+          this.lastValidPointerX = this.lastPointerX;
+
+          tp.wordWrap = {
+            style: "highlight",
+            dir: -1,
+            fromLineIdx: curIdx,
+            toLineIdx: prevIdx,
+            fromBarLeft: curBox.barLeft,
+            fromBarWidth: curBox.barWidth,
+            fromDocTop: curBox.docLineTop,
+            fromDocBottom: curBox.docLineBottom,
+            fromLineH: curBox.lineH,
+            fromColIndex: curBox.colIndex,
+            toBarLeft: prevBox.barLeft,
+            toBarWidth: prevBox.barWidth,
+            toDocTop: prevBox.docLineTop,
+            toDocBottom: prevBox.docLineBottom,
+            toLineH: prevBox.lineH,
+            toColIndex: prevBox.colIndex,
+            fromLeft: fullMinX,
+            fromWidth,
+            fromSolidRatio,
+            fromNoPreview,
+            toLeft,
+            toWidth,
+            toSolidRatio: 100,
+            toNoPreview: true
+          };
+          break;
+        } else {
+          tp.wordWrap = null;
+          this._applyContinuousWordGeometryAtLeft(lineWords, rawLeft, curLine, dx < 0, geom);
+          break;
+        }
+      }
+    } else {
+      tp.wordWrap = null;
+      const startLeft = Number.isFinite(tp.wordFloatLeft)
+        ? tp.wordFloatLeft
+        : (lineWords[0].left - padX);
+      this._applyContinuousWordGeometryAtLeft(lineWords, startLeft + dx, curLine, dx < 0, geom);
+    }
+
     if (geom) {
       this.height = geom.height;
       this.targetY = geom.targetY;
       this.currentY = geom.targetY;
-    }
-
-    const isBottomCover = (this.style === "bottom-cover" || this.mode === "bottom-cover");
-    if (isBottomCover) {
-      const startCenterX = Number.isFinite(tp.waveCenterX)
-        ? tp.waveCenterX
-        : (Number.isFinite(this.lastPointerX) ? this.lastPointerX : lineWords[0].left);
-      this._applyContinuousBottomCoverWaveAtX(lineWords, startCenterX + dx, curLine, dx < 0, geom);
-    } else {
-      const padX = 3;
-      const startLeft = Number.isFinite(tp.wordFloatLeft)
-        ? tp.wordFloatLeft
-        : (lineWords[0].left - padX);
-      // Clamp strictly within full column width with zero overshoot memory
-      // so reversing direction from either edge responds immediately on the first pixel.
-      this._applyContinuousWordGeometryAtLeft(lineWords, startLeft + dx, curLine, dx < 0, geom);
     }
 
     tp.wordWrapOverflow = 0;
@@ -3305,6 +3734,9 @@ export class ReadingRuler {
     this._snapRulerInstantOrAnimated();
     this.disableWordTransition();
     this.applyPosition();
+    if (curLine) {
+      this._ensureTrackpadLineVisibleInViewport(curLine, this.height);
+    }
   }
 
   _applyTrackpadWordDelta(dx, dy) {
@@ -3408,6 +3840,7 @@ export class ReadingRuler {
       tp.wordWrapOverflow = 0;
       tp.pendingDx = 0;
       tp.accumX = 0;
+      this._clearTrackpadWordWrap();
     }
 
     if (nextLine.isMedia) {
@@ -9791,6 +10224,7 @@ export class ReadingRuler {
       this.rulerEl.style.opacity = "0";
       this.rulerEl.style.visibility = "hidden";
       if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+      this._hideSecondaryRuler();
       this.clearFocusTextMask();
       return;
     }
@@ -9810,6 +10244,7 @@ export class ReadingRuler {
       this.rulerEl.style.opacity = "0";
       this.rulerEl.style.visibility = "hidden";
       if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+      this._hideSecondaryRuler();
       this.clearFocusTextMask();
       return;
     }
@@ -10724,9 +11159,124 @@ export class ReadingRuler {
     const lineScreenBottom = isVertical ? Math.round(docLineBottom - vScrollTop) : Math.round(docLineBottom);
     const lineH = Math.max(1, lineScreenBottom - lineScreenTop);
 
+    const activeWordWrap = (this.followMode === "trackpad" &&
+      this.wordTracking &&
+      !this.isPageTransitioning &&
+      activeStyle !== "off" &&
+      !isCurrentMedia &&
+      this._trackpad?.wordWrap &&
+      this._trackpad.wordWrap.style === activeStyle)
+      ? this._trackpad.wordWrap
+      : null;
+
     // Vizuální indikátor pravítka dle activeStyle (off / highlight / bottom-cover)
     this.rulerEl.style.setProperty("transition", "none", "important");
-    if (activeStyle === "bottom-cover") {
+    if (activeWordWrap && activeStyle === "bottom-cover") {
+      const hex = colorHexMap[this.color] || "#f59e0b";
+      const glowRgb = colorGlowMap[this.color] || "245, 158, 11";
+      const fromScreenBottom = isVertical ? Math.round(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom);
+      const toScreenBottom = isVertical ? Math.round(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom);
+
+      this.rulerEl.style.top = "0px";
+      this.rulerEl.style.left = "0px";
+      this.rulerEl.style.right = "auto";
+      this.rulerEl.style.width = `${activeWordWrap.fromBarWidth}px`;
+      this.rulerEl.style.maxWidth = `${activeWordWrap.fromBarWidth}px`;
+      this.rulerEl.style.height = "2px";
+      this.rulerEl.style.transform = `translate3d(${activeWordWrap.fromBarLeft}px, ${fromScreenBottom}px, 0)`;
+      this.rulerEl.style.setProperty("background-color", hex, "important");
+      this.rulerEl.style.setProperty("color", hex, "important");
+      this.rulerEl.style.border = "none";
+      this.rulerEl.style.outline = "none";
+      this.rulerEl.style.setProperty("box-shadow", `0 1px 4px rgba(${glowRgb}, 0.45)`, "important");
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
+      this.rulerEl.style.display = "block";
+      this.rulerEl.style.overflow = "visible";
+      this.rulerEl.style.contain = "none";
+      this.rulerEl.style.setProperty("z-index", "20", "important");
+      if (this.wordWaveEl) {
+        this.wordWaveEl.style.setProperty("transition", "none", "important");
+        this.wordWaveEl.style.transform = `translate3d(${activeWordWrap.fromWaveX}px, 0, 0)`;
+        this.wordWaveEl.style.display = "block";
+      }
+
+      if (this.secondaryRulerEl) {
+        this.secondaryRulerEl.classList.remove("is-hidden", "is-page-transitioning", "mode-off", "is-snapped");
+        this.secondaryRulerEl.classList.add("is-visible", "word-tracking-mode");
+        this.secondaryRulerEl.style.setProperty("transition", "none", "important");
+        this.secondaryRulerEl.style.top = "0px";
+        this.secondaryRulerEl.style.left = "0px";
+        this.secondaryRulerEl.style.right = "auto";
+        this.secondaryRulerEl.style.width = `${activeWordWrap.toBarWidth}px`;
+        this.secondaryRulerEl.style.maxWidth = `${activeWordWrap.toBarWidth}px`;
+        this.secondaryRulerEl.style.height = "2px";
+        this.secondaryRulerEl.style.transform = `translate3d(${activeWordWrap.toBarLeft}px, ${toScreenBottom}px, 0)`;
+        this.secondaryRulerEl.style.setProperty("background-color", hex, "important");
+        this.secondaryRulerEl.style.setProperty("color", hex, "important");
+        this.secondaryRulerEl.style.border = "none";
+        this.secondaryRulerEl.style.outline = "none";
+        this.secondaryRulerEl.style.setProperty("box-shadow", `0 1px 4px rgba(${glowRgb}, 0.45)`, "important");
+        this.secondaryRulerEl.style.opacity = "1";
+        this.secondaryRulerEl.style.visibility = "visible";
+        this.secondaryRulerEl.style.display = "block";
+        this.secondaryRulerEl.style.overflow = "visible";
+        this.secondaryRulerEl.style.contain = "none";
+        this.secondaryRulerEl.style.setProperty("z-index", "20", "important");
+        if (this.secondaryWordWaveEl) {
+          this.secondaryWordWaveEl.style.setProperty("transition", "none", "important");
+          this.secondaryWordWaveEl.style.transform = `translate3d(${activeWordWrap.toWaveX}px, 0, 0)`;
+          this.secondaryWordWaveEl.style.display = "block";
+        }
+      }
+    } else if (activeWordWrap && activeStyle === "highlight") {
+      const fromScreenTop = isVertical ? Math.round(activeWordWrap.fromDocTop - vScrollTop) : Math.round(activeWordWrap.fromDocTop);
+      const toScreenTop = isVertical ? Math.round(activeWordWrap.toDocTop - vScrollTop) : Math.round(activeWordWrap.toDocTop);
+
+      this.rulerEl.style.top = "0px";
+      this.rulerEl.style.left = "0px";
+      this.rulerEl.style.right = "auto";
+      this.rulerEl.style.width = `${activeWordWrap.fromWidth}px`;
+      this.rulerEl.style.maxWidth = "100%";
+      this.rulerEl.style.height = `${activeWordWrap.fromLineH}px`;
+      this.rulerEl.style.transform = `translate3d(${activeWordWrap.fromLeft}px, ${fromScreenTop}px, 0)`;
+      this.rulerEl.style.setProperty("--word-solid-ratio", `${activeWordWrap.fromSolidRatio.toFixed(1)}%`);
+      this.rulerEl.classList.toggle("no-preview", !!activeWordWrap.fromNoPreview);
+      this.rulerEl.style.backgroundColor = "";
+      this.rulerEl.style.border = "none";
+      this.rulerEl.style.outline = "none";
+      this.rulerEl.style.boxShadow = "none";
+      this.rulerEl.style.opacity = "1";
+      this.rulerEl.style.visibility = "visible";
+      this.rulerEl.style.display = "block";
+      this.rulerEl.style.setProperty("z-index", "20", "important");
+      if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
+
+      if (this.secondaryRulerEl) {
+        this.secondaryRulerEl.classList.remove("is-hidden", "is-page-transitioning", "mode-off", "is-snapped");
+        this.secondaryRulerEl.classList.add("is-visible", "word-tracking-mode");
+        this.secondaryRulerEl.style.setProperty("transition", "none", "important");
+        this.secondaryRulerEl.style.top = "0px";
+        this.secondaryRulerEl.style.left = "0px";
+        this.secondaryRulerEl.style.right = "auto";
+        this.secondaryRulerEl.style.width = `${activeWordWrap.toWidth}px`;
+        this.secondaryRulerEl.style.maxWidth = "100%";
+        this.secondaryRulerEl.style.height = `${activeWordWrap.toLineH}px`;
+        this.secondaryRulerEl.style.transform = `translate3d(${activeWordWrap.toLeft}px, ${toScreenTop}px, 0)`;
+        this.secondaryRulerEl.style.setProperty("--word-solid-ratio", `${activeWordWrap.toSolidRatio.toFixed(1)}%`);
+        this.secondaryRulerEl.classList.toggle("no-preview", !!activeWordWrap.toNoPreview);
+        this.secondaryRulerEl.style.backgroundColor = "";
+        this.secondaryRulerEl.style.border = "none";
+        this.secondaryRulerEl.style.outline = "none";
+        this.secondaryRulerEl.style.boxShadow = "none";
+        this.secondaryRulerEl.style.opacity = "1";
+        this.secondaryRulerEl.style.visibility = "visible";
+        this.secondaryRulerEl.style.display = "block";
+        this.secondaryRulerEl.style.setProperty("z-index", "20", "important");
+        if (this.secondaryWordWaveEl) this.secondaryWordWaveEl.style.display = "none";
+      }
+    } else if (activeStyle === "bottom-cover") {
+      this._hideSecondaryRuler();
       const hex = colorHexMap[this.color] || "#f59e0b";
       const glowRgb = colorGlowMap[this.color] || "245, 158, 11";
       this.rulerEl.style.top = "0px";
@@ -10748,6 +11298,7 @@ export class ReadingRuler {
       this.rulerEl.style.contain = "none";
       this.rulerEl.style.setProperty("z-index", "20", "important");
     } else if (activeStyle === "off") {
+      this._hideSecondaryRuler();
       this.rulerEl.classList.remove("is-visible");
       this.rulerEl.classList.add("is-hidden", "mode-off");
       this.rulerEl.style.setProperty("display", "none", "important");
@@ -10760,6 +11311,7 @@ export class ReadingRuler {
       if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
     } else {
       // highlight
+      this._hideSecondaryRuler();
       this.rulerEl.style.top = "0px";
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "auto";
@@ -10829,6 +11381,89 @@ export class ReadingRuler {
       const maskLeft = useFullWidth ? 0 : coverLeft;
       const maskWidth = useFullWidth ? "100%" : `${coverWidth}px`;
 
+      if (activeWordWrap && activeWordWrap.fromColIndex !== activeWordWrap.toColIndex && (spreadInfo || isTwoCol)) {
+        // Cross-column / cross-spread wrap-around: keep both the departing line (col 0) and emerging line (col 1) clearly visible
+        const fromIsLeft = activeWordWrap.fromColIndex === 0;
+        const fromScreenTop = isVertical ? Math.round(activeWordWrap.fromDocTop - vScrollTop) : Math.round(activeWordWrap.fromDocTop);
+        const fromScreenBottom = isVertical ? Math.round(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom);
+        const toScreenTop = isVertical ? Math.round(activeWordWrap.toDocTop - vScrollTop) : Math.round(activeWordWrap.toDocTop);
+        const toScreenBottom = isVertical ? Math.round(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom);
+
+        const col0ScreenTop = fromIsLeft ? fromScreenTop : toScreenTop;
+        const col0ScreenBottom = fromIsLeft ? fromScreenBottom : toScreenBottom;
+        const col1ScreenTop = fromIsLeft ? toScreenTop : fromScreenTop;
+        const col1ScreenBottom = fromIsLeft ? toScreenBottom : fromScreenBottom;
+
+        let c0Left = this.column0Left ?? activeWordWrap.fromBarLeft;
+        let c0Width = this.column0Width ?? activeWordWrap.fromBarWidth;
+        let c1Left = this.column1Left ?? activeWordWrap.toBarLeft;
+        let c1Width = this.column1Width ?? activeWordWrap.toBarWidth;
+        if (spreadInfo) {
+          const leftRect = spreadInfo.leftRect || (spreadInfo.activeRect.left < spreadInfo.inactiveRect.left ? spreadInfo.activeRect : spreadInfo.inactiveRect);
+          const rightRect = spreadInfo.rightRect || (spreadInfo.activeRect.left < spreadInfo.inactiveRect.left ? spreadInfo.inactiveRect : spreadInfo.activeRect);
+          c0Left = Math.round(leftRect.left);
+          c0Width = Math.round(leftRect.width);
+          c1Left = Math.round(rightRect.left);
+          c1Width = Math.round(rightRect.width);
+        }
+
+        const applyColMask = (el, cls, show, left, width, topY, height) => {
+          if (!el) return;
+          if (show) {
+            el.className = `ruler-mask ${cls} is-visible`;
+            el.classList.remove("pdf-overlay-mask", "mode-bottom-cover");
+            el.style.setProperty("display", "block", "important");
+            el.style.setProperty("background-color", themeBg, "important");
+            el.style.setProperty("opacity", String(dimOpacity), "important");
+            el.style.setProperty("z-index", "15", "important");
+            el.style.setProperty("pointer-events", "none", "important");
+            el.style.setProperty("transition", "none", "important");
+            el.style.top = "0px";
+            el.style.left = "0px";
+            el.style.right = "auto";
+            el.style.maxWidth = "none";
+            el.style.width = `${Math.max(0, Math.round(width))}px`;
+            el.style.height = `${Math.max(0, Math.round(height))}px`;
+            el.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(topY)}px, 0)`;
+          } else {
+            el.style.display = "none";
+            el.classList.remove("is-visible");
+            el.classList.add("is-hidden");
+          }
+        };
+
+        const showUp = this.focusMode === "up" || this.focusMode === "both";
+        const showDown = this.focusMode === "down" || this.focusMode === "both";
+
+        applyColMask(this.maskTopEl, "ruler-mask-top", showUp, c0Left, c0Width, col0ScreenTop - vh, vh);
+        applyColMask(this.maskLeftEl, "ruler-mask-left", showDown, c0Left, c0Width, col0ScreenBottom, Math.max(vh * 2, 2000));
+        applyColMask(this.maskRightEl, "ruler-mask-right", showUp, c1Left, c1Width, col1ScreenTop - vh, vh);
+        applyColMask(this.maskBottomEl, "ruler-mask-bottom", showDown, c1Left, c1Width, col1ScreenBottom, Math.max(vh * 2, 2000));
+
+        if (this.maskInactiveSpreadEl) {
+          this.maskInactiveSpreadEl.style.display = "none";
+          this.maskInactiveSpreadEl.classList.remove("is-visible");
+          this.maskInactiveSpreadEl.classList.add("is-hidden");
+        }
+      } else {
+      let focusScreenTop = lineScreenTop;
+      let focusScreenBottom = lineScreenBottom;
+      let focusLineH = lineH;
+      let focusSlitLeft = slitLeft;
+      let focusSlitRight = slitRight;
+
+      if (activeWordWrap) {
+        const fromScreenTop = isVertical ? Math.round(activeWordWrap.fromDocTop - vScrollTop) : Math.round(activeWordWrap.fromDocTop);
+        const fromScreenBottom = isVertical ? Math.round(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom);
+        const toScreenTop = isVertical ? Math.round(activeWordWrap.toDocTop - vScrollTop) : Math.round(activeWordWrap.toDocTop);
+        const toScreenBottom = isVertical ? Math.round(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom);
+        focusScreenTop = Math.min(fromScreenTop, toScreenTop);
+        focusScreenBottom = Math.max(fromScreenBottom, toScreenBottom);
+        focusLineH = Math.max(1, focusScreenBottom - focusScreenTop);
+        focusSlitLeft = Math.max(0, Math.min(activeWordWrap.fromBarLeft, activeWordWrap.toBarLeft));
+        focusSlitRight = Math.min(window.innerWidth, Math.max(activeWordWrap.fromBarLeft + activeWordWrap.fromBarWidth, activeWordWrap.toBarLeft + activeWordWrap.toBarWidth));
+      }
+
       // 1. Horní maska: pro "up" a "both"
       if (this.focusMode === "up" || this.focusMode === "both") {
         if (this.maskTopEl) {
@@ -10845,7 +11480,7 @@ export class ReadingRuler {
           this.maskTopEl.style.maxWidth = "none";
           this.maskTopEl.style.width = maskWidth;
           this.maskTopEl.style.height = `${vh}px`;
-          this.maskTopEl.style.transform = `translate3d(${maskLeft}px, ${Math.round(lineScreenTop - vh)}px, 0)`;
+          this.maskTopEl.style.transform = `translate3d(${maskLeft}px, ${Math.round(focusScreenTop - vh)}px, 0)`;
         }
       } else if (this.maskTopEl) {
         this.maskTopEl.style.display = "none";
@@ -10869,7 +11504,7 @@ export class ReadingRuler {
           this.maskBottomEl.style.maxWidth = "none";
           this.maskBottomEl.style.width = maskWidth;
           this.maskBottomEl.style.height = `${Math.max(vh * 2, 2000)}px`;
-          this.maskBottomEl.style.transform = `translate3d(${maskLeft}px, ${lineScreenBottom}px, 0)`;
+          this.maskBottomEl.style.transform = `translate3d(${maskLeft}px, ${focusScreenBottom}px, 0)`;
         }
       } else if (this.maskBottomEl) {
         this.maskBottomEl.style.display = "none";
@@ -10880,7 +11515,7 @@ export class ReadingRuler {
       // 3. Postranní masky: pouze v režimu "both" (při sledování slov, 2-sloupcích nebo PDF)
       const needSideMasks = this.focusMode === "both" && ((this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia) || isTwoCol || this.isPdfMode);
       if (needSideMasks) {
-        const leftBandWidth = Math.max(0, Math.round(slitLeft));
+        const leftBandWidth = Math.max(0, Math.round(focusSlitLeft));
         if (leftBandWidth > 0 && this.maskLeftEl) {
           this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
           this.maskLeftEl.style.setProperty("display", "block", "important");
@@ -10893,15 +11528,15 @@ export class ReadingRuler {
           this.maskLeftEl.style.right = "auto";
           this.maskLeftEl.style.maxWidth = "none";
           this.maskLeftEl.style.width = `${leftBandWidth}px`;
-          this.maskLeftEl.style.height = `${lineH}px`;
-          this.maskLeftEl.style.transform = `translate3d(0, ${lineScreenTop}px, 0)`;
+          this.maskLeftEl.style.height = `${focusLineH}px`;
+          this.maskLeftEl.style.transform = `translate3d(0, ${focusScreenTop}px, 0)`;
         } else if (this.maskLeftEl) {
           this.maskLeftEl.style.display = "none";
           this.maskLeftEl.classList.remove("is-visible");
           this.maskLeftEl.classList.add("is-hidden");
         }
 
-        const rightBandLeft = Math.round(slitRight);
+        const rightBandLeft = Math.round(focusSlitRight);
         const rightBandWidth = Math.max(0, window.innerWidth - rightBandLeft);
         if (rightBandWidth > 0 && this.maskRightEl) {
           this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
@@ -10915,8 +11550,8 @@ export class ReadingRuler {
           this.maskRightEl.style.right = "auto";
           this.maskRightEl.style.maxWidth = "none";
           this.maskRightEl.style.width = `${rightBandWidth}px`;
-          this.maskRightEl.style.height = `${lineH}px`;
-          this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${lineScreenTop}px, 0)`;
+          this.maskRightEl.style.height = `${focusLineH}px`;
+          this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${focusScreenTop}px, 0)`;
         } else if (this.maskRightEl) {
           this.maskRightEl.style.display = "none";
           this.maskRightEl.classList.remove("is-visible");
@@ -10986,6 +11621,7 @@ export class ReadingRuler {
         this.maskInactiveSpreadEl.style.display = "none";
         this.maskInactiveSpreadEl.classList.remove("is-visible");
         this.maskInactiveSpreadEl.classList.add("is-hidden");
+      }
       }
     } else {
       if (this.maskTopEl) { this.maskTopEl.style.display = "none"; this.maskTopEl.classList.remove("is-visible"); this.maskTopEl.classList.add("is-hidden"); }
@@ -11160,6 +11796,32 @@ export class ReadingRuler {
     this.rulerEl.classList.toggle("word-transition-active", !!this.wordTracking && !!this.horizontalWordTransition);
     this.rulerEl.classList.toggle("word-transition-snap", !!this.wordTracking && !this.horizontalWordTransition);
     this.rulerEl.classList.toggle("is-page-transitioning", !!this.isPageTransitioning);
+
+    if (this.secondaryRulerEl) {
+      this.secondaryRulerEl.style.willChange = "transform";
+      this.secondaryRulerEl.style.contain = this.mode === "bottom-cover" ? "none" : "paint";
+      this.secondaryRulerEl.classList.add("reading-ruler", "reading-ruler-secondary");
+      this.secondaryRulerEl.classList.toggle("mode-off", activeStyle === "off");
+      this.secondaryRulerEl.classList.toggle("mode-highlight", activeStyle === "highlight");
+      this.secondaryRulerEl.classList.toggle("mode-focus", (this.focusMode && this.focusMode !== "off") && activeStyle === "off");
+      this.secondaryRulerEl.classList.toggle("mode-underline", activeStyle === "underline");
+      this.secondaryRulerEl.classList.toggle("mode-bottom-cover", activeStyle === "bottom-cover");
+      const secClassesToRemove = [];
+      for (const cls of this.secondaryRulerEl.classList) {
+        if (cls.startsWith("color-") && cls !== `color-${this.color}`) {
+          secClassesToRemove.push(cls);
+        }
+      }
+      secClassesToRemove.forEach(cls => this.secondaryRulerEl.classList.remove(cls));
+      this.secondaryRulerEl.classList.add(`color-${this.color}`);
+      if (colorGlowMap[this.color]) {
+        this.secondaryRulerEl.style.setProperty("--ruler-glow-rgb", colorGlowMap[this.color]);
+      }
+      this.secondaryRulerEl.classList.toggle("word-tracking-mode", !!this.wordTracking);
+      this.secondaryRulerEl.classList.toggle("word-transition-active", !!this.wordTracking && !!this.horizontalWordTransition);
+      this.secondaryRulerEl.classList.toggle("word-transition-snap", !!this.wordTracking && !this.horizontalWordTransition);
+      this.secondaryRulerEl.classList.toggle("is-page-transitioning", !!this.isPageTransitioning);
+    }
 
     const isTwoCol = !this.isVerticalMode() && this.isTwoCol;
     const showTopMask = isFocus && (this.focusMode === "up" || this.focusMode === "both");
@@ -11488,6 +12150,7 @@ export class ReadingRuler {
 
   setStyle(style) {
     if (["off", "highlight", "bottom-cover"].includes(style)) {
+      this._clearTrackpadWordWrap();
       this.style = style;
       this.mode = style;
       if (style !== "off") {
@@ -11827,6 +12490,7 @@ export class ReadingRuler {
   }
 
   setWordTracking(enabled) {
+    this._clearTrackpadWordWrap();
     this.disableWordTransition();
     if (this.isImageOnlyPdf) {
       this.wordTracking = false;
