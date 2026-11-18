@@ -1186,6 +1186,9 @@ export class LuminaApp {
           this.updatePageUI();
           if (this.ruler && this.ruler.enabled) {
             this.ruler.refreshLines();
+            if (this.ruler.wordTracking) {
+              this.ruler.refreshWords?.();
+            }
             this.ruler.applyPosition();
           }
         });
@@ -2038,6 +2041,9 @@ export class LuminaApp {
         }
         this.renderScrubberTicks();
         this.ruler?.refreshLines();
+        if (this.ruler?.wordTracking) {
+          this.ruler.refreshWords?.();
+        }
         this.ruler?.applyPosition();
       }
     });
@@ -2825,6 +2831,9 @@ export class LuminaApp {
             await this.pdfLoader.renderPage(this.pdfLoader.currentPage);
             this.updatePageUI();
             this.ruler?.refreshLines();
+            if (this.ruler?.wordTracking) {
+              this.ruler.refreshWords?.();
+            }
             this.ruler?.applyPosition();
             return;
           }
@@ -2837,6 +2846,9 @@ export class LuminaApp {
               this.goToPage(this.currentPageIndex, null, true, { isReflow: true });
               this.renderScrubberTicks();
               this.ruler?.refreshLines();
+              if (this.ruler?.wordTracking) {
+                this.ruler.refreshWords?.();
+              }
               this.ruler?.applyPosition();
             });
           });

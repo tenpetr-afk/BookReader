@@ -12,10 +12,30 @@
 import { countWords, isValidWord } from "./text-parser.js?v=2.6.1";
 
 export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i horizontální odsazení v řádkovém režimu
-export const RULER_WAVE_WIDTH = 80; // px - fixní šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
-export const RULER_WAVE_HEIGHT = 12; // px - fixní hloubka vlnky indikátoru
+export const RULER_WAVE_WIDTH = 80; // px - výchozí referenční šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
+export const RULER_WAVE_HEIGHT = 12; // px - výchozí referenční hloubka vlnky indikátoru
 export const COVER_LINE_OFFSET = 2; // px - fixní vertikální vzdálenost vodicí linky pod spodním okrajem řádku v režimu Spodní clona (Bottom Cover)
-const RULER_WAVE_SVG = `<svg viewBox="0 0 80 13" width="80" height="13" preserveAspectRatio="none"><rect x="0" y="0" width="80" height="2" fill="currentColor" /><path d="M 0,1 C 20,1 24,13 40,13 C 56,13 60,1 80,1 Z" fill="currentColor" /></svg>`;
+
+function buildRulerWavePath(width = RULER_WAVE_WIDTH, depth = RULER_WAVE_HEIGHT) {
+  const w = Math.max(12, Math.round(width));
+  const d = Math.max(3, Math.round(depth));
+  const bottomY = 1 + d;
+  const c1x = +(w * 0.25).toFixed(2);
+  const c2x = +(w * 0.30).toFixed(2);
+  const midX = +(w * 0.50).toFixed(2);
+  const c3x = +(w * 0.70).toFixed(2);
+  const c4x = +(w * 0.75).toFixed(2);
+  return `M 0,1 C ${c1x},1 ${c2x},${bottomY} ${midX},${bottomY} C ${c3x},${bottomY} ${c4x},1 ${w},1 Z`;
+}
+
+function buildRulerWaveSvg(width = RULER_WAVE_WIDTH, depth = RULER_WAVE_HEIGHT) {
+  const w = Math.max(12, Math.round(width));
+  const d = Math.max(3, Math.round(depth));
+  const h = 1 + d;
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none"><rect x="0" y="0" width="${w}" height="2" fill="currentColor" /><path d="${buildRulerWavePath(w, d)}" fill="currentColor" /></svg>`;
+}
+
+const RULER_WAVE_SVG = buildRulerWaveSvg(RULER_WAVE_WIDTH, RULER_WAVE_HEIGHT);
 
 export class ReadingRuler {
   constructor(containerElement, app = null) {
@@ -3306,11 +3326,109 @@ export class ReadingRuler {
     return null;
   }
 
+  /**
+   * Spočítá proporcionální rozměry vlnky pro indikátor čteného slova podle
+   * skutečné vykreslené velikosti písma daného řádku (v CSS px).
+   * Šířka ≈ 3.5× výška písma (~5–7 znaků), hloubka ≈ 0.36× výška písma (1/3–2/5).
+   */
+  _getWaveMetricsForLine(lineOrIdx = this.activeLineIndex) {
+    const line = (lineOrIdx && typeof lineOrIdx === "object")
+      ? lineOrIdx
+      : (this.cachedLines && lineOrIdx >= 0 && lineOrIdx < this.cachedLines.length ? this.cachedLines[lineOrIdx] : null);
+
+    let fontH = 0;
+    if (line) {
+      const exactFs = Number.isFinite(line.exactFontSize) && line.exactFontSize > 0 ? line.exactFontSize : 0;
+      const lineFs = Number.isFinite(line.fontSize) && line.fontSize > 0 ? line.fontSize : 0;
+      const roundedFs = Math.round(lineFs || exactFs || 0);
+      const glyphH = (roundedFs && this.glyphHeightByFontSize?.get(roundedFs))
+        || (Number.isFinite(line.height) && line.height > 0 ? line.height : 0);
+      if (exactFs > 0) {
+        fontH = exactFs;
+      } else if (lineFs > 0) {
+        fontH = lineFs;
+      } else if (glyphH > 0) {
+        fontH = glyphH / 1.15;
+      }
+    }
+
+    if (!fontH || !Number.isFinite(fontH) || fontH <= 0) {
+      if (!this.isPdfMode) {
+        const cssFs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--reader-font-size"));
+        if (Number.isFinite(cssFs) && cssFs > 0) {
+          fontH = cssFs;
+        } else if (Number.isFinite(this.app?.settings?.fontSize) && this.app.settings.fontSize > 0) {
+          fontH = this.app.settings.fontSize;
+        }
+      }
+      if (!fontH || !Number.isFinite(fontH) || fontH <= 0) {
+        const fallbackH = Number.isFinite(this.uniformLineHeight) && this.uniformLineHeight > 0
+          ? this.uniformLineHeight
+          : (Number.isFinite(this.height) && this.height > 0 ? this.height : 22);
+        fontH = fallbackH / 1.2;
+      }
+    }
+
+    fontH = Math.max(6, fontH);
+    const width = Math.max(20, Math.round(fontH * 3.5));
+    const depth = Math.max(3, Math.round(fontH * 0.36));
+    const height = depth + 1;
+    return {
+      width,
+      depth,
+      height,
+      halfWidth: Math.round(width / 2)
+    };
+  }
+
+  _applyWaveMetrics(waveEl, metrics, hostRulerEl = null) {
+    if (!waveEl || !metrics) return;
+    const { width, depth, height } = metrics;
+    if (
+      waveEl._lastWaveWidth !== width ||
+      waveEl._lastWaveDepth !== depth ||
+      waveEl._lastWaveHeight !== height
+    ) {
+      waveEl._lastWaveWidth = width;
+      waveEl._lastWaveDepth = depth;
+      waveEl._lastWaveHeight = height;
+
+      waveEl.style.setProperty("--ruler-wave-width", `${width}px`);
+      waveEl.style.setProperty("--ruler-wave-height", `${height}px`);
+      waveEl.style.width = `${width}px`;
+      waveEl.style.height = `${height}px`;
+
+      const svg = waveEl.querySelector("svg");
+      if (svg) {
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        svg.setAttribute("width", String(width));
+        svg.setAttribute("height", String(height));
+        const rect = svg.querySelector("rect");
+        if (rect) {
+          rect.setAttribute("width", String(width));
+        }
+        const path = svg.querySelector("path");
+        if (path) {
+          path.setAttribute("d", buildRulerWavePath(width, depth));
+        }
+      } else {
+        waveEl.innerHTML = buildRulerWaveSvg(width, depth);
+      }
+    }
+    if (hostRulerEl) {
+      const clipBottom = Math.max(30, height + 16);
+      if (hostRulerEl._lastWaveClipBottom !== clipBottom) {
+        hostRulerEl._lastWaveClipBottom = clipBottom;
+        hostRulerEl.style.setProperty("--ruler-wave-clip-bottom", `${clipBottom}px`);
+      }
+    }
+  }
+
   _getInitialBottomCoverWaveCenterX(lineIdx, lineWords = null) {
     const words = (lineWords && lineWords.length > 0) ? lineWords : this.ensureActiveWords(lineIdx);
     if (!words || words.length === 0) return 100;
     const wordBounds = this._getLineWordBounds(lineIdx, words);
-    const halfWave = Math.round((RULER_WAVE_WIDTH || 80) / 2);
+    const halfWave = this._getWaveMetricsForLine(lineIdx).halfWidth;
     return wordBounds
       ? (wordBounds.left + Math.min(halfWave, Math.floor(wordBounds.width / 2)))
       : (words[0].centerX ?? words[0].left);
@@ -3509,14 +3627,15 @@ export class ReadingRuler {
     const padX = 3;
 
     if (isBottomCover) {
-      const WAVE_WIDTH = RULER_WAVE_WIDTH || 80;
-      const halfWave = Math.round(WAVE_WIDTH / 2);
       let rawCenterX = (Number.isFinite(tp.waveCenterX)
         ? tp.waveCenterX
         : (Number.isFinite(this.lastPointerX) ? this.lastPointerX : lineWords[0].left)) + dx;
 
       let safety = 0;
       while (safety++ < 8) {
+        const curWave = this._getWaveMetricsForLine(curIdx);
+        const WAVE_WIDTH = curWave.width;
+        const halfWave = curWave.halfWidth;
         const curBox = this._getTrackpadLineRulerBox(curIdx, geom, lineWords);
         const curWordBounds = this._getLineWordBounds(curIdx, lineWords);
         const textLeft = curWordBounds ? curWordBounds.left : Math.floor(lineWords[0].left);
@@ -3525,7 +3644,7 @@ export class ReadingRuler {
         const effHalf = Math.min(halfWave, Math.floor(textWidth / 2));
         const wrapLeftStart = textLeft + effHalf;
         const wrapRightStart = Math.max(wrapLeftStart, textRight - effHalf);
-        const wrapSpan = halfWave + effHalf;
+        const wrapSpan = Math.max(1, halfWave + effHalf);
 
         if (rawCenterX > wrapRightStart && (dx > 0 || tp.wordWrap?.dir === 1)) {
           const nextIdx = this._findAdjacentTrackpadTextLine(curIdx, 1);
@@ -3536,6 +3655,9 @@ export class ReadingRuler {
             break;
           }
           const exitPx = rawCenterX - wrapRightStart;
+          const nextWave = this._getWaveMetricsForLine(nextIdx);
+          const nextWaveW = nextWave.width;
+          const nextHalfWave = nextWave.halfWidth;
           const nextLine = this.cachedLines[nextIdx];
           const nextWords = this.ensureActiveWords(nextIdx);
           const nextGeom = this.computeLineGeometry(nextIdx);
@@ -3544,7 +3666,7 @@ export class ReadingRuler {
           const nextTextLeft = nextWordBounds ? nextWordBounds.left : Math.floor(nextWords[0].left);
           const nextTextRight = nextWordBounds ? nextWordBounds.right : Math.ceil(nextWords[nextWords.length - 1].right);
           const nextTextWidth = Math.max(1, nextTextRight - nextTextLeft);
-          const nextEffHalf = Math.min(halfWave, Math.floor(nextTextWidth / 2));
+          const nextEffHalf = Math.min(nextHalfWave, Math.floor(nextTextWidth / 2));
 
           if (exitPx >= wrapSpan) {
             const rem = exitPx - wrapSpan;
@@ -3569,7 +3691,7 @@ export class ReadingRuler {
           this.lastPointerX = Math.round(rawCenterX);
           this.lastValidPointerX = this.lastPointerX;
           const fromWaveX = Math.round((rawCenterX - curBox.barLeft) - halfWave);
-          const toWaveX = Math.round((nextTextLeft - nextBox.barLeft) - WAVE_WIDTH + t * (WAVE_WIDTH - halfWave + nextEffHalf));
+          const toWaveX = Math.round((nextTextLeft - nextBox.barLeft) - nextWaveW + t * (nextWaveW - nextHalfWave + nextEffHalf));
           tp.wordWrap = {
             style: "bottom-cover",
             dir: 1,
@@ -3587,12 +3709,18 @@ export class ReadingRuler {
             toDocBottom: nextBox.docLineBottom,
             toLineH: nextBox.lineH,
             toColIndex: nextBox.colIndex,
+            fromWaveWidth: WAVE_WIDTH,
+            fromWaveDepth: curWave.depth,
+            fromWaveHeight: curWave.height,
+            toWaveWidth: nextWaveW,
+            toWaveDepth: nextWave.depth,
+            toWaveHeight: nextWave.height,
             fromWaveX,
             fromWaveClipLeft: Math.max(0, Math.round((textLeft - curBox.barLeft) - fromWaveX)),
             fromWaveClipRight: Math.max(0, Math.round((fromWaveX + WAVE_WIDTH) - (textRight - curBox.barLeft))),
             toWaveX,
             toWaveClipLeft: Math.max(0, Math.round((nextTextLeft - nextBox.barLeft) - toWaveX)),
-            toWaveClipRight: Math.max(0, Math.round((toWaveX + WAVE_WIDTH) - (nextTextRight - nextBox.barLeft)))
+            toWaveClipRight: Math.max(0, Math.round((toWaveX + nextWaveW) - (nextTextRight - nextBox.barLeft)))
           };
           break;
         } else if (rawCenterX < wrapLeftStart && (dx < 0 || tp.wordWrap?.dir === -1)) {
@@ -3604,6 +3732,9 @@ export class ReadingRuler {
             break;
           }
           const exitPx = wrapLeftStart - rawCenterX;
+          const prevWave = this._getWaveMetricsForLine(prevIdx);
+          const prevWaveW = prevWave.width;
+          const prevHalfWave = prevWave.halfWidth;
           const prevLine = this.cachedLines[prevIdx];
           const prevWords = this.ensureActiveWords(prevIdx);
           const prevGeom = this.computeLineGeometry(prevIdx);
@@ -3612,7 +3743,7 @@ export class ReadingRuler {
           const prevTextLeft = prevWordBounds ? prevWordBounds.left : Math.floor(prevWords[0].left);
           const prevTextRight = prevWordBounds ? prevWordBounds.right : Math.ceil(prevWords[prevWords.length - 1].right);
           const prevTextWidth = Math.max(1, prevTextRight - prevTextLeft);
-          const prevEffHalf = Math.min(halfWave, Math.floor(prevTextWidth / 2));
+          const prevEffHalf = Math.min(prevHalfWave, Math.floor(prevTextWidth / 2));
 
           if (exitPx >= wrapSpan) {
             const rem = exitPx - wrapSpan;
@@ -3636,7 +3767,7 @@ export class ReadingRuler {
           this.lastPointerX = Math.round(rawCenterX);
           this.lastValidPointerX = this.lastPointerX;
           const fromWaveX = Math.round((rawCenterX - curBox.barLeft) - halfWave);
-          const toWaveX = Math.round((prevTextRight - prevBox.barLeft) - t * (halfWave + prevEffHalf));
+          const toWaveX = Math.round((prevTextRight - prevBox.barLeft) - t * (prevHalfWave + prevEffHalf));
           tp.wordWrap = {
             style: "bottom-cover",
             dir: -1,
@@ -3654,12 +3785,18 @@ export class ReadingRuler {
             toDocBottom: prevBox.docLineBottom,
             toLineH: prevBox.lineH,
             toColIndex: prevBox.colIndex,
+            fromWaveWidth: WAVE_WIDTH,
+            fromWaveDepth: curWave.depth,
+            fromWaveHeight: curWave.height,
+            toWaveWidth: prevWaveW,
+            toWaveDepth: prevWave.depth,
+            toWaveHeight: prevWave.height,
             fromWaveX,
             fromWaveClipLeft: Math.max(0, Math.round((textLeft - curBox.barLeft) - fromWaveX)),
             fromWaveClipRight: Math.max(0, Math.round((fromWaveX + WAVE_WIDTH) - (textRight - curBox.barLeft))),
             toWaveX,
             toWaveClipLeft: Math.max(0, Math.round((prevTextLeft - prevBox.barLeft) - toWaveX)),
-            toWaveClipRight: Math.max(0, Math.round((toWaveX + WAVE_WIDTH) - (prevTextRight - prevBox.barLeft)))
+            toWaveClipRight: Math.max(0, Math.round((toWaveX + prevWaveW) - (prevTextRight - prevBox.barLeft)))
           };
           break;
         } else {
@@ -5993,7 +6130,7 @@ export class ReadingRuler {
       }
       const col0RightEarly = isTwoColEarly ? (stageCenterX - colGapEarly / 2) : stageRight;
 
-      const pushLineRect = (r, parentEl, blockEl, fontSize, isPdfEl, pdfTf, pageSlot) => {
+      const pushLineRect = (r, parentEl, blockEl, fontSize, isPdfEl, pdfTf, pageSlot, exactFontSize = fontSize) => {
         let rTop = r.top;
         let rBottom = r.bottom;
         let rHeight = r.height;
@@ -6046,6 +6183,7 @@ export class ReadingRuler {
             pageSlot,
             canvasRect: pdfTf ? pdfTf.canvasRect : null,
             fontSize,
+            exactFontSize,
             top: rTop + vScrollTop,
             bottom: rBottom + vScrollTop,
             left: lineLeft,
@@ -6183,15 +6321,39 @@ export class ReadingRuler {
           }
         }
 
-        const hasInlineStyleFontSize = parent.style && parent.style.fontSize && !Number.isNaN(parseFloat(parent.style.fontSize));
-        const rawFontSize = (INLINE_STYLE_TAGS.has(parent.tagName) && !hasInlineStyleFontSize)
-          ? (parseFloat(compStyle.fontSize) || 16)
-          : (parseFloat(parent.style?.fontSize) || parseFloat(compStyle.fontSize) || 16);
         const isPdfEl = hasTextLayer && (this.isPdfMode || !!parent.closest('.textLayer'));
         const textLayer = isPdfEl ? parent.closest('.textLayer') : null;
         const pdfTf = textLayer ? getPdfTransform(textLayer) : null;
         const pageSlot = isPdfEl ? (parent.closest('.pdf-page-slot, .pdf-page-container') || textLayer) : null;
-        const fontSize = Math.max(6, Math.round(pdfTf ? (rawFontSize * pdfTf.scaleY) : rawFontSize));
+
+        let rawFontSize = NaN;
+        const isBionicEl = !!(parent.classList && (parent.classList.contains("bionic-fixation") || parent.classList.contains("bionic-bold")));
+        const styleTarget = isBionicEl ? (parent.parentElement || parent) : parent;
+        if (styleTarget !== blockElement && (
+          isPdfEl ||
+          (styleTarget.style && styleTarget.style.fontSize) ||
+          !INLINE_STYLE_TAGS.has(styleTarget.tagName) ||
+          (styleTarget.className && !styleTarget.classList?.contains("bionic-word"))
+        )) {
+          let targetStyle = styleCache.get(styleTarget);
+          if (!targetStyle) {
+            try {
+              targetStyle = window.getComputedStyle(styleTarget);
+              styleCache.set(styleTarget, targetStyle);
+            } catch (e) {
+              targetStyle = compStyle;
+            }
+          }
+          rawFontSize = parseFloat(targetStyle?.fontSize);
+        }
+        if (!Number.isFinite(rawFontSize) || rawFontSize <= 0) {
+          const hasInlineStyleFontSize = parent.style && parent.style.fontSize && !Number.isNaN(parseFloat(parent.style.fontSize));
+          rawFontSize = (INLINE_STYLE_TAGS.has(parent.tagName) && !hasInlineStyleFontSize)
+            ? (parseFloat(compStyle.fontSize) || 16)
+            : (parseFloat(parent.style?.fontSize) || parseFloat(compStyle.fontSize) || 16);
+        }
+        const scaledFontSize = Math.max(4, pdfTf ? (rawFontSize * pdfTf.scaleY) : rawFontSize);
+        const fontSize = Math.max(4, Math.round(scaledFontSize));
 
         let parentRect = null;
         if (parent === blockElement) {
@@ -6231,7 +6393,7 @@ export class ReadingRuler {
 
           for (let i = 0; i < rects.length; i++) {
             const r = rects[i];
-            pushLineRect(r, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot);
+            pushLineRect(r, parent, blockElement, fontSize, isPdfEl, pdfTf, pageSlot, scaledFontSize);
           }
         } catch (e) {}
       }
@@ -6363,7 +6525,7 @@ export class ReadingRuler {
       // 2. Fix Line Clustering: filter out rects spanning multiple lines before clustering
       const validLines = rawLines.filter(r => {
         if (r.isMedia) return true;
-        if (r.fontSize && r.height > r.fontSize * 2.2) return false;
+        if (r.fontSize && r.height > Math.max(r.fontSize, 6) * 2.2) return false;
         return true;
       });
 
@@ -6399,6 +6561,7 @@ export class ReadingRuler {
             bottom: r.bottom,
             centerY: r.centerY,
             height: r.height,
+            fontSize: r.exactFontSize || r.fontSize || 16,
             weight: fragW,
             isBionic: !!r.isBionic
           };
@@ -6470,10 +6633,15 @@ export class ReadingRuler {
           const frags = line._frags;
           const medCenterY = computeWeightedMedian(frags, f => f.centerY, f => f.weight);
           const medHeight = computeWeightedMedian(frags, f => f.height, f => f.weight);
+          const medFontSize = computeWeightedMedian(frags, f => f.fontSize, f => f.weight);
           line.rawTop = line.top;
           line.rawBottom = line.bottom;
           line.centerY = medCenterY;
           line.height = medHeight;
+          if (medFontSize > 0) {
+            line.exactFontSize = medFontSize;
+            line.fontSize = Math.max(4, Math.round(medFontSize));
+          }
           line.top = medCenterY - medHeight / 2;
           line.bottom = medCenterY + medHeight / 2;
           delete line._frags;
@@ -7014,6 +7182,7 @@ export class ReadingRuler {
     this._lastEmptyDetectTime = 0;
     this._lastActiveLineIndex = -1;
     this._lastActiveColumn = null;
+    this._clearTrackpadWordWrap?.();
     this._clearWordCache();
     if (resetReadingIndices) {
       this._activeReadingLineIndex = -1;
@@ -11216,8 +11385,9 @@ export class ReadingRuler {
       this.rulerEl.style.transform = `translate3d(${Math.round(colLeft)}px, ${screenY}px, 0)`;
 
       if (isBottomCoverWordTracking && !isCurrentMedia) {
-        const WAVE_WIDTH = RULER_WAVE_WIDTH || 80;
-        const halfWave = Math.round(WAVE_WIDTH / 2);
+        const waveMetrics = this._getWaveMetricsForLine(this.activeLineIndex);
+        const WAVE_WIDTH = waveMetrics.width;
+        const halfWave = waveMetrics.halfWidth;
         const rulerLeft = Math.round(colLeft);
         const rulerWidth = Math.round(colWidth);
 
@@ -11256,11 +11426,12 @@ export class ReadingRuler {
           this.wordWaveEl = document.createElement("div");
           this.wordWaveEl.className = "ruler-word-wave";
           this.wordWaveEl.setAttribute("aria-hidden", "true");
-          this.wordWaveEl.innerHTML = RULER_WAVE_SVG;
+          this.wordWaveEl.innerHTML = buildRulerWaveSvg(waveMetrics.width, waveMetrics.depth);
           this.rulerEl.appendChild(this.wordWaveEl);
         }
 
         if (this.wordWaveEl) {
+          this._applyWaveMetrics(this.wordWaveEl, waveMetrics, this.rulerEl);
           this.wordWaveEl.style.transform = `translate3d(${waveX}px, 0, 0)`;
           this.wordWaveEl.style.display = "block";
         }
@@ -11334,19 +11505,28 @@ export class ReadingRuler {
       this.rulerEl.style.overflow = "visible";
       this.rulerEl.style.contain = "none";
       this.rulerEl.style.setProperty("z-index", "20", "important");
+      const fromWaveMetrics = (activeWordWrap.fromWaveWidth && activeWordWrap.fromWaveHeight)
+        ? { width: activeWordWrap.fromWaveWidth, depth: activeWordWrap.fromWaveDepth || (activeWordWrap.fromWaveHeight - 1), height: activeWordWrap.fromWaveHeight }
+        : this._getWaveMetricsForLine(activeWordWrap.fromLineIdx);
+      const toWaveMetrics = (activeWordWrap.toWaveWidth && activeWordWrap.toWaveHeight)
+        ? { width: activeWordWrap.toWaveWidth, depth: activeWordWrap.toWaveDepth || (activeWordWrap.toWaveHeight - 1), height: activeWordWrap.toWaveHeight }
+        : this._getWaveMetricsForLine(activeWordWrap.toLineIdx);
+
       if (this.wordWaveEl) {
         const clipL = activeWordWrap.fromWaveClipLeft || 0;
         const clipR = activeWordWrap.fromWaveClipRight || 0;
+        const fromClipBottom = Math.max(20, fromWaveMetrics.height + 10);
+        this._applyWaveMetrics(this.wordWaveEl, fromWaveMetrics, this.rulerEl);
         this.wordWaveEl.style.setProperty("transition", "none", "important");
         this.wordWaveEl.style.transform = `translate3d(${activeWordWrap.fromWaveX}px, 0, 0)`;
-        this.wordWaveEl.style.clipPath = (clipL > 0 || clipR > 0) ? `inset(-10px ${clipR}px -20px ${clipL}px)` : "none";
+        this.wordWaveEl.style.clipPath = (clipL > 0 || clipR > 0) ? `inset(-10px ${clipR}px -${fromClipBottom}px ${clipL}px)` : "none";
         this.wordWaveEl.style.display = "block";
       }
 
       if (this.secondaryRulerEl) {
         const toClipL = activeWordWrap.toWaveClipLeft || 0;
         const toClipR = activeWordWrap.toWaveClipRight || 0;
-        const waveW = RULER_WAVE_WIDTH || 80;
+        const waveW = toWaveMetrics.width || RULER_WAVE_WIDTH;
         const hasVisibleIncomingWave = (waveW - toClipL - toClipR) > 0;
 
         this.secondaryRulerEl.classList.remove("is-hidden", "is-page-transitioning", "mode-off", "is-snapped");
@@ -11372,9 +11552,11 @@ export class ReadingRuler {
         this.secondaryRulerEl.style.contain = "none";
         this.secondaryRulerEl.style.setProperty("z-index", "20", "important");
         if (this.secondaryWordWaveEl) {
+          const toClipBottom = Math.max(20, toWaveMetrics.height + 10);
+          this._applyWaveMetrics(this.secondaryWordWaveEl, toWaveMetrics, this.secondaryRulerEl);
           this.secondaryWordWaveEl.style.setProperty("transition", "none", "important");
           this.secondaryWordWaveEl.style.transform = `translate3d(${activeWordWrap.toWaveX}px, 0, 0)`;
-          this.secondaryWordWaveEl.style.clipPath = (toClipL > 0 || toClipR > 0) ? `inset(-10px ${toClipR}px -20px ${toClipL}px)` : "none";
+          this.secondaryWordWaveEl.style.clipPath = (toClipL > 0 || toClipR > 0) ? `inset(-10px ${toClipR}px -${toClipBottom}px ${toClipL}px)` : "none";
           this.secondaryWordWaveEl.style.display = "block";
         }
       }
