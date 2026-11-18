@@ -6,7 +6,7 @@
 
 import { storage, computeFileHash, isTouchCapableDevice } from "./storage.js?v=2.6.5";
 import { EpubParser } from "./epub-parser.js?v=2.6.5";
-import { PDFLoader } from "./pdf-loader.js?v=2.6.7";
+import { PDFLoader } from "./pdf-loader.js?v=2.6.8";
 import { tracker, ReadingTracker } from "./tracker.js?v=2.6.5";
 import { ReadingRuler } from "./ruler.js?v=2.6.5";
 import { StatsCharts } from "./charts.js?v=2.6.5";
@@ -2009,6 +2009,7 @@ export class LuminaApp {
     // Přizpůsobení stran při změně orientace iPadu/iPhonu (Portrait/Landscape), velikosti okna a iOS Safari toolbaru
     let lastEffectiveCols = this.resolveEffectiveColumnCount();
     const onPdfViewportResize = () => {
+      if (window.visualViewport && window.visualViewport.scale > 1.02) return;
       if (this.isPdfMode && this.pdfLoader && !this.dom.viewReader.classList.contains("is-hidden")) {
         this.schedulePdfViewportRelayout();
       }
@@ -4327,6 +4328,11 @@ export class LuminaApp {
 
           this.showReaderView();
           if (this.dom.bookTitleEl) this.dom.bookTitleEl.textContent = title;
+          if (this.isVerticalReadingMode()) {
+            await this.pdfLoader.renderAllPagesVertical(this.pdfLoader.currentPage);
+          } else {
+            await this.pdfLoader.renderPage(this.pdfLoader.currentPage, 0, { isReflow: true });
+          }
           await this.renderPdfToc();
           this.updatePageUI();
           tracker.startSession(bookId, title, 0, (bookData.totalWords || 1), 0);

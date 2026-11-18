@@ -268,9 +268,14 @@ export class PDFLoader {
    */
   _getAvailableReadingBox() {
     const vv = window.visualViewport;
-    const vvWidth = vv?.width || window.innerWidth;
-    const vvHeight = vv?.height || window.innerHeight;
+    const vvScale = vv?.scale || 1;
     const vpEl = document.getElementById("paged-viewport");
+    const vvWidth = (vpEl && vpEl.clientWidth > 100)
+      ? vpEl.clientWidth
+      : ((vv && vvScale <= 1.02 ? vv.width : 0) || window.innerWidth);
+    const vvHeight = (vpEl && vpEl.clientHeight > 100)
+      ? vpEl.clientHeight
+      : ((vv && vvScale <= 1.02 ? vv.height : 0) || window.innerHeight);
     const isMobile = vvWidth < 768;
 
     if (!isMobile) {
@@ -591,7 +596,7 @@ export class PDFLoader {
           pageContainer.style.height = `${floorH}px`;
           pageContainer.style.maxWidth = "100%";
           pageContainer.style.maxHeight = "100%";
-          pageContainer.style.margin = "auto";
+          pageContainer.style.margin = "0";
           pageContainer.style.display = "flex";
           pageContainer.style.justifyContent = "center";
           pageContainer.style.alignItems = "center";

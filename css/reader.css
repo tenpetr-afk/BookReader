@@ -196,7 +196,7 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 }
 
 /* Bezpečnostní vnitřní lem sloupců (safety buffer) proti ořezu diakritiky, verzálek a kurzívy */
-.paged-content > * {
+.paged-content:not(.is-pdf-mode) > * {
   max-width: 100% !important;
   box-sizing: border-box !important;
   padding-left: 2px !important;
@@ -204,9 +204,9 @@ body:not(.mode-vertical) .paged-content.columns-2 {
 }
 
 /* Zabránění vzniku prázdných sloupců přetečením spodního okraje posledního odstavce */
-.paged-content > *:last-child,
-.paged-content > *:last-child *:last-child,
-.paged-content > *:last-child *:last-child *:last-child {
+body:not(.is-pdf-mode) .paged-content:not(.is-pdf-mode) > *:last-child,
+body:not(.is-pdf-mode) .paged-content:not(.is-pdf-mode) > *:last-child *:last-child,
+body:not(.is-pdf-mode) .paged-content:not(.is-pdf-mode) > *:last-child *:last-child *:last-child {
   margin-bottom: 0 !important;
   padding-bottom: 0 !important;
 }
@@ -3025,8 +3025,17 @@ body.is-pdf-mode:not(.mode-vertical) .paged-content {
   column-width: auto !important;
   column-gap: 0 !important;
   display: flex !important;
+  flex-direction: row !important;
   justify-content: center !important;
   align-items: center !important;
+}
+
+body.is-pdf-mode:not(.mode-vertical) #reader-content > .pdf-page-container,
+body.is-pdf-mode:not(.mode-vertical) #reader-content > .pdf-spread-container,
+body.is-pdf-mode:not(.mode-vertical) .pdf-spread-container > .pdf-page-slot {
+  margin: 0 !important;
+  padding: 0 !important;
+  flex-shrink: 0 !important;
 }
 
 .pdf-spread-container {

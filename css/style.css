@@ -3798,7 +3798,7 @@ body.is-pdf-mode.mode-vertical .pdf-page-container canvas {
 }
 
 body.is-pdf-mode.mode-vertical .pdf-page-container {
-  margin-bottom: 24px !important;
+  margin: 0 auto 24px auto !important;
   flex-shrink: 0 !important;
   max-height: none !important;
 }
@@ -3808,7 +3808,7 @@ body.is-pdf-mode #reader-content canvas,
 #reader-content.is-pdf-mode canvas,
 .pdf-page-canvas {
   display: block !important;
-  margin: auto !important;
+  margin: 0 !important;
   box-shadow: none !important;
   border: none !important;
   border-radius: 0 !important;
@@ -3842,13 +3842,14 @@ body.is-pdf-mode #reader-content canvas,
   border: none !important;
   border-radius: 0 !important;
   padding: 0 !important;
-  margin: auto !important;
+  margin: 0 !important;
   max-width: 100% !important;
   max-height: 100% !important;
   background: transparent;
   display: flex !important;
   justify-content: center !important;
   align-items: center !important;
+  flex-shrink: 0 !important;
   overflow: hidden !important;
 }
 
