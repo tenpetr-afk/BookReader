@@ -263,11 +263,94 @@ export class PDFLoader {
   }
 
   /**
+   * Vypočítá dostupný prostor pro vykreslení PDF stránky s ohledem na mobilní viewport,
+   * lišty #reader-header a #paged-footer-bar a iOS safe-area-inset-* okraje.
+   */
+  _getAvailableReadingBox() {
+    const vv = window.visualViewport;
+    const vvWidth = vv?.width || window.innerWidth;
+    const vvHeight = vv?.height || window.innerHeight;
+    const vpEl = document.getElementById("paged-viewport");
+    const isMobile = vvWidth < 768;
+
+    if (!isMobile) {
+      const availVpH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : (vvHeight - 32);
+      return {
+        availW: Math.max(120, vvWidth - 32),
+        availH: Math.max(120, availVpH),
+        spreadSlotW: Math.max(120, Math.floor((vvWidth - 64) / 2)),
+        spreadSingleW: Math.max(120, Math.floor(vvWidth - 64)),
+        spreadSlotH: Math.max(120, Math.min(vvHeight - 32, availVpH))
+      };
+    }
+
+    const body = document.body;
+    const chromeHidden = body.classList.contains("reader-chrome-hidden");
+    const headerEl = document.getElementById("reader-header");
+    const footerEl = document.getElementById("paged-footer-bar");
+
+    let safeTop = 0;
+    let headerH = 0;
+    if (headerEl) {
+      const hStyle = window.getComputedStyle(headerEl);
+      safeTop = parseFloat(hStyle.paddingTop) || 0;
+      if (!chromeHidden) {
+        const hRect = headerEl.getBoundingClientRect();
+        headerH = Math.max(hRect.bottom, hRect.height, safeTop);
+      } else {
+        headerH = safeTop;
+      }
+    }
+
+    let safeBottom = 0;
+    let footerH = 0;
+    const footerVisible = !chromeHidden &&
+      body.classList.contains("show-footer-bar") &&
+      !body.classList.contains("hide-footer-bar");
+
+    if (footerEl) {
+      const fStyle = window.getComputedStyle(footerEl);
+      safeBottom = parseFloat(fStyle.paddingBottom) || 0;
+      if (footerVisible) {
+        const fRect = footerEl.getBoundingClientRect();
+        if (fRect.height > 0) {
+          footerH = Math.max(fRect.height, vvHeight - fRect.top, safeBottom);
+        }
+      } else {
+        footerH = safeBottom;
+      }
+    }
+
+    // Fallback pro případ, že CSS env(safe-area-inset-bottom) nebyl při skryté patičce dostupný přes paddingBottom
+    if (vpEl && vpEl.clientHeight > 100) {
+      const vpAvailH = vpEl.clientHeight - 16;
+      const vvAvailH = vvHeight - headerH - footerH - 16;
+      return {
+        availW: Math.max(120, vvWidth - 24),
+        availH: Math.max(120, Math.min(vpAvailH, vvAvailH)),
+        spreadSlotW: Math.max(120, vvWidth - 24),
+        spreadSingleW: Math.max(120, vvWidth - 24),
+        spreadSlotH: Math.max(120, Math.min(vpAvailH, vvAvailH))
+      };
+    }
+
+    const availH = Math.max(120, vvHeight - headerH - footerH - 16);
+    return {
+      availW: Math.max(120, vvWidth - 24),
+      availH,
+      spreadSlotW: Math.max(120, vvWidth - 24),
+      spreadSingleW: Math.max(120, vvWidth - 24),
+      spreadSlotH: availH
+    };
+  }
+
+  /**
    * Vykreslí zadanou stranu PDF do elementu <canvas>
    * V horizontálním režimu při aktivním isSpreadActive() vykreslí dvoustranu (Two-Page Spread)
    */
-  async renderPage(pageNumber, direction = 0) {
+  async renderPage(pageNumber, direction = 0, options = {}) {
     if (!this.pdfDoc || pageNumber < 1 || pageNumber > this.numPages) return;
+    const isReflow = !!options?.isReflow;
 
     if (this.isVerticalMode()) {
       await this.goToPage(pageNumber, direction);
@@ -348,10 +431,9 @@ export class PDFLoader {
         try {
           pages = await Promise.all(pagesToLoad.map(num => this.pdfDoc.getPage(num)));
 
-          const vpEl = document.getElementById("paged-viewport");
-          const maxSlotW = hasRight ? Math.floor((window.innerWidth - 64) / 2) : Math.floor(window.innerWidth - 64);
-          const availVpH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : (window.innerHeight - 32);
-          const maxSlotH = Math.min(window.innerHeight - 32, availVpH);
+          const box = this._getAvailableReadingBox();
+          const maxSlotW = hasRight ? box.spreadSlotW : box.spreadSingleW;
+          const maxSlotH = box.spreadSlotH;
 
           const unscaledViewports = pages.map(p => {
             const uv = p.getViewport({ scale: 1 });
@@ -480,8 +562,7 @@ export class PDFLoader {
         try {
           page = await this.pdfDoc.getPage(pageNumber);
 
-          const targetWidth = window.innerWidth;
-          const targetHeight = window.innerHeight;
+          const box = this._getAvailableReadingBox();
 
           const unscaledViewport = page.getViewport({ scale: 1 });
           const rawWidth = (page.rotate === 90 || page.rotate === 270)
@@ -490,14 +571,11 @@ export class PDFLoader {
           const rawHeight = (page.rotate === 90 || page.rotate === 270)
             ? (page.view?.[2] || unscaledViewport.height)
             : (page.view?.[3] || unscaledViewport.height);
-          const pageWidth = unscaledViewport.width || rawWidth || targetWidth;
-          const pageHeight = unscaledViewport.height || rawHeight || targetHeight;
+          const pageWidth = unscaledViewport.width || rawWidth || box.availW;
+          const pageHeight = unscaledViewport.height || rawHeight || box.availH;
 
-          const vpEl = document.getElementById("paged-viewport");
-          const availH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : targetHeight;
-
-          const scaleX = (targetWidth - 32) / pageWidth;
-          const scaleY = availH / pageHeight;
+          const scaleX = box.availW / pageWidth;
+          const scaleY = box.availH / pageHeight;
           const scale = Math.min(scaleX, scaleY);
 
           const viewport = page.getViewport({ scale });
@@ -519,8 +597,8 @@ export class PDFLoader {
           pageContainer.style.transition = "none";
           pageContainer.style.width = `${floorW}px`;
           pageContainer.style.height = `${floorH}px`;
-          pageContainer.style.maxWidth = "100vw";
-          pageContainer.style.maxHeight = "100vh";
+          pageContainer.style.maxWidth = "100%";
+          pageContainer.style.maxHeight = "100%";
           pageContainer.style.margin = "auto";
           pageContainer.style.display = "flex";
           pageContainer.style.justifyContent = "center";
@@ -602,7 +680,7 @@ export class PDFLoader {
 
     // Provázání do globálního stavu aplikace LuminaReader
     if (this.app && typeof this.app.onPdfPageRendered === "function") {
-      this.app.onPdfPageRendered(this.currentPage, this.numPages, false, false, direction);
+      this.app.onPdfPageRendered(this.currentPage, this.numPages, isReflow, false, direction);
     }
     if (typeof this.onPageChanged === "function") {
       this.onPageChanged(this.currentPage, this.numPages);
@@ -639,8 +717,10 @@ export class PDFLoader {
     } catch (e) {}
 
     const sc = this.getScrollContainer();
-    const clientW = sc?.clientWidth || window.innerWidth;
-    const availW = clientW <= 820 ? clientW : Math.min(clientW - 48, 860);
+    const clientW = sc?.clientWidth || window.visualViewport?.width || window.innerWidth;
+    const availW = clientW < 768
+      ? Math.max(120, clientW - 16)
+      : (clientW <= 820 ? clientW : Math.min(clientW - 48, 860));
     const scale = availW / defaultWidth;
     const estimatedW = Math.floor(defaultWidth * scale);
     const estimatedH = Math.floor(defaultHeight * scale);
@@ -765,8 +845,10 @@ export class PDFLoader {
       const pageHeight = unscaledViewport.height || rawHeight || 800;
 
       const sc = this.getScrollContainer();
-      const clientW = sc?.clientWidth || window.innerWidth;
-      const availW = clientW <= 820 ? clientW : Math.min(clientW - 48, 860);
+      const clientW = sc?.clientWidth || window.visualViewport?.width || window.innerWidth;
+      const availW = clientW < 768
+        ? Math.max(120, clientW - 16)
+        : (clientW <= 820 ? clientW : Math.min(clientW - 48, 860));
       const scale = availW / pageWidth;
 
       const viewport = page.getViewport({ scale });

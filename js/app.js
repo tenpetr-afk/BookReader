@@ -2006,8 +2006,14 @@ export class LuminaApp {
       }, { passive: true });
     }
 
-    // Přizpůsobení stran při změně orientace iPadu (Portrait/Landscape) a velikosti okna
+    // Přizpůsobení stran při změně orientace iPadu/iPhonu (Portrait/Landscape), velikosti okna a iOS Safari toolbaru
     let lastEffectiveCols = this.resolveEffectiveColumnCount();
+    const onPdfViewportResize = () => {
+      if (this.isPdfMode && this.pdfLoader && !this.dom.viewReader.classList.contains("is-hidden")) {
+        this.schedulePdfViewportRelayout();
+      }
+    };
+
     window.addEventListener("resize", () => {
       this._cachedColumnStep = null;
       if (this.settings.columnsMode === "auto") {
@@ -2018,13 +2024,7 @@ export class LuminaApp {
         }
       }
       if (this.isPdfMode && this.pdfLoader && !this.dom.viewReader.classList.contains("is-hidden")) {
-        if (this.isVerticalReadingMode()) {
-          this.pdfLoader.renderAllPagesVertical(this.pdfLoader.currentPage);
-        } else {
-          this.pdfLoader.renderPage(this.pdfLoader.currentPage);
-        }
-        this.updatePageUI();
-        this.ruler?.applyPosition();
+        this.schedulePdfViewportRelayout();
         return;
       }
       if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
@@ -2040,6 +2040,11 @@ export class LuminaApp {
         this.ruler?.applyPosition();
       }
     });
+
+    window.addEventListener("orientationchange", onPdfViewportResize, { passive: true });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", onPdfViewportResize, { passive: true });
+    }
 
     try {
       const mobileMedia = window.matchMedia("(max-width: 600px)");
@@ -3080,9 +3085,10 @@ export class LuminaApp {
         storage.saveSettings(this.settings);
         if (this.currentBook && !this.dom.viewReader.classList.contains("is-hidden")) {
           if (this.isPdfMode) {
-            this.updateScrubberUI();
-            this.updatePageUI();
-            this.ruler?.applyPosition();
+            requestAnimationFrame(() => {
+              this.updateScrubberUI();
+              this.schedulePdfViewportRelayout({ immediate: true });
+            });
             return;
           }
           requestAnimationFrame(() => {
@@ -4879,6 +4885,40 @@ export class LuminaApp {
     }
   }
 
+  schedulePdfViewportRelayout(options = {}) {
+    if (!this.isPdfMode || !this.pdfLoader || this.dom.viewReader?.classList.contains("is-hidden")) {
+      return;
+    }
+    if (this._pdfRelayoutTimer) {
+      clearTimeout(this._pdfRelayoutTimer);
+      this._pdfRelayoutTimer = null;
+    }
+    const run = async () => {
+      if (!this.isPdfMode || !this.pdfLoader || this.dom.viewReader?.classList.contains("is-hidden")) {
+        return;
+      }
+      if (this.isVerticalReadingMode()) {
+        await this.pdfLoader.renderAllPagesVertical(this.pdfLoader.currentPage);
+      } else {
+        await this.pdfLoader.renderPage(this.pdfLoader.currentPage, 0, { isReflow: true });
+      }
+      this.updatePageUI();
+      if (this.ruler && this.ruler.enabled) {
+        this.ruler.refreshLines(false);
+        if (this.ruler.wordTracking && typeof this.ruler.refreshWords === "function") {
+          this.ruler.refreshWords();
+        }
+        this.ruler.applyPosition();
+      }
+    };
+
+    if (options.immediate) {
+      run();
+      return;
+    }
+    this._pdfRelayoutTimer = setTimeout(run, 120);
+  }
+
   onPdfPageRendered(currentPage, numPages, isReflow = false, isInitial = false, explicitDirection = null) {
     const prevPageIndex = this.currentPageIndex;
     this.currentPageIndex = currentPage - 1;
@@ -4911,7 +4951,18 @@ export class LuminaApp {
 
     // Re-synchronize reading ruler with the freshly rendered text layer
     if (this.ruler && this.ruler.enabled) {
-      this.ruler.onPageChange(direction, isPageChanged, true);
+      if (isReflow) {
+        requestAnimationFrame(() => {
+          if (!this.ruler || !this.ruler.enabled) return;
+          this.ruler.refreshLines(false);
+          if (this.ruler.wordTracking && typeof this.ruler.refreshWords === "function") {
+            this.ruler.refreshWords();
+          }
+          this.ruler.applyPosition();
+        });
+      } else {
+        this.ruler.onPageChange(direction, isPageChanged, true);
+      }
     }
     this.releaseNavigationLocks();
   }

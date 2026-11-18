@@ -3000,10 +3000,14 @@ html.mode-vertical.reader-chrome-hidden .footer-actions-group,
    ========================================================================== */
 
 /* Jeviště a obsah v horizontálním režimu pro PDF */
-body.is-pdf-mode:not(.mode-vertical) .paged-stage {
+body.is-pdf-mode:not(.mode-vertical) .paged-stage,
+body.is-pdf-mode:not(.mode-vertical) #paged-stage {
   width: 100% !important;
-  max-width: 100vw !important;
+  max-width: 100% !important;
   height: 100% !important;
+  max-height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
   display: flex !important;
   justify-content: center !important;
   align-items: center !important;
@@ -3012,8 +3016,11 @@ body.is-pdf-mode:not(.mode-vertical) .paged-stage {
 body.is-pdf-mode:not(.mode-vertical) #reader-content,
 body.is-pdf-mode:not(.mode-vertical) .paged-content {
   width: 100% !important;
-  max-width: 100vw !important;
+  max-width: 100% !important;
   height: 100% !important;
+  max-height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
   column-count: 1 !important;
   column-width: auto !important;
   column-gap: 0 !important;
