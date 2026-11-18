@@ -3329,7 +3329,7 @@ export class ReadingRuler {
   /**
    * Spočítá proporcionální rozměry vlnky pro indikátor čteného slova podle
    * skutečné vykreslené velikosti písma daného řádku (v CSS px).
-   * Šířka ≈ 3.5× výška písma (~5–7 znaků), hloubka ≈ 0.36× výška písma (1/3–2/5).
+   * Šířka ≈ 4.2× výška písma, hloubka ≈ 0.432× výška písma (+20 % oproti 3.5× / 0.36×).
    */
   _getWaveMetricsForLine(lineOrIdx = this.activeLineIndex) {
     const line = (lineOrIdx && typeof lineOrIdx === "object")
@@ -3370,8 +3370,8 @@ export class ReadingRuler {
     }
 
     fontH = Math.max(6, fontH);
-    const width = Math.max(20, Math.round(fontH * 3.5));
-    const depth = Math.max(3, Math.round(fontH * 0.36));
+    const width = Math.max(24, Math.round(fontH * 4.2));
+    const depth = Math.max(3, Math.round(fontH * 0.432));
     const height = depth + 1;
     return {
       width,
