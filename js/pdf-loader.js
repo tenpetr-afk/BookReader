@@ -321,21 +321,13 @@ export class PDFLoader {
       }
     }
 
-    // Fallback pro případ, že CSS env(safe-area-inset-bottom) nebyl při skryté patičce dostupný přes paddingBottom
-    if (vpEl && vpEl.clientHeight > 100) {
-      const vpAvailH = vpEl.clientHeight - 16;
-      const vvAvailH = vvHeight - headerH - footerH - 16;
-      return {
-        availW: Math.max(120, vvWidth - 24),
-        availH: Math.max(120, Math.min(vpAvailH, vvAvailH)),
-        spreadSlotW: Math.max(120, vvWidth - 24),
-        spreadSingleW: Math.max(120, vvWidth - 24),
-        spreadSlotH: Math.max(120, Math.min(vpAvailH, vvAvailH))
-      };
-    }
-
     const availH = Math.max(120, vvHeight - headerH - footerH - 16);
     return {
+      isMobile: true,
+      vvWidth,
+      vvHeight,
+      headerH,
+      footerH,
       availW: Math.max(120, vvWidth - 24),
       availH,
       spreadSlotW: Math.max(120, vvWidth - 24),
@@ -603,6 +595,23 @@ export class PDFLoader {
           pageContainer.style.display = "flex";
           pageContainer.style.justifyContent = "center";
           pageContainer.style.alignItems = "center";
+
+          // Stránka je vycentrovaná na střed obrazovky; posune se pouze pokud by jinak zasáhla do horní nebo spodní lišty
+          if (box.isMobile) {
+            const centeredTop = (box.vvHeight - floorH) / 2;
+            const centeredBottom = centeredTop + floorH;
+            const minTop = box.headerH + 8;
+            const maxBottom = box.vvHeight - box.footerH - 8;
+            let offsetY = 0;
+            if (centeredTop < minTop) {
+              offsetY = Math.round(minTop - centeredTop);
+            } else if (centeredBottom > maxBottom) {
+              offsetY = Math.round(maxBottom - centeredBottom);
+            }
+            if (offsetY !== 0) {
+              pageContainer.style.transform = `translateY(${offsetY}px)`;
+            }
+          }
           pageContainer.style.boxShadow = "none";
           pageContainer.style.border = "none";
           pageContainer.style.borderRadius = "0";

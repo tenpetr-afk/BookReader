@@ -3714,23 +3714,12 @@ body.is-pdf-mode:not(.mode-vertical) #reader-content,
 @media (max-width: 767px) {
   body.is-pdf-mode:not(.mode-vertical) #paged-viewport,
   body.is-pdf-mode:not(.mode-vertical) .paged-viewport {
-    top: var(--header-height, calc(60px + env(safe-area-inset-top, 0px))) !important;
-    bottom: var(--footer-height, calc(48px + env(safe-area-inset-bottom, 0px))) !important;
-    height: auto !important;
-    max-height: none !important;
-  }
-
-  body.is-pdf-mode.hide-footer-bar:not(.mode-vertical) #paged-viewport,
-  body.is-pdf-mode.hide-footer-bar:not(.mode-vertical) .paged-viewport,
-  body.is-pdf-mode:not(.show-footer-bar):not(.mode-vertical) #paged-viewport,
-  body.is-pdf-mode:not(.show-footer-bar):not(.mode-vertical) .paged-viewport {
-    bottom: env(safe-area-inset-bottom, 0px) !important;
-  }
-
-  body.is-pdf-mode.reader-chrome-hidden:not(.mode-vertical) #paged-viewport,
-  body.is-pdf-mode.reader-chrome-hidden:not(.mode-vertical) .paged-viewport {
-    top: env(safe-area-inset-top, 0px) !important;
-    bottom: env(safe-area-inset-bottom, 0px) !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
   }
 }
 

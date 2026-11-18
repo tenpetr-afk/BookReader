@@ -6,7 +6,7 @@
 
 import { storage, computeFileHash, isTouchCapableDevice } from "./storage.js?v=2.6.5";
 import { EpubParser } from "./epub-parser.js?v=2.6.5";
-import { PDFLoader } from "./pdf-loader.js?v=2.6.5";
+import { PDFLoader } from "./pdf-loader.js?v=2.6.7";
 import { tracker, ReadingTracker } from "./tracker.js?v=2.6.5";
 import { ReadingRuler } from "./ruler.js?v=2.6.5";
 import { StatsCharts } from "./charts.js?v=2.6.5";
