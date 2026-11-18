@@ -1507,6 +1507,14 @@ body.ruler-vertical-mode .ruler-focused-image {
   color: #64748b !important;
 }
 
+.reading-ruler.mode-bottom-cover.is-wrap-transitioning,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.is-wrap-transitioning,
+.reading-ruler.mode-bottom-cover[class*="color-"].is-wrap-transitioning,
+.reading-ruler.mode-bottom-cover.word-tracking-mode[class*="color-"].is-wrap-transitioning {
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
 /* Fixní accent wave / vlnka pro indikátor čteného slova v režimu Spodní clona (Bottom Cover) */
 .ruler-word-wave {
   position: absolute;

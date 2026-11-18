@@ -2788,6 +2788,14 @@ body.is-pdf-mode .reading-ruler.mode-off,
   color: #64748b !important;
 }
 
+.reading-ruler.mode-bottom-cover.is-wrap-transitioning,
+.reading-ruler.mode-bottom-cover.word-tracking-mode.is-wrap-transitioning,
+.reading-ruler.mode-bottom-cover[class*="color-"].is-wrap-transitioning,
+.reading-ruler.mode-bottom-cover.word-tracking-mode[class*="color-"].is-wrap-transitioning {
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
 /* Fixní accent wave / vlnka pro indikátor čteného slova v režimu Spodní clona (Bottom Cover) */
 .ruler-word-wave {
   position: absolute;
@@ -4165,6 +4173,16 @@ body.is-pdf-mode .reading-ruler.mode-bottom-cover.word-tracking-mode.color-slate
   --ruler-glow-rgb: 100, 116, 139;
   background-color: #64748b !important;
   color: #64748b !important;
+}
+
+body.is-pdf-mode .reading-ruler.mode-bottom-cover.is-wrap-transitioning,
+body.is-pdf-mode .reading-ruler.mode-bottom-cover.word-tracking-mode.is-wrap-transitioning,
+body.is-pdf-mode .reading-ruler.mode-bottom-cover[class*="color-"].is-wrap-transitioning,
+body.is-pdf-mode .reading-ruler.mode-bottom-cover.word-tracking-mode[class*="color-"].is-wrap-transitioning,
+.reading-ruler.pdf-ruler-overlay.mode-bottom-cover.is-wrap-transitioning,
+.reading-ruler.pdf-ruler-overlay.mode-bottom-cover.word-tracking-mode.is-wrap-transitioning {
+  background-color: transparent !important;
+  box-shadow: none !important;
 }
 
 /* PDF Režim: Sledování slov (Word tracking) – bublinový gradient nad aktivním slovem */

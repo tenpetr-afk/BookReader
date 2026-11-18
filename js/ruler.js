@@ -527,9 +527,11 @@ export class ReadingRuler {
 
     if (this.rulerEl) {
       this.rulerEl.classList.add("is-page-transitioning");
+      this.rulerEl.classList.remove("is-wrap-transitioning");
       this.rulerEl.style.transition = "none";
       this.rulerEl.style.setProperty("transition", "none", "important");
     }
+    this._clearTrackpadWordWrap();
 
     const isFocusActive = this.enabled && this.focusMode && this.focusMode !== "off";
     if (!isFocusActive) {
@@ -1040,11 +1042,18 @@ export class ReadingRuler {
       if (words && words.length > 0) {
         this.activeWordIndex = 0;
         this.setWordWindow(0);
+        if (this._trackpad) {
+          this._trackpad.wordWrap = null;
+          this._trackpad.wordWrapOverflow = 0;
+          this._trackpad.wordFloatLeft = words[0].left - 3;
+          this._trackpad.waveCenterX = words[0].centerX ?? words[0].left;
+        }
       } else {
         this.activeWordIndex = -1;
       }
       if (this.rulerEl) this.rulerEl.classList.add("word-tracking-mode");
     } else {
+      this._clearTrackpadWordWrap();
       this.activeWordIndex = -1;
       this._clearWordCache();
       if (this.rulerEl) {
@@ -2567,7 +2576,7 @@ export class ReadingRuler {
 
   _hideSecondaryRuler() {
     if (this.secondaryRulerEl) {
-      this.secondaryRulerEl.classList.remove("is-visible", "word-tracking-mode", "no-preview");
+      this.secondaryRulerEl.classList.remove("is-visible", "word-tracking-mode", "no-preview", "is-wrap-transitioning");
       this.secondaryRulerEl.classList.add("is-hidden");
       this.secondaryRulerEl.style.setProperty("display", "none", "important");
       this.secondaryRulerEl.style.setProperty("opacity", "0", "important");
@@ -3263,15 +3272,54 @@ export class ReadingRuler {
     return { clampedLeft, textMinX: fullMinX, maxLeft, overflow: rawLeft - clampedLeft };
   }
 
+  _getLineWordBounds(lineIdx, lineWords = null) {
+    if (!this.cachedLines || lineIdx < 0 || lineIdx >= this.cachedLines.length) return null;
+    const line = this.cachedLines[lineIdx];
+    if (!line || line.isMedia) return null;
+
+    const words = (lineWords && lineWords.length > 0) ? lineWords : this.ensureActiveWords(lineIdx);
+    if (words && words.length > 0) {
+      let minLeft = Infinity;
+      let maxRight = -Infinity;
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (Number.isFinite(w.left) && w.left < minLeft) minLeft = w.left;
+        if (Number.isFinite(w.right) && w.right > maxRight) maxRight = w.right;
+      }
+      if (minLeft < Infinity && maxRight > -Infinity) {
+        const left = Math.floor(minLeft);
+        const right = Math.ceil(maxRight);
+        return {
+          left,
+          right,
+          width: Math.max(1, right - left)
+        };
+      }
+    }
+
+    if (Number.isFinite(line.textLeft) && Number.isFinite(line.textRight) && line.textRight > line.textLeft) {
+      const left = Math.floor(line.textLeft);
+      const right = Math.ceil(line.textRight);
+      return {
+        left,
+        right,
+        width: Math.max(1, right - left)
+      };
+    }
+    return null;
+  }
+
   _applyContinuousBottomCoverWaveAtX(lineWords, rawCenterX, activeLine = null, isMovingLeft = false, geom = null) {
     const colBounds = this._getTrackpadWordColumnBounds(activeLine, lineWords, geom);
-    const padX = 3;
-    const minCenterX = (lineWords && lineWords.length > 0)
-      ? Math.round(lineWords[0].left - padX)
-      : colBounds.colLeft;
-    const maxCenterX = (lineWords && lineWords.length > 0)
-      ? Math.round(lineWords[lineWords.length - 1].right + padX)
-      : colBounds.colRight;
+    const wordBounds = (activeLine && this.activeLineIndex >= 0)
+      ? this._getLineWordBounds(this.activeLineIndex, lineWords)
+      : null;
+    const minCenterX = wordBounds
+      ? wordBounds.left
+      : ((lineWords && lineWords.length > 0) ? Math.floor(lineWords[0].left) : colBounds.colLeft);
+    const maxCenterX = wordBounds
+      ? wordBounds.right
+      : ((lineWords && lineWords.length > 0) ? Math.ceil(lineWords[lineWords.length - 1].right) : colBounds.colRight);
 
     const clampedCenterX = Math.max(minCenterX, Math.min(maxCenterX, rawCenterX));
 
@@ -3333,6 +3381,27 @@ export class ReadingRuler {
       : null;
     const g = geom || this.computeLineGeometry(lineIdx);
     const colBounds = this._getTrackpadWordColumnBounds(line, lineWords, g);
+    const isBottomCoverWordMode = (this.style === "bottom-cover" || this.mode === "bottom-cover") && !!this.wordTracking;
+    const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
+    const docLineTop = (g && Number.isFinite(g.lineTop)) ? g.lineTop : (line?.lineTop ?? line?.top ?? 150);
+    const docLineBottom = (g && Number.isFinite(g.lineBottom)) ? g.lineBottom : (line?.lineBottom ?? line?.bottom ?? (docLineTop + h));
+
+    if (isBottomCoverWordMode) {
+      const wordBounds = this._getLineWordBounds(lineIdx, lineWords);
+      if (wordBounds) {
+        return {
+          barLeft: wordBounds.left,
+          barRight: wordBounds.right,
+          barWidth: wordBounds.width,
+          colBounds,
+          docLineTop,
+          docLineBottom,
+          lineH: Math.max(1, Math.round(docLineBottom - docLineTop)),
+          colIndex: line?.columnIndex ?? 0
+        };
+      }
+    }
+
     const isVertical = this.isVerticalMode();
     const isTwoCol = !isVertical && this.isTwoCol;
     const isSpread = !isVertical && this.isSpreadActive();
@@ -3383,9 +3452,6 @@ export class ReadingRuler {
     barLeft = Math.round(barLeft);
     barWidth = Math.max(50, Math.round(barWidth));
     const barRight = barLeft + barWidth;
-    const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
-    const docLineTop = (g && Number.isFinite(g.lineTop)) ? g.lineTop : (line?.lineTop ?? line?.top ?? 150);
-    const docLineBottom = (g && Number.isFinite(g.lineBottom)) ? g.lineBottom : (line?.lineBottom ?? line?.bottom ?? (docLineTop + h));
 
     return {
       barLeft,
@@ -3427,17 +3493,16 @@ export class ReadingRuler {
       let safety = 0;
       while (safety++ < 8) {
         const curBox = this._getTrackpadLineRulerBox(curIdx, geom, lineWords);
-        const textLeft = Math.round(lineWords[0].left - padX);
-        const textRight = Math.round(lineWords[lineWords.length - 1].right + padX);
+        const curWordBounds = this._getLineWordBounds(curIdx, lineWords);
+        const textLeft = curWordBounds ? curWordBounds.left : Math.floor(lineWords[0].left);
+        const textRight = curWordBounds ? curWordBounds.right : Math.ceil(lineWords[lineWords.length - 1].right);
         const textWidth = Math.max(1, textRight - textLeft);
-        const wrapLeftStart = textWidth >= WAVE_WIDTH
-          ? (textLeft + halfWave)
-          : Math.min(textRight, textLeft + halfWave);
-        const wrapRightStart = textWidth >= WAVE_WIDTH
-          ? (textRight - halfWave)
-          : Math.max(textLeft, textRight - halfWave);
+        const effHalf = Math.min(halfWave, Math.floor(textWidth / 2));
+        const wrapLeftStart = textLeft + effHalf;
+        const wrapRightStart = Math.max(wrapLeftStart, textRight - effHalf);
+        const wrapSpan = halfWave + effHalf;
 
-        if (rawCenterX > wrapRightStart && (dx >= 0 || rawCenterX > textRight - halfWave)) {
+        if (rawCenterX > wrapRightStart && (dx > 0 || tp.wordWrap?.dir === 1)) {
           const nextIdx = this._findAdjacentTrackpadTextLine(curIdx, 1);
           if (nextIdx == null) {
             // Page end boundary: clamp cleanly at the right boundary of the last word
@@ -3450,10 +3515,14 @@ export class ReadingRuler {
           const nextWords = this.ensureActiveWords(nextIdx);
           const nextGeom = this.computeLineGeometry(nextIdx);
           const nextBox = this._getTrackpadLineRulerBox(nextIdx, nextGeom, nextWords);
-          const nextTextLeft = Math.round(nextWords[0].left - padX);
+          const nextWordBounds = this._getLineWordBounds(nextIdx, nextWords);
+          const nextTextLeft = nextWordBounds ? nextWordBounds.left : Math.floor(nextWords[0].left);
+          const nextTextRight = nextWordBounds ? nextWordBounds.right : Math.ceil(nextWords[nextWords.length - 1].right);
+          const nextTextWidth = Math.max(1, nextTextRight - nextTextLeft);
+          const nextEffHalf = Math.min(halfWave, Math.floor(nextTextWidth / 2));
 
-          if (exitPx >= WAVE_WIDTH) {
-            const rem = exitPx - WAVE_WIDTH;
+          if (exitPx >= wrapSpan) {
+            const rem = exitPx - wrapSpan;
             this.activeLineIndex = nextIdx;
             tp.activeColumn = nextLine?.columnIndex ?? 0;
             this._checkLineProgress(nextIdx, false);
@@ -3461,12 +3530,13 @@ export class ReadingRuler {
             curLine = nextLine;
             lineWords = nextWords;
             geom = nextGeom;
-            rawCenterX = nextTextLeft + halfWave + rem;
+            rawCenterX = nextTextLeft + nextEffHalf + rem;
             tp.wordWrap = null;
             continue;
           }
 
           // Active forward wrap-around split across curIdx -> nextIdx
+          const t = Math.max(0, Math.min(1, exitPx / Math.max(1, wrapSpan)));
           tp.waveCenterX = rawCenterX;
           tp.wordFloatLeft = rawCenterX - (this.activeWordWidth || 40) / 2;
           this.activeWordIndex = lineWords.length - 1;
@@ -3474,7 +3544,7 @@ export class ReadingRuler {
           this.lastPointerX = Math.round(rawCenterX);
           this.lastValidPointerX = this.lastPointerX;
           const fromWaveX = Math.round((rawCenterX - curBox.barLeft) - halfWave);
-          const toWaveX = Math.round((nextTextLeft - nextBox.barLeft) - (WAVE_WIDTH - exitPx));
+          const toWaveX = Math.round((nextTextLeft - nextBox.barLeft) - WAVE_WIDTH + t * (WAVE_WIDTH - halfWave + nextEffHalf));
           tp.wordWrap = {
             style: "bottom-cover",
             dir: 1,
@@ -3497,10 +3567,10 @@ export class ReadingRuler {
             fromWaveClipRight: Math.max(0, Math.round((fromWaveX + WAVE_WIDTH) - (textRight - curBox.barLeft))),
             toWaveX,
             toWaveClipLeft: Math.max(0, Math.round((nextTextLeft - nextBox.barLeft) - toWaveX)),
-            toWaveClipRight: 0
+            toWaveClipRight: Math.max(0, Math.round((toWaveX + WAVE_WIDTH) - (nextTextRight - nextBox.barLeft)))
           };
           break;
-        } else if (rawCenterX < wrapLeftStart && (dx <= 0 || rawCenterX < textLeft + halfWave)) {
+        } else if (rawCenterX < wrapLeftStart && (dx < 0 || tp.wordWrap?.dir === -1)) {
           const prevIdx = this._findAdjacentTrackpadTextLine(curIdx, -1);
           if (prevIdx == null) {
             // Page start boundary: clamp cleanly at the left boundary of the first word
@@ -3513,31 +3583,35 @@ export class ReadingRuler {
           const prevWords = this.ensureActiveWords(prevIdx);
           const prevGeom = this.computeLineGeometry(prevIdx);
           const prevBox = this._getTrackpadLineRulerBox(prevIdx, prevGeom, prevWords);
-          const prevTextLeft = Math.round(prevWords[0].left - padX);
-          const prevTextRight = Math.round(prevWords[prevWords.length - 1].right + padX);
+          const prevWordBounds = this._getLineWordBounds(prevIdx, prevWords);
+          const prevTextLeft = prevWordBounds ? prevWordBounds.left : Math.floor(prevWords[0].left);
+          const prevTextRight = prevWordBounds ? prevWordBounds.right : Math.ceil(prevWords[prevWords.length - 1].right);
+          const prevTextWidth = Math.max(1, prevTextRight - prevTextLeft);
+          const prevEffHalf = Math.min(halfWave, Math.floor(prevTextWidth / 2));
 
-          if (exitPx >= WAVE_WIDTH) {
-            const rem = exitPx - WAVE_WIDTH;
+          if (exitPx >= wrapSpan) {
+            const rem = exitPx - wrapSpan;
             this.activeLineIndex = prevIdx;
             tp.activeColumn = prevLine?.columnIndex ?? 0;
             curIdx = prevIdx;
             curLine = prevLine;
             lineWords = prevWords;
             geom = prevGeom;
-            rawCenterX = prevTextRight - halfWave - rem;
+            rawCenterX = prevTextRight - prevEffHalf - rem;
             tp.wordWrap = null;
             continue;
           }
 
           // Active backward wrap-around split across curIdx -> prevIdx
+          const t = Math.max(0, Math.min(1, exitPx / Math.max(1, wrapSpan)));
           tp.waveCenterX = rawCenterX;
           tp.wordFloatLeft = rawCenterX - (this.activeWordWidth || 40) / 2;
           this.activeWordIndex = 0;
           this._checkWordProgress(0, true);
           this.lastPointerX = Math.round(rawCenterX);
           this.lastValidPointerX = this.lastPointerX;
-          const fromWaveX = Math.round((textLeft - curBox.barLeft) - exitPx);
-          const toWaveX = Math.round((prevTextRight - prevBox.barLeft) - exitPx);
+          const fromWaveX = Math.round((rawCenterX - curBox.barLeft) - halfWave);
+          const toWaveX = Math.round((prevTextRight - prevBox.barLeft) - t * (halfWave + prevEffHalf));
           tp.wordWrap = {
             style: "bottom-cover",
             dir: -1,
@@ -3904,7 +3978,12 @@ export class ReadingRuler {
     if (words && words.length > 0) {
       const isBottomCover = (this.style === "bottom-cover" || this.mode === "bottom-cover");
       if (isBottomCover) {
-        this._applyContinuousBottomCoverWaveAtX(words, words[0].left, nextLine, dir < 0, geom);
+        const wordBounds = this._getLineWordBounds(nextIdx, words);
+        const halfWave = Math.round((RULER_WAVE_WIDTH || 80) / 2);
+        const startX = wordBounds
+          ? (wordBounds.left + Math.min(halfWave, Math.floor(wordBounds.width / 2)))
+          : words[0].left;
+        this._applyContinuousBottomCoverWaveAtX(words, startX, nextLine, dir < 0, geom);
       } else {
         // Position flush at the exact outward-padded starting edge of the new line's text (matching mouse mode)
         this._applyContinuousWordGeometryAtLeft(words, words[0].left - 3, nextLine, dir < 0, geom);
@@ -11094,6 +11173,14 @@ export class ReadingRuler {
         }
       }
 
+      if (isBottomCoverWordTracking && !isCurrentMedia && currentLine) {
+        const wordBounds = this._getLineWordBounds(this.activeLineIndex);
+        if (wordBounds) {
+          colLeft = wordBounds.left;
+          colWidth = wordBounds.width;
+        }
+      }
+
       slitLeft = Math.round(colLeft);
       slitRight = Math.round(colLeft + colWidth);
 
@@ -11203,10 +11290,10 @@ export class ReadingRuler {
     this.rulerEl.style.setProperty("transition", "none", "important");
     if (activeWordWrap && activeStyle === "bottom-cover") {
       const hex = colorHexMap[this.color] || "#f59e0b";
-      const glowRgb = colorGlowMap[this.color] || "245, 158, 11";
       const fromScreenBottom = isVertical ? Math.round(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom);
       const toScreenBottom = isVertical ? Math.round(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom);
 
+      this.rulerEl.classList.add("is-wrap-transitioning");
       this.rulerEl.style.top = "0px";
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "auto";
@@ -11214,11 +11301,11 @@ export class ReadingRuler {
       this.rulerEl.style.maxWidth = `${activeWordWrap.fromBarWidth}px`;
       this.rulerEl.style.height = "2px";
       this.rulerEl.style.transform = `translate3d(${activeWordWrap.fromBarLeft}px, ${fromScreenBottom}px, 0)`;
-      this.rulerEl.style.setProperty("background-color", hex, "important");
+      this.rulerEl.style.setProperty("background-color", "transparent", "important");
       this.rulerEl.style.setProperty("color", hex, "important");
       this.rulerEl.style.border = "none";
       this.rulerEl.style.outline = "none";
-      this.rulerEl.style.setProperty("box-shadow", `0 1px 4px rgba(${glowRgb}, 0.45)`, "important");
+      this.rulerEl.style.setProperty("box-shadow", "none", "important");
       this.rulerEl.style.opacity = "1";
       this.rulerEl.style.visibility = "visible";
       this.rulerEl.style.display = "block";
@@ -11236,7 +11323,7 @@ export class ReadingRuler {
 
       if (this.secondaryRulerEl) {
         this.secondaryRulerEl.classList.remove("is-hidden", "is-page-transitioning", "mode-off", "is-snapped");
-        this.secondaryRulerEl.classList.add("is-visible", "word-tracking-mode");
+        this.secondaryRulerEl.classList.add("is-visible", "word-tracking-mode", "is-wrap-transitioning");
         this.secondaryRulerEl.style.setProperty("transition", "none", "important");
         this.secondaryRulerEl.style.top = "0px";
         this.secondaryRulerEl.style.left = "0px";
@@ -11245,11 +11332,11 @@ export class ReadingRuler {
         this.secondaryRulerEl.style.maxWidth = `${activeWordWrap.toBarWidth}px`;
         this.secondaryRulerEl.style.height = "2px";
         this.secondaryRulerEl.style.transform = `translate3d(${activeWordWrap.toBarLeft}px, ${toScreenBottom}px, 0)`;
-        this.secondaryRulerEl.style.setProperty("background-color", hex, "important");
+        this.secondaryRulerEl.style.setProperty("background-color", "transparent", "important");
         this.secondaryRulerEl.style.setProperty("color", hex, "important");
         this.secondaryRulerEl.style.border = "none";
         this.secondaryRulerEl.style.outline = "none";
-        this.secondaryRulerEl.style.setProperty("box-shadow", `0 1px 4px rgba(${glowRgb}, 0.45)`, "important");
+        this.secondaryRulerEl.style.setProperty("box-shadow", "none", "important");
         this.secondaryRulerEl.style.opacity = "1";
         this.secondaryRulerEl.style.visibility = "visible";
         this.secondaryRulerEl.style.display = "block";
@@ -11266,6 +11353,8 @@ export class ReadingRuler {
         }
       }
     } else if (activeWordWrap && activeStyle === "highlight") {
+      this.rulerEl.classList.remove("is-wrap-transitioning");
+      this.secondaryRulerEl?.classList.remove("is-wrap-transitioning");
       const fromScreenTop = isVertical ? Math.round(activeWordWrap.fromDocTop - vScrollTop) : Math.round(activeWordWrap.fromDocTop);
       const toScreenTop = isVertical ? Math.round(activeWordWrap.toDocTop - vScrollTop) : Math.round(activeWordWrap.toDocTop);
 
@@ -11313,6 +11402,7 @@ export class ReadingRuler {
       }
     } else if (activeStyle === "bottom-cover") {
       this._hideSecondaryRuler();
+      this.rulerEl.classList.remove("is-wrap-transitioning");
       if (this.wordWaveEl) {
         this.wordWaveEl.style.clipPath = "";
       }
@@ -11338,7 +11428,7 @@ export class ReadingRuler {
       this.rulerEl.style.setProperty("z-index", "20", "important");
     } else if (activeStyle === "off") {
       this._hideSecondaryRuler();
-      this.rulerEl.classList.remove("is-visible");
+      this.rulerEl.classList.remove("is-visible", "is-wrap-transitioning");
       this.rulerEl.classList.add("is-hidden", "mode-off");
       this.rulerEl.style.setProperty("display", "none", "important");
       this.rulerEl.style.setProperty("opacity", "0", "important");
@@ -11351,6 +11441,7 @@ export class ReadingRuler {
     } else {
       // highlight
       this._hideSecondaryRuler();
+      this.rulerEl.classList.remove("is-wrap-transitioning");
       this.rulerEl.style.top = "0px";
       this.rulerEl.style.left = "0px";
       this.rulerEl.style.right = "auto";
@@ -12066,9 +12157,10 @@ export class ReadingRuler {
       this.lastValidPointerX = null;
       this.lastValidPointerY = null;
       this.lastPenTime = 0;
+      this._clearTrackpadWordWrap();
       if (this.rulerEl) {
         this.rulerEl.style.display = "none";
-        this.rulerEl.classList.remove("is-visible");
+        this.rulerEl.classList.remove("is-visible", "is-wrap-transitioning");
         this.rulerEl.classList.add("is-hidden");
       }
       if (this.maskTopEl) this.maskTopEl.style.display = "none";
@@ -12561,11 +12653,18 @@ export class ReadingRuler {
       if (words && words.length > 0) {
         this.activeWordIndex = 0;
         this.setWordWindow(0);
+        if (this._trackpad) {
+          this._trackpad.wordWrap = null;
+          this._trackpad.wordWrapOverflow = 0;
+          this._trackpad.wordFloatLeft = words[0].left - 3;
+          this._trackpad.waveCenterX = words[0].centerX ?? words[0].left;
+        }
       } else {
         this.activeWordIndex = -1;
       }
       if (this.rulerEl) this.rulerEl.classList.add("word-tracking-mode");
     } else {
+      this._clearTrackpadWordWrap();
       this.activeWordIndex = -1;
       this._clearWordCache();
       if (this.rulerEl) {
