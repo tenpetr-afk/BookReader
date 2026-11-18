@@ -2219,11 +2219,15 @@ export class ReadingRuler {
   startHold(clientX, clientY, pointerType = "touch") {
     if (!this.enabled || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || this.isTouchSwiping || this.isSwipePageTransition || Date.now() < this.navigatingPageLockoutEndTime || (Date.now() - (this.lastSwipeTime || 0) < 200)) return;
     if (!this.isPointerInStage(clientX, clientY)) return;
-    if (this.followMode === "mouse" || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) return;
+    if (this.followMode !== "keyboard" && this.followMode !== "trackpad") return;
 
     this.cancelHold(false);
+    if (this._holdTriggeredResetTimer) {
+      clearTimeout(this._holdTriggeredResetTimer);
+      this._holdTriggeredResetTimer = null;
+    }
 
-    if (!this.cachedLines || this.cachedLines.length === 0) {
+    if (!this.isImageOnlyPdf && (!this.cachedLines || this.cachedLines.length === 0)) {
       this.detectLines();
     }
 
@@ -2243,17 +2247,20 @@ export class ReadingRuler {
 
     this.holdTimer = setTimeout(() => {
       this.triggerHoldSuccess(this.holdStartX, this.holdStartY);
-    }, 350);
+    }, 500);
   }
 
   triggerHoldSuccess(x, y) {
     this.clearHoldTimer();
+    if (this._holdTriggeredResetTimer) {
+      clearTimeout(this._holdTriggeredResetTimer);
+      this._holdTriggeredResetTimer = null;
+    }
     this.isHoldActive = false;
     this.isHoldTriggered = true;
     this.wasHoldAborted = false;
     this.dragCooldownEndTime = Date.now() + 650; // Bezpečnostní okno blokující následný syntetický klik
 
-    document.body.classList.remove("ruler-holding");
     if (window.getSelection) {
       const sel = window.getSelection();
       if (sel && sel.removeAllRanges) sel.removeAllRanges();
@@ -2266,14 +2273,27 @@ export class ReadingRuler {
     }
 
     if (this.isTouchSwiping || this.isSwipePageTransition || this.isLineLocked || this.isNavigating || this.isNavigatingPage || this.isPageTransitioning || Date.now() < this.navigatingPageLockoutEndTime || (Date.now() - (this.lastSwipeTime || 0) < 200)) {
+      document.body.classList.remove("ruler-holding");
       return;
     }
 
-    if (this.followMode === "keyboard") {
+    if (this.followMode === "keyboard" || this.followMode === "trackpad") {
       this.repositionToTarget(x, y, this.holdPointerType);
+      if (this.followMode === "trackpad" && this._trackpad?.active) {
+        const tp = this._trackpad;
+        tp.moved = false;
+        tp.startX = x;
+        tp.startY = y;
+        tp.lastX = x;
+        tp.lastY = y;
+        tp.pendingDx = 0;
+        tp.pendingDy = 0;
+        tp.boundaryPushY = 0;
+      }
       return;
     }
 
+    document.body.classList.remove("ruler-holding");
     this.handlePointerMove(x, y);
   }
 
@@ -2351,15 +2371,77 @@ export class ReadingRuler {
       return;
     }
 
-    if (!this.cachedLines || this.cachedLines.length === 0) {
+    this._ensureLinesFreshForCurrentLayout();
+    if (this.isPdfMode && !this.isImageOnlyPdf) {
+      this.detectLines(true);
+    } else if (!this.isImageOnlyPdf && (!this.cachedLines || this.cachedLines.length === 0)) {
       this.detectLines();
     }
-    if (!this.cachedLines || this.cachedLines.length === 0) return;
 
     this.isLineLocked = false;
     this.suppressLineAdvancement = false;
     this.isNavigating = false;
     this.isNavigatingPage = false;
+
+    if (this.isImageOnlyPdf || !this.cachedLines || this.cachedLines.length === 0) {
+      if (!this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0)) return;
+      const stage = this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body;
+      const stageRect = stage ? stage.getBoundingClientRect() : { top: 0, bottom: window.innerHeight, left: 0, width: window.innerWidth };
+      const spread = document.querySelector("#reader-content .pdf-spread-container");
+      let topBound = stageRect.top;
+      let bottomBound = stageRect.bottom;
+      const isSpread = this.isSpreadActive();
+      const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
+      if (isSpread && spreadInfo) {
+        const activeRect = spreadInfo.activeRect;
+        if (activeRect.height > 50) {
+          topBound = activeRect.top;
+          bottomBound = activeRect.bottom;
+        }
+      } else if (spread) {
+        const sRect = spread.getBoundingClientRect();
+        if (sRect.height > 50) {
+          topBound = sRect.top;
+          bottomBound = sRect.bottom;
+        }
+      } else {
+        const canvas = document.querySelector("#reader-content canvas");
+        if (canvas) {
+          const cRect = canvas.getBoundingClientRect();
+          if (cRect.height > 50) {
+            topBound = cRect.top;
+            bottomBound = cRect.bottom;
+          }
+        }
+      }
+
+      const h = this.height || this.pdfRulerHeight || 32;
+      if (this.mode === "bottom-cover" || this.style === "bottom-cover") {
+        this.currentY = Math.max(topBound, Math.min(bottomBound, clientY));
+      } else {
+        this.currentY = Math.max(topBound, Math.min(bottomBound - h, clientY - h / 2));
+      }
+      this.targetY = this.currentY;
+      this.lastPointerX = clientX;
+      this.lastPointerY = clientY;
+      this.lastValidPointerX = clientX;
+      this.lastValidPointerY = clientY;
+      if (this._trackpad) {
+        const splitX = (isSpread && spreadInfo) ? spreadInfo.midGap : (stageRect.left + stageRect.width / 2);
+        this._trackpad.activeColumn = isSpread ? ((clientX >= splitX) ? 1 : 0) : 0;
+        this._trackpad.boundaryPushY = 0;
+      }
+      if (this.rulerEl) {
+        this.rulerEl.style.display = "block";
+        this.rulerEl.style.opacity = "1";
+        this.rulerEl.style.visibility = "visible";
+        this.rulerEl.classList.remove("is-hidden", "hidden", "word-tracking-mode");
+        this.rulerEl.classList.add("is-visible");
+      }
+      this._snapRulerInstantOrAnimated();
+      this.applyPosition();
+      return;
+    }
 
     const stageRect = (this.snapToLines && this._cachedStageRect)
       ? this._cachedStageRect
@@ -2398,6 +2480,7 @@ export class ReadingRuler {
     this._lastActiveColumn = activeColumn;
     this._activeReadingLineIndex = targetLineIdx;
     this._activeLineStartTime = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    this._checkLineProgress(targetLineIdx, false);
     this.updateBlockTrackingContext();
     const targetLine = this.cachedLines[targetLineIdx];
     const isMediaLine = !!(targetLine && (targetLine.isMedia || !targetLine.hasText));
@@ -2409,8 +2492,11 @@ export class ReadingRuler {
       this.currentY = this.targetY;
     }
 
+    let syncedWords = null;
+    let syncedWordIdx = -1;
     if (this.wordTracking && !isMediaLine) {
       const words = this.ensureActiveWords(targetLineIdx);
+      syncedWords = words;
       let closestWordIdx = -1;
       let minWordDist = Infinity;
       for (let i = 0; i < words.length; i++) {
@@ -2423,6 +2509,7 @@ export class ReadingRuler {
           closestWordIdx = i;
         }
       }
+      syncedWordIdx = closestWordIdx;
       if (closestWordIdx >= 0) {
         this.activeWordIndex = closestWordIdx;
         this.setWordWindow(closestWordIdx);
@@ -2437,6 +2524,21 @@ export class ReadingRuler {
       if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
       this.lastPointerX = targetLine ? targetLine.left : clientX;
       this.lastPointerY = targetLine ? Math.round(targetLine.centerY) : clientY;
+    }
+
+    if (this._trackpad) {
+      this._trackpad.activeColumn = targetLine?.columnIndex ?? activeColumn;
+      this._trackpad.wordWrap = null;
+      this._trackpad.wordWrapOverflow = 0;
+      this._trackpad.boundaryPushY = 0;
+      if (this.wordTracking && !isMediaLine && syncedWords && syncedWordIdx >= 0 && syncedWords[syncedWordIdx]) {
+        const cw = syncedWords[syncedWordIdx];
+        this._trackpad.wordFloatLeft = cw.left - 3;
+        this._trackpad.waveCenterX = cw.centerX;
+      } else {
+        this._trackpad.wordFloatLeft = null;
+        this._trackpad.waveCenterX = null;
+      }
     }
 
     this.lastValidPointerX = this.lastPointerX;
@@ -2479,8 +2581,42 @@ export class ReadingRuler {
     const vScrollTop = viewport ? viewport.scrollTop : 0;
     const docY = vScrollTop + clientY;
 
-    if (this.cachedLines.length === 0) {
+    this._ensureLinesFreshForCurrentLayout();
+    if (this.isPdfMode && !this.isImageOnlyPdf) {
+      this.detectLines(true);
+    } else if (!this.isImageOnlyPdf && this.cachedLines.length === 0) {
       this.detectLines();
+    }
+
+    if (this.isImageOnlyPdf || this.cachedLines.length === 0) {
+      const h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.pdfRulerHeight || this.manualHeight || 32);
+      const maxScrollH = viewport ? Math.max(viewport.scrollHeight, viewport.clientHeight) : window.innerHeight;
+      if (this.mode === "bottom-cover" || this.style === "bottom-cover") {
+        this.currentY = Math.max(0, Math.min(maxScrollH, docY));
+        this.stationaryScreenY = Math.round(clientY);
+      } else {
+        this.currentY = Math.max(0, Math.min(maxScrollH - h, docY - h / 2));
+        this.stationaryScreenY = Math.round(clientY - h / 2);
+      }
+      this.targetY = this.currentY;
+      this.lastPointerX = clientX;
+      this.lastPointerY = clientY;
+      this.lastValidPointerX = clientX;
+      this.lastValidPointerY = clientY;
+      if (this._trackpad) {
+        this._trackpad.activeColumn = 0;
+        this._trackpad.boundaryPushY = 0;
+      }
+      if (this.rulerEl) {
+        this.rulerEl.style.display = "block";
+        this.rulerEl.style.opacity = "1";
+        this.rulerEl.style.visibility = "visible";
+        this.rulerEl.classList.remove("is-hidden", "hidden", "word-tracking-mode");
+        this.rulerEl.classList.add("is-visible");
+      }
+      this._snapRulerInstantOrAnimated();
+      this.applyPosition();
+      return;
     }
 
     let targetLineIdx = -1;
@@ -2499,8 +2635,11 @@ export class ReadingRuler {
     }
 
     this.activeLineIndex = targetLineIdx;
+    this._lastActiveLineIndex = targetLineIdx;
+    this._lastActiveColumn = 0;
     this._activeReadingLineIndex = targetLineIdx;
     this._activeLineStartTime = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    this._checkLineProgress(targetLineIdx, false);
     this.updateBlockTrackingContext();
     const targetLine = (targetLineIdx >= 0 && targetLineIdx < this.cachedLines.length) ? this.cachedLines[targetLineIdx] : null;
     const isMediaLine = !!(targetLine && (targetLine.isMedia || !targetLine.hasText));
@@ -2519,8 +2658,11 @@ export class ReadingRuler {
       this.stationaryScreenY = Math.round(clientY - h / 2);
     }
 
+    let syncedWords = null;
+    let syncedWordIdx = -1;
     if (this.wordTracking && !isMediaLine) {
       const words = this.ensureActiveWords(targetLineIdx);
+      syncedWords = words;
       let closestWordIdx = -1;
       let minWordDist = Infinity;
       for (let i = 0; i < words.length; i++) {
@@ -2533,6 +2675,7 @@ export class ReadingRuler {
           closestWordIdx = i;
         }
       }
+      syncedWordIdx = closestWordIdx;
       if (closestWordIdx >= 0) {
         this.activeWordIndex = closestWordIdx;
         this.setWordWindow(closestWordIdx);
@@ -2547,6 +2690,21 @@ export class ReadingRuler {
       if (this.wordWaveEl) this.wordWaveEl.style.display = "none";
       this.lastPointerX = targetLine ? targetLine.left : clientX;
       this.lastPointerY = targetLine ? Math.round(targetLine.centerY - vScrollTop) : clientY;
+    }
+
+    if (this._trackpad) {
+      this._trackpad.activeColumn = 0;
+      this._trackpad.wordWrap = null;
+      this._trackpad.wordWrapOverflow = 0;
+      this._trackpad.boundaryPushY = 0;
+      if (this.wordTracking && !isMediaLine && syncedWords && syncedWordIdx >= 0 && syncedWords[syncedWordIdx]) {
+        const cw = syncedWords[syncedWordIdx];
+        this._trackpad.wordFloatLeft = cw.left - 3;
+        this._trackpad.waveCenterX = cw.centerX;
+      } else {
+        this._trackpad.wordFloatLeft = null;
+        this._trackpad.waveCenterX = null;
+      }
     }
 
     this.lastValidPointerX = this.lastPointerX;
@@ -3029,6 +3187,9 @@ export class ReadingRuler {
         return true;
       }
       tp.moved = true;
+      if (this.isHoldActive) {
+        this.cancelHold(false);
+      }
       this.isTouchSwiping = false;
       this.isDraggingRuler = true;
       if (window.getSelection) {
@@ -4420,6 +4581,7 @@ export class ReadingRuler {
         if (e.pointerType === "pen" || e.pointerType === "touch") {
           if (e.isPrimary === false) {
             this._cancelTrackpadTouch();
+            this.cancelHold(false);
             return;
           }
           if (this._trackpad?.active) {
@@ -4434,7 +4596,20 @@ export class ReadingRuler {
           }
           this.isTouchActive = true;
           this.isTouchSwiping = false;
-          this._startTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY, e.target);
+          const started = this._startTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY, e.target);
+          if (started) {
+            this.startHold(e.clientX, e.clientY, e.pointerType);
+          }
+        } else if (e.pointerType === "mouse") {
+          if (this.isSyntheticMouseEvent(e) || e.button !== 0) return;
+          const isRecentSwipe = (Date.now() - (this.lastSwipeTime || 0) < 200) || (Date.now() - (this.lastTouchEndTime || 0) < 200);
+          const isDocTurning = document.body.classList.contains("is-turning-page") ||
+            document.body.classList.contains("is-chapter-loading") ||
+            !!(this.app?.isNavigating) ||
+            (Date.now() < this.navigatingPageLockoutEndTime);
+          if (!this.enabled || this.isTouchSwiping || this.isSwipePageTransition || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || isDocTurning || isRecentSwipe) return;
+          if (!this.isPointerInStage(e.clientX, e.clientY) || (e.target?.closest && e.target.closest("hr"))) return;
+          this.startHold(e.clientX, e.clientY, "mouse");
         }
         return;
       }
@@ -4537,6 +4712,7 @@ export class ReadingRuler {
         const isPenHover = (e.pointerType === "pen" && e.buttons === 0 && (!e.pressure || e.pressure <= 0));
         if (e.pointerType === "pen" || e.pointerType === "touch") {
           if (isPenHover) {
+            if (this.isHoldActive) this.cancelHold(false);
             if (this._trackpad?.active && this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId) {
               this.isTouchActive = false;
               this.isPenTouching = false;
@@ -4550,10 +4726,30 @@ export class ReadingRuler {
           if (!this._trackpad?.active && this.isUiControl(e.target)) {
             this.isPenTouching = false;
             this._trackingSuspendedByOverlay = true;
+            if (this.isHoldActive) this.cancelHold(false);
             return;
+          }
+          if (this.isHoldActive) {
+            const dx = Math.abs(e.clientX - this.holdStartX);
+            const dy = Math.abs(e.clientY - this.holdStartY);
+            if (Math.hypot(dx, dy) > 18 || dx > 18 || dy > 18) {
+              this.cancelHold(false);
+            }
           }
           if (this._trackpad?.active && this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId) {
             this._moveTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY);
+          }
+        } else if (e.pointerType === "mouse") {
+          if (this.isSyntheticMouseEvent(e)) return;
+          if (this.isHoldActive && this.holdPointerType === "mouse") {
+            const dx = Math.abs(e.clientX - this.holdStartX);
+            const dy = Math.abs(e.clientY - this.holdStartY);
+            if (Math.hypot(dx, dy) > 8 || dx > 8 || dy > 8) {
+              this.cancelHold(false);
+            }
+          }
+          if (this.isHoldTriggered && (e.buttons & 1) !== 0 && !this.isUiControl(e.target) && this.isPointerInStage(e.clientX, e.clientY)) {
+            this.repositionToTarget(e.clientX, e.clientY, "mouse");
           }
         }
         return;
@@ -4700,6 +4896,18 @@ export class ReadingRuler {
 
     const onPointerUp = (e) => {
       if (this.followMode === "trackpad") {
+        document.body.classList.remove("ruler-holding");
+        if (this.isHoldActive) {
+          this.cancelHold(false);
+        }
+        if (this.isHoldTriggered) {
+          this.dragCooldownEndTime = Math.max(this.dragCooldownEndTime || 0, Date.now() + 450);
+          if (this._holdTriggeredResetTimer) clearTimeout(this._holdTriggeredResetTimer);
+          this._holdTriggeredResetTimer = setTimeout(() => {
+            this.isHoldTriggered = false;
+            this._holdTriggeredResetTimer = null;
+          }, 350);
+        }
         if (e.pointerType === "touch" || e.pointerType === "pen") {
           const isPrimaryActive = !this._trackpad?.active || (this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId);
           if (isPrimaryActive) {
@@ -4885,10 +5093,13 @@ export class ReadingRuler {
       }
 
       if (this.isHoldTriggered) {
-        this.dragCooldownEndTime = Date.now() + 200;
-        setTimeout(() => {
+        document.body.classList.remove("ruler-holding");
+        this.dragCooldownEndTime = Math.max(this.dragCooldownEndTime || 0, Date.now() + 450);
+        if (this._holdTriggeredResetTimer) clearTimeout(this._holdTriggeredResetTimer);
+        this._holdTriggeredResetTimer = setTimeout(() => {
           this.isHoldTriggered = false;
-        }, 200);
+          this._holdTriggeredResetTimer = null;
+        }, 350);
       }
 
       if (this.isDraggingRuler && (this.activePointerId === null || e.pointerId === this.activePointerId)) {
@@ -4931,12 +5142,13 @@ export class ReadingRuler {
       this.touchStrokeStartTime = 0;
       if (this.isHoldActive) {
         const holdDuration = Date.now() - (this.holdStartTime || 0);
-        if (holdDuration >= 280 && !this.wasHoldAborted && this.isPointerInStage(this.holdStartX, this.holdStartY)) {
+        if (holdDuration >= 500 && !this.wasHoldAborted && this.isPointerInStage(this.holdStartX, this.holdStartY)) {
           this.triggerHoldSuccess(this.holdStartX, this.holdStartY);
         } else {
           this.cancelHold(false);
         }
       }
+      document.body.classList.remove("ruler-holding");
       this.isDraggingRuler = false;
       this.isPenTouching = false;
       this.activePointerId = null;
@@ -5164,10 +5376,13 @@ export class ReadingRuler {
       }
 
       if (this.isHoldTriggered) {
-        this.dragCooldownEndTime = Date.now() + 200;
-        setTimeout(() => {
+        document.body.classList.remove("ruler-holding");
+        this.dragCooldownEndTime = Math.max(this.dragCooldownEndTime || 0, Date.now() + 450);
+        if (this._holdTriggeredResetTimer) clearTimeout(this._holdTriggeredResetTimer);
+        this._holdTriggeredResetTimer = setTimeout(() => {
           this.isHoldTriggered = false;
-        }, 200);
+          this._holdTriggeredResetTimer = null;
+        }, 350);
       }
     };
 
@@ -5327,9 +5542,19 @@ export class ReadingRuler {
       if (this.followMode === "keyboard" || this.followMode === "trackpad" || this.isHoldActive || this.isHoldTriggered || Date.now() < this.dragCooldownEndTime) {
         if (this.isPointerInStage(e.clientX, e.clientY)) {
           e.preventDefault();
+          e.stopPropagation();
         }
       }
-    });
+    }, { capture: true });
+
+    // Zamezení zahájení výběru textu (desktop i iPadOS/iOS) při podržení nebo v aktivním režimu pravítka
+    document.addEventListener("selectstart", (e) => {
+      if (!this.enabled) return;
+      if (this.isUiControl(e.target)) return;
+      if (this.isHoldActive || this.isHoldTriggered || Date.now() < this.dragCooldownEndTime || this.followMode === "keyboard" || this.followMode === "trackpad") {
+        e.preventDefault();
+      }
+    }, { capture: true });
 
     // Zamezení nechtěného výběru textu v čtecí ploše během podržení nebo tažení pravítka
     document.addEventListener("selectionchange", () => {
@@ -5404,6 +5629,7 @@ export class ReadingRuler {
       if (this.isHoldTriggered || this.wasHoldAborted || Date.now() < this.dragCooldownEndTime || (this.followMode === "trackpad" && this.wasRecentlyTrackpadDragging())) {
         e.stopPropagation();
         e.stopImmediatePropagation();
+        if (e.cancelable) e.preventDefault();
         return;
       }
 

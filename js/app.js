@@ -1388,8 +1388,14 @@ export class LuminaApp {
           (now - (this.ruler?.lastSwipeTime || 0) < 200);
         const isRecentTap = (now - lastTapTime < 350) ||
           (now - (this.ruler?.lastTouchTapTime || 0) < 350);
+        const isRulerHoldOrCooldown = !!(this.ruler?.enabled && (
+          this.ruler.isHoldActive ||
+          this.ruler.isHoldTriggered ||
+          this.ruler.wasHoldAborted ||
+          (now < (this.ruler.dragCooldownEndTime || 0))
+        ));
 
-        if (isRecentSwipe || isRecentTap) {
+        if (isRecentSwipe || isRecentTap || isRulerHoldOrCooldown) {
           e.preventDefault();
           return;
         }
@@ -1463,8 +1469,14 @@ export class LuminaApp {
         (now - (this.ruler?.lastSwipeTime || 0) < 200);
       const isRecentTap = (now - lastTapTime < 350) ||
         (now - (this.ruler?.lastTouchTapTime || 0) < 350);
+      const isRulerHoldOrCooldown = !!(this.ruler?.enabled && (
+        this.ruler.isHoldActive ||
+        this.ruler.isHoldTriggered ||
+        this.ruler.wasHoldAborted ||
+        (now < (this.ruler.dragCooldownEndTime || 0))
+      ));
 
-      if (isRecentSwipe || isRecentTap) {
+      if (isRecentSwipe || isRecentTap || isRulerHoldOrCooldown) {
         e.preventDefault();
         return;
       }
@@ -1617,7 +1629,7 @@ export class LuminaApp {
         if (this.ruler?.enabled && this.ruler.followMode === "trackpad") {
           isSwiping = false;
           this.ruler.isTouchSwiping = false;
-          if (this.ruler.wasRecentlyTrackpadDragging?.()) {
+          if (this.ruler.wasRecentlyTrackpadDragging?.() || this.ruler.isHoldTriggered || this.ruler.wasHoldAborted || Date.now() < (this.ruler.dragCooldownEndTime || 0)) {
             if (e.cancelable) e.preventDefault();
             return;
           }
@@ -1819,8 +1831,8 @@ export class LuminaApp {
             return;
           }
           if (absDeltaX >= 10 || absDeltaY >= 10 || dist >= 10) return;
-          if (this.ruler.isHoldTriggered) {
-            this.ruler.isHoldTriggered = false;
+          if (this.ruler.isHoldTriggered || this.ruler.wasHoldAborted || Date.now() < (this.ruler.dragCooldownEndTime || 0)) {
+            if (e.cancelable) e.preventDefault();
             return;
           }
           if (typeof this.ruler.handleTap === "function") {
@@ -1932,8 +1944,14 @@ export class LuminaApp {
           (now - (this.ruler?.lastTouchTapTime || 0) < 350) ||
           (now - (this.ruler?.lastTouchEndTime || 0) < 200);
         const isRecentTrackpadDrag = !!(this.ruler?.enabled && this.ruler.followMode === "trackpad" && this.ruler.wasRecentlyTrackpadDragging?.());
+        const isRulerHoldOrCooldown = !!(this.ruler?.enabled && (
+          this.ruler.isHoldActive ||
+          this.ruler.isHoldTriggered ||
+          this.ruler.wasHoldAborted ||
+          (now < (this.ruler.dragCooldownEndTime || 0))
+        ));
 
-        if (isRecentSwipe || isRecentTouch || isRecentTrackpadDrag || this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
+        if (isRecentSwipe || isRecentTouch || isRecentTrackpadDrag || isRulerHoldOrCooldown || this.isNavigating || this.ruler?.isLineLocked || (now < (this.ruler?.navigatingPageLockoutEndTime || 0))) {
           return;
         }
         if (e.target && (e.target.closest("button") || e.target.closest(".ruler-floating-controls") || e.target.closest(".paged-footer-bar") || e.target.closest(".ruler-btn-group") || e.target.closest("#ruler-quick-popover"))) {
