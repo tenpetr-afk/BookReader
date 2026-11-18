@@ -1518,11 +1518,10 @@ body.ruler-vertical-mode .ruler-focused-image {
 /* Fixní accent wave / vlnka pro indikátor čteného slova v režimu Spodní clona (Bottom Cover) */
 .ruler-word-wave {
   position: absolute;
-  top: 100%;
-  margin-top: -1px;
+  top: 0;
   left: 0;
   width: 80px;
-  height: 12px;
+  height: 13px;
   display: none;
   pointer-events: none !important;
   color: inherit;
@@ -1534,7 +1533,7 @@ body.ruler-vertical-mode .ruler-focused-image {
 .ruler-word-wave svg {
   display: block;
   width: 80px;
-  height: 12px;
+  height: 13px;
   color: inherit;
   overflow: visible;
 }

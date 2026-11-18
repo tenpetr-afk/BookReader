@@ -15,6 +15,7 @@ export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i hori
 export const RULER_WAVE_WIDTH = 80; // px - fixní šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
 export const RULER_WAVE_HEIGHT = 12; // px - fixní hloubka vlnky indikátoru
 export const COVER_LINE_OFFSET = 2; // px - fixní vertikální vzdálenost vodicí linky pod spodním okrajem řádku v režimu Spodní clona (Bottom Cover)
+const RULER_WAVE_SVG = `<svg viewBox="0 0 80 13" width="80" height="13" preserveAspectRatio="none"><rect x="0" y="0" width="80" height="2" fill="currentColor" /><path d="M 0,1 C 20,1 24,13 40,13 C 56,13 60,1 80,1 Z" fill="currentColor" /></svg>`;
 
 export class ReadingRuler {
   constructor(containerElement, app = null) {
@@ -1120,7 +1121,7 @@ export class ReadingRuler {
     this.wordWaveEl = document.createElement("div");
     this.wordWaveEl.className = "ruler-word-wave";
     this.wordWaveEl.setAttribute("aria-hidden", "true");
-    this.wordWaveEl.innerHTML = `<svg viewBox="0 0 80 12" width="80" height="12" preserveAspectRatio="none"><path d="M 0,0 C 20,0 24,12 40,12 C 56,12 60,0 80,0 Z" fill="currentColor" /></svg>`;
+    this.wordWaveEl.innerHTML = RULER_WAVE_SVG;
     this.rulerEl.appendChild(this.wordWaveEl);
 
     this.secondaryRulerEl = document.createElement("div");
@@ -1132,7 +1133,7 @@ export class ReadingRuler {
     this.secondaryWordWaveEl = document.createElement("div");
     this.secondaryWordWaveEl.className = "ruler-word-wave";
     this.secondaryWordWaveEl.setAttribute("aria-hidden", "true");
-    this.secondaryWordWaveEl.innerHTML = `<svg viewBox="0 0 80 12" width="80" height="12" preserveAspectRatio="none"><path d="M 0,0 C 20,0 24,12 40,12 C 56,12 60,0 80,0 Z" fill="currentColor" /></svg>`;
+    this.secondaryWordWaveEl.innerHTML = RULER_WAVE_SVG;
     this.secondaryRulerEl.appendChild(this.secondaryWordWaveEl);
 
     this.maskTopEl = document.createElement("div");
@@ -11255,7 +11256,7 @@ export class ReadingRuler {
           this.wordWaveEl = document.createElement("div");
           this.wordWaveEl.className = "ruler-word-wave";
           this.wordWaveEl.setAttribute("aria-hidden", "true");
-          this.wordWaveEl.innerHTML = `<svg viewBox="0 0 80 12" width="80" height="12" preserveAspectRatio="none"><path d="M 0,0 C 20,0 24,12 40,12 C 56,12 60,0 80,0 Z" fill="currentColor" /></svg>`;
+          this.wordWaveEl.innerHTML = RULER_WAVE_SVG;
           this.rulerEl.appendChild(this.wordWaveEl);
         }
 
@@ -11338,7 +11339,7 @@ export class ReadingRuler {
         const clipR = activeWordWrap.fromWaveClipRight || 0;
         this.wordWaveEl.style.setProperty("transition", "none", "important");
         this.wordWaveEl.style.transform = `translate3d(${activeWordWrap.fromWaveX}px, 0, 0)`;
-        this.wordWaveEl.style.clipPath = (clipL > 0 || clipR > 0) ? `inset(0 ${clipR}px -20px ${clipL}px)` : "none";
+        this.wordWaveEl.style.clipPath = (clipL > 0 || clipR > 0) ? `inset(-10px ${clipR}px -20px ${clipL}px)` : "none";
         this.wordWaveEl.style.display = "block";
       }
 
@@ -11373,7 +11374,7 @@ export class ReadingRuler {
         if (this.secondaryWordWaveEl) {
           this.secondaryWordWaveEl.style.setProperty("transition", "none", "important");
           this.secondaryWordWaveEl.style.transform = `translate3d(${activeWordWrap.toWaveX}px, 0, 0)`;
-          this.secondaryWordWaveEl.style.clipPath = (toClipL > 0 || toClipR > 0) ? `inset(0 ${toClipR}px -20px ${toClipL}px)` : "none";
+          this.secondaryWordWaveEl.style.clipPath = (toClipL > 0 || toClipR > 0) ? `inset(-10px ${toClipR}px -20px ${toClipL}px)` : "none";
           this.secondaryWordWaveEl.style.display = "block";
         }
       }
