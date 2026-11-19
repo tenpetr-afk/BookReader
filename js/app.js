@@ -4710,6 +4710,9 @@ export class LuminaApp {
   createBookCard(book) {
     const extractProgressPercent = (src) => {
       if (!src || typeof src !== "object") return 0;
+      if ((src.isPdf || src.format === "pdf") && src.currentPage && src.numPages) {
+        return Math.round((src.currentPage / src.numPages) * 100);
+      }
       const anchor = src.readingAnchor || src.reading_anchor;
       if (anchor && typeof anchor.bookProgress === "number" && !isNaN(anchor.bookProgress)) {
         return anchor.bookProgress;
@@ -5186,6 +5189,12 @@ export class LuminaApp {
           this._isOpeningBook = false;
           this._isRestoringPosition = false;
         }
+        if (this.pdfLoader && this.pdfLoader.numPages > 0) {
+          const expectedPdfProg = Math.round((this.pdfLoader.currentPage / this.pdfLoader.numPages) * 100);
+          if (book.numPages !== this.pdfLoader.numPages || Math.round(book.progress ?? -1) !== expectedPdfProg) {
+            this.saveProgress(true);
+          }
+        }
         if (shouldPushLocalAfterRestore) {
           supabaseSync.syncProgress(book.id, {
             currentChapterIndex: 0,
@@ -5243,6 +5252,25 @@ export class LuminaApp {
         this.recomputeGlobalPagination();
         this.renderScrubberTicks();
         this.updatePageUI();
+        if (!this._isOpeningBook && !this._isRestoringPosition && this.currentBook?.id === book.id && !this.isPdfMode) {
+          const freshAnchor = this.captureCurrentEpubAnchor();
+          if (freshAnchor) {
+            this._currentEpubAnchor = freshAnchor;
+          } else if (this._currentEpubAnchor) {
+            this._currentEpubAnchor = {
+              ...this._currentEpubAnchor,
+              bookProgress: this.computeNormalizedBookProgress(
+                this._currentEpubAnchor.chapterIndex ?? this.currentChapterIndex,
+                this._currentEpubAnchor.charOffset ?? 0,
+                this._currentEpubAnchor.chapterLength ?? 0
+              )
+            };
+          }
+          const newPct = Math.round(this._currentEpubAnchor?.bookProgress ?? this.computeNormalizedBookProgress());
+          if (Math.round(this.currentBook.progress ?? -1) !== newPct) {
+            this.saveProgress(true, { preserveAnchor: true });
+          }
+        }
         return counts;
       }).catch(e => {
         console.warn("Nelze spočítat celková slova knihy:", e);
@@ -5307,6 +5335,25 @@ export class LuminaApp {
       } finally {
         this._isOpeningBook = false;
         this._isRestoringPosition = false;
+      }
+      if (this.bookWordCounts && this.currentBook?.id === book.id && !this.isPdfMode) {
+        const freshAnchor = this.captureCurrentEpubAnchor();
+        if (freshAnchor) {
+          this._currentEpubAnchor = freshAnchor;
+        } else if (this._currentEpubAnchor) {
+          this._currentEpubAnchor = {
+            ...this._currentEpubAnchor,
+            bookProgress: this.computeNormalizedBookProgress(
+              this._currentEpubAnchor.chapterIndex ?? this.currentChapterIndex,
+              this._currentEpubAnchor.charOffset ?? 0,
+              this._currentEpubAnchor.chapterLength ?? 0
+            )
+          };
+        }
+        const newPct = Math.round(this._currentEpubAnchor?.bookProgress ?? this.computeNormalizedBookProgress());
+        if (Math.round(book.progress ?? -1) !== newPct) {
+          this.saveProgress(true, { preserveAnchor: true });
+        }
       }
 
       if (shouldPushLocalAfterRestore && localTimeBeforeRemote > 0) {
@@ -5773,7 +5820,7 @@ export class LuminaApp {
           chapterRatio: Math.round((readingAnchor.chapterRatio ?? pageRatio) * 10000) / 10000,
           updatedAt: now
         };
-        if (typeof readingAnchor.bookProgress !== "number" || isNaN(readingAnchor.bookProgress)) {
+        if (this.bookWordCounts || typeof readingAnchor.bookProgress !== "number" || isNaN(readingAnchor.bookProgress)) {
           readingAnchor.bookProgress = this.computeNormalizedBookProgress(
             readingAnchor.chapterIndex,
             readingAnchor.charOffset,
@@ -5912,15 +5959,16 @@ export class LuminaApp {
       this.saveProgressTimer = null;
     }
     const doSaveIDB = () => {
-      if (!this.currentBook) return;
-      storage.updateBookProgress(this.currentBook.id, progressData).catch(err => {
+      if (!this.currentBook) return Promise.resolve();
+      return storage.updateBookProgress(this.currentBook.id, progressData).catch(err => {
         console.warn("[LuminaApp] Chyba při ukládání postupu do IndexedDB:", err);
       });
     };
+    let idbSavePromise = Promise.resolve();
     if (options.debouncedIdb && !immediate) {
       this.saveProgressTimer = setTimeout(doSaveIDB, 180);
     } else {
-      doSaveIDB();
+      idbSavePromise = doSaveIDB();
     }
 
     // 3. Synchronizace se Supabase (okamžitá s koalescencí při listování/skoku; keepalive při odchodu/skrytí)
@@ -5933,6 +5981,7 @@ export class LuminaApp {
       immediate: useImmediateCloud,
       keepalive: !!options.keepalive
     });
+    return idbSavePromise;
   }
 
   // --- KONTINUÁLNÍ ČTENÍ A SPRÁVA KAPITOL PRO EPUB (MODE-VERTICAL) ---
@@ -8343,7 +8392,7 @@ export class LuminaApp {
   // --- ZOBRAZENÍ A MODÁLY ---
 
   async showLibraryView() {
-    this.saveProgress(true);
+    const savePromise = this.saveProgress(true);
     localStorage.setItem("lumina_active_view", "library");
     tracker.stopSession();
     if (this.ruler) {
@@ -8372,6 +8421,9 @@ export class LuminaApp {
     }
     this.isPdfMode = false;
     if (this._libraryNeedsRefresh) {
+      if (savePromise && typeof savePromise.then === "function") {
+        await savePromise;
+      }
       await this.renderLibrary();
       this._libraryNeedsRefresh = false;
     }
