@@ -8447,6 +8447,11 @@ export class LuminaApp {
     const isHidden = document.body.classList.contains("reader-chrome-hidden");
     const willHide = (force !== undefined) ? !force : !isHidden;
     document.body.classList.toggle("reader-chrome-hidden", willHide);
+    if (this.isPdfMode && this.pdfLoader && !this.isVerticalReadingMode() && !this.dom.viewReader?.classList.contains("is-hidden")) {
+      requestAnimationFrame(() => {
+        this.schedulePdfViewportRelayout({ immediate: true });
+      });
+    }
   }
 
   invalidateMeasuredPagination() {

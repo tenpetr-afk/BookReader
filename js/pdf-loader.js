@@ -278,17 +278,6 @@ export class PDFLoader {
       : ((vv && vvScale <= 1.02 ? vv.height : 0) || window.innerHeight);
     const isMobile = vvWidth < 768;
 
-    if (!isMobile) {
-      const availVpH = vpEl && vpEl.clientHeight > 100 ? (vpEl.clientHeight - 16) : (vvHeight - 32);
-      return {
-        availW: Math.max(120, vvWidth - 32),
-        availH: Math.max(120, availVpH),
-        spreadSlotW: Math.max(120, Math.floor((vvWidth - 64) / 2)),
-        spreadSingleW: Math.max(120, Math.floor(vvWidth - 64)),
-        spreadSlotH: Math.max(120, Math.min(vvHeight - 32, availVpH))
-      };
-    }
-
     const body = document.body;
     const chromeHidden = body.classList.contains("reader-chrome-hidden");
     const headerEl = document.getElementById("reader-header");
@@ -326,19 +315,40 @@ export class PDFLoader {
       }
     }
 
-    const availH = Math.max(120, vvHeight - headerH - footerH - 16);
+    const padV = chromeHidden ? 8 : 16;
+    const padH = chromeHidden ? (isMobile ? 8 : 16) : (isMobile ? 24 : 32);
+    const availW = Math.max(120, vvWidth - padH);
+    const availH = Math.max(120, vvHeight - headerH - footerH - padV);
+
     return {
-      isMobile: true,
+      isMobile,
+      chromeHidden,
       vvWidth,
       vvHeight,
       headerH,
       footerH,
-      availW: Math.max(120, vvWidth - 24),
+      availW,
       availH,
-      spreadSlotW: Math.max(120, vvWidth - 24),
-      spreadSingleW: Math.max(120, vvWidth - 24),
+      spreadSlotW: isMobile ? availW : Math.max(120, Math.floor((vvWidth - (chromeHidden ? 32 : 64)) / 2)),
+      spreadSingleW: isMobile ? availW : Math.max(120, Math.floor(vvWidth - (chromeHidden ? 32 : 64))),
       spreadSlotH: availH
     };
+  }
+
+  _computeChromeSafeOffsetY(contentH, box) {
+    if (!box || !contentH) return 0;
+    const pad = box.chromeHidden ? 4 : 8;
+    const minTop = box.headerH + pad;
+    const maxBottom = box.vvHeight - box.footerH - pad;
+    const centeredTop = (box.vvHeight - contentH) / 2;
+    const centeredBottom = centeredTop + contentH;
+    if (centeredTop < minTop) {
+      return Math.round(minTop - centeredTop);
+    }
+    if (centeredBottom > maxBottom) {
+      return Math.round(maxBottom - centeredBottom);
+    }
+    return 0;
   }
 
   /**
@@ -518,6 +528,11 @@ export class PDFLoader {
             renderTasks.push({ rTask, tTask, page: p, viewport, canvas, imageLayer });
           }
 
+          const maxSpreadSlotH = pageSlots.reduce((acc, s) => Math.max(acc, parseFloat(s.style.height) || 0), 0);
+          const spreadOffsetY = this._computeChromeSafeOffsetY(maxSpreadSlotH, box);
+          if (spreadOffsetY !== 0) {
+            spreadContainer.style.transform = `translateY(${spreadOffsetY}px)`;
+          }
           container.appendChild(spreadContainer);
 
           this.currentRenderTasks = renderTasks.map(t => t.rTask);
@@ -601,21 +616,10 @@ export class PDFLoader {
           pageContainer.style.justifyContent = "center";
           pageContainer.style.alignItems = "center";
 
-          // Stránka je vycentrovaná na střed obrazovky; posune se pouze pokud by jinak zasáhla do horní nebo spodní lišty
-          if (box.isMobile) {
-            const centeredTop = (box.vvHeight - floorH) / 2;
-            const centeredBottom = centeredTop + floorH;
-            const minTop = box.headerH + 8;
-            const maxBottom = box.vvHeight - box.footerH - 8;
-            let offsetY = 0;
-            if (centeredTop < minTop) {
-              offsetY = Math.round(minTop - centeredTop);
-            } else if (centeredBottom > maxBottom) {
-              offsetY = Math.round(maxBottom - centeredBottom);
-            }
-            if (offsetY !== 0) {
-              pageContainer.style.transform = `translateY(${offsetY}px)`;
-            }
+          // Stránka je vycentrovaná; posune se pouze pokud by jinak zasáhla do horní nebo spodní lišty s ikonami
+          const offsetY = this._computeChromeSafeOffsetY(floorH, box);
+          if (offsetY !== 0) {
+            pageContainer.style.transform = `translateY(${offsetY}px)`;
           }
           pageContainer.style.boxShadow = "none";
           pageContainer.style.border = "none";
