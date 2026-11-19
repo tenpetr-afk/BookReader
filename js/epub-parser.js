@@ -453,25 +453,9 @@ export class EpubParser {
     const hasMedia = body.querySelectorAll("img, image, svg, canvas, video, audio, table").length > 0;
     const isBlank = wordCount === 0 && !hasMedia;
 
-    // Získáme název kapitoly
-    let title = "";
-    const h1 = body.querySelector("h1, h2, h3");
-    if (h1 && h1.textContent.trim()) {
-      title = h1.textContent.trim();
-    } else {
-      const cleanSpinePath = spineEntry.fullPath.split("#")[0].split("?")[0];
-      const matchedToc = this.toc.find(t => {
-        if (!t || !t.fullHref) return false;
-        const cleanToc = t.fullHref.split("#")[0].split("?")[0];
-        if (cleanToc === cleanSpinePath) return true;
-        try {
-          return decodeURIComponent(cleanToc) === decodeURIComponent(cleanSpinePath);
-        } catch (e) {
-          return false;
-        }
-      });
-      title = matchedToc ? matchedToc.title : `Kapitola ${index + 1}`;
-    }
+    // Získáme název kapitoly (sdíleno s calculateTotalWords pro konzistenci posuvníku)
+    const title = this.extractChapterTitle(body, spineEntry, index);
+    spineEntry.title = title;
 
     return {
       index,
@@ -485,17 +469,52 @@ export class EpubParser {
   }
 
   /**
-   * Spočítá odhad celkového počtu slov v knize
+   * Extrahuje název kapitoly ze záhlaví v HTML nebo z TOC (se zálohou na číslo spine)
+   */
+  extractChapterTitle(body, spineEntry, index) {
+    if (body) {
+      const h1 = body.querySelector("h1, h2, h3");
+      const hText = h1 ? h1.textContent.replace(/\s+/g, " ").trim() : "";
+      if (hText) {
+        return hText;
+      }
+    }
+
+    if (spineEntry && spineEntry.fullPath && Array.isArray(this.toc) && this.toc.length > 0) {
+      const cleanSpinePath = spineEntry.fullPath.split("#")[0].split("?")[0];
+      const matchedToc = this.toc.find(t => {
+        if (!t || !t.fullHref) return false;
+        const cleanToc = t.fullHref.split("#")[0].split("?")[0];
+        if (cleanToc === cleanSpinePath) return true;
+        try {
+          return decodeURIComponent(cleanToc) === decodeURIComponent(cleanSpinePath);
+        } catch (e) {
+          return false;
+        }
+      });
+      if (matchedToc && matchedToc.title) {
+        return matchedToc.title.replace(/\s+/g, " ").trim();
+      }
+    }
+
+    return `Kapitola ${index + 1}`;
+  }
+
+  /**
+   * Spočítá odhad celkového počtu slov v knize a přednačte skutečné názvy kapitol
    */
   async calculateTotalWords() {
     let totalWords = 0;
     const chapterWords = [];
+    const chapterTitles = [];
+    const domParser = typeof DOMParser !== "undefined" ? new DOMParser() : null;
 
     for (let i = 0; i < this.spine.length; i++) {
       try {
         const spineEntry = this.spine[i];
         if (!spineEntry || !spineEntry.fullPath) {
           chapterWords.push(0);
+          chapterTitles.push(`Kapitola ${i + 1}`);
           continue;
         }
         const rawHtml = await this.archive.getFileAsText(spineEntry.fullPath);
@@ -504,13 +523,23 @@ export class EpubParser {
         const count = countWords(cleanText);
         chapterWords.push(count);
         totalWords += count;
+
+        let title = spineEntry.title || "";
+        if (!title && domParser) {
+          const dom = domParser.parseFromString(rawHtml, "text/html");
+          const body = dom.body || dom.documentElement;
+          title = this.extractChapterTitle(body, spineEntry, i);
+          spineEntry.title = title;
+        }
+        chapterTitles.push(title || `Kapitola ${i + 1}`);
       } catch (e) {
         console.warn(`Nepodařilo se spočítat slova v kapitole ${i}:`, e);
         chapterWords.push(0);
+        chapterTitles.push(`Kapitola ${i + 1}`);
       }
     }
 
-    return { totalWords, chapterWords };
+    return { totalWords, chapterWords, chapterTitles };
   }
 
   resolvePath(baseDir, relativePath) {

@@ -31,6 +31,7 @@
 [data-theme="light"], .theme-light { --bg-theme: #f8fafc; --color-bg: #f8fafc; --text-color: #0f172a; }
 [data-theme="warm"], .theme-warm { --bg-theme: #fbf0d9; --color-bg: #fbf0d9; --text-color: #2c2523; }
 [data-theme="sepia"], .theme-sepia { --bg-theme: #f4ecd8; --color-bg: #f4ecd8; --text-color: #382b20; }
+[data-theme="espresso"], .theme-espresso { --bg-theme: #3e3421; --color-bg: #3e3421; --text-color: #f3ead8; }
 [data-theme="dark"], .theme-dark { --bg-theme: #0f172a; --color-bg: #0f172a; --text-color: #f8fafc; }
 [data-theme="oled"], .theme-oled { --bg-theme: #000000; --color-bg: #000000; --text-color: #f5f5f5; }
 
@@ -556,6 +557,7 @@ body.ui-liquid-glass.mode-vertical .footer-actions-group:has(#ruler-quick-popove
   background: var(--bg-hover, rgba(0, 0, 0, 0.06));
 }
 
+[data-theme="espresso"] .split-pill-btn:hover,
 [data-theme="dark"] .split-pill-btn:hover,
 [data-theme="oled"] .split-pill-btn:hover {
   background: rgba(255, 255, 255, 0.12);
@@ -647,8 +649,8 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
-  width: max-content;
-  min-width: 156px;
+  width: min(500px, calc(100vw - max(3rem, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))));
+  min-width: 240px;
   padding: 0;
   margin: 0;
   z-index: 60;
@@ -667,7 +669,7 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   transform: translateY(10px) scale(0.95) !important;
 }
 
-/* Horní řada: 3 kruhová tlačítka (Stats, Search, Settings) */
+/* Horní řada: Přesný krokový ovladač stránek vlevo + 3 kruhová tlačítka vpravo */
 .action-cluster-top-row {
   display: flex;
   flex-direction: row;
@@ -676,14 +678,152 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   width: 100%;
   gap: 8px;
   box-sizing: border-box;
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
-/* Dolní řada: Table of Contents (TOC) tlačítko a scrubber */
+.action-cluster-top-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Přesný krokový ovladač stránek (−1 / zadat stranu / +1) */
+.pill-page-stepper {
+  height: 38px;
+  border-radius: 9999px;
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+  box-shadow: var(--shadow-sm, var(--glass-shadow, 0 8px 24px rgba(0, 0, 0, 0.08)));
+  color: var(--text-color, var(--text-main));
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  gap: 2px;
+  box-sizing: border-box;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.pill-stepper-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+
+.pill-stepper-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+[data-theme="espresso"] .pill-stepper-btn:hover:not(:disabled),
+[data-theme="dark"] .pill-stepper-btn:hover:not(:disabled),
+[data-theme="oled"] .pill-stepper-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.pill-stepper-btn:active:not(:disabled) {
+  transform: scale(0.9);
+}
+
+.pill-stepper-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pill-stepper-btn svg {
+  display: block;
+  pointer-events: none;
+  stroke: currentColor;
+}
+
+.pill-stepper-display {
+  height: 30px;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.pill-stepper-display:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="espresso"] .pill-stepper-display:hover,
+[data-theme="dark"] .pill-stepper-display:hover,
+[data-theme="oled"] .pill-stepper-display:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.pill-stepper-display.is-hidden,
+.pill-stepper-input.is-hidden {
+  display: none !important;
+}
+
+.pill-stepper-sep {
+  opacity: 0.55;
+  font-weight: 500;
+  margin: 0 1px;
+}
+
+.pill-stepper-input {
+  width: 62px;
+  height: 26px;
+  border-radius: 9999px;
+  border: 1.5px solid #2563eb;
+  background: var(--bg-main, rgba(255, 255, 255, 0.92));
+  color: var(--text-main, #0f172a);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+  padding: 0 6px;
+  margin: 0 2px;
+  box-sizing: border-box;
+  -moz-appearance: textfield;
+}
+
+.pill-stepper-input::-webkit-outer-spin-button,
+.pill-stepper-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+[data-theme="espresso"] .pill-stepper-input,
+[data-theme="dark"] .pill-stepper-input,
+[data-theme="oled"] .pill-stepper-input {
+  background: rgba(15, 23, 42, 0.9);
+  color: #f8fafc;
+}
+
+/* Dolní řada: Široký posuvník knihy a samostatné tlačítko obsahu vpravo */
 .action-cluster-bottom-row {
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: stretch;
+  gap: 8px;
   width: 100%;
   position: relative;
 }
@@ -743,9 +883,10 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
 .dock-action-btn-wide,
 .pill-scrubber-capsule,
 .apple-books-capsule {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 156px;
-  height: 40px;
+  height: 44px;
   border-radius: 9999px;
   background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff));
   backdrop-filter: none;
@@ -772,11 +913,13 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
 .apple-books-capsule:hover {
   background: var(--bg-hover, var(--bg-secondary));
   border-color: var(--border-color);
-  transform: scale(1.02);
+  transform: scaleY(1.03);
 }
 
 .pill-scrubber-capsule.is-scrubbing {
-  transform: scale(1.02) !important;
+  transform: scaleY(1.07) !important;
+  border-color: rgba(37, 99, 235, 0.45) !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.22), var(--shadow-md, 0 10px 28px rgba(0, 0, 0, 0.14)) !important;
   cursor: grabbing;
 }
 
@@ -818,6 +961,7 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   will-change: width;
 }
 
+[data-theme="espresso"] .pill-scrubber-progress-fill,
 [data-theme="dark"] .pill-scrubber-progress-fill,
 [data-theme="oled"] .pill-scrubber-progress-fill {
   background: rgba(255, 255, 255, 0.22);
@@ -832,33 +976,84 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   transition: none !important;
 }
 
-/* Vrstva nad výplní: popisek vlevo + ikona obsahu vpravo */
+/* Značky kapitol na spodním okraji dráhy posuvníku */
+.pill-scrubber-chapter-ticks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.pill-scrubber-tick {
+  position: absolute;
+  bottom: 0;
+  width: 1.5px;
+  height: 6px;
+  background: var(--text-color, var(--text-main, #000000));
+  opacity: 0.2;
+  transform: translateX(-50%);
+  border-radius: 1px 1px 0 0;
+}
+
+/* Přesný svislý indikátor pozice (thumb) na okraji výplně */
+.pill-scrubber-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  width: 3.5px;
+  height: 22px;
+  border-radius: 9999px;
+  background: #2563eb;
+  opacity: 0.72;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 2;
+  transition: left 0.15s ease, height 0.15s ease, width 0.15s ease, opacity 0.15s ease;
+  will-change: left;
+}
+
+.pill-scrubber-capsule:hover .pill-scrubber-thumb {
+  opacity: 0.95;
+  height: 26px;
+  width: 4px;
+}
+
+.pill-scrubber-capsule.is-scrubbing .pill-scrubber-thumb {
+  transition: height 0.12s ease, width 0.12s ease, opacity 0.12s ease !important;
+  opacity: 1;
+  height: 30px;
+  width: 5px;
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.45);
+}
+
+/* Vrstva nad výplní: centrovaný nebo zarovnaný popisek pozice */
 .pill-scrubber-content {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 6px 0 14px;
+  padding: 0 16px;
   z-index: 2;
   pointer-events: none;
   box-sizing: border-box;
-  gap: 6px;
+  gap: 8px;
 }
 
 /* Popisek: strukturovaný prefix + procenta (nikdy se neořezávají) */
 .pill-scrubber-label {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   min-width: 0;
   overflow: hidden;
-  font-size: 0.82rem;
+  font-size: 0.84rem;
   font-weight: 500;
   color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   letter-spacing: 0.01em;
   pointer-events: none;
   flex: 1 1 auto;
-  gap: 0;
+  gap: 6px;
 }
 
 .pill-scrubber-label-prefix {
@@ -870,9 +1065,7 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
 }
 
 .pill-scrubber-label-separator {
-  flex-shrink: 0;
-  white-space: pre;
-  opacity: 0.7;
+  display: none;
 }
 
 .pill-scrubber-label-percent {
@@ -882,57 +1075,33 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   font-weight: 600;
 }
 
-/* Fixní tlačítko obsahu vpravo */
+/* Samostatné tlačítko obsahu vpravo vedle posuvníku */
+.dock-action-btn.pill-scrubber-menu-btn,
 .pill-scrubber-menu-btn {
   flex-shrink: 0;
   pointer-events: auto;
-  width: 30px;
-  height: 30px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   margin: 0;
-  transition: opacity 0.15s ease, background 0.15s ease;
   position: relative;
   z-index: 3;
 }
 
-.pill-scrubber-menu-btn:hover {
-  opacity: 1;
-  background: rgba(0, 0, 0, 0.06);
-}
-
-[data-theme="dark"] .pill-scrubber-menu-btn:hover,
-[data-theme="oled"] .pill-scrubber-menu-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-[data-theme="sepia"] .pill-scrubber-menu-btn:hover,
-[data-theme="warm"] .pill-scrubber-menu-btn:hover {
-  background: rgba(56, 43, 32, 0.08);
-}
-
-.pill-scrubber-menu-btn:focus-visible {
-  outline: 2px solid #2563eb;
-  outline-offset: 1px;
-  border-radius: 50%;
-}
-
 .pill-scrubber-menu-btn svg {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
   stroke: var(--text-color, var(--glass-icon-color, var(--text-main, currentColor)));
   pointer-events: none;
 }
 
-/* Plovoucí liquid-glass tooltip přímo nad prstem/kurzorem */
+/* Plovoucí liquid-glass tooltip přímo nad pozicí posuvníku */
 .pill-scrubber-tooltip {
   position: absolute;
   bottom: calc(100% + 12px);
@@ -947,7 +1116,7 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.06);
   color: var(--text-color, var(--glass-icon-color, var(--text-main)));
   padding: 8px 14px;
-  border-radius: 12px;
+  border-radius: 14px;
   font-size: 0.82rem;
   font-weight: 500;
   line-height: 1.3;
@@ -958,11 +1127,31 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   visibility: visible;
   transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.18s ease;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  max-width: min(340px, calc(100vw - 32px));
+  gap: 2px;
+  max-width: min(340px, calc(100vw - 24px));
   box-sizing: border-box;
   will-change: left, opacity, transform;
+}
+
+.pill-scrubber-tooltip-hint {
+  font-size: 0.7rem;
+  font-weight: 500;
+  opacity: 0.65;
+  line-height: 1.2;
+}
+
+.pill-scrubber-tooltip-hint.is-fine {
+  color: #2563eb;
+  opacity: 1;
+  font-weight: 600;
+}
+
+[data-theme="espresso"] .pill-scrubber-tooltip-hint.is-fine,
+[data-theme="dark"] .pill-scrubber-tooltip-hint.is-fine,
+[data-theme="oled"] .pill-scrubber-tooltip-hint.is-fine {
+  color: #60a5fa;
 }
 
 .pill-scrubber-tooltip.is-hidden {
@@ -987,6 +1176,7 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.08));
 }
 
+[data-theme="espresso"] .pill-scrubber-tooltip,
 [data-theme="dark"] .pill-scrubber-tooltip,
 [data-theme="oled"] .pill-scrubber-tooltip {
   background: var(--bg-surface-elevated, rgba(30, 30, 32, 0.92));
@@ -994,6 +1184,7 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 
+[data-theme="espresso"] .pill-scrubber-tooltip::after,
 [data-theme="dark"] .pill-scrubber-tooltip::after,
 [data-theme="oled"] .pill-scrubber-tooltip::after {
   border-top-color: var(--bg-surface-elevated, rgba(30, 30, 32, 0.92));
@@ -1798,6 +1989,13 @@ body.is-turning-page .ruler-mask.is-visible {
   transform-origin: bottom right;
   opacity: 1 !important;
   transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="espresso"] .ruler-quick-popover,
+.theme-espresso .ruler-quick-popover {
+  background: #332a1b !important;
+  color: #f3ead8 !important;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(243, 234, 216, 0.10);
 }
 
 [data-theme="dark"] .ruler-quick-popover,
@@ -3080,6 +3278,7 @@ body.is-pdf-mode:not(.mode-vertical) .pdf-spread-container > .pdf-page-slot {
    Dark / OLED Mode Filter pro PDF Canvas
    ========================================================================== */
 
+[data-theme="espresso"] .pdf-page-canvas,
 [data-theme="dark"] .pdf-page-canvas {
   filter: invert(0.92) hue-rotate(180deg) contrast(0.95) brightness(0.95) !important;
 }
@@ -3088,6 +3287,9 @@ body.is-pdf-mode:not(.mode-vertical) .pdf-spread-container > .pdf-page-slot {
   filter: invert(1) hue-rotate(180deg) contrast(1.05) !important;
 }
 
+[data-theme="espresso"] .pdf-page-container canvas,
+.theme-espresso .pdf-page-canvas,
+.theme-espresso .pdf-page-container canvas,
 [data-theme="dark"] .pdf-page-container canvas,
 .theme-dark .pdf-page-canvas,
 .theme-dark .pdf-page-container canvas {
@@ -3334,6 +3536,35 @@ body.is-pdf-mode:not(.mode-vertical) .pdf-spread-container > .pdf-page-slot {
     height: 32px !important;
     min-width: 32px !important;
   }
+
+  .reader-floating-dock {
+    width: calc(100vw - max(1rem, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))) !important;
+    min-width: 240px !important;
+  }
+
+  .pill-page-stepper {
+    height: 36px;
+    padding: 0 2px;
+  }
+
+  .pill-stepper-btn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .pill-stepper-display {
+    padding: 0 5px;
+    font-size: 0.78rem;
+  }
+
+  .action-cluster-top-actions {
+    gap: 6px;
+  }
+
+  .action-cluster-top-actions .dock-action-btn {
+    width: 36px;
+    height: 36px;
+  }
 }
 
 /* Odstranění náročného backdrop-filter na dotykových zařízeních pro výchozí motiv (iPad A10 GPU optimalizace) */
@@ -3342,6 +3573,7 @@ body.is-pdf-mode:not(.mode-vertical) .pdf-spread-container > .pdf-page-slot {
   body:not(.ui-liquid-glass) .btn-reader-menu-fab,
   body:not(.ui-liquid-glass) .dock-action-btn,
   body:not(.ui-liquid-glass) .dock-action-btn-wide,
+  body:not(.ui-liquid-glass) .pill-page-stepper,
   body:not(.ui-liquid-glass) .pill-scrubber-capsule,
   body:not(.ui-liquid-glass) .apple-books-capsule,
   body:not(.ui-liquid-glass) .pill-scrubber-tooltip,
@@ -3457,6 +3689,29 @@ html[data-theme="sepia"] body.ui-liquid-glass .ruler-quick-popover:hover,
   opacity: 1 !important;
 }
 
+body.theme-espresso.ui-liquid-glass #ruler-quick-popover,
+body.theme-espresso.ui-liquid-glass .ruler-quick-popover,
+html[data-theme="espresso"] body.ui-liquid-glass #ruler-quick-popover,
+html[data-theme="espresso"] body.ui-liquid-glass .ruler-quick-popover,
+[data-theme="espresso"] body.ui-liquid-glass #ruler-quick-popover,
+[data-theme="espresso"] body.ui-liquid-glass .ruler-quick-popover,
+[data-theme="espresso"] #ruler-quick-popover,
+[data-theme="espresso"] .ruler-quick-popover,
+body.theme-espresso.ui-liquid-glass #ruler-quick-popover:hover,
+body.theme-espresso.ui-liquid-glass .ruler-quick-popover:hover,
+html[data-theme="espresso"] body.ui-liquid-glass #ruler-quick-popover:hover,
+html[data-theme="espresso"] body.ui-liquid-glass .ruler-quick-popover:hover,
+[data-theme="espresso"] body.ui-liquid-glass #ruler-quick-popover:hover,
+[data-theme="espresso"] body.ui-liquid-glass .ruler-quick-popover:hover,
+[data-theme="espresso"] #ruler-quick-popover:hover,
+[data-theme="espresso"] .ruler-quick-popover:hover {
+  background: #332a1b !important;
+  color: #f3ead8 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
+}
+
 body.theme-dark.ui-liquid-glass #ruler-quick-popover,
 body.theme-dark.ui-liquid-glass .ruler-quick-popover,
 html[data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover,
@@ -3464,6 +3719,13 @@ html[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover,
 [data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover,
 [data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover,
 [data-theme="dark"] #ruler-quick-popover,
+[data-theme="espresso"] .ruler-quick-popover,
+.theme-espresso .ruler-quick-popover {
+  background: #332a1b !important;
+  color: #f3ead8 !important;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(243, 234, 216, 0.10);
+}
+
 [data-theme="dark"] .ruler-quick-popover,
 body.theme-dark.ui-liquid-glass #ruler-quick-popover:hover,
 body.theme-dark.ui-liquid-glass .ruler-quick-popover:hover,
@@ -3918,6 +4180,21 @@ body.ui-liquid-glass .dock-action-btn:active {
   transform: scale(0.91) !important;
 }
 
+body.ui-liquid-glass .pill-page-stepper {
+  background: var(--lq-glass-bg) !important;
+  backdrop-filter: var(--lq-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  border-top-color: var(--lq-glass-border-top) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow) !important;
+  color: var(--lq-glass-text) !important;
+}
+
+body.ui-liquid-glass .pill-stepper-btn:hover:not(:disabled),
+body.ui-liquid-glass .pill-stepper-display:hover {
+  background: var(--lq-glass-track-bg) !important;
+}
+
 body.ui-liquid-glass .dock-action-btn-wide,
 body.ui-liquid-glass .pill-scrubber-capsule,
 body.ui-liquid-glass .apple-books-capsule {
@@ -3940,12 +4217,13 @@ body.ui-liquid-glass .apple-books-capsule:hover {
   background: var(--lq-glass-bg-hover) !important;
   border-color: var(--lq-glass-border-hover) !important;
   box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow-hover) !important;
-  transform: translateY(-1px) scale(1.03) !important;
+  transform: translateY(-1px) scaleY(1.03) !important;
 }
 
 body.ui-liquid-glass .pill-scrubber-capsule.is-scrubbing {
-  transform: scale(1.04) !important;
-  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow-hover) !important;
+  transform: scaleY(1.07) !important;
+  border-color: rgba(96, 165, 250, 0.7) !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3), var(--lq-chromatic-rim), var(--lq-glass-shadow-hover) !important;
 }
 
 body.ui-liquid-glass .pill-scrubber-progress-fill {
@@ -3954,20 +4232,20 @@ body.ui-liquid-glass .pill-scrubber-progress-fill {
   border-radius: 9999px 0 0 9999px;
 }
 
+body.ui-liquid-glass .pill-scrubber-thumb {
+  background: var(--lq-glass-text, #ffffff);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.45);
+}
+
 body.ui-liquid-glass .pill-scrubber-label {
   color: var(--lq-glass-text) !important;
   text-shadow: var(--lq-glass-text-shadow);
 }
 
-body.ui-liquid-glass .pill-scrubber-menu-btn {
+body.ui-liquid-glass .dock-action-btn.pill-scrubber-menu-btn {
+  width: 44px;
+  height: 44px;
   color: var(--lq-glass-text) !important;
-  transition: transform var(--lq-spring-duration) var(--lq-spring-easing),
-              background 0.2s ease !important;
-}
-
-body.ui-liquid-glass .pill-scrubber-menu-btn:hover {
-  background: var(--lq-glass-track-bg) !important;
-  transform: scale(1.1);
 }
 
 body.ui-liquid-glass .pill-scrubber-tooltip {
@@ -3979,7 +4257,7 @@ body.ui-liquid-glass .pill-scrubber-tooltip {
   box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow) !important;
   color: var(--lq-glass-text) !important;
   text-shadow: var(--lq-glass-text-shadow);
-  border-radius: 9999px !important;
+  border-radius: 16px !important;
 }
 
 /* Mobilní rozložení rychlého nastavení pravítka (#ruler-quick-popover) */

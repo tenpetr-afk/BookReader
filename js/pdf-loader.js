@@ -109,9 +109,9 @@ export class PDFLoader {
 
   _isDarkThemeActive() {
     const docTheme = document.documentElement.getAttribute("data-theme");
-    if (docTheme === "dark" || docTheme === "oled") return true;
+    if (docTheme === "dark" || docTheme === "oled" || docTheme === "espresso") return true;
     const bodyTheme = document.body?.getAttribute("data-theme");
-    return bodyTheme === "dark" || bodyTheme === "oled";
+    return bodyTheme === "dark" || bodyTheme === "oled" || bodyTheme === "espresso";
   }
 
   _destroyCanvas(canvas) {
