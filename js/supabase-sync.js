@@ -4,31 +4,34 @@
  * obousměrnou synchronizaci mezi zařízeními a offline-first fungování.
  */
 
-import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.6.1';
-import { storage, computeFileHash } from './storage.js?v=2.6.1';
-import { EpubParser } from './epub-parser.js?v=2.6.1';
+import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.6.5';
+import { storage, computeFileHash, getBookProgressTimestamp } from './storage.js?v=2.6.5';
+import { EpubParser } from './epub-parser.js?v=2.6.5';
 
 export class SupabaseSync {
   constructor() {
     this.status = "idle"; // "idle" | "syncing" | "synced" | "error" | "offline"
     this.statusListeners = new Set();
     this.syncCompletedListeners = new Set();
-    this.pendingProgress = null;
+    this.pendingProgress = new Map();
     this.progressDebounceTimer = null;
+    this._inFlightProgress = new Set();
+    this._booksSchemaHasAnchorCols = true;
     this.isSyncing = false;
     this._lastSyncTime = 0;
 
-    // Sledování změn síťového připojení
+    // Sledování změn síťového připojení a životního cyklu stránky (okamžitý flush při uspání/zavření)
     if (typeof window !== "undefined") {
       window.addEventListener("online", () => this.handleOnline());
       window.addEventListener("offline", () => this.handleOffline());
-      window.addEventListener("beforeunload", () => this.flushPendingProgress());
+      window.addEventListener("beforeunload", () => this.flushPendingProgress({ keepalive: true }));
+      window.addEventListener("pagehide", () => this.flushPendingProgress({ keepalive: true }));
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "hidden") {
-          this.flushPendingProgress();
+          this.flushPendingProgress({ keepalive: true });
         }
       });
-      
+
       if (!navigator.onLine) {
         this.status = "offline";
       }
@@ -187,10 +190,15 @@ export class SupabaseSync {
       }
 
       // Zápis / aktualizace metadat v databázi (tabulka books)
-      const scrollProg = Number(book.scrollPercent ?? book.pageRatio ?? 0) || 0;
+      const scrollProg = isPdf
+        ? (Number(book.scrollPercent ?? book.pageRatio ?? 0) || 0)
+        : (book.readingAnchor && typeof book.readingAnchor.bookProgress === "number"
+          ? Math.max(0, Math.min(1, book.readingAnchor.bookProgress / 100))
+          : (Number(book.scrollPercent ?? book.pageRatio ?? 0) || 0));
       const chIdx = Number(book.currentChapterIndex) || 0;
       const pIdx = Math.max(1, (Number(book.currentPageIndex) || 0) + 1);
       const rulerH = Number(book.pdfRulerConfig?.height) || 32;
+      const progTs = getBookProgressTimestamp(book);
 
       const row = {
         id: book.id,
@@ -202,12 +210,24 @@ export class SupabaseSync {
         current_page: pIdx,
         scroll_progress: scrollProg,
         pdf_ruler_height: rulerH,
-        updated_at: new Date(book.lastReadAt || Date.now()).toISOString()
+        updated_at: new Date(progTs || book.lastReadAt || Date.now()).toISOString()
       };
 
-      const { error: dbError } = await supabase
+      if (this._booksSchemaHasAnchorCols) {
+        row.reading_anchor = book.readingAnchor || null;
+        row.progress_updated_at = progTs > 0 ? new Date(progTs).toISOString() : null;
+      }
+
+      let { error: dbError } = await supabase
         .from("books")
         .upsert(row, { onConflict: "id" });
+
+      if (dbError && this._isMissingAnchorColumnError(dbError)) {
+        this._booksSchemaHasAnchorCols = false;
+        const fallbackRow = this._stripAnchorCols(row);
+        const retry = await supabase.from("books").upsert(fallbackRow, { onConflict: "id" });
+        dbError = retry.error;
+      }
 
       if (dbError) {
         console.error(`[Supabase Sync] ${fileType.toUpperCase()} upload failed:`, dbError);
@@ -274,10 +294,187 @@ export class SupabaseSync {
     }
   }
 
+  _isMissingAnchorColumnError(error) {
+    if (!error) return false;
+    const msg = String(error.message || "");
+    return error.code === "PGRST204" ||
+      error.code === "42703" ||
+      msg.includes("reading_anchor") ||
+      msg.includes("progress_updated_at");
+  }
+
+  _stripAnchorCols(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+    const copy = { ...payload };
+    delete copy.reading_anchor;
+    delete copy.progress_updated_at;
+    return copy;
+  }
+
+  _parseReadingAnchor(rawAnchor) {
+    if (!rawAnchor) return null;
+    let obj = rawAnchor;
+    if (typeof rawAnchor === "string") {
+      try {
+        obj = JSON.parse(rawAnchor);
+      } catch (_) {
+        return null;
+      }
+    }
+    if (!obj || typeof obj !== "object") return null;
+    if (typeof obj.chapterIndex !== "number" && typeof obj.charOffset !== "number" && typeof obj.bookProgress !== "number") {
+      return null;
+    }
+    return obj;
+  }
+
+  getCloudBookTimestamp(cloudBook) {
+    return getBookProgressTimestamp(cloudBook);
+  }
+
+  normalizeCloudBookProgress(cloudBook, localBook = null) {
+    if (!cloudBook) return null;
+    const cloudTime = this.getCloudBookTimestamp(cloudBook);
+    const isPdf = cloudBook.file_type === "pdf" ||
+      cloudBook.file_name?.toLowerCase().endsWith(".pdf") ||
+      cloudBook.file_path?.toLowerCase().endsWith(".pdf") ||
+      !!(localBook?.isPdf || localBook?.format === "pdf");
+
+    const readingAnchor = !isPdf ? this._parseReadingAnchor(cloudBook.reading_anchor || cloudBook.readingAnchor) : null;
+    const chIdx = readingAnchor && typeof readingAnchor.chapterIndex === "number"
+      ? readingAnchor.chapterIndex
+      : (Number(cloudBook.current_chapter) || 0);
+    const pIdx = Math.max(0, (Number(cloudBook.current_page) || 1) - 1);
+    const currPage = pIdx + 1;
+    const rawScroll = Number(cloudBook.scroll_progress) || 0;
+
+    let computedProgress = 0;
+    let pageRatio = rawScroll;
+    let scrollPercent = rawScroll;
+    const totalPages = isPdf ? (localBook?.numPages || cloudBook.total_pages || localBook?.total_pages) : undefined;
+
+    if (isPdf) {
+      if (totalPages && totalPages > 0) {
+        computedProgress = Math.max(0, Math.min(100, Math.round((currPage / totalPages) * 100)));
+      } else {
+        computedProgress = Math.max(0, Math.min(100, Math.round((rawScroll > 0 && rawScroll <= 1) ? rawScroll * 100 : rawScroll)));
+      }
+    } else if (readingAnchor) {
+      if (typeof readingAnchor.bookProgress === "number" && !isNaN(readingAnchor.bookProgress)) {
+        computedProgress = Math.max(0, Math.min(100, Math.round(readingAnchor.bookProgress)));
+      } else {
+        computedProgress = Math.max(0, Math.min(100, Math.round((rawScroll > 0 && rawScroll <= 1) ? rawScroll * 100 : rawScroll)));
+      }
+      if (typeof readingAnchor.chapterRatio === "number" && !isNaN(readingAnchor.chapterRatio)) {
+        pageRatio = Math.max(0, Math.min(1, readingAnchor.chapterRatio));
+      }
+      scrollPercent = computedProgress / 100;
+      if (!readingAnchor.updatedAt && cloudTime > 0) {
+        readingAnchor.updatedAt = cloudTime;
+      }
+    } else {
+      computedProgress = Math.max(0, Math.min(100, Math.round((rawScroll > 0 && rawScroll <= 1) ? rawScroll * 100 : rawScroll)));
+    }
+
+    const updates = {
+      currentChapterIndex: chIdx,
+      currentPageIndex: pIdx,
+      currentPage: currPage,
+      scrollPercent,
+      scroll_progress: rawScroll,
+      pageRatio,
+      progress: computedProgress,
+      progressPercent: computedProgress,
+      progressUpdatedAt: cloudTime,
+      lastReadAt: cloudTime || Date.now()
+    };
+    if (totalPages) {
+      updates.numPages = totalPages;
+    }
+    if (readingAnchor) {
+      updates.readingAnchor = readingAnchor;
+    }
+    if (cloudBook.pdf_ruler_height && localBook?.pdfRulerConfig) {
+      updates.pdfRulerConfig = {
+        ...localBook.pdfRulerConfig,
+        height: cloudBook.pdf_ruler_height,
+        stepSize: cloudBook.pdf_ruler_height
+      };
+    }
+
+    return updates;
+  }
+
   /**
-   * Asynchronní aktualizace postupu čtení s debouncingem
+   * Stáhne nejnovější pozici čtení pro konkrétní knihu ze Supabase (pro kontrolu před otevřením)
    */
-  syncProgress(bookId, progressData, { immediate = false } = {}) {
+  async fetchBookProgress(bookId, bookMeta = null) {
+    if (!this.isOnline() || !supabase || !bookId) return null;
+
+    try {
+      let { data, error } = await supabase
+        .from("books")
+        .select("*")
+        .eq("id", bookId)
+        .maybeSingle();
+
+      if (!data && !error && bookMeta?.file_path) {
+        const alt = await supabase
+          .from("books")
+          .select("*")
+          .eq("file_path", bookMeta.file_path)
+          .maybeSingle();
+        data = alt.data;
+        error = alt.error;
+      }
+
+      if (error || !data) return null;
+
+      const timestamp = this.getCloudBookTimestamp(data);
+      const progressUpdates = this.normalizeCloudBookProgress(data, bookMeta);
+      return { cloudRow: data, progressUpdates, timestamp };
+    } catch (err) {
+      console.warn("[SupabaseSync] Chyba při stahování postupu knihy z cloudu:", err);
+      return null;
+    }
+  }
+
+  _buildBookProgressPatch(progressData) {
+    const ts = getBookProgressTimestamp(progressData) || Date.now();
+    const isoTs = new Date(ts).toISOString();
+    const patch = {
+      updated_at: isoTs
+    };
+
+    if (typeof progressData.currentChapterIndex === "number") {
+      patch.current_chapter = progressData.currentChapterIndex;
+    }
+    if (typeof progressData.currentPageIndex === "number") {
+      patch.current_page = progressData.currentPageIndex + 1;
+    }
+    if (typeof progressData.scrollPercent === "number") {
+      patch.scroll_progress = progressData.scrollPercent;
+    } else if (typeof progressData.pageRatio === "number") {
+      patch.scroll_progress = progressData.pageRatio;
+    }
+    if (typeof progressData.pdfRulerHeight === "number") {
+      patch.pdf_ruler_height = progressData.pdfRulerHeight;
+    }
+
+    if (this._booksSchemaHasAnchorCols) {
+      if (progressData.readingAnchor !== undefined) {
+        patch.reading_anchor = progressData.readingAnchor;
+      }
+      patch.progress_updated_at = isoTs;
+    }
+
+    return patch;
+  }
+
+  /**
+   * Asynchronní aktualizace postupu čtení s koalescencí nebo okamžitým odesláním
+   */
+  syncProgress(bookId, progressData, { immediate = false, keepalive = false } = {}) {
     if (!this.isOnline() || !bookId || !progressData) return;
 
     if (this.progressDebounceTimer) {
@@ -285,47 +482,100 @@ export class SupabaseSync {
       this.progressDebounceTimer = null;
     }
 
-    this.pendingProgress = { bookId, progressData };
+    this.pendingProgress.set(bookId, progressData);
 
-    if (immediate) {
-      this.flushPendingProgress();
+    if (immediate || keepalive) {
+      this.flushPendingProgress({ bookId, keepalive });
     } else {
       this.progressDebounceTimer = setTimeout(() => {
+        this.progressDebounceTimer = null;
         this.flushPendingProgress();
-      }, 1500);
+      }, 250);
     }
   }
 
   /**
-   * Okamžité odeslání čekajícího postupu čtení
+   * Okamžité odeslání čekajícího postupu čtení (s podporou keepalive pro zavření / background)
    */
-  async flushPendingProgress() {
-    if (!this.pendingProgress || !this.isOnline() || !supabase) return;
+  async flushPendingProgress({ bookId = null, keepalive = false } = {}) {
+    if (!this.isOnline() || !supabase) return;
+    if (!this.pendingProgress || this.pendingProgress.size === 0) return;
 
-    const { bookId, progressData } = this.pendingProgress;
-    this.pendingProgress = null;
+    const targetIds = bookId
+      ? (this.pendingProgress.has(bookId) ? [bookId] : [])
+      : Array.from(this.pendingProgress.keys());
+
+    for (const targetBookId of targetIds) {
+      if (!keepalive && this._inFlightProgress.has(targetBookId)) {
+        continue;
+      }
+      await this._flushBookProgressQueue(targetBookId, { keepalive });
+    }
+  }
+
+  async _flushBookProgressQueue(targetBookId, { keepalive = false } = {}) {
+    if (!targetBookId || !this.pendingProgress.has(targetBookId)) return;
+
+    if (keepalive) {
+      const progressData = this.pendingProgress.get(targetBookId);
+      this.pendingProgress.delete(targetBookId);
+      await this._sendProgressPatch(targetBookId, progressData, { keepalive: true });
+      return;
+    }
+
+    if (this._inFlightProgress.has(targetBookId)) return;
+    this._inFlightProgress.add(targetBookId);
 
     try {
-      const patch = {
-        updated_at: new Date().toISOString()
-      };
+      while (this.pendingProgress.has(targetBookId)) {
+        const progressData = this.pendingProgress.get(targetBookId);
+        this.pendingProgress.delete(targetBookId);
+        await this._sendProgressPatch(targetBookId, progressData, { keepalive: false });
+      }
+    } finally {
+      this._inFlightProgress.delete(targetBookId);
+    }
+  }
 
-      if (typeof progressData.currentChapterIndex === "number") {
-        patch.current_chapter = progressData.currentChapterIndex;
-      }
-      if (typeof progressData.currentPageIndex === "number") {
-        patch.current_page = progressData.currentPageIndex + 1;
-      }
-      if (typeof progressData.scrollPercent === "number") {
-        patch.scroll_progress = progressData.scrollPercent;
-      } else if (typeof progressData.pageRatio === "number") {
-        patch.scroll_progress = progressData.pageRatio;
-      }
-      if (typeof progressData.pdfRulerHeight === "number") {
-        patch.pdf_ruler_height = progressData.pdfRulerHeight;
+  async _sendProgressPatch(bookId, progressData, { keepalive = false } = {}) {
+    try {
+      const patch = this._buildBookProgressPatch(progressData);
+
+      if (keepalive && typeof fetch === "function" && SUPABASE_URL && SUPABASE_ANON_KEY) {
+        const endpoint = `${SUPABASE_URL}/rest/v1/books?id=eq.${encodeURIComponent(bookId)}`;
+        const headers = {
+          "apikey": SUPABASE_ANON_KEY,
+          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal"
+        };
+        const res = await fetch(endpoint, {
+          method: "PATCH",
+          keepalive: true,
+          headers,
+          body: JSON.stringify(patch)
+        });
+        if (!res.ok && res.status === 400 && this._booksSchemaHasAnchorCols) {
+          this._booksSchemaHasAnchorCols = false;
+          await fetch(endpoint, {
+            method: "PATCH",
+            keepalive: true,
+            headers,
+            body: JSON.stringify(this._stripAnchorCols(patch))
+          }).catch(() => {});
+        }
+        return;
       }
 
-      await supabase.from("books").update(patch).eq("id", bookId);
+      let { error } = await supabase.from("books").update(patch).eq("id", bookId);
+      if (error && this._isMissingAnchorColumnError(error)) {
+        this._booksSchemaHasAnchorCols = false;
+        const retryRes = await supabase.from("books").update(this._stripAnchorCols(patch)).eq("id", bookId);
+        error = retryRes.error;
+      }
+      if (error) {
+        console.warn("[SupabaseSync] Chyba při odesílání postupu čtení:", error);
+      }
     } catch (err) {
       console.warn("[SupabaseSync] Chyba při odesílání postupu čtení:", err);
     }
@@ -684,6 +934,7 @@ export class SupabaseSync {
 
               const author = cloudBook.author || cloudBook.creator || parsedAuthor || "Neznámý autor";
               const title = cloudBook.title || parsedTitle || "Kniha EPUB";
+              const cloudProg = this.normalizeCloudBookProgress(cloudBook);
 
               newBookData = {
                 id: cloudBook.id,
@@ -700,17 +951,19 @@ export class SupabaseSync {
                 fileData: arrayBuffer,
                 data: arrayBuffer,
                 addedAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
-                lastReadAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
-                currentChapterIndex: Number(cloudBook.current_chapter) || 0,
-                currentPageIndex: Math.max(0, (Number(cloudBook.current_page) || 1) - 1),
+                lastReadAt: cloudProg?.lastReadAt || (cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now()),
+                progressUpdatedAt: cloudProg?.progressUpdatedAt || 0,
+                currentChapterIndex: cloudProg?.currentChapterIndex ?? (Number(cloudBook.current_chapter) || 0),
+                currentPageIndex: cloudProg?.currentPageIndex ?? Math.max(0, (Number(cloudBook.current_page) || 1) - 1),
                 totalChapters: totalChapters,
                 totalWords: totalWords,
                 wordsRead: 0,
-                progress: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
-                progressPercent: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
-                currentPage: Number(cloudBook.current_page) || 1,
-                scrollPercent: Number(cloudBook.scroll_progress) || 0,
-                pageRatio: Number(cloudBook.scroll_progress) || 0
+                progress: cloudProg?.progress ?? Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
+                progressPercent: cloudProg?.progressPercent ?? Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
+                currentPage: cloudProg?.currentPage ?? (Number(cloudBook.current_page) || 1),
+                scrollPercent: cloudProg?.scrollPercent ?? (Number(cloudBook.scroll_progress) || 0),
+                pageRatio: cloudProg?.pageRatio ?? (Number(cloudBook.scroll_progress) || 0),
+                readingAnchor: cloudProg?.readingAnchor || null
               };
             }
 
@@ -724,58 +977,60 @@ export class SupabaseSync {
             console.error(`[Supabase Sync] Nepodařilo se stáhnout a zpracovat knihu ${cloudBook.id}:`, dlErr);
           }
         } else {
-          // Kniha existuje v obou úložištích -> Synchronizace postupu čtení
+          // Kniha existuje v obou úložištích -> Synchronizace postupu čtení s kontrolou nejnovějšího časového razítka
           matchedLocalIds.add(localBook.id);
-          const cloudTime = cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : 0;
-          const localTime = localBook.lastReadAt || localBook.addedAt || 0;
 
-          // Pokud je cloud o více než 2 sekundy novější než lokální stav:
-          if (cloudTime > localTime + 2000) {
-            const chIdx = cloudBook.current_chapter || 0;
-            const pIdx = Math.max(0, (cloudBook.current_page || 1) - 1);
-            const scroll = Number(cloudBook.scroll_progress) || 0;
-            const currPage = pIdx + 1;
-            const totalPages = localBook.numPages || cloudBook.total_pages || localBook.total_pages;
-            const computedProgress = (totalPages && totalPages > 0)
-              ? Math.max(0, Math.min(100, Math.round((currPage / totalPages) * 100)))
-              : Math.max(0, Math.min(100, Math.round((scroll > 0 && scroll <= 1) ? scroll * 100 : scroll)));
+          // Opětovné načtení nejčerstvějšího lokálního stavu (chrání před souběhem, pokud uživatel během stahování otočil stránku)
+          const freshLocalBook = (await storage.getBook(localBook.id)) || localBook;
+          const cachedLocal = storage.getCachedBookProgress(localBook.id);
 
-            const updates = {
-              currentChapterIndex: chIdx,
-              currentPageIndex: pIdx,
-              currentPage: currPage,
-              numPages: totalPages,
-              scrollPercent: scroll,
-              scroll_progress: scroll,
-              pageRatio: scroll,
-              progress: computedProgress,
-              progressPercent: computedProgress,
-              lastReadAt: cloudTime
-            };
-            if (cloudBook.pdf_ruler_height && localBook.pdfRulerConfig) {
-              updates.pdfRulerConfig = {
-                height: cloudBook.pdf_ruler_height,
-                stepSize: cloudBook.pdf_ruler_height
-              };
+          const idbTime = getBookProgressTimestamp(freshLocalBook);
+          const lsTime = getBookProgressTimestamp(cachedLocal);
+          const localTime = Math.max(idbTime, lsTime);
+          const effectiveLocal = (lsTime > idbTime && cachedLocal)
+            ? { ...freshLocalBook, ...cachedLocal, progressUpdatedAt: lsTime }
+            : freshLocalBook;
+
+          const cloudTime = this.getCloudBookTimestamp(cloudBook);
+
+          if (cloudTime > localTime + 50) {
+            const updates = this.normalizeCloudBookProgress(cloudBook, freshLocalBook);
+            if (updates) {
+              await storage.updateBookProgress(localBook.id, updates);
+              try {
+                localStorage.setItem(`lumina_progress_${localBook.id}`, JSON.stringify(updates));
+              } catch (e) {}
+
+              stats.updatedFromCloud++;
+              console.log(`[SupabaseSync] Postup knihy "${freshLocalBook.title}" aktualizován z cloudu (ts: ${cloudTime} > ${localTime}).`);
             }
-
-            await storage.updateBookProgress(localBook.id, updates);
-            try {
-              localStorage.setItem(`lumina_progress_${localBook.id}`, JSON.stringify(updates));
-            } catch (e) {}
-
-            stats.updatedFromCloud++;
-            console.log(`[SupabaseSync] Postup knihy "${localBook.title}" aktualizován z cloudu (kap. ${chIdx}, str. ${pIdx + 1}).`);
-          } else if (localTime > cloudTime + 2000) {
+          } else if (localTime > cloudTime + 50) {
             // Lokální stav je novější -> odeslat do cloudu
+            const isPdfLocal = !!(effectiveLocal.isPdf || effectiveLocal.format === "pdf");
+            const localAnchor = !isPdfLocal ? (effectiveLocal.readingAnchor || null) : null;
+            const localScrollProg = isPdfLocal
+              ? (Number(effectiveLocal.scrollPercent ?? effectiveLocal.pageRatio ?? 0) || 0)
+              : (localAnchor && typeof localAnchor.bookProgress === "number"
+                ? Math.max(0, Math.min(1, localAnchor.bookProgress / 100))
+                : (Number(effectiveLocal.scrollPercent ?? effectiveLocal.pageRatio ?? 0) || 0));
+
+            const isoLocal = new Date(localTime).toISOString();
             const patch = {
-              current_chapter: localBook.currentChapterIndex || 0,
-              current_page: Math.max(1, (localBook.currentPageIndex || 0) + 1),
-              scroll_progress: Number(localBook.scrollPercent ?? localBook.pageRatio ?? 0) || 0,
-              pdf_ruler_height: localBook.pdfRulerConfig?.height || 32,
-              updated_at: new Date(localTime).toISOString()
+              current_chapter: effectiveLocal.currentChapterIndex || 0,
+              current_page: Math.max(1, (effectiveLocal.currentPageIndex || 0) + 1),
+              scroll_progress: localScrollProg,
+              pdf_ruler_height: effectiveLocal.pdfRulerConfig?.height || 32,
+              updated_at: isoLocal
             };
-            await supabase.from("books").update(patch).eq("id", cloudBook.id);
+            if (this._booksSchemaHasAnchorCols) {
+              patch.reading_anchor = localAnchor;
+              patch.progress_updated_at = isoLocal;
+            }
+            let { error: upErr } = await supabase.from("books").update(patch).eq("id", cloudBook.id);
+            if (upErr && this._isMissingAnchorColumnError(upErr)) {
+              this._booksSchemaHasAnchorCols = false;
+              await supabase.from("books").update(this._stripAnchorCols(patch)).eq("id", cloudBook.id);
+            }
             stats.uploadedToCloud++;
           }
 
@@ -784,14 +1039,14 @@ export class SupabaseSync {
             try {
               const cloudPatch = {
                 id: localBook.id,
-                title: localBook.title,
-                file_name: localBook.fileName,
+                title: freshLocalBook.title,
+                file_name: freshLocalBook.fileName,
                 file_type: "pdf",
                 file_path: `books/${localBook.id}.pdf`,
-                current_chapter: localBook.currentChapterIndex || 0,
-                current_page: Math.max(1, (localBook.currentPageIndex || 0) + 1),
-                scroll_progress: Number(localBook.scrollPercent ?? localBook.pageRatio ?? 0) || 0,
-                pdf_ruler_height: localBook.pdfRulerConfig?.height || 32,
+                current_chapter: effectiveLocal.currentChapterIndex || 0,
+                current_page: Math.max(1, (effectiveLocal.currentPageIndex || 0) + 1),
+                scroll_progress: Number(effectiveLocal.scrollPercent ?? effectiveLocal.pageRatio ?? 0) || 0,
+                pdf_ruler_height: effectiveLocal.pdfRulerConfig?.height || 32,
                 updated_at: new Date(localTime || Date.now()).toISOString()
               };
               await supabase.from("books").upsert(cloudPatch, { onConflict: "id" });

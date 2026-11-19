@@ -586,3 +586,739 @@ export class EpubParser {
     this.blobUrlsToRevoke = [];
   }
 }
+
+// ==============================================================================
+// Content-Anchored EPUB Position Tracking & Resolution Helpers
+// ==============================================================================
+
+const ANCHOR_SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "SVG", "CANVAS"]);
+const ANCHOR_BLOCK_TAGS = new Set([
+  "P", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "BLOCKQUOTE",
+  "TR", "SECTION", "ARTICLE", "HEADER", "FOOTER", "ASIDE", "DD", "DT",
+  "PRE", "FIGCAPTION", "BR", "HR"
+]);
+const ANCHOR_MEDIA_SELECTOR = "img, image, svg, canvas, video, audio, table";
+const ANCHOR_INVISIBLE_CHAR_REGEX = /[\u00AD\u200B-\u200D\uFEFF\u2060]/;
+const ANCHOR_WHITESPACE_REGEX = /[\s\u00A0]/;
+
+/**
+ * Sestaví normalizovaný textový index kapitoly s mapováním na DOM textové uzly.
+ * Je invariantní vůči typografii, rozměrům obrazovky i Bionic Reading (<b>) značkám.
+ *
+ * @param {Element} rootElement
+ * @returns {{ normalizedText: string, runs: Array<{ node: Text, nodeOffset: number, length: number, normStart: number, normEnd: number }> }}
+ */
+export function buildChapterTextIndex(rootElement) {
+  if (!rootElement) {
+    return { normalizedText: "", runs: [] };
+  }
+
+  let normalizedText = "";
+  let pendingSpace = false;
+  const runs = [];
+
+  const appendBlockSeparator = () => {
+    if (normalizedText.length > 0) {
+      pendingSpace = true;
+    }
+  };
+
+  const flushSpace = () => {
+    if (pendingSpace && normalizedText.length > 0 && normalizedText[normalizedText.length - 1] !== " ") {
+      normalizedText += " ";
+    }
+    pendingSpace = false;
+  };
+
+  const walk = (node) => {
+    if (!node) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const val = node.nodeValue || "";
+      if (val.length === 0) return;
+
+      let runStartInNode = -1;
+      let runNormStart = -1;
+      let runBuf = "";
+
+      const commitRun = () => {
+        if (runBuf.length === 0 || runStartInNode < 0) return;
+        const normStart = runNormStart;
+        normalizedText += runBuf;
+        const normEnd = normalizedText.length;
+        runs.push({
+          node,
+          nodeOffset: runStartInNode,
+          length: runBuf.length,
+          normStart,
+          normEnd
+        });
+        runStartInNode = -1;
+        runNormStart = -1;
+        runBuf = "";
+      };
+
+      for (let i = 0; i < val.length; i++) {
+        const ch = val[i];
+        if (ANCHOR_INVISIBLE_CHAR_REGEX.test(ch)) {
+          commitRun();
+          continue;
+        }
+        if (ANCHOR_WHITESPACE_REGEX.test(ch)) {
+          commitRun();
+          if (normalizedText.length > 0) {
+            pendingSpace = true;
+          }
+          continue;
+        }
+        if (runStartInNode < 0) {
+          flushSpace();
+          runStartInNode = i;
+          runNormStart = normalizedText.length;
+        }
+        runBuf += ch;
+      }
+      commitRun();
+      return;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const tag = (node.tagName || "").toUpperCase();
+    if (ANCHOR_SKIP_TAGS.has(tag)) return;
+
+    const isBlock = ANCHOR_BLOCK_TAGS.has(tag);
+    if (isBlock) appendBlockSeparator();
+
+    for (let child = node.firstChild; child; child = child.nextSibling) {
+      walk(child);
+    }
+
+    if (isBlock) appendBlockSeparator();
+  };
+
+  walk(rootElement);
+  return { normalizedText, runs };
+}
+
+/**
+ * Najde běh (run) odpovídající normalizovanému znakovému offsetu pomocí binárního vyhledávání.
+ */
+function findRunIndexForOffset(runs, normOffset) {
+  if (!runs || runs.length === 0) return -1;
+  let lo = 0;
+  let hi = runs.length - 1;
+  let bestAfter = -1;
+
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const run = runs[mid];
+    if (normOffset >= run.normStart && normOffset < run.normEnd) {
+      return mid;
+    }
+    if (normOffset < run.normStart) {
+      bestAfter = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return bestAfter !== -1 ? bestAfter : runs.length - 1;
+}
+
+/**
+ * Převede znakový offset v normalizovaném textu na DOM bod { node, offset }.
+ */
+export function offsetToDomPoint(indexData, normOffset) {
+  const runs = indexData?.runs;
+  if (!runs || runs.length === 0) return null;
+
+  const clamped = Math.max(0, Math.min(indexData.normalizedText.length, normOffset));
+  const idx = findRunIndexForOffset(runs, clamped);
+  if (idx < 0) return null;
+
+  const run = runs[idx];
+  const nodeLen = run.node?.nodeValue?.length ?? 0;
+  if (clamped <= run.normStart) {
+    return { node: run.node, offset: Math.min(nodeLen, run.nodeOffset) };
+  }
+  if (clamped >= run.normEnd) {
+    return { node: run.node, offset: Math.min(nodeLen, run.nodeOffset + run.length) };
+  }
+  return {
+    node: run.node,
+    offset: Math.min(nodeLen, run.nodeOffset + (clamped - run.normStart))
+  };
+}
+
+/**
+ * Převede znakový offset na DOM Range v rámci jediného textového uzlu pro spolehlivé měření pozice.
+ */
+export function offsetToRange(indexData, normOffset, spanLength = 1) {
+  const runs = indexData?.runs;
+  if (!runs || runs.length === 0) return null;
+
+  const totalLen = indexData.normalizedText.length;
+  const clamped = Math.max(0, Math.min(Math.max(0, totalLen - 1), normOffset));
+  const idx = findRunIndexForOffset(runs, clamped);
+  if (idx < 0) return null;
+
+  const run = runs[idx];
+  const node = run.node;
+  const nodeLen = node?.nodeValue?.length ?? 0;
+  if (!node || nodeLen === 0) return null;
+
+  const localStart = Math.max(0, Math.min(nodeLen - 1, run.nodeOffset + Math.max(0, clamped - run.normStart)));
+  const maxInRun = Math.min(nodeLen, run.nodeOffset + run.length);
+  const localEnd = Math.max(localStart + 1, Math.min(maxInRun, localStart + Math.max(1, spanLength)));
+
+  try {
+    const range = document.createRange();
+    range.setStart(node, localStart);
+    range.setEnd(node, Math.min(nodeLen, localEnd));
+    return range;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Převede DOM bod { node, nodeOffset } na přesný znakový offset v normalizovaném textu kapitoly.
+ */
+export function domPointToOffset(indexData, targetNode, nodeOffset = 0) {
+  const runs = indexData?.runs;
+  if (!runs || runs.length === 0 || !targetNode) return 0;
+
+  for (let i = 0; i < runs.length; i++) {
+    const run = runs[i];
+    if (run.node !== targetNode) continue;
+    const runEndInNode = run.nodeOffset + run.length;
+    if (nodeOffset >= run.nodeOffset && nodeOffset <= runEndInNode) {
+      return run.normStart + (nodeOffset - run.nodeOffset);
+    }
+    if (nodeOffset < run.nodeOffset) {
+      return run.normStart;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Sestaví stabilní cestu childNodes indexů od rootElement k targetNode.
+ */
+export function getDomNodePath(rootElement, targetNode) {
+  if (!rootElement || !targetNode) return null;
+  const path = [];
+  let curr = targetNode;
+  while (curr && curr !== rootElement) {
+    const parent = curr.parentNode;
+    if (!parent) return null;
+    const idx = Array.prototype.indexOf.call(parent.childNodes, curr);
+    if (idx < 0) return null;
+    path.push(idx);
+    curr = parent;
+  }
+  if (curr !== rootElement) return null;
+  path.reverse();
+  return path;
+}
+
+/**
+ * Převede cestu childNodes indexů zpět na DOM uzel v rootElement.
+ */
+export function resolveDomNodePath(rootElement, path) {
+  if (!rootElement || !Array.isArray(path)) return null;
+  let curr = rootElement;
+  for (let i = 0; i < path.length; i++) {
+    const idx = path[i];
+    if (typeof idx !== "number" || idx < 0 || !curr.childNodes || idx >= curr.childNodes.length) {
+      return null;
+    }
+    curr = curr.childNodes[idx];
+  }
+  return curr || null;
+}
+
+function getWordRangeLengthAtOffset(text, charOffset) {
+  if (!text || charOffset < 0 || charOffset >= text.length) return 1;
+  let end = charOffset;
+  while (end < text.length && !/\s/.test(text[end]) && (end - charOffset) < 24) {
+    end++;
+  }
+  return Math.max(1, end - charOffset);
+}
+
+/**
+ * Zachytí obsahovou kotvu odpovídající prvnímu viditelnému slovu v levém horním rohu aktivního viewportu.
+ *
+ * @param {Object} params
+ * @returns {Object|null}
+ */
+export function captureViewportAnchor({
+  rootElement,
+  contentElement = null,
+  stageElement = null,
+  viewportElement = null,
+  chapterIndex = 0,
+  pageIndex = 0,
+  exactStep = 0,
+  stageWidth = 0,
+  isVertical = false,
+  bookProgress = 0,
+  chapterRatio = 0,
+  indexData = null
+}) {
+  if (!rootElement) return null;
+  const idxData = indexData || buildChapterTextIndex(rootElement);
+  const { normalizedText } = idxData;
+
+  const contentEl = contentElement || rootElement;
+  const contentRect = contentEl.getBoundingClientRect();
+  const stageRect = stageElement ? stageElement.getBoundingClientRect() : null;
+  const vpRect = viewportElement ? viewportElement.getBoundingClientRect() : stageRect;
+
+  const pageStartX = pageIndex * exactStep;
+  const pageEndX = pageStartX + (stageWidth || (stageRect ? stageRect.width : 0));
+
+  const isRectVisible = (r) => {
+    if (!r || r.width <= 0.5 || r.height <= 0.5) return false;
+    if (isVertical) {
+      if (!vpRect) return true;
+      return r.bottom > vpRect.top + 2 && r.top < vpRect.bottom - 2;
+    }
+    const lLeft = r.left - contentRect.left;
+    const lRight = r.right - contentRect.left;
+    const horizMatch = lRight > pageStartX + 2 && lLeft < pageEndX - 2;
+    if (!horizMatch) return false;
+    if (stageRect) {
+      return r.bottom > stageRect.top + 1 && r.top < stageRect.bottom - 1;
+    }
+    return true;
+  };
+
+  const range = document.createRange();
+  let bestCandidate = null;
+  let fallbackMediaEl = null;
+
+  const isBetterCandidate = (cand, currentBest) => {
+    if (!currentBest) return true;
+    // Preferujeme kandidáta, který začíná přímo na aktuální stránce/viewportu (ne z předchozí)
+    if (cand.startsInside !== currentBest.startsInside) {
+      return cand.startsInside;
+    }
+    if (!isVertical) {
+      // V dvouzápřahovém / vícesloupcovém režimu preferujeme nejlevější sloupec, pak horní řádek
+      const colSpan = Math.max(120, (stageWidth || 600) * 0.45);
+      const candCol = Math.floor(Math.max(0, cand.layoutLeft - pageStartX) / colSpan);
+      const bestCol = Math.floor(Math.max(0, currentBest.layoutLeft - pageStartX) / colSpan);
+      if (candCol !== bestCol) return candCol < bestCol;
+    }
+    if (Math.abs(cand.top - currentBest.top) > 4) {
+      return cand.top < currentBest.top;
+    }
+    return cand.layoutLeft < currentBest.layoutLeft;
+  };
+
+  let visitedVisibleWords = 0;
+
+  const inspectElement = (node) => {
+    if (!node) return;
+    if (visitedVisibleWords >= 40) return;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const val = node.nodeValue || "";
+      if (!val || !/\S/.test(val)) return;
+
+      const wordRegex = /[^\s\u00A0\u00AD\u200B-\u200D\uFEFF\u2060]+/g;
+      let match;
+      while ((match = wordRegex.exec(val)) !== null) {
+        const wStart = match.index;
+        const wEnd = wStart + match[0].length;
+        try {
+          range.setStart(node, wStart);
+          range.setEnd(node, wEnd);
+          const rects = range.getClientRects();
+          for (let j = 0; j < rects.length; j++) {
+            const r = rects[j];
+            if (!isRectVisible(r)) continue;
+            const layoutLeft = r.left - contentRect.left;
+            const startsInside = isVertical
+              ? (vpRect ? r.top >= vpRect.top - 4 : true)
+              : (layoutLeft >= pageStartX - 3);
+            const candidate = {
+              node,
+              offset: wStart,
+              top: r.top,
+              layoutLeft,
+              startsInside
+            };
+            if (isBetterCandidate(candidate, bestCandidate)) {
+              bestCandidate = candidate;
+            }
+            visitedVisibleWords++;
+            break;
+          }
+        } catch (_) {}
+        if (visitedVisibleWords >= 40) break;
+      }
+      return;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const tag = (node.tagName || "").toUpperCase();
+    if (ANCHOR_SKIP_TAGS.has(tag)) return;
+
+    if (["IMG", "IMAGE", "VIDEO", "AUDIO", "CANVAS", "TABLE"].includes(tag)) {
+      const r = node.getBoundingClientRect();
+      if (isRectVisible(r) && !fallbackMediaEl) {
+        fallbackMediaEl = node;
+      }
+      if (tag !== "TABLE") return;
+    }
+
+    // Ořez celých neviditelných větví DOMu v O(1)
+    if (node !== rootElement) {
+      let anyRectVisible = false;
+      try {
+        range.selectNodeContents(node);
+        const rects = range.getClientRects();
+        for (let i = 0; i < rects.length; i++) {
+          if (isRectVisible(rects[i])) {
+            anyRectVisible = true;
+            break;
+          }
+        }
+        if (!anyRectVisible && rects.length === 0) {
+          const br = node.getBoundingClientRect();
+          if (isRectVisible(br)) anyRectVisible = true;
+        }
+      } catch (_) {
+        anyRectVisible = true;
+      }
+      if (!anyRectVisible) return;
+    }
+
+    for (let child = node.firstChild; child; child = child.nextSibling) {
+      inspectElement(child);
+      if (visitedVisibleWords >= 40) break;
+    }
+  };
+
+  inspectElement(rootElement);
+
+  const clampedBookProgress = Math.max(0, Math.min(100, Math.round((Number(bookProgress) || 0) * 100) / 100));
+  const clampedChapterRatio = Math.max(0, Math.min(1, Number(chapterRatio) || 0));
+
+  if (bestCandidate) {
+    let charOffset = domPointToOffset(idxData, bestCandidate.node, bestCandidate.offset);
+    // Pokud Bionic Reading nebo inline tag rozdělil slovo, zůstaneme u začátku slova pokud těsně navazuje
+    if (charOffset > 0 && !/\s/.test(normalizedText[charOffset - 1])) {
+      let wordStart = charOffset;
+      while (wordStart > 0 && !/\s/.test(normalizedText[wordStart - 1]) && (charOffset - wordStart) < 16) {
+        wordStart--;
+      }
+      // Ověříme, zda začátek slova leží stále na téže stránce
+      if (wordStart < charOffset) {
+        const startRange = offsetToRange(idxData, wordStart, 1);
+        const startRect = startRange?.getClientRects?.()[0];
+        if (startRect && isRectVisible(startRect)) {
+          charOffset = wordStart;
+        }
+      }
+    }
+
+    const snippetRaw = normalizedText.slice(charOffset, charOffset + 48).trimEnd();
+    const snippet = snippetRaw.slice(0, 48);
+    const prefixStart = Math.max(0, charOffset - 24);
+    const prefix = normalizedText.slice(prefixStart, charOffset);
+    const suffix = normalizedText.slice(charOffset + snippet.length, charOffset + snippet.length + 24);
+
+    return {
+      version: 2,
+      chapterIndex: Number(chapterIndex) || 0,
+      charOffset,
+      domPath: getDomNodePath(rootElement, bestCandidate.node),
+      domOffset: bestCandidate.offset,
+      snippet,
+      prefix,
+      suffix,
+      chapterLength: normalizedText.length,
+      chapterRatio: Math.round(clampedChapterRatio * 10000) / 10000,
+      bookProgress: clampedBookProgress,
+      hasTextOnPage: true,
+      updatedAt: Date.now()
+    };
+  }
+
+  // Fallback pro stránky obsahující pouze obrázek / média bez textu
+  const fallbackOffset = Math.max(
+    0,
+    Math.min(Math.max(0, normalizedText.length - 1), Math.round(clampedChapterRatio * normalizedText.length))
+  );
+
+  return {
+    version: 2,
+    chapterIndex: Number(chapterIndex) || 0,
+    charOffset: pageIndex === 0 ? 0 : fallbackOffset,
+    domPath: null,
+    domOffset: 0,
+    elementDomPath: fallbackMediaEl ? getDomNodePath(rootElement, fallbackMediaEl) : null,
+    snippet: normalizedText.slice(fallbackOffset, fallbackOffset + 32).trim(),
+    prefix: "",
+    suffix: "",
+    chapterLength: normalizedText.length,
+    chapterRatio: Math.round(clampedChapterRatio * 10000) / 10000,
+    bookProgress: clampedBookProgress,
+    hasTextOnPage: false,
+    updatedAt: Date.now()
+  };
+}
+
+function findClosestOccurrence(haystack, needle, targetOffset) {
+  if (!haystack || !needle) return -1;
+  let pos = 0;
+  let bestIdx = -1;
+  let bestDist = Infinity;
+
+  while (pos < haystack.length) {
+    const idx = haystack.indexOf(needle, pos);
+    if (idx === -1) break;
+    const dist = Math.abs(idx - targetOffset);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = idx;
+      if (dist === 0) break;
+    }
+    pos = idx + Math.max(1, needle.length);
+  }
+  return bestIdx;
+}
+
+/**
+ * Vyhledá uloženou kotvu v aktuálně vykresleném DOMu kapitoly s víceúrovňovým ověřením.
+ *
+ * @param {Element} rootElement
+ * @param {Object} anchor
+ * @param {Object|null} indexData
+ */
+export function resolveAnchorInChapter(rootElement, anchor, indexData = null) {
+  if (!rootElement || !anchor) return null;
+
+  if (anchor.hasTextOnPage === false && Array.isArray(anchor.elementDomPath)) {
+    const mediaEl = resolveDomNodePath(rootElement, anchor.elementDomPath);
+    if (mediaEl) {
+      return {
+        element: mediaEl,
+        range: null,
+        charOffset: Number(anchor.charOffset) || 0,
+        matchedBy: "elementDomPath"
+      };
+    }
+  }
+
+  const idxData = indexData || buildChapterTextIndex(rootElement);
+  const { normalizedText } = idxData;
+
+  if (!normalizedText || normalizedText.length === 0) {
+    if (Array.isArray(anchor.elementDomPath)) {
+      const mediaEl = resolveDomNodePath(rootElement, anchor.elementDomPath);
+      if (mediaEl) {
+        return { element: mediaEl, range: null, charOffset: 0, matchedBy: "elementDomPath" };
+      }
+    }
+    return null;
+  }
+
+  const rawOffset = typeof anchor.charOffset === "number" && !Number.isNaN(anchor.charOffset)
+    ? Math.max(0, Math.min(normalizedText.length - 1, Math.round(anchor.charOffset)))
+    : null;
+  const snippet = typeof anchor.snippet === "string" ? anchor.snippet.trim() : "";
+  const prefix = typeof anchor.prefix === "string" ? anchor.prefix : "";
+  const suffix = typeof anchor.suffix === "string" ? anchor.suffix : "";
+
+  let resolvedOffset = null;
+  let matchedBy = "charOffset";
+
+  // 1. Přesná shoda na charOffset s ověřením kontextu (snippet)
+  if (rawOffset !== null && snippet) {
+    const probePrefix = snippet.slice(0, Math.min(18, snippet.length));
+    const atExact = normalizedText.slice(rawOffset, rawOffset + probePrefix.length);
+    if (atExact === probePrefix) {
+      resolvedOffset = rawOffset;
+      matchedBy = "exactOffset+snippet";
+    } else {
+      // Lokální okno ±96 znaků kolem charOffset
+      const winStart = Math.max(0, rawOffset - 96);
+      const winEnd = Math.min(normalizedText.length, rawOffset + 96 + snippet.length);
+      const localWindow = normalizedText.slice(winStart, winEnd);
+      const localIdx = findClosestOccurrence(localWindow, probePrefix, rawOffset - winStart);
+      if (localIdx !== -1) {
+        resolvedOffset = winStart + localIdx;
+        matchedBy = "localWindow+snippet";
+      }
+    }
+  }
+
+  // 2. Kontextové vyhledávání v celé kapitole (prefix+snippet, snippet+suffix, snippet, první slova)
+  if (resolvedOffset === null && snippet) {
+    const targetRef = rawOffset !== null
+      ? rawOffset
+      : Math.round((Number(anchor.chapterRatio) || 0) * normalizedText.length);
+
+    if (prefix) {
+      const combined = prefix + snippet;
+      const idx = findClosestOccurrence(normalizedText, combined, Math.max(0, targetRef - prefix.length));
+      if (idx !== -1) {
+        resolvedOffset = idx + prefix.length;
+        matchedBy = "prefix+snippet";
+      }
+    }
+
+    if (resolvedOffset === null && suffix) {
+      const combined = snippet + suffix;
+      const idx = findClosestOccurrence(normalizedText, combined, targetRef);
+      if (idx !== -1) {
+        resolvedOffset = idx;
+        matchedBy = "snippet+suffix";
+      }
+    }
+
+    if (resolvedOffset === null && snippet.length >= 6) {
+      const idx = findClosestOccurrence(normalizedText, snippet, targetRef);
+      if (idx !== -1) {
+        resolvedOffset = idx;
+        matchedBy = "snippet";
+      }
+    }
+
+    if (resolvedOffset === null) {
+      const shortPhrase = snippet.split(/\s+/).slice(0, 3).join(" ");
+      if (shortPhrase.length >= 6) {
+        const idx = findClosestOccurrence(normalizedText, shortPhrase, targetRef);
+        if (idx !== -1) {
+          resolvedOffset = idx;
+          matchedBy = "shortPhrase";
+        }
+      }
+    }
+  }
+
+  // 3. Fallback na DOM cestu (pokud se struktura nezměnila)
+  if (resolvedOffset === null && Array.isArray(anchor.domPath)) {
+    const domNode = resolveDomNodePath(rootElement, anchor.domPath);
+    if (domNode && domNode.nodeType === Node.TEXT_NODE) {
+      const domOff = Math.max(0, Math.min((domNode.nodeValue || "").length, Number(anchor.domOffset) || 0));
+      resolvedOffset = domPointToOffset(idxData, domNode, domOff);
+      matchedBy = "domPath";
+    }
+  }
+
+  // 4. Fallback na surový charOffset nebo chapterRatio
+  if (resolvedOffset === null) {
+    if (rawOffset !== null) {
+      resolvedOffset = rawOffset;
+      matchedBy = "charOffsetFallback";
+    } else {
+      const ratio = Math.max(0, Math.min(1, Number(anchor.chapterRatio) || 0));
+      resolvedOffset = Math.max(0, Math.min(normalizedText.length - 1, Math.round(ratio * normalizedText.length)));
+      matchedBy = "chapterRatioFallback";
+    }
+  }
+
+  const wordLen = getWordRangeLengthAtOffset(normalizedText, resolvedOffset);
+  const range = offsetToRange(idxData, resolvedOffset, wordLen);
+  if (!range) return null;
+
+  return {
+    element: null,
+    range,
+    charOffset: resolvedOffset,
+    matchedBy
+  };
+}
+
+/**
+ * Namapuje obsahovou kotvu na index nově spočítané stránky v horizontálním stránkovaném režimu.
+ */
+export function mapAnchorToPageIndex({
+  rootElement,
+  contentElement = null,
+  stageElement = null,
+  anchor,
+  exactStep,
+  stageWidth = 0,
+  totalPages = 1,
+  indexData = null
+}) {
+  if (!rootElement || !anchor || !exactStep || exactStep <= 0) return null;
+  const resolved = resolveAnchorInChapter(rootElement, anchor, indexData);
+  if (!resolved) return null;
+
+  const contentRect = (contentElement || rootElement).getBoundingClientRect();
+  let targetRect = null;
+
+  if (resolved.range) {
+    const rects = resolved.range.getClientRects();
+    for (let i = 0; i < rects.length; i++) {
+      if (rects[i].width > 0 || rects[i].height > 0) {
+        targetRect = rects[i];
+        break;
+      }
+    }
+    if (!targetRect) {
+      const br = resolved.range.getBoundingClientRect();
+      if (br && (br.width > 0 || br.height > 0)) targetRect = br;
+    }
+  } else if (resolved.element) {
+    const br = resolved.element.getBoundingClientRect();
+    if (br && (br.width > 0 || br.height > 0)) targetRect = br;
+  }
+
+  if (!targetRect) return null;
+
+  const gap = Math.max(0, exactStep - (stageWidth || exactStep));
+  const subPixelAllowance = Math.max(4, Math.min(12, gap * 0.25));
+  const layoutLeft = targetRect.left - contentRect.left;
+  const rawPage = Math.floor((layoutLeft + subPixelAllowance) / exactStep);
+  const maxPage = Math.max(0, (totalPages || 1) - 1);
+
+  return {
+    pageIndex: Math.max(0, Math.min(maxPage, rawPage)),
+    charOffset: resolved.charOffset,
+    matchedBy: resolved.matchedBy
+  };
+}
+
+/**
+ * Namapuje obsahovou kotvu na svislou pozici scrollu (delta pro vp.scrollTop) ve vertikálním režimu.
+ */
+export function mapAnchorToVerticalOffset({
+  rootElement,
+  viewportElement,
+  anchor,
+  indexData = null
+}) {
+  if (!rootElement || !viewportElement || !anchor) return null;
+  const resolved = resolveAnchorInChapter(rootElement, anchor, indexData);
+  if (!resolved) return null;
+
+  let targetRect = null;
+  if (resolved.range) {
+    const rects = resolved.range.getClientRects();
+    for (let i = 0; i < rects.length; i++) {
+      if (rects[i].width > 0 || rects[i].height > 0) {
+        targetRect = rects[i];
+        break;
+      }
+    }
+    if (!targetRect) targetRect = resolved.range.getBoundingClientRect();
+  } else if (resolved.element) {
+    targetRect = resolved.element.getBoundingClientRect();
+  }
+
+  if (!targetRect) return null;
+  const vpRect = viewportElement.getBoundingClientRect();
+  return {
+    scrollDelta: targetRect.top - vpRect.top - 8,
+    charOffset: resolved.charOffset,
+    matchedBy: resolved.matchedBy
+  };
+}

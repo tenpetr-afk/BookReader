@@ -268,13 +268,13 @@ export class StorageManager {
   }
 
   async uploadBook(book) {
-    const { supabaseSync } = await import("./supabase-sync.js?v=2.6.1");
+    const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
     return await supabaseSync.uploadBook(book);
   }
 
   async syncWithCloud(options) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.1");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
       return await supabaseSync.syncAll(options);
     } catch (err) {
       console.warn("[StorageManager] syncWithCloud selhal:", err);
@@ -284,7 +284,7 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.1");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
       return await supabaseSync.pushSessionAndStats(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
@@ -294,10 +294,65 @@ export class StorageManager {
 
   async pushReadingSessionsToCloud(sessions) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.1");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
       return await supabaseSync.pushMultipleSessions(sessions);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
+      return null;
+    }
+  }
+
+  getBookProgressTimestamp(record) {
+    if (!record || typeof record !== "object") return 0;
+
+    const toMs = (val) => {
+      if (typeof val === "number" && Number.isFinite(val) && val > 0) return val;
+      if (typeof val === "string" && val.trim()) {
+        const parsed = Date.parse(val);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      }
+      return 0;
+    };
+
+    const anchorObj = record.readingAnchor || record.reading_anchor || null;
+    const anchorTs = anchorObj ? toMs(anchorObj.updatedAt ?? anchorObj.updated_at) : 0;
+    const explicitTs = toMs(record.progressUpdatedAt ?? record.progress_updated_at);
+
+    if (anchorTs > 0 || explicitTs > 0) {
+      return Math.max(anchorTs, explicitTs);
+    }
+
+    // Pokud bylo progressUpdatedAt explicitně vynulováno (čerstvě nahraná nepřečtená kniha), nepřepíše cizí postup
+    if (record.progressUpdatedAt === 0) {
+      return 0;
+    }
+
+    const hasProgress = Boolean(
+      (Number(record.currentChapterIndex ?? record.current_chapter ?? 0) > 0) ||
+      (Number(record.currentPageIndex ?? 0) > 0) ||
+      (Number(record.currentPage ?? record.current_page ?? 1) > 1) ||
+      (Number(record.scrollPercent ?? record.scroll_progress ?? record.pageRatio ?? 0) > 0) ||
+      (Number(record.progress ?? record.progressPercent ?? 0) > 0)
+    );
+
+    if (!hasProgress) {
+      return 0;
+    }
+
+    return Math.max(
+      toMs(record.lastReadAt),
+      toMs(record.updated_at)
+    );
+  }
+
+  getCachedBookProgress(bookId) {
+    if (!bookId || typeof localStorage === "undefined") return null;
+    try {
+      const raw = localStorage.getItem(`lumina_progress_${bookId}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (_) {
       return null;
     }
   }
@@ -306,12 +361,15 @@ export class StorageManager {
     if (!book) return 0;
     let progressValue = 0;
 
-    if (typeof book.progress === "number" && !isNaN(book.progress)) {
-      progressValue = (book.progress > 0 && book.progress < 1) ? book.progress * 100 : book.progress;
+    const anchor = book.readingAnchor || book.reading_anchor;
+    if (anchor && typeof anchor.bookProgress === "number" && !isNaN(anchor.bookProgress)) {
+      progressValue = anchor.bookProgress;
+    } else if (typeof book.progress === "number" && !isNaN(book.progress)) {
+      progressValue = (book.progress > 0 && book.progress < 1 && !anchor) ? book.progress * 100 : book.progress;
     } else if (typeof book.scroll_progress === "number" && !isNaN(book.scroll_progress)) {
       progressValue = (book.scroll_progress > 0 && book.scroll_progress <= 1) ? book.scroll_progress * 100 : book.scroll_progress;
     } else if (typeof book.progressPercent === "number" && !isNaN(book.progressPercent)) {
-      progressValue = (book.progressPercent > 0 && book.progressPercent < 1) ? book.progressPercent * 100 : book.progressPercent;
+      progressValue = (book.progressPercent > 0 && book.progressPercent < 1 && !anchor) ? book.progressPercent * 100 : book.progressPercent;
     } else if (typeof book.scrollPercent === "number" && !isNaN(book.scrollPercent)) {
       progressValue = (book.scrollPercent > 0 && book.scrollPercent <= 1) ? book.scrollPercent * 100 : book.scrollPercent;
     } else if (book.currentPage && book.numPages) {
@@ -457,8 +515,28 @@ export class StorageManager {
 
   async updateBookProgress(bookId, updates) {
     const book = await this.getBook(bookId);
-    if (!book) return;
-    Object.assign(book, updates, { lastReadAt: Date.now() });
+    if (!book || !updates) return;
+
+    const anchorTs = updates.readingAnchor?.updatedAt ?? updates.reading_anchor?.updatedAt;
+    const effectiveProgressUpdatedAt =
+      (typeof updates.progressUpdatedAt === "number" && updates.progressUpdatedAt > 0)
+        ? updates.progressUpdatedAt
+        : ((typeof anchorTs === "number" && anchorTs > 0)
+          ? anchorTs
+          : ((typeof updates.lastReadAt === "number" && updates.lastReadAt > 0) ? updates.lastReadAt : Date.now()));
+    const effectiveLastReadAt =
+      (typeof updates.lastReadAt === "number" && updates.lastReadAt > 0)
+        ? updates.lastReadAt
+        : effectiveProgressUpdatedAt;
+
+    Object.assign(book, updates, {
+      lastReadAt: effectiveLastReadAt,
+      progressUpdatedAt: effectiveProgressUpdatedAt
+    });
+
+    if (book.readingAnchor && typeof book.readingAnchor === "object" && !book.readingAnchor.updatedAt) {
+      book.readingAnchor.updatedAt = effectiveProgressUpdatedAt;
+    }
 
     const isPdf = !!(book.isPdf || book.format === "pdf" || updates.isPdf);
     const currentPage = updates.currentPage ?? (updates.currentPageIndex !== undefined ? updates.currentPageIndex + 1 : (book.currentPage ?? (book.currentPageIndex !== undefined ? book.currentPageIndex + 1 : (updates.current_page ?? book.current_page))));
@@ -840,7 +918,7 @@ export class StorageManager {
    */
   async reconcileSessionsWithCloud() {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.1");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
       if (!supabaseSync || !supabaseSync.isOnline()) {
         return { success: false, reason: "offline", purged: 0, saved: 0 };
       }
@@ -2103,6 +2181,10 @@ export async function pushReadingSessionsToCloud(sessions) {
 
 export function normalizeBookProgress(book) {
   return storage.normalizeBookProgress(book);
+}
+
+export function getBookProgressTimestamp(record) {
+  return storage.getBookProgressTimestamp(record);
 }
 
 export async function deduplicateBooks() {

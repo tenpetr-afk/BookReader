@@ -1,6 +1,44 @@
 -- ==============================================================================
--- LuminaReader - Supabase Schema pro Synchronizaci Čtecích Statistik a Relací
+-- LuminaReader - Supabase Schema pro Synchronizaci Knih, Pozice a Statistik
 -- ==============================================================================
+
+-- 0. Tabulka pro knihy a synchronizaci přesné čtecí pozice (books)
+CREATE TABLE IF NOT EXISTS public.books (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT 'Bez názvu',
+    file_name TEXT,
+    file_type TEXT NOT NULL DEFAULT 'epub' CHECK (file_type IN ('epub', 'pdf')),
+    file_path TEXT,
+    current_chapter INTEGER NOT NULL DEFAULT 0,
+    current_page INTEGER NOT NULL DEFAULT 1,
+    scroll_progress DOUBLE PRECISION NOT NULL DEFAULT 0,
+    pdf_ruler_height INTEGER NOT NULL DEFAULT 32,
+    reading_anchor JSONB DEFAULT NULL,
+    progress_updated_at TIMESTAMPTZ DEFAULT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- Migrace pro stávající databáze: přidání sloupců pro obsahovou kotvu EPUB a časové razítko pozice
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS reading_anchor JSONB DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS progress_updated_at TIMESTAMPTZ DEFAULT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_books_updated_at ON public.books (updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_books_progress_updated_at ON public.books (progress_updated_at DESC);
+
+ALTER TABLE public.books ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'books' AND policyname = 'Allow public access on books'
+    ) THEN
+        CREATE POLICY "Allow public access on books"
+        ON public.books FOR ALL
+        TO anon, authenticated
+        USING (true) WITH CHECK (true);
+    END IF;
+END $$;
 
 -- 1. Tabulka pro detailní čtecí relace (reading_sessions)
 -- Uchovává jednotlivé relace s aktivní dobou čtení >= 5 minut (300 sekund)

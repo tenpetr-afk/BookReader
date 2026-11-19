@@ -146,7 +146,11 @@
         </div>
       </div>
 
-      <div class="reader-header-right"></div>
+      <div class="reader-header-right">
+        <button type="button" id="btn-toggle-bookmark" class="btn-icon btn-bookmark-toggle" title="Přidat / odebrat záložku (klávesa B)" aria-label="Přidat záložku" aria-pressed="false">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        </button>
+      </div>
     </header>
 
     <!-- Stránkovaná čtečka (Paged Viewport pro iPad swipe a touchpad) -->
@@ -376,15 +380,30 @@
   <div id="drawer-backdrop" class="drawer-backdrop"></div>
 
   <!-- =========================================================================
-       3. POSTRANNÍ PANEL: OBSAH (TOC DRAWER)
+       3. POSTRANNÍ PANEL: OBSAH A ZÁLOŽKY (TOC & BOOKMARKS DRAWER)
        ========================================================================= -->
-  <aside id="toc-drawer" class="drawer-panel drawer-left" aria-label="Obsah knihy">
-    <div class="drawer-header">
-      <h2 class="drawer-title">Obsah knihy</h2>
-      <button id="btn-close-toc" class="btn-close-drawer" aria-label="Zavřít obsah">✕</button>
+  <aside id="toc-drawer" class="drawer-panel drawer-left" aria-label="Obsah knihy a záložky">
+    <div class="drawer-header toc-drawer-header">
+      <div class="toc-drawer-tabs" role="tablist" aria-label="Přepínač obsahu a záložek">
+        <button type="button" id="btn-drawer-tab-toc" class="toc-tab-btn active" role="tab" aria-selected="true" aria-controls="toc-list">Obsah</button>
+        <button type="button" id="btn-drawer-tab-bookmarks" class="toc-tab-btn" role="tab" aria-selected="false" aria-controls="bookmarks-panel">
+          <span>Záložky</span>
+          <span id="bookmarks-count-badge" class="bookmarks-count-badge is-hidden">0</span>
+        </button>
+      </div>
+      <button id="btn-close-toc" class="btn-close-drawer" aria-label="Zavřít panel">✕</button>
     </div>
     <div class="drawer-body">
-      <ul id="toc-list" class="toc-list"></ul>
+      <ul id="toc-list" class="toc-list" role="tabpanel" aria-labelledby="btn-drawer-tab-toc"></ul>
+      <div id="bookmarks-panel" class="bookmarks-panel is-hidden" role="tabpanel" aria-labelledby="btn-drawer-tab-bookmarks">
+        <div class="bookmarks-panel-actions">
+          <button type="button" id="btn-add-bookmark-drawer" class="btn btn-secondary btn-add-bookmark-drawer">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+            <span id="btn-add-bookmark-drawer-text">Přidat záložku na tuto stranu</span>
+          </button>
+        </div>
+        <ul id="bookmarks-list" class="bookmarks-list"></ul>
+      </div>
     </div>
   </aside>
 

@@ -182,7 +182,7 @@ body:not(.mode-vertical) .paged-content {
   column-width: var(--reader-stage-width, 80vw) !important;
   column-gap: var(--page-gap, 50px);
   column-fill: auto;
-  transition: transform 0.20s cubic-bezier(0.2, 0.9, 0.3, 1);
+  transition: none;
   will-change: transform;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
@@ -370,6 +370,55 @@ body:not(.is-pdf-mode) .paged-content:not(.is-pdf-mode) > *:last-child *:last-ch
 .btn-back-library:hover {
   background: var(--bg-hover, rgba(0, 0, 0, 0.05)) !important;
   transform: translateX(-2px);
+}
+
+.btn-bookmark-toggle {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-main, currentColor) !important;
+  padding: 6px !important;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  min-width: 34px;
+  min-height: 34px !important;
+  width: auto;
+  height: auto;
+  transition: transform var(--transition-fast, 0.15s), background-color var(--transition-fast, 0.15s), color var(--transition-fast, 0.15s);
+}
+
+.btn-bookmark-toggle:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05)) !important;
+  transform: scale(1.06);
+}
+
+.btn-bookmark-toggle.is-bookmarked,
+.btn-bookmark-toggle.is-bookmarked svg {
+  color: #2563eb !important;
+  stroke: #2563eb !important;
+}
+
+.btn-bookmark-toggle.is-bookmarked svg {
+  fill: #2563eb !important;
+}
+
+[data-theme="espresso"] .btn-bookmark-toggle.is-bookmarked,
+[data-theme="dark"] .btn-bookmark-toggle.is-bookmarked,
+[data-theme="oled"] .btn-bookmark-toggle.is-bookmarked,
+[data-theme="espresso"] .btn-bookmark-toggle.is-bookmarked svg,
+[data-theme="dark"] .btn-bookmark-toggle.is-bookmarked svg,
+[data-theme="oled"] .btn-bookmark-toggle.is-bookmarked svg {
+  color: #60a5fa !important;
+  stroke: #60a5fa !important;
+}
+
+[data-theme="espresso"] .btn-bookmark-toggle.is-bookmarked svg,
+[data-theme="dark"] .btn-bookmark-toggle.is-bookmarked svg,
+[data-theme="oled"] .btn-bookmark-toggle.is-bookmarked svg {
+  fill: #60a5fa !important;
 }
 
 .reading-progress-container {
@@ -2920,6 +2969,8 @@ body.is-pdf-mode #settings-drawer #tab-pane-font {
 .liquid-glass-badge,
 body.mode-vertical .btn-back-library,
 body.mode-vertical #btn-back-library,
+body.mode-vertical .btn-bookmark-toggle,
+body.mode-vertical #btn-toggle-bookmark,
 body.mode-vertical .header-title-wrapper,
 body.mode-vertical #footer-remaining-chapter,
 body.mode-vertical #footer-book-pages,
@@ -2927,6 +2978,8 @@ body.mode-vertical .footer-actions-group,
 html.mode-vertical .liquid-glass-badge,
 html.mode-vertical .btn-back-library,
 html.mode-vertical #btn-back-library,
+html.mode-vertical .btn-bookmark-toggle,
+html.mode-vertical #btn-toggle-bookmark,
 html.mode-vertical .header-title-wrapper,
 html.mode-vertical #footer-remaining-chapter,
 html.mode-vertical #footer-book-pages,
@@ -2934,6 +2987,8 @@ html.mode-vertical .footer-actions-group,
 [data-reading-mode="vertical"] .liquid-glass-badge,
 [data-reading-mode="vertical"] .btn-back-library,
 [data-reading-mode="vertical"] #btn-back-library,
+[data-reading-mode="vertical"] .btn-bookmark-toggle,
+[data-reading-mode="vertical"] #btn-toggle-bookmark,
 [data-reading-mode="vertical"] .header-title-wrapper,
 [data-reading-mode="vertical"] #footer-remaining-chapter,
 [data-reading-mode="vertical"] #footer-book-pages,
@@ -2962,10 +3017,16 @@ html.mode-vertical .footer-actions-group,
 /* Individuální přizpůsobení velikosti a tvaru tlačítek */
 body.mode-vertical .btn-back-library,
 body.mode-vertical #btn-back-library,
+body.mode-vertical .btn-bookmark-toggle,
+body.mode-vertical #btn-toggle-bookmark,
 html.mode-vertical .btn-back-library,
 html.mode-vertical #btn-back-library,
+html.mode-vertical .btn-bookmark-toggle,
+html.mode-vertical #btn-toggle-bookmark,
 [data-reading-mode="vertical"] .btn-back-library,
-[data-reading-mode="vertical"] #btn-back-library {
+[data-reading-mode="vertical"] #btn-back-library,
+[data-reading-mode="vertical"] .btn-bookmark-toggle,
+[data-reading-mode="vertical"] #btn-toggle-bookmark {
   width: 38px !important;
   height: 38px !important;
   min-width: 38px !important;
@@ -2976,8 +3037,11 @@ html.mode-vertical #btn-back-library,
 }
 
 body.mode-vertical .btn-back-library:hover,
+body.mode-vertical .btn-bookmark-toggle:hover,
 html.mode-vertical .btn-back-library:hover,
-[data-reading-mode="vertical"] .btn-back-library:hover {
+html.mode-vertical .btn-bookmark-toggle:hover,
+[data-reading-mode="vertical"] .btn-back-library:hover,
+[data-reading-mode="vertical"] .btn-bookmark-toggle:hover {
   background: var(--bg-hover, var(--border-color)) !important;
   border-color: var(--border-color) !important;
   color: var(--text-color, var(--text-main, currentColor)) !important;
@@ -3182,16 +3246,19 @@ html.mode-vertical .footer-actions-group .btn-reader-menu-fab[aria-expanded="tru
 
 /* Skrývání při zapnutém pohlcujícím čtení (reader-chrome-hidden) */
 body.mode-vertical.reader-chrome-hidden .btn-back-library,
+body.mode-vertical.reader-chrome-hidden .btn-bookmark-toggle,
 body.mode-vertical.reader-chrome-hidden .header-title-wrapper,
 body.mode-vertical.reader-chrome-hidden #footer-remaining-chapter,
 body.mode-vertical.reader-chrome-hidden #footer-book-pages,
 body.mode-vertical.reader-chrome-hidden .footer-actions-group,
 html.mode-vertical.reader-chrome-hidden .btn-back-library,
+html.mode-vertical.reader-chrome-hidden .btn-bookmark-toggle,
 html.mode-vertical.reader-chrome-hidden .header-title-wrapper,
 html.mode-vertical.reader-chrome-hidden #footer-remaining-chapter,
 html.mode-vertical.reader-chrome-hidden #footer-book-pages,
 html.mode-vertical.reader-chrome-hidden .footer-actions-group,
 [data-reading-mode="vertical"].reader-chrome-hidden .btn-back-library,
+[data-reading-mode="vertical"].reader-chrome-hidden .btn-bookmark-toggle,
 [data-reading-mode="vertical"].reader-chrome-hidden .header-title-wrapper,
 [data-reading-mode="vertical"].reader-chrome-hidden #footer-remaining-chapter,
 [data-reading-mode="vertical"].reader-chrome-hidden #footer-book-pages,
@@ -3602,6 +3669,7 @@ body.is-pdf-mode:not(.mode-vertical) .pdf-spread-container > .pdf-page-slot {
   body:not(.ui-liquid-glass) .pill-scrubber-tooltip,
   body:not(.ui-liquid-glass) .liquid-glass-badge,
   body:not(.ui-liquid-glass) .btn-back-library,
+  body:not(.ui-liquid-glass) .btn-bookmark-toggle,
   body:not(.ui-liquid-glass) .header-title-wrapper,
   body:not(.ui-liquid-glass) #footer-remaining-chapter,
   body:not(.ui-liquid-glass) #footer-book-pages,

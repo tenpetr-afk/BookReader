@@ -955,6 +955,65 @@ body.dragging-file .drop-zone-overlay {
   transform: scale(0.96);
 }
 
+.btn-bookmark-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-color);
+  background: var(--bg-surface-elevated);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  pointer-events: auto;
+}
+
+.btn-bookmark-toggle:hover {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  transform: scale(1.06);
+}
+
+.btn-bookmark-toggle:active {
+  transform: scale(0.94);
+}
+
+.btn-bookmark-toggle.is-bookmarked,
+body.mode-vertical .btn-bookmark-toggle.is-bookmarked,
+body.is-pdf-mode .btn-bookmark-toggle.is-bookmarked {
+  color: #2563eb !important;
+  border-color: rgba(37, 99, 235, 0.45) !important;
+}
+
+.btn-bookmark-toggle.is-bookmarked svg,
+body.mode-vertical .btn-bookmark-toggle.is-bookmarked svg,
+body.is-pdf-mode .btn-bookmark-toggle.is-bookmarked svg {
+  fill: #2563eb !important;
+  stroke: #2563eb !important;
+}
+
+[data-theme="espresso"] .btn-bookmark-toggle.is-bookmarked,
+[data-theme="dark"] .btn-bookmark-toggle.is-bookmarked,
+[data-theme="oled"] .btn-bookmark-toggle.is-bookmarked,
+[data-theme="espresso"] .btn-bookmark-toggle.is-bookmarked svg,
+[data-theme="dark"] .btn-bookmark-toggle.is-bookmarked svg,
+[data-theme="oled"] .btn-bookmark-toggle.is-bookmarked svg {
+  color: #60a5fa !important;
+  stroke: #60a5fa !important;
+}
+
+[data-theme="espresso"] .btn-bookmark-toggle.is-bookmarked svg,
+[data-theme="dark"] .btn-bookmark-toggle.is-bookmarked svg,
+[data-theme="oled"] .btn-bookmark-toggle.is-bookmarked svg {
+  fill: #60a5fa !important;
+}
+
 .btn-back-label {
   display: inline;
 }
@@ -1182,6 +1241,223 @@ body.settings-sheet-open .drawer-backdrop {
   background: var(--color-primary-light);
   color: var(--color-primary);
   font-weight: 700;
+}
+
+/* Přepínač Obsah / Záložky v levém panelu */
+.toc-drawer-header {
+  gap: 0.75rem;
+}
+
+.toc-drawer-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: var(--bg-surface-elevated, var(--bg-secondary, #f1f5f9));
+  padding: 0.25rem;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--border-color, #e2e8f0);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.toc-tab-btn {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.42rem 0.65rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-md, 10px) - 3px);
+  cursor: pointer;
+  transition: all var(--transition-fast, 0.15s) ease;
+  white-space: nowrap;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.toc-tab-btn:hover {
+  color: var(--text-main);
+}
+
+.toc-tab-btn.active {
+  background: var(--bg-surface, #ffffff);
+  color: var(--text-main);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.bookmarks-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: var(--color-primary-light, rgba(59, 130, 246, 0.14));
+  color: var(--color-primary, #2563eb);
+  font-variant-numeric: tabular-nums;
+}
+
+.bookmarks-count-badge.is-hidden,
+.toc-list.is-hidden,
+.bookmarks-panel.is-hidden {
+  display: none !important;
+}
+
+.bookmarks-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.bookmarks-panel-actions {
+  display: flex;
+}
+
+.btn-add-bookmark-drawer {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border-radius: var(--radius-md, 10px);
+}
+
+.btn-add-bookmark-drawer.is-bookmarked svg {
+  fill: currentColor;
+}
+
+.bookmarks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.bookmark-item {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface-elevated, var(--bg-surface));
+  overflow: hidden;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.bookmark-item:hover {
+  border-color: var(--color-primary);
+  background: var(--bg-hover);
+}
+
+.bookmark-item.is-current {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.bookmark-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.7rem 0.85rem;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bookmark-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.5rem;
+}
+
+.bookmark-item-page {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.bookmark-item-page svg {
+  color: var(--color-primary, #2563eb);
+  fill: var(--color-primary, #2563eb);
+  flex-shrink: 0;
+}
+
+.bookmark-item-percent {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bookmark-item-chapter {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary, var(--text-muted));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.bookmark-item-snippet {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.bookmark-item-delete {
+  flex: 0 0 auto;
+  width: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.bookmark-item-delete:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+
+.bookmarks-empty {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 /* ==========================================================================
@@ -4312,8 +4588,9 @@ body.is-pdf-mode .reader-header .header-title-wrapper {
   pointer-events: auto !important;
 }
 
-/* Tlačítko zpět s frosted liquid-glass kapslí pro vysoký kontrast na světlém i tmavém PDF */
-body.is-pdf-mode .btn-back-library {
+/* Tlačítko zpět a záložky s frosted liquid-glass kapslí pro vysoký kontrast na světlém i tmavém PDF */
+body.is-pdf-mode .btn-back-library,
+body.is-pdf-mode .btn-bookmark-toggle {
   background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff)) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -4321,12 +4598,16 @@ body.is-pdf-mode .btn-back-library {
   box-shadow: var(--shadow-sm, 0 4px 16px rgba(0, 0, 0, 0.12)) !important;
   color: var(--text-color, var(--text-main)) !important;
   border-radius: var(--radius-full, 9999px) !important;
-  padding: 0.45rem 0.95rem !important;
-  min-height: 38px !important;
   text-shadow: none !important;
 }
 
-body.is-pdf-mode .btn-back-library:hover {
+body.is-pdf-mode .btn-back-library {
+  padding: 0.45rem 0.95rem !important;
+  min-height: 38px !important;
+}
+
+body.is-pdf-mode .btn-back-library:hover,
+body.is-pdf-mode .btn-bookmark-toggle:hover {
   background: var(--bg-hover, var(--bg-secondary)) !important;
   border-color: var(--border-color) !important;
   box-shadow: var(--shadow-md, 0 6px 20px rgba(0, 0, 0, 0.18)) !important;
@@ -4635,6 +4916,8 @@ body.is-pdf-mode .reading-ruler.mode-highlight.word-tracking-mode.color-slate,
 .liquid-glass-badge,
 body.mode-vertical .btn-back-library,
 body.mode-vertical #btn-back-library,
+body.mode-vertical .btn-bookmark-toggle,
+body.mode-vertical #btn-toggle-bookmark,
 body.mode-vertical .header-title-wrapper,
 body.mode-vertical #footer-remaining-chapter,
 body.mode-vertical #footer-book-pages,
@@ -4642,6 +4925,8 @@ body.mode-vertical .footer-actions-group,
 html.mode-vertical .liquid-glass-badge,
 html.mode-vertical .btn-back-library,
 html.mode-vertical #btn-back-library,
+html.mode-vertical .btn-bookmark-toggle,
+html.mode-vertical #btn-toggle-bookmark,
 html.mode-vertical .header-title-wrapper,
 html.mode-vertical #footer-remaining-chapter,
 html.mode-vertical #footer-book-pages,
@@ -4649,6 +4934,8 @@ html.mode-vertical .footer-actions-group,
 [data-reading-mode="vertical"] .liquid-glass-badge,
 [data-reading-mode="vertical"] .btn-back-library,
 [data-reading-mode="vertical"] #btn-back-library,
+[data-reading-mode="vertical"] .btn-bookmark-toggle,
+[data-reading-mode="vertical"] #btn-toggle-bookmark,
 [data-reading-mode="vertical"] .header-title-wrapper,
 [data-reading-mode="vertical"] #footer-remaining-chapter,
 [data-reading-mode="vertical"] #footer-book-pages,
@@ -4677,10 +4964,16 @@ html.mode-vertical .footer-actions-group,
 /* Individuální přizpůsobení velikosti a tvaru tlačítek */
 body.mode-vertical .btn-back-library,
 body.mode-vertical #btn-back-library,
+body.mode-vertical .btn-bookmark-toggle,
+body.mode-vertical #btn-toggle-bookmark,
 html.mode-vertical .btn-back-library,
 html.mode-vertical #btn-back-library,
+html.mode-vertical .btn-bookmark-toggle,
+html.mode-vertical #btn-toggle-bookmark,
 [data-reading-mode="vertical"] .btn-back-library,
-[data-reading-mode="vertical"] #btn-back-library {
+[data-reading-mode="vertical"] #btn-back-library,
+[data-reading-mode="vertical"] .btn-bookmark-toggle,
+[data-reading-mode="vertical"] #btn-toggle-bookmark {
   width: 38px !important;
   height: 38px !important;
   min-width: 38px !important;
@@ -4691,8 +4984,11 @@ html.mode-vertical #btn-back-library,
 }
 
 body.mode-vertical .btn-back-library:hover,
+body.mode-vertical .btn-bookmark-toggle:hover,
 html.mode-vertical .btn-back-library:hover,
-[data-reading-mode="vertical"] .btn-back-library:hover {
+html.mode-vertical .btn-bookmark-toggle:hover,
+[data-reading-mode="vertical"] .btn-back-library:hover,
+[data-reading-mode="vertical"] .btn-bookmark-toggle:hover {
   background: var(--bg-hover, var(--border-color)) !important;
   border-color: var(--border-color) !important;
   color: var(--text-color, var(--text-main, currentColor)) !important;
@@ -4897,16 +5193,19 @@ html.mode-vertical .footer-actions-group .btn-reader-menu-fab[aria-expanded="tru
 
 /* Skrývání při zapnutém pohlcujícím čtení (reader-chrome-hidden) */
 body.mode-vertical.reader-chrome-hidden .btn-back-library,
+body.mode-vertical.reader-chrome-hidden .btn-bookmark-toggle,
 body.mode-vertical.reader-chrome-hidden .header-title-wrapper,
 body.mode-vertical.reader-chrome-hidden #footer-remaining-chapter,
 body.mode-vertical.reader-chrome-hidden #footer-book-pages,
 body.mode-vertical.reader-chrome-hidden .footer-actions-group,
 html.mode-vertical.reader-chrome-hidden .btn-back-library,
+html.mode-vertical.reader-chrome-hidden .btn-bookmark-toggle,
 html.mode-vertical.reader-chrome-hidden .header-title-wrapper,
 html.mode-vertical.reader-chrome-hidden #footer-remaining-chapter,
 html.mode-vertical.reader-chrome-hidden #footer-book-pages,
 html.mode-vertical.reader-chrome-hidden .footer-actions-group,
 [data-reading-mode="vertical"].reader-chrome-hidden .btn-back-library,
+[data-reading-mode="vertical"].reader-chrome-hidden .btn-bookmark-toggle,
 [data-reading-mode="vertical"].reader-chrome-hidden .header-title-wrapper,
 [data-reading-mode="vertical"].reader-chrome-hidden #footer-remaining-chapter,
 [data-reading-mode="vertical"].reader-chrome-hidden #footer-book-pages,
@@ -6532,6 +6831,8 @@ body.ui-liquid-glass .theme-btn.active {
 /* Vertical Mode Badges */
 body.ui-liquid-glass.mode-vertical .btn-back-library,
 body.ui-liquid-glass.mode-vertical #btn-back-library,
+body.ui-liquid-glass.mode-vertical .btn-bookmark-toggle,
+body.ui-liquid-glass.mode-vertical #btn-toggle-bookmark,
 body.ui-liquid-glass.mode-vertical .header-title-wrapper,
 body.ui-liquid-glass.mode-vertical #footer-remaining-chapter,
 body.ui-liquid-glass.mode-vertical #footer-book-pages,
@@ -6553,6 +6854,8 @@ body.ui-liquid-glass .liquid-glass-badge {
 
 body.ui-liquid-glass.mode-vertical .btn-back-library:hover,
 body.ui-liquid-glass.mode-vertical #btn-back-library:hover,
+body.ui-liquid-glass.mode-vertical .btn-bookmark-toggle:hover,
+body.ui-liquid-glass.mode-vertical #btn-toggle-bookmark:hover,
 body.ui-liquid-glass.mode-vertical .header-title-wrapper:hover,
 body.ui-liquid-glass.mode-vertical #footer-remaining-chapter:hover,
 body.ui-liquid-glass.mode-vertical #footer-book-pages:hover {
