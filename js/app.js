@@ -4593,6 +4593,12 @@ export class LuminaApp {
       </div>
     `;
 
+    if (book.coverDataUrl) {
+      const coverWrapper = card.querySelector(".book-cover-wrapper");
+      const coverImg = card.querySelector(".book-cover-img");
+      this.applyTextCoverThemeIfPlainPage(book, coverWrapper, coverImg);
+    }
+
     // Otevření knihy
     card.addEventListener("click", (e) => {
       if (e.target.closest(".btn-delete-book")) return;
@@ -4614,6 +4620,70 @@ export class LuminaApp {
     });
 
     return card;
+  }
+
+  /**
+   * Zjistí, zda úvodní náhled knihy tvoří jen bílá stránka s textem (bez barevného přebalu),
+   * a pokud ano, označí kontejner třídou .is-text-cover pro přizpůsobení motivu aplikace.
+   */
+  applyTextCoverThemeIfPlainPage(book, coverWrapper, coverImg) {
+    if (!coverWrapper || !coverImg || !book?.coverDataUrl) return;
+    if (!this._textCoverCache) this._textCoverCache = new Map();
+
+    const cacheKey = book.id || `${book.coverDataUrl.length}_${book.coverDataUrl.slice(0, 48)}`;
+    if (this._textCoverCache.has(cacheKey)) {
+      coverWrapper.classList.toggle("is-text-cover", !!this._textCoverCache.get(cacheKey));
+      return;
+    }
+
+    const analyze = () => {
+      let isPlainWhitePage = false;
+      try {
+        const w = 32;
+        const h = 48;
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(coverImg, 0, 0, w, h);
+          const data = ctx.getImageData(0, 0, w, h).data;
+          const totalPixels = w * h;
+          let whiteCount = 0;
+          let colorfulCount = 0;
+
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const a = data[i + 3];
+            if (a < 20 || (r >= 225 && g >= 225 && b >= 225)) {
+              whiteCount++;
+            }
+            const maxC = Math.max(r, g, b);
+            const minC = Math.min(r, g, b);
+            if (maxC - minC > 35) {
+              colorfulCount++;
+            }
+          }
+
+          const whiteRatio = whiteCount / totalPixels;
+          const colorfulRatio = colorfulCount / totalPixels;
+          isPlainWhitePage = whiteRatio >= 0.62 && colorfulRatio < 0.04;
+        }
+      } catch (e) {
+        isPlainWhitePage = false;
+      }
+
+      this._textCoverCache.set(cacheKey, isPlainWhitePage);
+      coverWrapper.classList.toggle("is-text-cover", isPlainWhitePage);
+    };
+
+    if (coverImg.complete && coverImg.naturalWidth > 0) {
+      analyze();
+    } else {
+      coverImg.addEventListener("load", analyze, { once: true });
+    }
   }
 
   // --- CLOUD SYNC & ZÁLOHOVÁNÍ (SUPABASE) ---

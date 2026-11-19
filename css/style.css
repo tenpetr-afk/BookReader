@@ -706,11 +706,45 @@ body.dragging-file .drop-zone-overlay {
   overflow: hidden;
 }
 
+.book-cover-wrapper.is-text-cover {
+  background-color: var(--bg-app, var(--bg-theme, var(--bg-surface-elevated))) !important;
+  isolation: isolate;
+}
+
 .book-cover-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   transition: transform 0.3s ease;
+}
+
+/* Textové úvodní náhledy bez vlastního přebalu přebírají barvu motivu aplikace */
+[data-theme="light"] .book-cover-wrapper.is-text-cover .book-cover-img,
+.theme-light .book-cover-wrapper.is-text-cover .book-cover-img,
+[data-theme="warm"] .book-cover-wrapper.is-text-cover .book-cover-img,
+.theme-warm .book-cover-wrapper.is-text-cover .book-cover-img,
+[data-theme="sepia"] .book-cover-wrapper.is-text-cover .book-cover-img,
+.theme-sepia .book-cover-wrapper.is-text-cover .book-cover-img {
+  filter: none !important;
+  mix-blend-mode: multiply;
+}
+
+[data-theme="espresso"] .book-cover-wrapper.is-text-cover .book-cover-img,
+.theme-espresso .book-cover-wrapper.is-text-cover .book-cover-img {
+  filter: invert(1) hue-rotate(180deg) sepia(0.18) contrast(1.02) !important;
+  mix-blend-mode: screen;
+}
+
+[data-theme="dark"] .book-cover-wrapper.is-text-cover .book-cover-img,
+.theme-dark .book-cover-wrapper.is-text-cover .book-cover-img {
+  filter: invert(1) hue-rotate(180deg) contrast(1.04) !important;
+  mix-blend-mode: screen;
+}
+
+[data-theme="oled"] .book-cover-wrapper.is-text-cover .book-cover-img,
+.theme-oled .book-cover-wrapper.is-text-cover .book-cover-img {
+  filter: invert(1) hue-rotate(180deg) contrast(1.05) !important;
+  mix-blend-mode: screen;
 }
 
 .book-card:hover .book-cover-img {
@@ -726,8 +760,10 @@ body.dragging-file .drop-zone-overlay {
   justify-content: center;
   padding: 1.5rem;
   text-align: center;
-  background: linear-gradient(135deg, #1e293b, #0f172a);
-  color: #ffffff;
+  background: var(--bg-app, var(--bg-theme, var(--bg-surface-elevated)));
+  color: var(--text-main, #0f172a);
+  border-bottom: 1px solid var(--border-color);
+  box-sizing: border-box;
 }
 
 .cover-icon {

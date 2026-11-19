@@ -254,6 +254,7 @@ export class ReadingRuler {
       accumY: 0,
       pendingDx: 0,
       pendingDy: 0,
+      boundaryPushX: 0,
       boundaryPushY: 0,
       lastBoundaryTurnAt: 0,
       lastDragEndAt: 0,
@@ -2794,6 +2795,7 @@ export class ReadingRuler {
     tp.accumY = 0;
     tp.pendingDx = 0;
     tp.pendingDy = 0;
+    tp.boundaryPushX = 0;
     tp.boundaryPushY = 0;
     tp.scrollDetectAccum = 0;
     if (!keepColumn) {
@@ -3088,6 +3090,7 @@ export class ReadingRuler {
     tp.lastBoundaryTurnAt = now;
     tp.accumX = 0;
     tp.accumY = 0;
+    tp.boundaryPushX = 0;
     tp.boundaryPushY = 0;
     tp.active = false;
     tp.moved = false;
@@ -3139,6 +3142,7 @@ export class ReadingRuler {
     tp.accumY = 0;
     tp.pendingDx = 0;
     tp.pendingDy = 0;
+    tp.boundaryPushX = 0;
     tp.boundaryPushY = 0;
     tp.scrollDetectAccum = 0;
     tp.wordWrapOverflow = 0;
@@ -3814,9 +3818,16 @@ export class ReadingRuler {
         if (rawCenterX > wrapRightStart && (dx > 0 || tp.wordWrap?.dir === 1)) {
           const nextIdx = this._findAdjacentTrackpadTextLine(curIdx, 1);
           if (nextIdx == null) {
-            // Page end boundary: clamp cleanly at the right boundary of the last word
+            // Konec stránky: přichytit na pravý okraj posledního slova a při dalším posunu doprava přepnout na další stránku
             tp.wordWrap = null;
             this._applyContinuousBottomCoverWaveAtX(lineWords, Math.min(textRight, rawCenterX), curLine, dx < 0, geom);
+            if (dx > 0 && rawCenterX > textRight) {
+              const overshoot = rawCenterX - textRight;
+              tp.boundaryPushX = (tp.boundaryPushX > 0 ? tp.boundaryPushX : 0) + overshoot;
+              if (tp.boundaryPushX >= 28 && this._tryTriggerBoundaryTurn(1)) {
+                return;
+              }
+            }
             break;
           }
           const exitPx = rawCenterX - wrapRightStart;
@@ -3891,9 +3902,16 @@ export class ReadingRuler {
         } else if (rawCenterX < wrapLeftStart && (dx < 0 || tp.wordWrap?.dir === -1)) {
           const prevIdx = this._findAdjacentTrackpadTextLine(curIdx, -1);
           if (prevIdx == null) {
-            // Page start boundary: clamp cleanly at the left boundary of the first word
+            // Začátek stránky: přichytit na levý okraj prvního slova a při dalším posunu doleva přepnout na předchozí stránku
             tp.wordWrap = null;
             this._applyContinuousBottomCoverWaveAtX(lineWords, Math.max(textLeft, rawCenterX), curLine, dx < 0, geom);
+            if (dx < 0 && rawCenterX < textLeft) {
+              const overshoot = rawCenterX - textLeft;
+              tp.boundaryPushX = (tp.boundaryPushX < 0 ? tp.boundaryPushX : 0) + overshoot;
+              if (tp.boundaryPushX <= -28 && this._tryTriggerBoundaryTurn(-1)) {
+                return;
+              }
+            }
             break;
           }
           const exitPx = wrapLeftStart - rawCenterX;
@@ -3966,6 +3984,7 @@ export class ReadingRuler {
           break;
         } else {
           tp.wordWrap = null;
+          tp.boundaryPushX = 0;
           this._applyContinuousBottomCoverWaveAtX(lineWords, rawCenterX, curLine, dx < 0, geom);
           break;
         }
@@ -3991,6 +4010,13 @@ export class ReadingRuler {
           if (nextIdx == null) {
             tp.wordWrap = null;
             this._applyContinuousWordGeometryAtLeft(lineWords, rawLeft, curLine, dx < 0, geom);
+            if (dx > 0) {
+              const overshoot = rawLeft - wrapRightStartLeft;
+              tp.boundaryPushX = (tp.boundaryPushX > 0 ? tp.boundaryPushX : 0) + overshoot;
+              if (tp.boundaryPushX >= 28 && this._tryTriggerBoundaryTurn(1)) {
+                return;
+              }
+            }
             break;
           }
           const exitPx = rawLeft - wrapRightStartLeft;
@@ -4067,6 +4093,13 @@ export class ReadingRuler {
           if (prevIdx == null) {
             tp.wordWrap = null;
             this._applyContinuousWordGeometryAtLeft(lineWords, rawLeft, curLine, dx < 0, geom);
+            if (dx < 0) {
+              const overshoot = rawLeft - textMinX;
+              tp.boundaryPushX = (tp.boundaryPushX < 0 ? tp.boundaryPushX : 0) + overshoot;
+              if (tp.boundaryPushX <= -28 && this._tryTriggerBoundaryTurn(-1)) {
+                return;
+              }
+            }
             break;
           }
           const exitPx = textMinX - rawLeft;
@@ -4142,6 +4175,7 @@ export class ReadingRuler {
           break;
         } else {
           tp.wordWrap = null;
+          tp.boundaryPushX = 0;
           this._applyContinuousWordGeometryAtLeft(lineWords, rawLeft, curLine, dx < 0, geom);
           break;
         }
@@ -4151,7 +4185,20 @@ export class ReadingRuler {
       const startLeft = Number.isFinite(tp.wordFloatLeft)
         ? tp.wordFloatLeft
         : (lineWords[0].left - padX);
-      this._applyContinuousWordGeometryAtLeft(lineWords, startLeft + dx, curLine, dx < 0, geom);
+      const geomRes = this._applyContinuousWordGeometryAtLeft(lineWords, startLeft + dx, curLine, dx < 0, geom);
+      if (geomRes && geomRes.overflow > 0 && dx > 0 && this._findAdjacentTrackpadTextLine(curIdx, 1) == null) {
+        tp.boundaryPushX = (tp.boundaryPushX > 0 ? tp.boundaryPushX : 0) + geomRes.overflow;
+        if (tp.boundaryPushX >= 28 && this._tryTriggerBoundaryTurn(1)) {
+          return;
+        }
+      } else if (geomRes && geomRes.overflow < 0 && dx < 0 && this._findAdjacentTrackpadTextLine(curIdx, -1) == null) {
+        tp.boundaryPushX = (tp.boundaryPushX < 0 ? tp.boundaryPushX : 0) + geomRes.overflow;
+        if (tp.boundaryPushX <= -28 && this._tryTriggerBoundaryTurn(-1)) {
+          return;
+        }
+      } else {
+        tp.boundaryPushX = 0;
+      }
     }
 
     if (geom) {
@@ -4269,6 +4316,7 @@ export class ReadingRuler {
     if (tp) {
       tp.activeColumn = nextLine.columnIndex ?? 0;
       tp.wordWrapOverflow = 0;
+      tp.boundaryPushX = 0;
       tp.pendingDx = 0;
       tp.accumX = 0;
       this._clearTrackpadWordWrap();
