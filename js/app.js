@@ -874,7 +874,7 @@ export class LuminaApp {
 
     const comp = getComputedStyle(this.dom.readerContent);
     const colGap = parseFloat(comp.columnGap);
-    const gap = (!isNaN(colGap) && colGap > 0) ? colGap : (this.pageGap || 50);
+    const gap = (!isNaN(colGap) && colGap >= 0) ? colGap : (this.pageGap ?? 50);
 
     const exactStep = stageWidth + gap;
     const result = {
