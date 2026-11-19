@@ -14,7 +14,8 @@ import { countWords, isValidWord } from "./text-parser.js?v=2.6.1";
 export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i horizontální odsazení v řádkovém režimu
 export const RULER_WAVE_WIDTH = 80; // px - výchozí referenční šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
 export const RULER_WAVE_HEIGHT = 12; // px - výchozí referenční hloubka vlnky indikátoru
-export const COVER_LINE_OFFSET = 2; // px - fixní vertikální vzdálenost vodicí linky pod spodním okrajem řádku v režimu Spodní clona (Bottom Cover)
+export const COVER_LINE_OFFSET = 2; // px - záložní vertikální vzdálenost vodicí linky pod spodním okrajem řádku v režimu Spodní clona (Bottom Cover)
+export const COVER_LINE_GAP_RATIO = 0.05; // 5 % výšky celého řádku - mezera mezi nejnižším bodem nejnižšího písmena (j, y, p, g, q) a čárou v režimu Spodní clona
 
 function buildRulerWavePath(width = RULER_WAVE_WIDTH, depth = RULER_WAVE_HEIGHT) {
   const w = Math.max(12, Math.round(width));
@@ -1316,8 +1317,11 @@ export class ReadingRuler {
 
     const vp = isVertical ? (this._cachedViewportEl || document.getElementById("paged-viewport")) : null;
     const vScrollTop = (isVertical && vp) ? vp.scrollTop : 0;
+    const isBottomCover = this.style === "bottom-cover" || this.mode === "bottom-cover";
     const lineScreenTop = isVertical ? Math.round(lineTop - vScrollTop) : Math.round(lineTop);
-    const lineScreenBottom = isVertical ? Math.round(lineBottom - vScrollTop) : Math.round(lineBottom);
+    const lineScreenBottom = isVertical
+      ? (isBottomCover ? this._snapToDevicePixel(lineBottom - vScrollTop) : Math.round(lineBottom - vScrollTop))
+      : (isBottomCover ? this._snapToDevicePixel(lineBottom) : Math.round(lineBottom));
     const lineH = Math.max(1, lineScreenBottom - lineScreenTop);
 
     // Kontrola dvoustrany / dvou sloupců
@@ -5880,11 +5884,11 @@ export class ReadingRuler {
       const targetLine = targetIdx >= 0 ? this.cachedLines[targetIdx] : null;
 
       if (targetLine) {
-        if (this.mode === "bottom-cover") {
+        if (this.mode === "bottom-cover" || this.style === "bottom-cover") {
           const baselineDocY = Number.isFinite(this.currentY)
             ? this.currentY
-            : (Number.isFinite(targetLine.bottom) ? (targetLine.bottom + COVER_LINE_OFFSET) : targetLine.centerY);
-          screenY = Math.round(baselineDocY - vScrollTop);
+            : this._computeTextLineBottomCoverY(targetLine);
+          screenY = this._snapToDevicePixel(baselineDocY - vScrollTop);
         } else {
           screenY = Math.round(targetLine.centerY - vScrollTop - (h / 2));
         }
@@ -5893,9 +5897,10 @@ export class ReadingRuler {
       }
     }
 
-    const isBottomCoverWordTracking = (this.style === "bottom-cover" || this.mode === "bottom-cover") && !!this.wordTracking;
+    const isBottomCoverStyle = (this.style === "bottom-cover" || this.mode === "bottom-cover");
+    const isBottomCoverWordTracking = isBottomCoverStyle && !!this.wordTracking;
     const rx = Math.round((this.wordTracking && !isBottomCoverWordTracking) ? (this.wordLeft || 0) : (this._rulerLeft || 0));
-    const ry = Math.round(screenY);
+    const ry = isBottomCoverStyle ? this._snapToDevicePixel(screenY) : Math.round(screenY);
 
     this.rulerEl.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
 
@@ -5903,12 +5908,12 @@ export class ReadingRuler {
     const isFocusActive = this.enabled && this.focusMode && this.focusMode !== "off";
     if (isFocusActive) {
       const vh = vHeight || window.innerHeight;
-      const rh = (this.style === "bottom-cover" || this.mode === "bottom-cover") ? 0 : Math.round(h);
+      const rh = isBottomCoverStyle ? 0 : Math.round(h);
       if (this.maskTopEl && this.maskTopEl.style.display !== "none") {
         this.maskTopEl.style.transform = `translate3d(0, ${Math.round(ry - vh)}px, 0)`;
       }
       if (this.maskBottomEl && this.maskBottomEl.style.display !== "none") {
-        this.maskBottomEl.style.transform = `translate3d(0, ${Math.round(ry + rh)}px, 0)`;
+        this.maskBottomEl.style.transform = `translate3d(0, ${isBottomCoverStyle ? ry : Math.round(ry + rh)}px, 0)`;
       }
       if (this.maskLeftEl && this.maskLeftEl.style.display !== "none") {
         this.maskLeftEl.style.transform = `translate3d(0, ${ry}px, 0)`;
@@ -6857,9 +6862,32 @@ export class ReadingRuler {
         for (const line of colClustered) {
           if (line.isMedia || !line._frags || line._frags.length === 0) continue;
           const frags = line._frags;
-          const medCenterY = computeWeightedMedian(frags, f => f.centerY, f => f.weight);
+          let medCenterY = computeWeightedMedian(frags, f => f.centerY, f => f.weight);
           const medHeight = computeWeightedMedian(frags, f => f.height, f => f.weight);
           const medFontSize = computeWeightedMedian(frags, f => f.fontSize, f => f.weight);
+
+          // V PDF režimu mohou mít fragmenty se znaky s diakritikou (kvůli vyššímu fontAscent v PDF.js)
+          // posunutý centerY mírně nahoru oproti základním fragmentům téhož řádku.
+          // Ukotvíme proto centerY k neposunutým hlavním fragmentům řádku (stejná velikost písma),
+          // aby čára pravítka v PDF nekolísala řádek od řádku a nezasahovala do písmen (j, y, p, g, q).
+          if ((this.isPdfMode || line.isPdfLine) && frags.length > 1) {
+            const fsTol = Math.max(1.2, (medFontSize || 16) * 0.10);
+            const cyTol = Math.max(2.0, (medHeight || 16) * 0.14);
+            let maxMainCenterY = medCenterY;
+            for (let i = 0; i < frags.length; i++) {
+              const f = frags[i];
+              if (
+                f.weight >= 2 &&
+                Math.abs((f.fontSize || medFontSize) - medFontSize) <= fsTol &&
+                Math.abs(f.centerY - medCenterY) <= cyTol &&
+                f.centerY > maxMainCenterY
+              ) {
+                maxMainCenterY = f.centerY;
+              }
+            }
+            medCenterY = maxMainCenterY;
+          }
+
           line.rawTop = line.top;
           line.rawBottom = line.bottom;
           line.centerY = medCenterY;
@@ -7230,6 +7258,101 @@ export class ReadingRuler {
             );
             const validPitches = intraParaPitches.length > 0 ? intraParaPitches : candidatePitches;
             medianPitch = validPitches[Math.floor(validPitches.length / 2)];
+          }
+
+          const effectivePdfPitch = (medianPitch != null && medianPitch > 0)
+            ? medianPitch
+            : Math.max(medianGlyphHeight * 1.2, fs * 1.25);
+          if (effectivePdfPitch > 0) {
+            this.pitchByFontSize.set(fs, effectivePdfPitch);
+          }
+
+          // Regularizace souvislých odstavcových bloků v PDF pro 100% konstantní rozteč řádků:
+          // Eliminuje vertikální chvění textLayeru mezi řádky s diakritikou a řádky bez diakritiky.
+          if (medianPitch != null && medianPitch > 0 && groupLines.length >= 2) {
+            const pitchTol = Math.min(2.5, medianPitch * 0.14);
+            let runStart = 0;
+            const regularizeRun = (run) => {
+              const n = run.length;
+              if (n < 2) return;
+              let runPitch = medianPitch;
+              const meanI = (n - 1) / 2;
+              let meanY = 0;
+              for (let k = 0; k < n; k++) meanY += run[k].centerY;
+              meanY /= n;
+              if (n >= 3) {
+                let num = 0;
+                let den = 0;
+                for (let k = 0; k < n; k++) {
+                  const di = k - meanI;
+                  num += di * (run[k].centerY - meanY);
+                  den += di * di;
+                }
+                if (den > 0) {
+                  const fittedPitch = num / den;
+                  if (Math.abs(fittedPitch - medianPitch) <= pitchTol) {
+                    runPitch = fittedPitch;
+                  }
+                }
+              }
+              const residuals = [];
+              for (let k = 0; k < n; k++) {
+                const fittedY = meanY + (k - meanI) * runPitch;
+                residuals.push(run[k].centerY - fittedY);
+              }
+              residuals.sort((a, b) => a - b);
+              // Ukotvení k neposunutým (nižším) řádkům odstavce (75. percentil reziduí)
+              const baselineShift = Math.max(0, Math.min(1.2, residuals[Math.min(n - 1, Math.floor(n * 0.75))] || 0));
+              for (let k = 0; k < n; k++) {
+                const targetCenterY = meanY + (k - meanI) * runPitch + baselineShift;
+                const delta = Math.max(-1.5, Math.min(1.5, targetCenterY - run[k].centerY));
+                run[k].centerY += delta;
+              }
+            };
+
+            for (let i = 1; i <= this.cachedLines.length; i++) {
+              const prev = this.cachedLines[i - 1];
+              const cur = i < this.cachedLines.length ? this.cachedLines[i] : null;
+              let isContiguous = false;
+              if (cur && !prev.isMedia && !cur.isMedia && prev.hasText && cur.hasText) {
+                const prevFs = Math.round(prev.fontSize || 16);
+                const curFs = Math.round(cur.fontSize || 16);
+                const sameSlot = !prev.pageSlot || !cur.pageSlot || prev.pageSlot === cur.pageSlot;
+                if (
+                  prev.columnIndex === cur.columnIndex &&
+                  sameSlot &&
+                  Math.abs(prevFs - fs) <= 1 &&
+                  Math.abs(curFs - fs) <= 1
+                ) {
+                  const dy = cur.centerY - prev.centerY;
+                  if (Math.abs(dy - medianPitch) <= pitchTol) {
+                    isContiguous = true;
+                  }
+                }
+              }
+              if (!isContiguous) {
+                const runLen = i - runStart;
+                if (runLen >= 2) {
+                  const runSlice = this.cachedLines.slice(runStart, i);
+                  if (Math.abs(Math.round(runSlice[0].fontSize || 16) - fs) <= 1) {
+                    regularizeRun(runSlice);
+                  }
+                }
+                runStart = i;
+              }
+            }
+          }
+
+          // Normalize PDF line top/bottom/height using medianGlyphHeight from line.centerY
+          for (const l of groupLines) {
+            l.rawTop = l.rawTop ?? l.top;
+            l.rawBottom = l.rawBottom ?? l.bottom;
+            l.height = medianGlyphHeight;
+            l.top = l.centerY - medianGlyphHeight / 2;
+            l.bottom = l.centerY + medianGlyphHeight / 2;
+            if (effectivePdfPitch > 0) {
+              l.linePitch = effectivePdfPitch;
+            }
           }
 
           // 2. Strictly wrap the text line with minimal, uniform vertical padding (never expanding into margins)
@@ -8065,6 +8188,81 @@ export class ReadingRuler {
     };
   }
 
+  /**
+   * Zaokrouhlí souřadnici na fyzický pixel displeje (devicePixelRatio),
+   * čímž zamezí ±1px kvantizačnímu skákání čáry mezi sousedními řádky na Retina/HiDPI displejích.
+   */
+  _snapToDevicePixel(val) {
+    if (!Number.isFinite(val)) return 0;
+    const dpr = Math.min(Math.max(1, (typeof window !== "undefined" && window.devicePixelRatio) || 1), 4);
+    return Math.round(val * dpr) / dpr;
+  }
+
+  /**
+   * Vypočítá Y pozici vodicí linky v režimu Spodní clona (bottom-cover) tak,
+   * aby mezera mezi čárou a nejnižším bodem nejnižšího písmena (j, y, p, g, q)
+   * odpovídala přesně 5 % výšky celého řádku (COVER_LINE_GAP_RATIO = 0.05)
+   * a působila zcela konstantně napříč EPUB i PDF soubory.
+   */
+  _computeTextLineBottomCoverY(line, nextLine = null, hasNext = false, computedLineH = 0) {
+    if (!line) return 0;
+    const isPdfLine = !!(this.isPdfMode || line.isPdfLine);
+    const roundedFs = Math.round(line.fontSize || 16);
+    const glyphH = (this.glyphHeightByFontSize && (
+        this.glyphHeightByFontSize.get(roundedFs) ||
+        this.glyphHeightByFontSize.get(roundedFs - 1) ||
+        this.glyphHeightByFontSize.get(roundedFs + 1)
+      ))
+      || line.height
+      || 18;
+
+    const linePitch = (Number.isFinite(line.linePitch) && line.linePitch > 0)
+      ? line.linePitch
+      : ((this.pitchByFontSize && (
+          this.pitchByFontSize.get(roundedFs) ||
+          this.pitchByFontSize.get(roundedFs - 1) ||
+          this.pitchByFontSize.get(roundedFs + 1)
+        )) || 0);
+    const autoLineH = (this.lineHeightByFontSize && (
+        this.lineHeightByFontSize.get(roundedFs) ||
+        this.lineHeightByFontSize.get(roundedFs - 1) ||
+        this.lineHeightByFontSize.get(roundedFs + 1)
+      ))
+      || computedLineH
+      || this.uniformLineHeight
+      || (glyphH * 1.2);
+    const fullLineHeight = Math.max(glyphH, autoLineH, linePitch);
+
+    // Nejspodnější bod nejnižšího písmena (descender: j, y, p, g, q):
+    // V PDF textLayer je DOM box kvůli PDF.js fontAscent / line-height:1 posunut výše než
+    // skutečné spodní dotahy písmen vykreslené na <canvas> (~10.5 % výšky glyfu).
+    // V EPUB zohledníme přesah spodních dotahů a vyhlazování (~3.5 % výšky glyfu).
+    const nominalGlyphBottom = line.centerY + (glyphH / 2);
+    const descenderOverhang = isPdfLine ? (glyphH * 0.105) : (glyphH * 0.035);
+    const lowestLetterPointY = nominalGlyphBottom + descenderOverhang;
+
+    // Mezera mezi čárou a nejnižším bodem nejnižšího písmena = 5 % výšky celého řádku
+    const coverGap = fullLineHeight * COVER_LINE_GAP_RATIO;
+    let coverTargetY = lowestLetterPointY + coverGap;
+
+    if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+      const nextRoundedFs = Math.round(nextLine.fontSize || roundedFs);
+      const nextGlyphH = (this.glyphHeightByFontSize && (
+          this.glyphHeightByFontSize.get(nextRoundedFs) ||
+          this.glyphHeightByFontSize.get(nextRoundedFs - 1) ||
+          this.glyphHeightByFontSize.get(nextRoundedFs + 1)
+        ))
+        || nextLine.height
+        || glyphH;
+      const nextInkTop = nextLine.top + (isPdfLine ? (nextGlyphH * 0.105) : 0);
+      if (coverTargetY > nextInkTop) {
+        coverTargetY = Math.max(lowestLetterPointY + Math.min(1, coverGap * 0.5), nextInkTop);
+      }
+    }
+
+    return this._snapToDevicePixel(coverTargetY);
+  }
+
   computeLineGeometry(lineIdx) {
     if (!this.cachedLines || this.cachedLines.length === 0) return null;
     const clampedIdx = Math.max(0, Math.min(this.cachedLines.length - 1, lineIdx));
@@ -8228,7 +8426,6 @@ export class ReadingRuler {
     let height;
     let targetY;
 
-    // Vždy spočítáme referenční spodní okraj (bottom-cover linka / clona)
     let hasNext = false;
     if (nextLine && (nextLine.columnIndex === line.columnIndex || (line.columnIndex == null && nextLine.columnIndex == null))) {
       const lineSlot = (line.element || line.el)?.closest?.(".pdf-page-slot, .pdf-page-container");
@@ -8237,21 +8434,6 @@ export class ReadingRuler {
         if (Number.isFinite(nextLine.top) && nextLine.top > (line.top ?? line.centerY)) {
           hasNext = true;
         }
-      }
-    }
-    const roundedFs = Math.round(line.fontSize || 16);
-    const glyphH = this.glyphHeightByFontSize?.get(roundedFs) || line.height || 18;
-    const curBottom = line.centerY + glyphH / 2;
-
-    const isPdfLine = !!(this.isPdfMode || line.isPdfLine);
-    const effectiveCoverOffset = isPdfLine ? COVER_LINE_OFFSET : 1;
-
-    let coverTargetY = Math.round(curBottom + effectiveCoverOffset);
-    if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
-      const clearancePx = isPdfLine ? 1 : 2;
-      const maxAllowedY = Math.floor(nextLine.top - clearancePx);
-      if (coverTargetY > maxAllowedY) {
-        coverTargetY = Math.max(Math.round(curBottom), maxAllowedY);
       }
     }
 
@@ -8322,7 +8504,27 @@ export class ReadingRuler {
       computedLineH = h;
     }
 
-    if (this.style === "bottom-cover" || this.mode === "bottom-cover") {
+    const isBottomCoverStyle = (this.style === "bottom-cover" || this.mode === "bottom-cover");
+    let coverTargetY;
+    if (isBottomCoverStyle) {
+      coverTargetY = this._computeTextLineBottomCoverY(line, nextLine, hasNext, computedLineH);
+    } else {
+      const roundedFs = Math.round(line.fontSize || 16);
+      const glyphH = this.glyphHeightByFontSize?.get(roundedFs) || line.height || 18;
+      const curBottom = line.centerY + glyphH / 2;
+      const isPdfLine = !!(this.isPdfMode || line.isPdfLine);
+      const effectiveCoverOffset = isPdfLine ? COVER_LINE_OFFSET : 1;
+      coverTargetY = Math.round(curBottom + effectiveCoverOffset);
+      if (hasNext && nextLine && Number.isFinite(nextLine.top)) {
+        const clearancePx = isPdfLine ? 1 : 2;
+        const maxAllowedY = Math.floor(nextLine.top - clearancePx);
+        if (coverTargetY > maxAllowedY) {
+          coverTargetY = Math.max(Math.round(curBottom), maxAllowedY);
+        }
+      }
+    }
+
+    if (isBottomCoverStyle) {
       targetY = coverTargetY;
       height = 2;
     } else {
@@ -11322,8 +11524,11 @@ export class ReadingRuler {
     const useFastCachedGeom = this.snapToLines && this.cachedLines && this.cachedLines.length > 0;
     const viewport = isVertical ? (this._cachedViewportEl || document.getElementById("paged-viewport")) : null;
     const vScrollTop = (isVertical && viewport) ? viewport.scrollTop : 0;
+    const isBottomCoverMode = this.style === "bottom-cover" || this.mode === "bottom-cover";
 
-    let y = Number.isFinite(this.currentY) ? Math.round(this.currentY) : 150;
+    let y = Number.isFinite(this.currentY)
+      ? (isBottomCoverMode ? this._snapToDevicePixel(this.currentY) : Math.round(this.currentY))
+      : 150;
     let h = Number.isFinite(this.height) && this.height > 0 ? Math.round(this.height) : (this.manualHeight || 36);
 
     let activeGeom = null;
@@ -11343,7 +11548,7 @@ export class ReadingRuler {
         y = activeGeom.targetY;
         this.targetY = activeGeom.targetY;
         this.currentY = activeGeom.targetY;
-        if (this.style !== "bottom-cover" && this.mode !== "bottom-cover" && activeGeom.height) {
+        if (!isBottomCoverMode && activeGeom.height) {
           h = activeGeom.height;
           this.height = h;
         }
@@ -11356,16 +11561,18 @@ export class ReadingRuler {
           this.targetY = activeGeom.targetY;
           this.currentY = activeGeom.targetY;
         }
-        if (this.style !== "bottom-cover" && this.mode !== "bottom-cover" && activeGeom.height) {
+        if (!isBottomCoverMode && activeGeom.height) {
           h = activeGeom.height;
           this.height = h;
         }
       }
     }
 
-    this.rulerEl.style.height = (this.style === "bottom-cover" || this.mode === "bottom-cover") ? "2px" : `${h}px`;
+    this.rulerEl.style.height = isBottomCoverMode ? "2px" : `${h}px`;
 
-    let screenY = isVertical ? Math.round(y - vScrollTop) : y;
+    let screenY = isVertical
+      ? (isBottomCoverMode ? this._snapToDevicePixel(y - vScrollTop) : Math.round(y - vScrollTop))
+      : y;
     if (isVertical && this.followMode === "keyboard") {
       if (this.stationaryScreenY === null) {
         this.initDefaultStationaryAnchor();
@@ -11691,7 +11898,9 @@ export class ReadingRuler {
     const docLineTop = (geom && Number.isFinite(geom.lineTop)) ? geom.lineTop : (activeStyle === "bottom-cover" ? (y - maskBandH) : y);
     const docLineBottom = (geom && Number.isFinite(geom.lineBottom)) ? geom.lineBottom : (activeStyle === "bottom-cover" ? y : (y + maskBandH));
     const lineScreenTop = isVertical ? Math.round(docLineTop - vScrollTop) : Math.round(docLineTop);
-    const lineScreenBottom = isVertical ? Math.round(docLineBottom - vScrollTop) : Math.round(docLineBottom);
+    const lineScreenBottom = isVertical
+      ? (activeStyle === "bottom-cover" ? this._snapToDevicePixel(docLineBottom - vScrollTop) : Math.round(docLineBottom - vScrollTop))
+      : (activeStyle === "bottom-cover" ? this._snapToDevicePixel(docLineBottom) : Math.round(docLineBottom));
     const lineH = Math.max(1, lineScreenBottom - lineScreenTop);
 
     const activeWordWrap = (this.followMode === "trackpad" &&
@@ -11709,8 +11918,8 @@ export class ReadingRuler {
     if (activeWordWrap && activeStyle === "bottom-cover") {
       const hex = colorHexMap[this.color] || "#f59e0b";
       const glowRgb = colorGlowMap[this.color] || "245, 158, 11";
-      const fromScreenBottom = isVertical ? Math.round(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom);
-      const toScreenBottom = isVertical ? Math.round(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom);
+      const fromScreenBottom = isVertical ? this._snapToDevicePixel(activeWordWrap.fromDocBottom - vScrollTop) : this._snapToDevicePixel(activeWordWrap.fromDocBottom);
+      const toScreenBottom = isVertical ? this._snapToDevicePixel(activeWordWrap.toDocBottom - vScrollTop) : this._snapToDevicePixel(activeWordWrap.toDocBottom);
 
       this.rulerEl.classList.add("is-wrap-transitioning");
       this.rulerEl.style.top = "0px";
@@ -11949,9 +12158,13 @@ export class ReadingRuler {
         // Cross-column / cross-spread wrap-around: keep both the departing line (col 0) and emerging line (col 1) clearly visible
         const fromIsLeft = activeWordWrap.fromColIndex === 0;
         const fromScreenTop = isVertical ? Math.round(activeWordWrap.fromDocTop - vScrollTop) : Math.round(activeWordWrap.fromDocTop);
-        const fromScreenBottom = isVertical ? Math.round(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom);
+        const fromScreenBottom = isVertical
+          ? (activeStyle === "bottom-cover" ? this._snapToDevicePixel(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom - vScrollTop))
+          : (activeStyle === "bottom-cover" ? this._snapToDevicePixel(activeWordWrap.fromDocBottom) : Math.round(activeWordWrap.fromDocBottom));
         const toScreenTop = isVertical ? Math.round(activeWordWrap.toDocTop - vScrollTop) : Math.round(activeWordWrap.toDocTop);
-        const toScreenBottom = isVertical ? Math.round(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom);
+        const toScreenBottom = isVertical
+          ? (activeStyle === "bottom-cover" ? this._snapToDevicePixel(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom - vScrollTop))
+          : (activeStyle === "bottom-cover" ? this._snapToDevicePixel(activeWordWrap.toDocBottom) : Math.round(activeWordWrap.toDocBottom));
 
         const col0ScreenTop = fromIsLeft ? fromScreenTop : toScreenTop;
         const col0ScreenBottom = fromIsLeft ? fromScreenBottom : toScreenBottom;
@@ -11987,8 +12200,8 @@ export class ReadingRuler {
             el.style.right = "auto";
             el.style.maxWidth = "none";
             el.style.width = `${Math.max(0, Math.round(width))}px`;
-            el.style.height = `${Math.max(0, Math.round(height))}px`;
-            el.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(topY)}px, 0)`;
+            el.style.height = `${Math.max(0, activeStyle === "bottom-cover" ? this._snapToDevicePixel(height) : Math.round(height))}px`;
+            el.style.transform = `translate3d(${Math.round(left)}px, ${activeStyle === "bottom-cover" ? this._snapToDevicePixel(topY) : Math.round(topY)}px, 0)`;
           } else {
             el.style.display = "none";
             el.classList.remove("is-visible");
@@ -12018,9 +12231,13 @@ export class ReadingRuler {
 
       if (activeWordWrap) {
         const fromScreenTop = isVertical ? Math.round(activeWordWrap.fromDocTop - vScrollTop) : Math.round(activeWordWrap.fromDocTop);
-        const fromScreenBottom = isVertical ? Math.round(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom);
+        const fromScreenBottom = isVertical
+          ? (activeStyle === "bottom-cover" ? this._snapToDevicePixel(activeWordWrap.fromDocBottom - vScrollTop) : Math.round(activeWordWrap.fromDocBottom - vScrollTop))
+          : (activeStyle === "bottom-cover" ? this._snapToDevicePixel(activeWordWrap.fromDocBottom) : Math.round(activeWordWrap.fromDocBottom));
         const toScreenTop = isVertical ? Math.round(activeWordWrap.toDocTop - vScrollTop) : Math.round(activeWordWrap.toDocTop);
-        const toScreenBottom = isVertical ? Math.round(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom);
+        const toScreenBottom = isVertical
+          ? (activeStyle === "bottom-cover" ? this._snapToDevicePixel(activeWordWrap.toDocBottom - vScrollTop) : Math.round(activeWordWrap.toDocBottom - vScrollTop))
+          : (activeStyle === "bottom-cover" ? this._snapToDevicePixel(activeWordWrap.toDocBottom) : Math.round(activeWordWrap.toDocBottom));
         focusScreenTop = Math.min(fromScreenTop, toScreenTop);
         focusScreenBottom = Math.max(fromScreenBottom, toScreenBottom);
         focusLineH = Math.max(1, focusScreenBottom - focusScreenTop);
