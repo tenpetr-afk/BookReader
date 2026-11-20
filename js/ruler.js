@@ -381,19 +381,15 @@ export class ReadingRuler {
    * Zjistí, zda je aktivní režim dvoustrany pro PDF (Two-Page Spread)
    */
   isSpreadActive() {
+    const slots = document.querySelectorAll("#reader-content .pdf-page-slot");
+    if (slots.length < 2) return false;
     if (this.app?.pdfLoader?.isSpreadActive) {
-      if (this.app.pdfLoader.isSpreadActive()) return true;
+      return !!this.app.pdfLoader.isSpreadActive();
     }
     if (window.luminaApp?.pdfLoader?.isSpreadActive) {
-      if (window.luminaApp.pdfLoader.isSpreadActive()) return true;
+      return !!window.luminaApp.pdfLoader.isSpreadActive();
     }
-    const spread = document.querySelector("#reader-content .pdf-spread-container");
-    if (spread) {
-      const slots = spread.querySelectorAll(".pdf-page-slot");
-      return slots.length >= 2;
-    }
-    const slots = document.querySelectorAll("#reader-content .pdf-page-slot");
-    return slots.length >= 2;
+    return true;
   }
 
   /**
@@ -1328,7 +1324,7 @@ export class ReadingRuler {
     // Kontrola dvoustrany / dvou sloupců
     const isSpread = !isVertical && this.isSpreadActive();
     const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
-    const isTwoCol = !isVertical && this.isTwoCol;
+    const isTwoCol = !isVertical && this.isTwoCol && (!this.isPdfMode || !!spreadInfo);
 
     let coverLeft = 0;
     let coverWidth = window.innerWidth;
@@ -6152,6 +6148,7 @@ export class ReadingRuler {
   checkTwoColumnLayout(content, stageRect = null, rawLines = null) {
     if (this.isVerticalMode()) return false;
     if (this.isSpreadActive()) return true;
+    if (this.isPdfMode) return false;
 
     // 1. Ověření CSS signálů dvousloupcového rozvržení výhradně na kontejnerech čtečky
     let cssTwoCol = false;
@@ -12191,7 +12188,7 @@ export class ReadingRuler {
 
       const isSpread = !isVertical && (useFastCachedGeom ? !!this._cachedIsSpread : this.isSpreadActive());
       const spreadInfo = isSpread ? (useFastCachedGeom ? this._getCachedSpreadInfoForLine(currentLine) : this.getActiveSpreadInfo(currentLine)) : null;
-      const isTwoCol = !isVertical && this.isTwoCol;
+      const isTwoCol = !isVertical && this.isTwoCol && (!this.isPdfMode || !!spreadInfo);
 
       let coverLeft = 0;
       let coverWidth = window.innerWidth;

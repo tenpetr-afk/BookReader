@@ -700,7 +700,7 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   gap: 8px;
   width: max-content;
   max-width: min(460px, calc(100vw - max(3rem, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))));
-  min-width: 240px;
+  min-width: 0;
   padding: 0;
   margin: 0;
   z-index: 60;
@@ -2242,7 +2242,6 @@ body.is-turning-page .ruler-mask.is-visible {
 .popover-slider-wrapper .slider-input {
   width: 100%;
   height: 6px;
-  background: var(--border-color);
   border-radius: 9999px;
   outline: none;
   accent-color: var(--color-primary);
@@ -2253,24 +2252,31 @@ body.is-turning-page .ruler-mask.is-visible {
 .popover-slider-wrapper .slider-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 22px;
+  width: 28px;
   height: 22px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  cursor: pointer;
-  border: 2px solid var(--bg-card, var(--bg-surface, #ffffff));
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  transition: transform 0.1s ease;
+  margin-top: calc((6px - 22px) / 2);
+  border-radius: 9999px;
+  background: #f2f2f4;
+  cursor: grab;
+  border: none;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.16),
+    0 0 0 1px rgba(0, 0, 0, 0.06);
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
 }
 
 .popover-slider-wrapper .slider-input::-moz-range-thumb {
-  width: 22px;
+  width: 28px;
   height: 22px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  cursor: pointer;
-  border: 2px solid var(--bg-card, var(--bg-surface, #ffffff));
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  border-radius: 9999px;
+  background: #f2f2f4;
+  cursor: grab;
+  border: none;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.16),
+    0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
 .popover-styles-grid {
@@ -3630,7 +3636,7 @@ body.is-pdf-mode:not(.mode-vertical) .pdf-spread-container > .pdf-page-slot {
 
   .reader-floating-dock {
     width: calc(100vw - max(1rem, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))) !important;
-    min-width: 240px !important;
+    min-width: 0 !important;
   }
 
   .pill-page-stepper {
@@ -4725,6 +4731,191 @@ html.mode-vertical.reader-chrome-hidden .footer-scrubber-slot,
     max-width: calc(100vw - max(1rem, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))) !important;
   }
 }
+
+/* ==========================================================================
+   Textura pergamenu (Parchment Texture) - celé UI aplikace bez přechodů
+   ========================================================================== */
+
+body.parchment-texture::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("./parchment.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  mix-blend-mode: multiply;
+  opacity: 0.78;
+}
+
+body.parchment-texture .paged-viewport,
+body.parchment-texture #view-library,
+body.parchment-texture #view-reader {
+  background-color: transparent !important;
+}
+
+body.parchment-texture #view-library,
+body.parchment-texture .paged-stage {
+  position: relative;
+  z-index: 1;
+}
+
+/* Panely nastavení, obsahu, vyhledávání, statistik, rychlého menu pravítka, tlačítka, ikony a karty */
+body.parchment-texture .drawer-panel::before,
+body.parchment-texture #stats-modal .modal-content::before,
+body.parchment-texture #ruler-quick-popover::before,
+body.parchment-texture .brand-icon::before,
+body.parchment-texture .app-version-badge::before,
+body.parchment-texture .btn-secondary::before,
+body.parchment-texture .book-card::before,
+body.parchment-texture .btn-back-library::before,
+body.parchment-texture .btn-bookmark-toggle::before,
+body.parchment-texture .ruler-split-pill::before,
+body.parchment-texture .btn-reader-menu-fab:not([aria-expanded="true"]):not(.active)::before,
+body.parchment-texture .dock-action-btn::before,
+body.parchment-texture .pill-scrubber-tooltip::before,
+body.parchment-texture #pill-scrubber-container.footer-scrubber.is-expanded .pill-scrubber-track::before,
+body.parchment-texture #pill-scrubber-container.footer-scrubber.is-scrubbing .pill-scrubber-track::before,
+body.parchment-texture #pill-scrubber-container.footer-scrubber:focus-visible .pill-scrubber-track::before,
+body.parchment-texture #pill-scrubber-container.footer-scrubber:hover .pill-scrubber-track::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("./parchment.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  mix-blend-mode: multiply;
+  opacity: 0.58;
+}
+
+body.parchment-texture .app-version-badge,
+body.parchment-texture .btn-secondary,
+body.parchment-texture .ruler-split-pill {
+  position: relative;
+}
+
+body.parchment-texture .brand-icon,
+body.parchment-texture .book-card,
+body.parchment-texture .btn-back-library,
+body.parchment-texture .btn-bookmark-toggle,
+body.parchment-texture .btn-reader-menu-fab,
+body.parchment-texture .dock-action-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+body.parchment-texture .drawer-panel > *,
+body.parchment-texture #stats-modal .modal-content > *,
+body.parchment-texture #ruler-quick-popover > *,
+body.parchment-texture .brand-icon > *,
+body.parchment-texture .btn-secondary > *,
+body.parchment-texture .book-card > *,
+body.parchment-texture .btn-back-library > *,
+body.parchment-texture .btn-bookmark-toggle > *,
+body.parchment-texture .ruler-split-pill > :not(#ruler-quick-popover),
+body.parchment-texture .btn-reader-menu-fab > *,
+body.parchment-texture .dock-action-btn > *,
+body.parchment-texture .pill-scrubber-tooltip > * {
+  position: relative;
+  z-index: 1;
+}
+
+[data-theme="light"] body.parchment-texture::before,
+body.parchment-texture.theme-light::before {
+  mix-blend-mode: multiply;
+  opacity: 0.52;
+}
+
+[data-theme="light"] body.parchment-texture .drawer-panel::before,
+[data-theme="light"] body.parchment-texture #stats-modal .modal-content::before,
+[data-theme="light"] body.parchment-texture #ruler-quick-popover::before,
+[data-theme="light"] body.parchment-texture .brand-icon::before,
+[data-theme="light"] body.parchment-texture .app-version-badge::before,
+[data-theme="light"] body.parchment-texture .btn-secondary::before,
+[data-theme="light"] body.parchment-texture .book-card::before,
+[data-theme="light"] body.parchment-texture .btn-back-library::before,
+[data-theme="light"] body.parchment-texture .btn-bookmark-toggle::before,
+[data-theme="light"] body.parchment-texture .ruler-split-pill::before,
+[data-theme="light"] body.parchment-texture .btn-reader-menu-fab:not([aria-expanded="true"]):not(.active)::before,
+[data-theme="light"] body.parchment-texture .dock-action-btn::before,
+[data-theme="light"] body.parchment-texture .pill-scrubber-tooltip::before,
+[data-theme="light"] body.parchment-texture #pill-scrubber-container.footer-scrubber .pill-scrubber-track::before {
+  mix-blend-mode: multiply;
+  opacity: 0.42;
+}
+
+[data-theme="espresso"] body.parchment-texture::before,
+body.parchment-texture.theme-espresso::before {
+  mix-blend-mode: soft-light;
+  opacity: 0.28;
+}
+
+[data-theme="espresso"] body.parchment-texture .drawer-panel::before,
+[data-theme="espresso"] body.parchment-texture #stats-modal .modal-content::before,
+[data-theme="espresso"] body.parchment-texture #ruler-quick-popover::before,
+[data-theme="espresso"] body.parchment-texture .brand-icon::before,
+[data-theme="espresso"] body.parchment-texture .app-version-badge::before,
+[data-theme="espresso"] body.parchment-texture .btn-secondary::before,
+[data-theme="espresso"] body.parchment-texture .book-card::before,
+[data-theme="espresso"] body.parchment-texture .btn-back-library::before,
+[data-theme="espresso"] body.parchment-texture .btn-bookmark-toggle::before,
+[data-theme="espresso"] body.parchment-texture .ruler-split-pill::before,
+[data-theme="espresso"] body.parchment-texture .btn-reader-menu-fab:not([aria-expanded="true"]):not(.active)::before,
+[data-theme="espresso"] body.parchment-texture .dock-action-btn::before,
+[data-theme="espresso"] body.parchment-texture .pill-scrubber-tooltip::before,
+[data-theme="espresso"] body.parchment-texture #pill-scrubber-container.footer-scrubber .pill-scrubber-track::before {
+  mix-blend-mode: soft-light;
+  opacity: 0.24;
+}
+
+[data-theme="dark"] body.parchment-texture::before,
+body.parchment-texture.theme-dark::before,
+[data-theme="oled"] body.parchment-texture::before,
+body.parchment-texture.theme-oled::before {
+  mix-blend-mode: soft-light;
+  filter: saturate(0.25);
+  opacity: 0.16;
+}
+
+[data-theme="dark"] body.parchment-texture .drawer-panel::before,
+[data-theme="dark"] body.parchment-texture #stats-modal .modal-content::before,
+[data-theme="dark"] body.parchment-texture #ruler-quick-popover::before,
+[data-theme="dark"] body.parchment-texture .brand-icon::before,
+[data-theme="dark"] body.parchment-texture .app-version-badge::before,
+[data-theme="dark"] body.parchment-texture .btn-secondary::before,
+[data-theme="dark"] body.parchment-texture .book-card::before,
+[data-theme="dark"] body.parchment-texture .btn-back-library::before,
+[data-theme="dark"] body.parchment-texture .btn-bookmark-toggle::before,
+[data-theme="dark"] body.parchment-texture .ruler-split-pill::before,
+[data-theme="dark"] body.parchment-texture .btn-reader-menu-fab:not([aria-expanded="true"]):not(.active)::before,
+[data-theme="dark"] body.parchment-texture .dock-action-btn::before,
+[data-theme="dark"] body.parchment-texture .pill-scrubber-tooltip::before,
+[data-theme="dark"] body.parchment-texture #pill-scrubber-container.footer-scrubber .pill-scrubber-track::before,
+[data-theme="oled"] body.parchment-texture .drawer-panel::before,
+[data-theme="oled"] body.parchment-texture #stats-modal .modal-content::before,
+[data-theme="oled"] body.parchment-texture #ruler-quick-popover::before,
+[data-theme="oled"] body.parchment-texture .brand-icon::before,
+[data-theme="oled"] body.parchment-texture .app-version-badge::before,
+[data-theme="oled"] body.parchment-texture .btn-secondary::before,
+[data-theme="oled"] body.parchment-texture .book-card::before,
+[data-theme="oled"] body.parchment-texture .btn-back-library::before,
+[data-theme="oled"] body.parchment-texture .btn-bookmark-toggle::before,
+[data-theme="oled"] body.parchment-texture .ruler-split-pill::before,
+[data-theme="oled"] body.parchment-texture .btn-reader-menu-fab:not([aria-expanded="true"]):not(.active)::before,
+[data-theme="oled"] body.parchment-texture .dock-action-btn::before,
+[data-theme="oled"] body.parchment-texture .pill-scrubber-tooltip::before,
+[data-theme="oled"] body.parchment-texture #pill-scrubber-container.footer-scrubber .pill-scrubber-track::before {
+  mix-blend-mode: soft-light;
+  filter: saturate(0.25);
+  opacity: 0.14;
+}
+
 
 
 

@@ -364,6 +364,10 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.btn svg {
+  flex-shrink: 0;
+}
+
 .btn:hover {
   background-color: var(--bg-hover);
   transform: translateY(-1px);
@@ -419,6 +423,7 @@ body {
 .sync-status-dot {
   width: 7px;
   height: 7px;
+  flex-shrink: 0;
   border-radius: 50%;
   background-color: var(--text-muted);
   display: inline-block;
@@ -1706,11 +1711,24 @@ body.settings-sheet-open .drawer-backdrop {
   width: 100%;
   height: 6px;
   border-radius: 9999px;
-  background: var(--border-color);
   outline: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
   accent-color: var(--color-primary);
   -webkit-appearance: none;
   appearance: none;
+  --current-thumb-w: 28px;
+  --slider-cap-x: calc(var(--current-thumb-w) / 2 + (100% - var(--current-thumb-w)) * var(--slider-ratio, 0.5));
+  background-color: var(--border-color);
+  background-image:
+    radial-gradient(circle 3px at calc(var(--slider-cap-x) - 3px) 50%, var(--color-primary, #2563eb) calc(100% - 0.5px), transparent 100%),
+    linear-gradient(to right, var(--color-primary, #2563eb), var(--color-primary, #2563eb));
+  background-repeat: no-repeat;
+  background-size:
+    100% 100%,
+    calc(var(--slider-cap-x) - 3px) 100%;
+  background-position: 0 0, 0 0;
 }
 
 .slider-input::-webkit-slider-runnable-track {
@@ -1722,19 +1740,27 @@ body.settings-sheet-open .drawer-backdrop {
 .slider-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 22px;
+  width: 28px;
   height: 22px;
   margin-top: calc((6px - 22px) / 2);
-  border-radius: 50%;
-  background: var(--color-primary);
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
-  border: 2px solid #ffffff;
-  transition: transform 0.1s ease;
+  border-radius: 9999px;
+  background: #f2f2f4;
+  cursor: grab;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.16),
+    0 0 0 1px rgba(0, 0, 0, 0.06);
+  border: none;
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
+}
+
+.slider-input::-webkit-slider-thumb:hover {
+  transform: scale(1.04);
 }
 
 .slider-input::-webkit-slider-thumb:active {
-  transform: scale(1.15);
+  transform: scale(1.08);
+  cursor: grabbing;
 }
 
 .slider-input::-moz-range-track {
@@ -1743,15 +1769,24 @@ body.settings-sheet-open .drawer-backdrop {
   border: none;
 }
 
+.slider-input::-moz-range-progress {
+  height: 0;
+  background: transparent;
+  border: none;
+}
+
 .slider-input::-moz-range-thumb {
-  width: 22px;
+  width: 28px;
   height: 22px;
-  margin-top: calc((6px - 22px) / 2);
-  border-radius: 50%;
-  background: var(--color-primary);
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
-  border: 2px solid #ffffff;
+  border-radius: 9999px;
+  background: #f2f2f4;
+  cursor: grab;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.16),
+    0 0 0 1px rgba(0, 0, 0, 0.06);
+  border: none;
+  transition: transform 0.12s ease, box-shadow 0.15s ease;
 }
 
 .toggle-row {

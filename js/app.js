@@ -509,6 +509,7 @@ export class LuminaApp {
 
       settingShowFooter: document.getElementById("setting-show-footer"),
       settingLiquidGlass: document.getElementById("setting-liquid-glass"),
+      settingParchmentTexture: document.getElementById("setting-parchment-texture"),
       readingModeControl: document.getElementById("reading-mode-control"),
       readingModeSelects: document.querySelectorAll("[data-reading-mode]"),
 
@@ -1100,6 +1101,14 @@ export class LuminaApp {
     document.documentElement.classList.toggle("ui-liquid-glass", isLiquidGlass);
     if (this.dom.settingLiquidGlass) {
       this.setSwitchState(this.dom.settingLiquidGlass, isLiquidGlass);
+    }
+
+    // Textura pergamenu
+    const hasParchment = !!s.parchmentTexture;
+    document.body.classList.toggle("parchment-texture", hasParchment);
+    document.documentElement.classList.toggle("parchment-texture", hasParchment);
+    if (this.dom.settingParchmentTexture) {
+      this.setSwitchState(this.dom.settingParchmentTexture, hasParchment);
     }
 
     // Synchronizace rychlého popoveru pravítka
@@ -3353,6 +3362,18 @@ export class LuminaApp {
       });
     }
 
+    // Přepínač Textura pergamenu
+    if (this.dom.settingParchmentTexture) {
+      this.dom.settingParchmentTexture.addEventListener("click", () => {
+        const val = !this.settings.parchmentTexture;
+        this.settings.parchmentTexture = val;
+        this.setSwitchState(this.dom.settingParchmentTexture, val);
+        document.body.classList.toggle("parchment-texture", val);
+        document.documentElement.classList.toggle("parchment-texture", val);
+        storage.saveSettings(this.settings);
+      });
+    }
+
     // Přepínač rychlého čtení (Bionic reading)
     if (this.dom.settingFastReading) {
       this.dom.settingFastReading.addEventListener("click", () => {
@@ -5233,19 +5254,22 @@ export class LuminaApp {
       // Zobrazit reader view ještě PŘED měřením rozměrů, aby clientWidth a scrollWidth nebyly 0!
       this.showReaderView();
 
-      // Rychle spočítáme celkový počet slov knihy na pozadí pro přesné počítadlo celkového počtu stran
+      // Rychle spočítáme celkový počet slov knihy na pozadí a zkusíme obnovit přesné stránkování z cache
       this.bookWordCounts = null;
       this.bookPagination = null;
-      this.invalidateMeasuredPagination();
+      this.invalidateMeasuredPagination(true);
+      const hasCachedPagination = this.tryRestoreCachedPagination(book.id);
       this.recomputeGlobalPagination();
       const wordCountPromise = this.currentParser.calculateTotalWords().then(counts => {
         this.bookWordCounts = counts;
         if (!this._calibratedWordsPerPage && this.currentChapterWords >= 150 && this.totalPagesInChapter >= 2) {
           this._calibratedWordsPerPage = Math.max(50, Math.min(1200, Math.round(this.currentChapterWords / this.totalPagesInChapter)));
         }
-        this.recomputeGlobalPagination();
-        this.renderScrubberTicks();
-        this.updatePageUI();
+        if (!this._fullPaginationMeasured) {
+          this.recomputeGlobalPagination();
+          this.renderScrubberTicks();
+          this.updatePageUI();
+        }
         return counts;
       }).catch(e => {
         console.warn("Nelze spočítat celková slova knihy:", e);
@@ -5310,6 +5334,10 @@ export class LuminaApp {
       } finally {
         this._isOpeningBook = false;
         this._isRestoringPosition = false;
+      }
+
+      if (!hasCachedPagination && !this._fullPaginationMeasured) {
+        this.scheduleFullBookPaginationMeasurement(0);
       }
 
       if (shouldPushLocalAfterRestore && localTimeBeforeRemote > 0) {
@@ -6924,20 +6952,20 @@ export class LuminaApp {
    * Zjistí, zda daná stránka kapitoly obsahuje skutečný viditelný obsah (text nebo média).
    * Zabraňuje zobrazování a generování prázdných stran na konci kapitol.
    */
-  hasVisibleContentOnPage(pageIndex) {
+  hasVisibleContentOnPage(pageIndex, stageEl = this.dom.pagedStage, contentEl = this.dom.readerContent) {
     if (this.isPdfMode || this.isVerticalReadingMode()) return true;
-    if (!this.dom.pagedStage || !this.dom.readerContent) return true;
+    if (!stageEl || !contentEl) return true;
     const { stageWidth, exactStep } = this.getExactColumnStep();
     if (pageIndex < 0 || exactStep <= 0 || stageWidth <= 0) return false;
 
     const pageStartRel = pageIndex * exactStep;
     const pageEndRel = pageStartRel + stageWidth;
 
-    const stageRect = this.dom.pagedStage.getBoundingClientRect();
+    const stageRect = stageEl.getBoundingClientRect();
     const stageLeft = stageRect.left;
 
     let currentOffset = 0;
-    const transform = this.dom.readerContent.style.transform;
+    const transform = contentEl.style.transform;
     if (transform) {
       const match = transform.match(/translate3d\(\s*(-?[\d.]+)\s*px/);
       if (match) {
@@ -6945,7 +6973,7 @@ export class LuminaApp {
       }
     }
 
-    const elements = this.dom.readerContent.querySelectorAll(
+    const elements = contentEl.querySelectorAll(
       "p, h1, h2, h3, h4, h5, h6, img, svg, canvas, table, blockquote, pre, code, ul, ol, li, div, section, article"
     );
     const range = document.createRange();
@@ -7837,12 +7865,13 @@ export class LuminaApp {
         const metrics = this.getBookMetrics();
         const currBookPage = metrics.currBookPage;
         const totalBookPages = metrics.totalBookPages;
+        const isMeasuringBook = !this.isPdfMode && !this._fullPaginationMeasured && (this.currentParser?.spine?.length || 0) > 1;
 
         if (this.dom.footerBookPages) {
-          this.dom.footerBookPages.textContent = `${currBookPage} z ${totalBookPages}`;
+          this.dom.footerBookPages.textContent = isMeasuringBook ? "···" : `${currBookPage} z ${totalBookPages}`;
         }
         if (this.dom.bookPageCounter) {
-          this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
+          this.dom.bookPageCounter.textContent = isMeasuringBook ? "···" : `strana ${currBookPage} z ${totalBookPages}`;
         }
 
         const hasPrev = scrollTop > 20 || (activeIdx > 0);
@@ -7881,12 +7910,13 @@ export class LuminaApp {
     const metrics = this.getBookMetrics();
     const currBookPage = metrics.currBookPage;
     const totalBookPages = metrics.totalBookPages;
+    const isMeasuringBook = !this.isPdfMode && !this._fullPaginationMeasured && (this.currentParser?.spine?.length || 0) > 1;
 
     if (this.dom.footerBookPages) {
-      this.dom.footerBookPages.textContent = `${currBookPage} z ${totalBookPages}`;
+      this.dom.footerBookPages.textContent = isMeasuringBook ? "···" : `${currBookPage} z ${totalBookPages}`;
     }
     if (this.dom.bookPageCounter) {
-      this.dom.bookPageCounter.textContent = `strana ${currBookPage} z ${totalBookPages}`;
+      this.dom.bookPageCounter.textContent = isMeasuringBook ? "···" : `strana ${currBookPage} z ${totalBookPages}`;
     }
 
     // 3. Tlačítka aktivní/neaktivní
@@ -9466,13 +9496,251 @@ export class LuminaApp {
     }
   }
 
-  invalidateMeasuredPagination() {
+  getPaginationLayoutKey() {
+    const stageRect = this.dom.pagedStage?.getBoundingClientRect?.();
+    const vpRect = this.dom.pagedViewport?.getBoundingClientRect?.();
+    const w = Math.round(stageRect?.width || 0);
+    const h = Math.round((this.isVerticalReadingMode() ? vpRect?.height : stageRect?.height) || 0);
+    const s = this.settings || {};
+    const cols = typeof this.resolveEffectiveColumnCount === "function" ? this.resolveEffectiveColumnCount() : 1;
+    const mode = this.isVerticalReadingMode() ? "v" : "h";
+    return `${mode}:${cols}:${w}x${h}:f${s.fontFamily}:s${s.fontSize}:lh${s.lineHeight}:ls${s.letterSpacing}:ws${s.wordSpacing}:m${s.marginPercent}:ta${s.textAlign}:b${s.fastReading ? 1 : 0}`;
+  }
+
+  tryRestoreCachedPagination(bookId) {
+    if (!bookId || this.isPdfMode || !this.currentParser) return false;
+    try {
+      const raw = localStorage.getItem("luminareader_pagination_cache");
+      if (!raw) return false;
+      const cache = JSON.parse(raw);
+      const entry = cache?.[bookId];
+      const spineLen = this.currentParser.spine?.length || 0;
+      if (!entry || !Array.isArray(entry.pages) || entry.pages.length !== spineLen) return false;
+      if (entry.key !== this.getPaginationLayoutKey()) return false;
+      if (!this._measuredChapterPages) this._measuredChapterPages = new Map();
+      this._measuredChapterPages.clear();
+      for (let i = 0; i < entry.pages.length; i++) {
+        this._measuredChapterPages.set(i, Math.max(1, Number(entry.pages[i]) || 1));
+      }
+      this._fullPaginationMeasured = true;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  saveCachedPagination(bookId) {
+    if (!bookId || this.isPdfMode || !this.currentParser || !this._fullPaginationMeasured) return;
+    try {
+      const spineLen = this.currentParser.spine?.length || 0;
+      if (spineLen <= 0) return;
+      const pages = [];
+      for (let i = 0; i < spineLen; i++) {
+        const val = this._measuredChapterPages?.get(i);
+        if (typeof val !== "number" || val < 1) return;
+        pages.push(val);
+      }
+      let cache = {};
+      const raw = localStorage.getItem("luminareader_pagination_cache");
+      if (raw) {
+        try { cache = JSON.parse(raw) || {}; } catch (e) { cache = {}; }
+      }
+      cache[bookId] = {
+        key: this.getPaginationLayoutKey(),
+        pages,
+        ts: Date.now()
+      };
+      // Ponechat max 10 posledních knih v cache
+      const keys = Object.keys(cache);
+      if (keys.length > 10) {
+        keys.sort((a, b) => (cache[a]?.ts || 0) - (cache[b]?.ts || 0));
+        while (keys.length > 10) {
+          delete cache[keys.shift()];
+        }
+      }
+      localStorage.setItem("luminareader_pagination_cache", JSON.stringify(cache));
+    } catch (e) {}
+  }
+
+  invalidateMeasuredPagination(skipSchedule = false) {
     if (this._measuredChapterPages) {
       this._measuredChapterPages.clear();
     } else {
       this._measuredChapterPages = new Map();
     }
     this._calibratedWordsPerPage = null;
+    this._fullPaginationMeasured = false;
+    this._paginationMeasureEpoch = (this._paginationMeasureEpoch || 0) + 1;
+    if (!skipSchedule) {
+      this.scheduleFullBookPaginationMeasurement();
+    }
+  }
+
+  scheduleFullBookPaginationMeasurement(delayMs = 160, retryCount = 0) {
+    if (this._paginationMeasureTimer) {
+      clearTimeout(this._paginationMeasureTimer);
+      this._paginationMeasureTimer = null;
+    }
+    if (this.isPdfMode || !this.currentParser || !this.currentBook) return;
+    const epoch = this._paginationMeasureEpoch || 0;
+    this._paginationMeasureTimer = setTimeout(() => {
+      this._paginationMeasureTimer = null;
+      if ((this._paginationMeasureEpoch || 0) !== epoch || this.isPdfMode || !this.currentParser) return;
+      if (this._isOpeningBook || this._isLoadingChapter || this.dom.viewReader?.classList.contains("is-hidden")) {
+        if (retryCount < 30) {
+          this.scheduleFullBookPaginationMeasurement(150, retryCount + 1);
+        }
+        return;
+      }
+      this.measureAllChaptersPagination(epoch);
+    }, delayMs);
+  }
+
+  async measureAllChaptersPagination(epoch) {
+    if (this.isPdfMode || !this.currentParser || !this.currentBook) return;
+    if ((this._paginationMeasureEpoch || 0) !== epoch) return;
+
+    const spineLen = this.currentParser.spine?.length || 0;
+    if (spineLen <= 1) {
+      this._fullPaginationMeasured = true;
+      return;
+    }
+
+    const stageEl = this.dom.pagedStage;
+    const contentEl = this.dom.readerContent;
+    if (!stageEl || !contentEl) return;
+
+    const isVertical = this.isVerticalReadingMode();
+    const stageRect = stageEl.getBoundingClientRect();
+    const vp = this.dom.pagedViewport;
+    const vpHeight = Math.max(1, vp?.clientHeight || window.innerHeight || 1);
+
+    let stageWidth = stageRect.width;
+    let stageHeight = stageRect.height;
+    let exactStep = 0;
+    let safetyThreshold = 30;
+
+    if (!isVertical) {
+      const stepInfo = this.getExactColumnStep();
+      stageWidth = stepInfo.stageWidth;
+      exactStep = stepInfo.exactStep;
+      const gap = stepInfo.gap;
+      if (stageWidth <= 0 || stageHeight <= 0 || exactStep <= 0) return;
+      const isTwoCol = typeof this.resolveEffectiveColumnCount === "function" && this.resolveEffectiveColumnCount() === 2;
+      const colWidth = isTwoCol ? Math.max(50, (stageWidth - gap) / 2) : stageWidth;
+      safetyThreshold = Math.max(30, Math.min(gap + 20, colWidth * 0.35));
+    } else if (stageWidth <= 0) {
+      return;
+    }
+
+    const measureStage = document.createElement("div");
+    measureStage.className = "paged-stage";
+    measureStage.setAttribute("aria-hidden", "true");
+    measureStage.style.cssText = isVertical
+      ? `position: fixed !important; left: -99999px !important; top: 0 !important; visibility: hidden !important; pointer-events: none !important; z-index: -1 !important; width: ${stageWidth}px !important; max-width: ${stageWidth}px !important; height: auto !important; overflow: visible !important; contain: layout style !important;`
+      : `position: fixed !important; left: -99999px !important; top: 0 !important; visibility: hidden !important; pointer-events: none !important; z-index: -1 !important; width: ${stageWidth}px !important; max-width: ${stageWidth}px !important; height: ${stageHeight}px !important; overflow: hidden !important; contain: layout style !important;`;
+
+    const measureContent = document.createElement("article");
+    const contentClasses = (contentEl.className || "reader-content paged-content")
+      .split(/\s+/)
+      .filter(c => c && c !== "is-chapter-loading")
+      .join(" ");
+    measureContent.className = contentClasses;
+    measureContent.style.cssText = isVertical
+      ? "height: auto !important; width: 100% !important; transition: none !important; transform: none !important;"
+      : "transition: none !important; transform: none !important;";
+
+    measureStage.appendChild(measureContent);
+    document.body.appendChild(measureStage);
+
+    const waitForOffscreenImages = async () => {
+      const imgs = measureContent.querySelectorAll("img");
+      if (!imgs || imgs.length === 0) return;
+      const pending = [];
+      imgs.forEach(img => {
+        if (!img.complete) {
+          pending.push(new Promise(resolve => {
+            img.addEventListener("load", resolve, { once: true });
+            img.addEventListener("error", resolve, { once: true });
+          }));
+        }
+      });
+      if (pending.length > 0) {
+        await Promise.race([
+          Promise.all(pending),
+          new Promise(resolve => setTimeout(resolve, 200))
+        ]);
+      }
+    };
+
+    try {
+      let sliceStart = performance.now();
+      const isCancelled = () =>
+        (this._paginationMeasureEpoch || 0) !== epoch ||
+        this.isPdfMode ||
+        !this.currentParser ||
+        this.dom.viewReader?.classList.contains("is-hidden");
+
+      for (let i = 0; i < spineLen; i++) {
+        if (isCancelled()) return;
+        if (this._measuredChapterPages?.has(i)) {
+          continue;
+        }
+
+        try {
+          const ch = await this.currentParser.loadChapter(i);
+          if (isCancelled()) return;
+          let html = ch.html || "";
+          if (this.settings.fastReading) {
+            html = this.toBionicReadingHtml(html, i);
+          }
+
+          if (isVertical) {
+            measureContent.innerHTML = `<section class="epub-chapter-section">${html}</section>`;
+          } else {
+            measureContent.innerHTML = html;
+          }
+
+          await waitForOffscreenImages();
+          if (isCancelled()) return;
+
+          let pages = 1;
+          if (isVertical) {
+            const sec = measureContent.firstElementChild;
+            const secHeight = Math.max(1, sec ? sec.offsetHeight : (measureContent.scrollHeight || 1));
+            pages = Math.max(1, Math.ceil(secHeight / vpHeight));
+          } else {
+            const scrollWidth = measureContent.scrollWidth;
+            if (scrollWidth > stageWidth + safetyThreshold) {
+              pages = 1 + Math.ceil((scrollWidth - stageWidth - safetyThreshold) / exactStep);
+            }
+            while (pages > 1 && !this.hasVisibleContentOnPage(pages - 1, measureStage, measureContent)) {
+              pages--;
+            }
+          }
+
+          if (!this._measuredChapterPages) this._measuredChapterPages = new Map();
+          this._measuredChapterPages.set(i, Math.max(1, pages));
+        } catch (err) {
+          // Kapitola se nepodařila změřit; fallback v recomputeGlobalPagination zůstane zachován
+        }
+
+        if (performance.now() - sliceStart > 10) {
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          sliceStart = performance.now();
+        }
+      }
+
+      if (isCancelled()) return;
+
+      this._fullPaginationMeasured = true;
+      this.recomputeGlobalPagination();
+      this.saveCachedPagination(this.currentBook?.id);
+      this.renderScrubberTicks();
+      this.updatePageUI();
+    } finally {
+      measureStage.remove();
+    }
   }
 
   recordMeasuredChapterPages(chapterIndex, pageCount, wordCount = 0) {
@@ -9484,9 +9752,23 @@ export class LuminaApp {
 
     const wCount = wordCount || this.bookWordCounts?.chapterWords?.[chapterIndex] || 0;
     let calibratedNow = false;
-    if (!this._calibratedWordsPerPage && wCount >= 150 && validPages >= 2) {
-      this._calibratedWordsPerPage = Math.max(50, Math.min(1200, Math.round(wCount / validPages)));
-      calibratedNow = true;
+    if (!this._fullPaginationMeasured && wCount >= 150 && validPages >= 2) {
+      let sumW = 0;
+      let sumP = 0;
+      for (const [idx, pgs] of this._measuredChapterPages.entries()) {
+        const cw = (idx === chapterIndex ? wCount : 0) || this.bookWordCounts?.chapterWords?.[idx] || 0;
+        if (cw >= 150 && pgs >= 2) {
+          sumW += cw;
+          sumP += pgs;
+        }
+      }
+      if (sumW > 0 && sumP > 0) {
+        const nextCal = Math.max(50, Math.min(1200, Math.round(sumW / sumP)));
+        if (nextCal !== this._calibratedWordsPerPage) {
+          this._calibratedWordsPerPage = nextCal;
+          calibratedNow = true;
+        }
+      }
     }
 
     if (
@@ -9931,11 +10213,12 @@ export class LuminaApp {
       this.dom.pillScrubberThumb.style.left = `clamp(4px, ${exactPercent.toFixed(3)}%, calc(100% - 4px))`;
     }
 
+    const isMeasuringBook = !this.isPdfMode && !this._fullPaginationMeasured && (this.currentParser?.spine?.length || 0) > 1;
     if (this.dom.pillScrubberPercent) {
-      this.dom.pillScrubberPercent.textContent = `${percent}\u00a0%`;
+      this.dom.pillScrubberPercent.textContent = isMeasuringBook && customRatio === null ? "···" : `${percent}\u00a0%`;
     }
 
-    const defaultPrefix = `Strana ${curPage} z ${totalPages}`;
+    const defaultPrefix = isMeasuringBook && customRatio === null ? "Načítání stran…" : `Strana ${curPage} z ${totalPages}`;
     if (this.dom.pillScrubberPrefix) {
       this.dom.pillScrubberPrefix.textContent = customPrefix !== null ? customPrefix : defaultPrefix;
     }

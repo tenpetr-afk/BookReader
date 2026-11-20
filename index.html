@@ -334,29 +334,13 @@
 
           <!-- Plovoucí cluster rychlých akcí -->
           <div id="reader-floating-dock" class="reader-floating-dock is-hidden" role="menu" aria-label="Rychlé akce čtečky">
-            <!-- Přesný krokový ovladač stránek vlevo + kruhová akční tlačítka vpravo -->
             <div class="action-cluster-top-row">
-              <div id="pill-page-stepper" class="pill-page-stepper" role="group" aria-label="Přesný výběr strany">
-                <button type="button" id="btn-scrubber-prev-page" class="pill-stepper-btn" title="Předchozí strana" aria-label="Předchozí strana">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-                </button>
-                <button type="button" id="btn-scrubber-page-jump" class="pill-stepper-display" title="Klepněte pro zadání čísla strany" aria-label="Zadat číslo strany">
-                  <span id="pill-stepper-current">1</span><span class="pill-stepper-sep"> / </span><span id="pill-stepper-total">1</span>
-                </button>
-                <input type="number" id="input-scrubber-page-jump" class="pill-stepper-input is-hidden" min="1" step="1" inputmode="numeric" aria-label="Číslo cílové strany" />
-                <button type="button" id="btn-scrubber-next-page" class="pill-stepper-btn" title="Další strana" aria-label="Další strana">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-                </button>
-              </div>
               <div class="action-cluster-top-actions">
                 <button id="btn-menu-stats" class="dock-action-btn" title="Statistiky čtení (klávesa S)" aria-label="Statistika">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
                 </button>
                 <button id="btn-menu-search" class="dock-action-btn" title="Hledat v knize (klávesa F)" aria-label="Hledat v knize">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                </button>
-                <button id="btn-menu-settings" class="dock-action-btn" title="Nastavení písma a vzhledu" aria-label="Nastavení">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
                 </button>
                 <button type="button" id="btn-menu-toc" class="dock-action-btn" title="Obsah knihy (klávesa T)" aria-label="Obsah knihy">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -367,6 +351,9 @@
                     <circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none" />
                     <line x1="8" y1="18" x2="20" y2="18" stroke-width="2.2" />
                   </svg>
+                </button>
+                <button id="btn-menu-settings" class="dock-action-btn" title="Nastavení písma a vzhledu" aria-label="Nastavení">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
                 </button>
               </div>
             </div>
@@ -611,6 +598,17 @@
             <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0.15rem 0 0 0;">Přepne plovoucí lišty, panely a ovládací prvky do skleněného designu s odlesky a hloubkou</p>
           </div>
           <button type="button" role="switch" id="setting-liquid-glass" class="switch-control" aria-checked="false" aria-label="Vzhled tekutého skla (Liquid Glass)">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+          </button>
+        </div>
+
+        <!-- Textura pergamenu -->
+        <div class="toggle-row" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
+          <div>
+            <span class="toggle-title">Textura pergamenu</span>
+            <p style="font-size: 0.75rem; color: var(--text-muted); margin: 0.15rem 0 0 0;">Přidá jemný papírový povrch pergamenu na pozadí čtečky</p>
+          </div>
+          <button type="button" role="switch" id="setting-parchment-texture" class="switch-control" aria-checked="false" aria-label="Textura pergamenu">
             <span class="switch-track"><span class="switch-thumb"></span></span>
           </button>
         </div>

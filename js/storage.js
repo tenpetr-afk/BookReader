@@ -1341,6 +1341,7 @@ export class StorageManager {
     const defaults = {
       theme: "warm", // light, warm, sepia, dark, oled
       liquidGlassUi: false, // Liquid Glass theme toggle
+      parchmentTexture: false, // Parchment paper texture toggle
       fontFamily: "georgia", // georgia, merriweather, lora, inter, atkinson, opendyslexic, verdana, arial, literata, comic-sans
       fontSize: 19, // px
       marginPercent: 8, // % velikost okrajů stránky
@@ -1395,6 +1396,9 @@ export class StorageManager {
         merged.liquidGlassUi = localStorage.getItem("liquidGlassUi") !== null
           ? localStorage.getItem("liquidGlassUi") === "true"
           : (parsed.liquidGlassUi !== undefined ? !!parsed.liquidGlassUi : false);
+        merged.parchmentTexture = localStorage.getItem("parchmentTexture") !== null
+          ? localStorage.getItem("parchmentTexture") === "true"
+          : (parsed.parchmentTexture !== undefined ? !!parsed.parchmentTexture : false);
         merged.pencilDoubleTapNavigation = parsed.pencilDoubleTapNavigation !== false;
         merged.pencilFlickNavigation = parsed.pencilFlickNavigation !== false;
         merged.showRulerButton = parsed.showRulerButton !== false;
@@ -1566,6 +1570,9 @@ export class StorageManager {
       localStorage.setItem('showProgressBar', String(isVisible));
       if (settings.liquidGlassUi !== undefined) {
         localStorage.setItem("liquidGlassUi", String(!!settings.liquidGlassUi));
+      }
+      if (settings.parchmentTexture !== undefined) {
+        localStorage.setItem("parchmentTexture", String(!!settings.parchmentTexture));
       }
       localStorage.setItem("luminareader_settings", JSON.stringify(settings));
     } catch (e) {

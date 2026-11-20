@@ -18,6 +18,7 @@ export class EpubParser {
     this.toc = [];
     this.coverBlobUrl = null;
     this.blobUrlsToRevoke = [];
+    this._blobUrlCache = new Map();
   }
 
   /**
@@ -387,9 +388,13 @@ export class EpubParser {
           else if (lower.endsWith(".gif")) mime = "image/gif";
           else if (lower.endsWith(".webp")) mime = "image/webp";
 
-          const blob = await this.archive.getFileAsBlob(fullImgPath, mime);
-          const blobUrl = URL.createObjectURL(blob);
-          this.blobUrlsToRevoke.push(blobUrl);
+          let blobUrl = this._blobUrlCache?.get(fullImgPath);
+          if (!blobUrl) {
+            const blob = await this.archive.getFileAsBlob(fullImgPath, mime);
+            blobUrl = URL.createObjectURL(blob);
+            this.blobUrlsToRevoke.push(blobUrl);
+            this._blobUrlCache?.set(fullImgPath, blobUrl);
+          }
 
           img.setAttribute("src", blobUrl);
           if (img.tagName.toLowerCase() === "image") {
@@ -584,6 +589,7 @@ export class EpubParser {
       } catch (e) {}
     }
     this.blobUrlsToRevoke = [];
+    this._blobUrlCache?.clear();
   }
 }
 
