@@ -4,23 +4,23 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash, isTouchCapableDevice, getBookProgressTimestamp } from "./storage.js?v=2.6.5";
+import { storage, computeFileHash, isTouchCapableDevice, getBookProgressTimestamp } from "./storage.js?v=2.9.9";
 import {
   EpubParser,
   buildChapterTextIndex,
   captureViewportAnchor,
   mapAnchorToPageIndex,
   mapAnchorToVerticalOffset
-} from "./epub-parser.js?v=2.6.5";
-import { PDFLoader } from "./pdf-loader.js?v=2.6.8";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.6.5";
-import { ReadingRuler } from "./ruler.js?v=2.6.5";
-import { StatsCharts } from "./charts.js?v=2.6.5";
-import { supabaseSync } from "./supabase-sync.js?v=2.6.5";
-import { supabase } from "./supabase-client.js?v=2.6.5";
-import * as TextParser from "./text-parser.js?v=2.6.5";
+} from "./epub-parser.js?v=2.9.9";
+import { PDFLoader } from "./pdf-loader.js?v=2.9.9";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.9.9";
+import { ReadingRuler } from "./ruler.js?v=2.9.9";
+import { StatsCharts } from "./charts.js?v=2.9.9";
+import { supabaseSync } from "./supabase-sync.js?v=2.9.9";
+import { supabase } from "./supabase-client.js?v=2.9.9";
+import * as TextParser from "./text-parser.js?v=2.9.9";
 
-export const APP_VERSION = "v2.6.5";
+export const APP_VERSION = "v2.9.9";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -89,6 +89,7 @@ export class LuminaApp {
     this._currentEpubAnchor = null;
     this._pendingReflowAnchor = null;
     this._chapterTextIndexCache = new Map();
+    this._downloadingBookIds = new Set();
 
     // Stavové proměnné pro navigaci a stránkování grafů statistik
     this._dailyChartWeekOffset = 0;
@@ -99,8 +100,14 @@ export class LuminaApp {
   }
 
   async init() {
-    // 1. Spolehlivé a okamžité nastavení verze aplikace
+    // 1. Spolehlivé a okamžité nastavení verze aplikace (bez mazání lokální mezipaměti knih v IndexedDB)
     try {
+      const prevVersion = localStorage.getItem("lumina_app_version");
+      if (prevVersion && prevVersion !== APP_VERSION) {
+        console.info(`[LuminaApp] Aktualizace aplikace ${prevVersion} -> ${APP_VERSION} (lokální mezipaměť knih a obálek v IndexedDB zachována).`);
+      }
+      localStorage.setItem("lumina_app_version", APP_VERSION);
+
       const versionEl = document.getElementById("app-version-badge");
       if (versionEl) {
         versionEl.textContent = APP_VERSION;
@@ -191,27 +198,32 @@ export class LuminaApp {
       });
     } catch (_) {}
 
-    // 7. Zkontrolovat naposledy čtenou knihu a obnovit stav čtení při znovunačtení
+    // 7. Zkontrolovat naposledy čtenou knihu a obnovit stav čtení při znovunačtení (pouze pokud je lokálně v IndexedDB)
     try {
       const lastBookId = storage.getLastActiveBookId();
       const activeView = localStorage.getItem("lumina_active_view");
       if (lastBookId && books && books.some(b => b.id === lastBookId)) {
         if (activeView === "reader") {
-          await this.openBook(lastBookId);
+          const hasLocalFile = await storage.hasBookFile(lastBookId);
+          if (hasLocalFile) {
+            await this.openBook(lastBookId, { isAutoRestore: true });
+          } else {
+            localStorage.setItem("lumina_active_view", "library");
+          }
         }
       }
     } catch (restoreErr) {
       console.warn("[LuminaApp] Chyba při obnovení rozečtené knihy:", restoreErr);
     }
 
-    // 8. Bezpečná a tichá asynchronní synchronizace s cloudem v pozadí (neblokující)
+    // 8. Bezpečná a tichá asynchronní synchronizace metadat s cloudem v pozadí (neblokující, bez stahování souborů)
     try {
       setTimeout(() => {
         try {
           if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
             this.syncWithCloud(false).then(async (res) => {
-              // Pokud byla lokální knihovna prázdná a cloud stáhl knihy, znovu vykreslit
-              if (books.length === 0 && res?.stats?.downloaded > 0) {
+              const s = res?.stats;
+              if (s && ((books.length === 0 && (s.metadataSynced > 0 || s.downloaded > 0)) || s.coversDownloaded > 0)) {
                 await this.renderLibrary();
               }
             }).catch(err => {
@@ -4779,8 +4791,14 @@ export class LuminaApp {
     book.progress = progressValue;
     book.progressPercent = progressValue;
 
+    const isCachedLocally = book.hasLocalFile === true || Boolean(book.fileData || book.data);
+    const isDownloading = this._downloadingBookIds?.has(book.id);
+
     const card = document.createElement("div");
     card.className = "book-card";
+    if (!isCachedLocally) card.classList.add("is-cloud-only");
+    if (isDownloading) card.classList.add("is-downloading");
+    card.dataset.bookId = book.id;
     card.setAttribute("tabindex", "0");
 
     const coverHtml = book.coverDataUrl
@@ -4790,6 +4808,20 @@ export class LuminaApp {
            <span class="cover-title">${book.title}</span>
          </div>`;
 
+    const cloudBadgeHtml = !isCachedLocally
+      ? `<span class="book-cloud-badge" title="Kniha je v cloudu – soubor se stáhne při prvním otevření" aria-label="Uloženo v cloudu">
+           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+             <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+           </svg>
+         </span>`
+      : "";
+
+    const loadingOverlayHtml = `
+      <div class="book-card-loading-overlay" aria-hidden="true">
+        <span class="book-card-spinner"></span>
+        <span class="book-card-loading-label">Stahuji…</span>
+      </div>`;
+
     const lastReadText = book.lastReadAt
       ? new Date(book.lastReadAt).toLocaleDateString("cs-CZ")
       : "Nová";
@@ -4797,6 +4829,8 @@ export class LuminaApp {
     card.innerHTML = `
       <div class="book-cover-wrapper">
         ${coverHtml}
+        ${cloudBadgeHtml}
+        ${loadingOverlayHtml}
         <div class="book-card-actions">
           <button class="btn-delete-book" title="Odebrat knihu" data-id="${book.id}">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -4824,10 +4858,17 @@ export class LuminaApp {
       this.applyTextCoverThemeIfPlainPage(book, coverWrapper, coverImg);
     }
 
-    // Otevření knihy
+    // Otevření knihy (kliknutím nebo klávesnicí)
     card.addEventListener("click", (e) => {
       if (e.target.closest(".btn-delete-book")) return;
       this.openBook(book.id);
+    });
+    card.addEventListener("keydown", (e) => {
+      if (e.target.closest(".btn-delete-book")) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        this.openBook(book.id);
+      }
     });
 
     // Smazání knihy
@@ -4991,12 +5032,35 @@ export class LuminaApp {
     }
   }
 
+  setBookCardDownloading(bookId, isDownloading) {
+    if (!bookId) return;
+    if (!this._downloadingBookIds) this._downloadingBookIds = new Set();
+    if (isDownloading) {
+      this._downloadingBookIds.add(bookId);
+    } else {
+      this._downloadingBookIds.delete(bookId);
+    }
+    if (this.dom.bookGrid) {
+      const cards = this.dom.bookGrid.querySelectorAll(".book-card");
+      for (const card of cards) {
+        if (card.dataset.bookId === bookId) {
+          card.classList.toggle("is-downloading", !!isDownloading);
+          if (!isDownloading) {
+            card.classList.remove("is-cloud-only");
+          }
+        }
+      }
+    }
+  }
+
   async handleManualCloudSync() {
-    this.showToast("Zahajuji synchronizaci s cloudem...", "info");
+    this.showToast("Synchronizuji metadata a postup s cloudem...", "info");
     const res = await supabaseSync.syncAll();
     if (res?.success) {
       const stats = res.stats || {};
       const parts = [];
+      if (stats.metadataSynced > 0) parts.push(`nová metadata knih: ${stats.metadataSynced}`);
+      if (stats.coversDownloaded > 0) parts.push(`obálky: ${stats.coversDownloaded}`);
       if (stats.downloaded > 0) parts.push(`staženo knih: ${stats.downloaded}`);
       if (stats.uploaded > 0) parts.push(`nahráno knih: ${stats.uploaded}`);
       if (stats.updatedFromCloud > 0) parts.push(`postup z cloudu`);
@@ -5027,7 +5091,7 @@ export class LuminaApp {
     try {
       const res = await supabaseSync.syncAll({ silent: !interactive });
       if (res?.success) {
-        if (res.stats?.downloaded > 0 || res.stats?.updatedFromCloud > 0) {
+        if (res.stats?.metadataSynced > 0 || res.stats?.coversDownloaded > 0 || res.stats?.downloaded > 0 || res.stats?.updatedFromCloud > 0) {
           await this.renderLibrary();
           if (this.currentBook) {
             const refreshed = await storage.getBook(this.currentBook.id);
@@ -5047,12 +5111,53 @@ export class LuminaApp {
 
   // --- ČTENÍ KNIHY ---
 
-  async openBook(bookId) {
-    this.showToast("Otevírám knihu...", "info");
-    const book = await storage.getBook(bookId);
+  async openBook(bookId, options = {}) {
+    if (!bookId) return;
+    if (this._downloadingBookIds?.has(bookId) || this._isOpeningBook) return;
+
+    let book = await storage.getBook(bookId);
     if (!book) {
       this.showToast("Kniha nebyla v databázi nalezena.", "error");
       return;
+    }
+
+    // 0. Striktní on-demand (lazy) stažení binárního souboru knihy až při kliknutí, pokud ještě není v IndexedDB
+    let rawBinary = await storage.getBookFile(book.id);
+    if (!rawBinary) {
+      if (options.isAutoRestore) {
+        localStorage.setItem("lumina_active_view", "library");
+        return;
+      }
+      if (!supabaseSync || !supabaseSync.isOnline()) {
+        this.showToast("Kniha není uložena v zařízení a jste offline. Připojte se pro stažení.", "error");
+        return;
+      }
+
+      this.setBookCardDownloading(book.id, true);
+      this.showToast(`Stahuji knihu „${book.title}“ z cloudu...`, "info");
+      try {
+        const dl = await supabaseSync.downloadBookFile(book);
+        if (!dl || !dl.arrayBuffer) {
+          this.showToast("Soubor knihy se nepodařilo stáhnout z cloudu.", "error");
+          return;
+        }
+        rawBinary = dl.arrayBuffer;
+        if (dl.book) {
+          book = dl.book;
+        }
+        this._libraryNeedsRefresh = true;
+      } catch (dlErr) {
+        console.error("[LuminaApp] Chyba při on-demand stahování knihy:", dlErr);
+        this.showToast(`Nepodařilo se stáhnout knihu: ${dlErr?.message || "chyba sítě"}`, "error");
+        return;
+      } finally {
+        this.setBookCardDownloading(bookId, false);
+        if (book.id !== bookId) {
+          this.setBookCardDownloading(book.id, false);
+        }
+      }
+    } else {
+      this.showToast("Otevírám knihu...", "info");
     }
 
     if (this.currentParser) {
@@ -5171,10 +5276,10 @@ export class LuminaApp {
         if (this.dom.bookTitleEl) this.dom.bookTitleEl.textContent = book.title;
 
         // Zahájíme novou relaci čtení pro PDF dokument
-        tracker.startSession(bookId, book.title, 0, (book.totalWords || 1), 0);
+        tracker.startSession(book.id, book.title, 0, (book.totalWords || 1), 0);
 
         try {
-          const rawPdf = book.fileData || book.data;
+          const rawPdf = rawBinary || book.fileData || book.data;
           if (!rawPdf) {
             throw new Error("PDF dokument neobsahuje žádná data souboru.");
           }
@@ -5205,7 +5310,7 @@ export class LuminaApp {
 
           await this.renderPdfToc();
           this.updatePageUI();
-          this.pdfLoader.calculateTotalWordsInBackground(bookId);
+          this.pdfLoader.calculateTotalWordsInBackground(book.id);
         } finally {
           this._isOpeningBook = false;
           this._isRestoringPosition = false;
@@ -5231,7 +5336,7 @@ export class LuminaApp {
       if (this.ruler) this.ruler.setPdfMode(false);
       this.setPdfRulerUIVisibility(false);
 
-      const rawBuffer = book.fileData || book.data;
+      const rawBuffer = rawBinary || book.fileData || book.data;
       if (!rawBuffer) {
         throw new Error("Kniha neobsahuje žádná data souboru.");
       }

@@ -4,9 +4,9 @@
  * obousměrnou synchronizaci mezi zařízeními a offline-first fungování.
  */
 
-import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.6.5';
-import { storage, computeFileHash, getBookProgressTimestamp } from './storage.js?v=2.6.5';
-import { EpubParser } from './epub-parser.js?v=2.6.5';
+import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.9.9';
+import { storage, computeFileHash, getBookProgressTimestamp } from './storage.js?v=2.9.9';
+import { EpubParser } from './epub-parser.js?v=2.9.9';
 
 export class SupabaseSync {
   constructor() {
@@ -17,6 +17,10 @@ export class SupabaseSync {
     this.progressDebounceTimer = null;
     this._inFlightProgress = new Set();
     this._booksSchemaHasAnchorCols = true;
+    this._booksSchemaHasExtendedCols = true;
+    this._inFlightDownloads = new Map();
+    this._inFlightCoverDownloads = new Map();
+    this._failedCoverPaths = new Set();
     this.isSyncing = false;
     this._lastSyncTime = 0;
 
@@ -131,25 +135,25 @@ export class SupabaseSync {
       const fileType = isPdf ? 'pdf' : (ext === 'pdf' ? 'pdf' : 'epub'); // striktně malá písmena
       const mimeType = fileType === 'pdf' ? 'application/pdf' : 'application/epub+zip';
 
-      // Surová binární data (ArrayBuffer, Uint8Array nebo Blob)
-      const rawBinary = book.data || book.fileData;
+      // Surová binární data (ArrayBuffer, Uint8Array, Blob nebo ze store "book_files")
+      const rawBinary = book.data || book.fileData || (book.id ? await storage.getBookFile(book.id) : null);
       if (!rawBinary) {
         const missingDataErr = new Error("Kniha neobsahuje surová binární data (book.data / book.fileData)");
         console.error(`[Supabase Sync] ${fileType.toUpperCase()} upload failed:`, missingDataErr);
         throw missingDataErr;
       }
 
-      // Výpočet deterministického hashe a ID pro PDF
+      // Výpočet deterministického hashe souboru (pro PDF i EPUB) a ID pro PDF
+      if (!book.fileHash && !book.file_hash) {
+        try {
+          const h = await computeFileHash(rawBinary);
+          if (h) {
+            book.fileHash = h;
+            book.file_hash = h;
+          }
+        } catch (_) {}
+      }
       if (isPdf) {
-        if (!book.fileHash && !book.file_hash) {
-          try {
-            const h = await computeFileHash(rawBinary);
-            if (h) {
-              book.fileHash = h;
-              book.file_hash = h;
-            }
-          } catch (_) {}
-        }
         const h = book.fileHash || book.file_hash;
         if (h) {
           const canonicalId = `pdf_${h}`;
@@ -174,19 +178,41 @@ export class SupabaseSync {
       } else {
         uploadBlob = new Blob([rawBinary], { type: mimeType });
       }
+      book.fileSize = uploadBlob.size;
+      book.file_size = uploadBlob.size;
 
       console.log(`[Supabase Sync] Nahrávám ${fileType.toUpperCase()} "${book.title}" (${uploadBlob.size} B, mime: ${mimeType}) do ${storagePath}...`);
 
-      const { data, error } = await supabase.storage
+      const { error } = await supabase.storage
         .from(STORAGE_BUCKET)
         .upload(storagePath, uploadBlob, {
           contentType: mimeType,
+          cacheControl: "31536000",
           upsert: true
         });
 
       if (error) {
         console.error(`[Supabase Sync] ${fileType.toUpperCase()} upload failed:`, error);
         throw error;
+      }
+
+      // Nahrání náhledu obálky samostatně do Storage (pokud existuje) pro lehkou knihovnu bez stahování celé knihy
+      let coverPath = book.cover_path || null;
+      let coverHash = book.coverHash || book.cover_hash || null;
+      const localCoverUrl = book.coverDataUrl || (await storage.getBookCover(book.id))?.dataUrl || null;
+      if (localCoverUrl && this._booksSchemaHasExtendedCols && (!coverPath || !coverHash)) {
+        try {
+          const uploadedCover = await this.uploadBookCover(book.id, localCoverUrl);
+          if (uploadedCover) {
+            coverPath = uploadedCover.coverPath;
+            coverHash = uploadedCover.coverHash;
+            book.cover_path = coverPath;
+            book.coverHash = coverHash;
+            book.cover_hash = coverHash;
+          }
+        } catch (coverErr) {
+          console.warn("[Supabase Sync] Varování při nahrávání obálky:", coverErr);
+        }
       }
 
       // Zápis / aktualizace metadat v databázi (tabulka books)
@@ -218,24 +244,25 @@ export class SupabaseSync {
         row.progress_updated_at = progTs > 0 ? new Date(progTs).toISOString() : null;
       }
 
-      let { error: dbError } = await supabase
-        .from("books")
-        .upsert(row, { onConflict: "id" });
-
-      if (dbError && this._isMissingAnchorColumnError(dbError)) {
-        this._booksSchemaHasAnchorCols = false;
-        const fallbackRow = this._stripAnchorCols(row);
-        const retry = await supabase.from("books").upsert(fallbackRow, { onConflict: "id" });
-        dbError = retry.error;
+      if (this._booksSchemaHasExtendedCols) {
+        row.author = book.author || book.creator || null;
+        row.file_size = uploadBlob.size;
+        row.file_hash = book.fileHash || book.file_hash || null;
+        row.cover_path = coverPath;
+        row.cover_hash = coverHash;
+        row.total_pages = Number(book.numPages || book.total_pages) || null;
+        row.total_chapters = Number(book.totalChapters || book.total_chapters) || null;
+        row.total_words = Number(book.totalWords || book.total_words) || null;
       }
 
+      const dbError = await this._upsertBooksRow(row);
       if (dbError) {
         console.error(`[Supabase Sync] ${fileType.toUpperCase()} upload failed:`, dbError);
         throw dbError;
       }
 
       console.log(`[Supabase Sync] Kniha "${book.title}" byla úspěšně nahrána do cloudu.`);
-      return { success: true, filePath: storagePath };
+      return { success: true, filePath: storagePath, coverPath, coverHash };
     } catch (err) {
       console.error("[Supabase Sync] Upload failed:", err);
       return null;
@@ -250,23 +277,35 @@ export class SupabaseSync {
 
     try {
       console.log(`[SupabaseSync] Mažu knihu ${bookId} z cloudu...`);
-      // Zjistíme cestu k souboru
-      const { data: bookRow } = await supabase
+      // Zjistíme cestu k souboru a obálce
+      let bookRow = null;
+      const selectCols = this._booksSchemaHasExtendedCols ? "file_path, cover_path" : "file_path";
+      const res = await supabase
         .from("books")
-        .select("file_path")
+        .select(selectCols)
         .eq("id", bookId)
         .maybeSingle();
+      if (res.error && this._isMissingExtendedColumnError(res.error)) {
+        this._booksSchemaHasExtendedCols = false;
+        const retry = await supabase.from("books").select("file_path").eq("id", bookId).maybeSingle();
+        bookRow = retry.data;
+      } else {
+        bookRow = res.data;
+      }
 
       const pathsToRemove = [];
       if (bookRow?.file_path) {
         pathsToRemove.push(bookRow.file_path);
+      }
+      if (bookRow?.cover_path) {
+        pathsToRemove.push(bookRow.cover_path);
       }
       if (bookId && bookId.startsWith("pdf_")) {
         pathsToRemove.push(`books/${bookId}.pdf`);
       }
 
       if (pathsToRemove.length > 0) {
-        await supabase.storage.from(STORAGE_BUCKET).remove(pathsToRemove);
+        await supabase.storage.from(STORAGE_BUCKET).remove(Array.from(new Set(pathsToRemove)));
       }
 
       // Soft-delete relací přiřazených k mazané knize
@@ -297,10 +336,24 @@ export class SupabaseSync {
   _isMissingAnchorColumnError(error) {
     if (!error) return false;
     const msg = String(error.message || "");
-    return error.code === "PGRST204" ||
-      error.code === "42703" ||
-      msg.includes("reading_anchor") ||
+    return msg.includes("reading_anchor") ||
       msg.includes("progress_updated_at");
+  }
+
+  _isMissingExtendedColumnError(error) {
+    if (!error) return false;
+    const msg = String(error.message || "");
+    return (
+      msg.includes("author") ||
+      msg.includes("file_size") ||
+      msg.includes("file_hash") ||
+      msg.includes("cover_path") ||
+      msg.includes("cover_hash") ||
+      msg.includes("total_pages") ||
+      msg.includes("total_chapters") ||
+      msg.includes("total_words") ||
+      ((error.code === "PGRST204" || error.code === "42703") && !this._isMissingAnchorColumnError(error))
+    );
   }
 
   _stripAnchorCols(payload) {
@@ -309,6 +362,236 @@ export class SupabaseSync {
     delete copy.reading_anchor;
     delete copy.progress_updated_at;
     return copy;
+  }
+
+  _stripExtendedCols(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+    const copy = { ...payload };
+    delete copy.author;
+    delete copy.file_size;
+    delete copy.file_hash;
+    delete copy.cover_path;
+    delete copy.cover_hash;
+    delete copy.total_pages;
+    delete copy.total_chapters;
+    delete copy.total_words;
+    return copy;
+  }
+
+  async _upsertBooksRow(row) {
+    let payload = { ...row };
+    if (!this._booksSchemaHasAnchorCols) payload = this._stripAnchorCols(payload);
+    if (!this._booksSchemaHasExtendedCols) payload = this._stripExtendedCols(payload);
+
+    let { error } = await supabase.from("books").upsert(payload, { onConflict: "id" });
+    for (let attempt = 0; attempt < 2 && error; attempt++) {
+      let changed = false;
+      if (this._isMissingAnchorColumnError(error) && this._booksSchemaHasAnchorCols) {
+        this._booksSchemaHasAnchorCols = false;
+        payload = this._stripAnchorCols(payload);
+        changed = true;
+      }
+      if (this._isMissingExtendedColumnError(error) && this._booksSchemaHasExtendedCols) {
+        this._booksSchemaHasExtendedCols = false;
+        payload = this._stripExtendedCols(payload);
+        changed = true;
+      }
+      if (!changed) break;
+      const retry = await supabase.from("books").upsert(payload, { onConflict: "id" });
+      error = retry.error;
+    }
+    return error || null;
+  }
+
+  async _updateBooksRow(bookId, patch) {
+    let payload = { ...patch };
+    if (!this._booksSchemaHasAnchorCols) payload = this._stripAnchorCols(payload);
+    if (!this._booksSchemaHasExtendedCols) payload = this._stripExtendedCols(payload);
+
+    let { error } = await supabase.from("books").update(payload).eq("id", bookId);
+    for (let attempt = 0; attempt < 2 && error; attempt++) {
+      let changed = false;
+      if (this._isMissingAnchorColumnError(error) && this._booksSchemaHasAnchorCols) {
+        this._booksSchemaHasAnchorCols = false;
+        payload = this._stripAnchorCols(payload);
+        changed = true;
+      }
+      if (this._isMissingExtendedColumnError(error) && this._booksSchemaHasExtendedCols) {
+        this._booksSchemaHasExtendedCols = false;
+        payload = this._stripExtendedCols(payload);
+        changed = true;
+      }
+      if (!changed) break;
+      const retry = await supabase.from("books").update(payload).eq("id", bookId);
+      error = retry.error;
+    }
+    return error || null;
+  }
+
+  _extractPdfHashFromCloudBook(cloudBook) {
+    if (!cloudBook) return null;
+    if (cloudBook.file_hash) return cloudBook.file_hash;
+    if (cloudBook.id?.startsWith("pdf_")) {
+      const m = cloudBook.id.match(/^pdf_([a-f0-9]{64}_\d+)$/);
+      if (m) return m[1];
+    }
+    if (cloudBook.file_path) {
+      const m = cloudBook.file_path.match(/pdf_([a-f0-9]{64}_\d+)/);
+      if (m) return m[1];
+    }
+    return null;
+  }
+
+  async _dataUrlToBlob(dataUrl) {
+    if (!dataUrl || typeof dataUrl !== "string") return null;
+    const res = await fetch(dataUrl);
+    return await res.blob();
+  }
+
+  async _blobToDataUrl(blob) {
+    if (!blob) return null;
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async _createCoverThumbnailBlob(dataUrlOrBlob) {
+    const origBlob = (typeof dataUrlOrBlob === "string")
+      ? await this._dataUrlToBlob(dataUrlOrBlob)
+      : dataUrlOrBlob;
+    if (!origBlob) return null;
+
+    const origMime = origBlob.type || "image/jpeg";
+    const origExt = origMime.includes("png") ? "png" : (origMime.includes("webp") ? "webp" : "jpg");
+
+    if (origBlob.size <= 65 * 1024 || typeof document === "undefined" || typeof createImageBitmap !== "function") {
+      return { blob: origBlob, mimeType: origMime, ext: origExt };
+    }
+
+    try {
+      const bitmap = await createImageBitmap(origBlob);
+      const maxWidth = 400;
+      const scale = bitmap.width > maxWidth ? (maxWidth / bitmap.width) : 1;
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        bitmap.close();
+        return { blob: origBlob, mimeType: origMime, ext: origExt };
+      }
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      bitmap.close();
+      const thumbBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.78));
+      if (thumbBlob && thumbBlob.size < origBlob.size) {
+        return { blob: thumbBlob, mimeType: "image/jpeg", ext: "jpg" };
+      }
+    } catch (_) {}
+
+    return { blob: origBlob, mimeType: origMime, ext: origExt };
+  }
+
+  async uploadBookCover(bookId, coverDataUrl) {
+    if (!this.isOnline() || !supabase || !bookId || !coverDataUrl) return null;
+    const prepared = await this._createCoverThumbnailBlob(coverDataUrl);
+    if (!prepared?.blob) return null;
+
+    const coverHash = await computeFileHash(prepared.blob);
+    const coverPath = `covers/${bookId}.${prepared.ext}`;
+
+    const { error } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .upload(coverPath, prepared.blob, {
+        contentType: prepared.mimeType,
+        cacheControl: "31536000",
+        upsert: true
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    await storage.saveBookCover(bookId, {
+      dataUrl: coverDataUrl,
+      coverHash,
+      coverPath
+    });
+
+    return { coverPath, coverHash };
+  }
+
+  /**
+   * Stáhne obálku knihy ze Supabase Storage nanejvýš jednou pro dané zařízení / cover_hash
+   * a uloží ji trvale do IndexedDB store "covers".
+   */
+  async ensureBookCoverCached(bookId, cloudBook) {
+    if (!bookId || !cloudBook) return false;
+    const coverPath = cloudBook.cover_path || cloudBook.coverPath || null;
+    if (!coverPath || this._failedCoverPaths.has(coverPath)) return false;
+
+    const remoteHash = cloudBook.cover_hash || cloudBook.coverHash || null;
+    const existing = await storage.getBookCover(bookId);
+    if (existing?.dataUrl) {
+      if (!remoteHash || existing.coverHash === remoteHash || (!existing.coverHash && existing.coverPath === coverPath)) {
+        return false;
+      }
+    }
+
+    if (remoteHash) {
+      const cachedByHash = await storage.getBookCoverByHash(remoteHash);
+      if (cachedByHash?.dataUrl) {
+        await storage.saveBookCover(bookId, {
+          dataUrl: cachedByHash.dataUrl,
+          coverHash: remoteHash,
+          coverPath
+        });
+        return true;
+      }
+    }
+
+    if (!this.isOnline() || !supabase) return false;
+
+    const flightKey = `${bookId}::${coverPath}`;
+    if (this._inFlightCoverDownloads.has(flightKey)) {
+      return await this._inFlightCoverDownloads.get(flightKey);
+    }
+
+    const task = (async () => {
+      try {
+        const { data: blob, error } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .download(coverPath);
+
+        if (error || !blob) {
+          this._failedCoverPaths.add(coverPath);
+          return false;
+        }
+
+        const dataUrl = await this._blobToDataUrl(blob);
+        if (!dataUrl) return false;
+        const coverHash = remoteHash || await computeFileHash(blob);
+
+        await storage.saveBookCover(bookId, {
+          dataUrl,
+          coverHash,
+          coverPath
+        });
+        return true;
+      } catch (err) {
+        console.warn(`[SupabaseSync] Nepodařilo se stáhnout obálku (${coverPath}):`, err);
+        return false;
+      } finally {
+        this._inFlightCoverDownloads.delete(flightKey);
+      }
+    })();
+
+    this._inFlightCoverDownloads.set(flightKey, task);
+    return await task;
   }
 
   _parseReadingAnchor(rawAnchor) {
@@ -676,7 +959,249 @@ export class SupabaseSync {
   }
 
   /**
-   * Kompletní obousměrná synchronizace mezi IndexedDB a Supabase
+   * Stáhne binární soubor knihy (EPUB/PDF) ze Supabase Storage striktně na vyžádání
+   * při prvním otevření knihy uživatelem a okamžitě jej uloží do IndexedDB.
+   * @param {Object} book
+   * @returns {Promise<{ arrayBuffer: ArrayBuffer, book: Object } | null>}
+   */
+  async downloadBookFile(book) {
+    if (!book || !book.id) return null;
+
+    // Nejprve ověřit, zda již soubor mezitím není v IndexedDB
+    const alreadyCached = await storage.getBookFile(book.id);
+    if (alreadyCached) {
+      return { arrayBuffer: alreadyCached, book };
+    }
+
+    if (this._inFlightDownloads.has(book.id)) {
+      return await this._inFlightDownloads.get(book.id);
+    }
+
+    if (!this.isOnline() || !supabase) {
+      throw new Error("Zařízení je offline – knihu nelze stáhnout z cloudu.");
+    }
+
+    const downloadTask = (async () => {
+      const isPdf = !!(book.isPdf || book.format === "pdf" || book.fileName?.toLowerCase().endsWith(".pdf") || book.file_path?.toLowerCase().endsWith(".pdf"));
+      const finalFileName = book.fileName || book.file_name || `${book.id}.${isPdf ? "pdf" : "epub"}`;
+      let storagePath = book.file_path || (isPdf ? `books/${book.id}.pdf` : `${book.id}/${finalFileName}`);
+      if (!storagePath) {
+        storagePath = `books/${book.id}.${isPdf ? "pdf" : "epub"}`;
+      }
+
+      console.log(`[Supabase Sync] Lazy download souboru knihy "${book.title}" (${storagePath})...`);
+      let { data: blob, error: dlErr } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .download(storagePath);
+
+      if ((dlErr || !blob) && storagePath.startsWith("books/")) {
+        const altPath = storagePath.replace(/^books\//, "");
+        const altRes = await supabase.storage.from(STORAGE_BUCKET).download(altPath);
+        if (!altRes.error && altRes.data) {
+          blob = altRes.data;
+          dlErr = null;
+          storagePath = altPath;
+        }
+      } else if ((dlErr || !blob) && !storagePath.startsWith("books/")) {
+        const altPath = `books/${storagePath}`;
+        const altRes = await supabase.storage.from(STORAGE_BUCKET).download(altPath);
+        if (!altRes.error && altRes.data) {
+          blob = altRes.data;
+          dlErr = null;
+          storagePath = altPath;
+        }
+      }
+
+      if (dlErr || !blob) {
+        throw new Error(dlErr?.message || `Soubor knihy (${storagePath}) nebyl v cloudovém úložišti nalezen.`);
+      }
+
+      const arrayBuffer = await blob.arrayBuffer();
+      const fileHash = await computeFileHash(arrayBuffer);
+      const fileSize = arrayBuffer.byteLength;
+
+      const existingCover = await storage.getBookCover(book.id);
+      let coverDataUrl = existingCover?.dataUrl || book.coverDataUrl || null;
+      let targetBookId = book.id;
+      let canonicalStoragePath = storagePath;
+
+      const updatedBook = {
+        ...book,
+        fileHash: fileHash || book.fileHash || book.file_hash || null,
+        file_hash: fileHash || book.file_hash || book.fileHash || null,
+        fileSize,
+        file_size: fileSize,
+        file_path: storagePath,
+        hasLocalFile: true
+      };
+
+      if (isPdf) {
+        if (fileHash) {
+          const canonicalId = `pdf_${fileHash}`;
+          if (book.id !== canonicalId) {
+            const existingCanonical = await storage.getBook(canonicalId);
+            if (existingCanonical) {
+              targetBookId = canonicalId;
+              updatedBook.id = canonicalId;
+            } else {
+              // Migrovat staré nestabilní ID na deterministické ID lokálně i v cloudu
+              const oldId = book.id;
+              await storage.deleteBookRaw(oldId);
+              await storage.migrateSessionsBookId(oldId, canonicalId);
+              storage.migrateLocalStorageProgress(oldId, canonicalId);
+              if (storage.getLastActiveBookId() === oldId) {
+                storage.setLastActiveBookId(canonicalId);
+              }
+              targetBookId = canonicalId;
+              updatedBook.id = canonicalId;
+              canonicalStoragePath = `books/${canonicalId}.pdf`;
+              updatedBook.file_path = storagePath;
+              this._upsertBooksRow({
+                id: canonicalId,
+                title: updatedBook.title || "PDF Dokument",
+                author: updatedBook.author || "PDF Dokument",
+                file_name: finalFileName,
+                file_type: "pdf",
+                file_path: storagePath,
+                file_size: fileSize,
+                file_hash: fileHash,
+                current_chapter: Number(updatedBook.currentChapterIndex) || 0,
+                current_page: Math.max(1, (Number(updatedBook.currentPageIndex) || 0) + 1),
+                scroll_progress: Number(updatedBook.scrollPercent ?? updatedBook.pageRatio ?? 0) || 0,
+                pdf_ruler_height: Number(updatedBook.pdfRulerConfig?.height) || 32,
+                updated_at: new Date(getBookProgressTimestamp(updatedBook) || Date.now()).toISOString()
+              }).then(async (upErr) => {
+                if (!upErr) {
+                  await supabase.from("books").delete().eq("id", oldId).catch(() => {});
+                }
+              }).catch(() => {});
+            }
+          }
+        }
+
+        try {
+          if (typeof window !== "undefined" && window.pdfjsLib && (!updatedBook.numPages || !coverDataUrl)) {
+            const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
+            const pdfDoc = await loadingTask.promise;
+            const numPages = pdfDoc.numPages || 1;
+            updatedBook.numPages = numPages;
+            updatedBook.totalPages = numPages;
+            updatedBook.total_pages = numPages;
+            updatedBook.description = `PDF dokument (${numPages} stran)`;
+            if (!updatedBook.totalWords) {
+              updatedBook.totalWords = numPages * 250;
+            }
+            if (!coverDataUrl) {
+              const page = await pdfDoc.getPage(1);
+              const viewport = page.getViewport({ scale: 0.5 });
+              const canvas = document.createElement("canvas");
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+              coverDataUrl = canvas.toDataURL("image/jpeg", 0.75);
+            }
+          }
+        } catch (pe) {
+          console.warn("[Supabase Sync] Varování při extrakci náhledu staženého PDF:", pe);
+        }
+      } else {
+        // EPUB – extrakce metadat a obálky pokud chybí
+        try {
+          if (!coverDataUrl || !updatedBook.totalWords || !updatedBook.author || updatedBook.author === "Neznámý autor") {
+            const parser = await EpubParser.parse(arrayBuffer.slice(0));
+            const parsedTitle = parser.metadata?.title || "";
+            const parsedAuthor = parser.metadata?.creator || "";
+            if (!updatedBook.title && parsedTitle) updatedBook.title = parsedTitle;
+            if ((!updatedBook.author || updatedBook.author === "Neznámý autor") && parsedAuthor) {
+              updatedBook.author = parsedAuthor;
+              updatedBook.creator = parsedAuthor;
+            }
+            updatedBook.totalChapters = parser.spine?.length || updatedBook.totalChapters || 1;
+            if (!updatedBook.totalWords) {
+              const wordStats = await parser.calculateTotalWords().catch(() => ({ totalWords: 0 }));
+              updatedBook.totalWords = wordStats.totalWords || 0;
+            }
+            if (!coverDataUrl && parser.coverBlobUrl) {
+              try {
+                const res = await fetch(parser.coverBlobUrl);
+                const b = await res.blob();
+                coverDataUrl = await this._blobToDataUrl(b);
+              } catch (_) {}
+            }
+            parser.destroy?.();
+          }
+        } catch (parseErr) {
+          console.warn("[Supabase Sync] Varování při extrakci metadat staženého EPUB:", parseErr);
+        }
+      }
+
+      if (coverDataUrl) {
+        updatedBook.coverDataUrl = coverDataUrl;
+      }
+
+      // Okamžitě uložit binární soubor do "book_files", obálku do "covers" a metadata do "books"
+      await storage.saveBookFile(targetBookId, arrayBuffer, { fileHash, fileSize });
+      if (coverDataUrl) {
+        await storage.saveBookCover(targetBookId, {
+          dataUrl: coverDataUrl,
+          coverHash: updatedBook.coverHash || updatedBook.cover_hash || null,
+          coverPath: updatedBook.cover_path || null
+        });
+      }
+      await storage.saveBook(updatedBook);
+
+      // Na pozadí doplnit chybějící obálku a lehká metadata do DB (bez opětovného nahrávání binárky!)
+      if (this._booksSchemaHasExtendedCols && (!updatedBook.cover_path || !book.file_hash || !book.file_size)) {
+        this._backfillCloudMetadataAndCover(updatedBook, coverDataUrl).catch(() => {});
+      }
+
+      console.log(`[Supabase Sync] Kniha "${updatedBook.title}" stažena na vyžádání a uložena do IndexedDB (${fileSize} B).`);
+      return { arrayBuffer, book: updatedBook };
+    })();
+
+    this._inFlightDownloads.set(book.id, downloadTask);
+    try {
+      return await downloadTask;
+    } finally {
+      this._inFlightDownloads.delete(book.id);
+    }
+  }
+
+  async _backfillCloudMetadataAndCover(book, coverDataUrl = null) {
+    if (!this.isOnline() || !supabase || !book?.id || !this._booksSchemaHasExtendedCols) return;
+    const patch = {};
+    if (book.author && book.author !== "Neznámý autor" && book.author !== "PDF Dokument") {
+      patch.author = book.author;
+    }
+    if (book.fileSize) patch.file_size = book.fileSize;
+    if (book.fileHash) patch.file_hash = book.fileHash;
+    if (book.numPages) patch.total_pages = book.numPages;
+    if (book.totalChapters) patch.total_chapters = book.totalChapters;
+    if (book.totalWords) patch.total_words = book.totalWords;
+
+    if (coverDataUrl && !book.cover_path) {
+      try {
+        const up = await this.uploadBookCover(book.id, coverDataUrl);
+        if (up) {
+          patch.cover_path = up.coverPath;
+          patch.cover_hash = up.coverHash;
+          book.cover_path = up.coverPath;
+          book.coverHash = up.coverHash;
+          book.cover_hash = up.coverHash;
+          await storage.saveBook(book);
+        }
+      } catch (_) {}
+    }
+
+    if (Object.keys(patch).length > 0) {
+      await this._updateBooksRow(book.id, patch);
+    }
+  }
+
+  /**
+   * Kompletní obousměrná synchronizace METADAT mezi IndexedDB a Supabase.
+   * Při spuštění ani při synchronizaci NIKDY nestahuje binární soubory EPUB/PDF ze Storage –
+   * stahuje pouze lehká textová metadata z DB a chybějící náhledy obálek (max 1x na zařízení).
    */
   async syncAll({ silent = false } = {}) {
     if (!this.isOnline() || !supabase) {
@@ -692,6 +1217,8 @@ export class SupabaseSync {
     this.setStatus("syncing");
 
     const stats = {
+      metadataSynced: 0,
+      coversDownloaded: 0,
       downloaded: 0,
       uploaded: 0,
       updatedFromCloud: 0,
@@ -704,11 +1231,10 @@ export class SupabaseSync {
     };
 
     try {
-      // 1. Získat a deduplikovat lokální knihy z IndexedDB
+      // 1. Získat a deduplikovat lokální knihy z IndexedDB (bez načítání binárek)
       const localBooks = await storage.deduplicateBooks();
-      const localMap = new Map(localBooks.map(b => [b.id, b]));
 
-      // 2. Získat a deduplikovat záznamy knih ze Supabase
+      // 2. Získat a deduplikovat lehká metadata knih ze Supabase DB
       const { data: rawCloudBooks, error: fetchErr } = await supabase
         .from("books")
         .select("*");
@@ -717,19 +1243,33 @@ export class SupabaseSync {
         throw fetchErr;
       }
 
+      if (Array.isArray(rawCloudBooks) && rawCloudBooks.length > 0) {
+        this._booksSchemaHasExtendedCols = Object.prototype.hasOwnProperty.call(rawCloudBooks[0], "cover_path");
+        this._booksSchemaHasAnchorCols = Object.prototype.hasOwnProperty.call(rawCloudBooks[0], "reading_anchor");
+      }
+
       const cloudList = await this.normalizeAndMergeCloudBooks(rawCloudBooks || []);
       const matchedLocalIds = new Set();
 
       // Pomocná funkce pro vyhledání odpovídající lokální knihy ke cloudové knize
       const findMatchingLocalBook = (cloudBook) => {
-        // 1. Shoda podle id
         const byId = localBooks.find(b => b.id === cloudBook.id);
         if (byId) return byId;
 
-        // 2. Shoda podle file_path / storage_path
         if (cloudBook.file_path) {
           const byPath = localBooks.find(b => b.file_path === cloudBook.file_path);
           if (byPath) return byPath;
+        }
+
+        const cloudHash = this._extractPdfHashFromCloudBook(cloudBook);
+        if (cloudHash) {
+          const byHash = localBooks.find(b =>
+            (b.fileHash && b.fileHash === cloudHash) ||
+            (b.file_hash && b.file_hash === cloudHash) ||
+            (b.id && b.id.includes(cloudHash)) ||
+            (b.file_path && b.file_path.includes(cloudHash))
+          );
+          if (byHash) return byHash;
         }
 
         const isPdf = cloudBook.file_type === "pdf" ||
@@ -737,7 +1277,6 @@ export class SupabaseSync {
                       cloudBook.file_path?.toLowerCase().endsWith(".pdf");
 
         if (isPdf) {
-          // 3. Shoda podle fileHash v ID nebo na objektu
           for (const b of localBooks) {
             if (!b.isPdf && b.format !== "pdf") continue;
             const bHash = b.fileHash || b.file_hash;
@@ -747,7 +1286,6 @@ export class SupabaseSync {
             }
           }
 
-          // 4. Shoda podle normalizovaného názvu souboru nebo titulku
           const cloudName = (cloudBook.file_name || "").toLowerCase().trim();
           const cloudTitle = (cloudBook.title || "").toLowerCase().trim();
           for (const b of localBooks) {
@@ -762,225 +1300,80 @@ export class SupabaseSync {
         return null;
       };
 
-      // 3. Projít cloudové knihy (stáhnout chybějící nebo aktualizovat postup)
+      // 3. Projít cloudové knihy – synchronizovat POUZE metadata, obálky (max 1x) a postup čtení
       for (const cloudBook of cloudList) {
         const localBook = findMatchingLocalBook(cloudBook);
 
         if (!localBook) {
-          // Kniha existuje v cloudu, ale ne lokálně -> STÁHNOUT
-          try {
-            let storagePath = cloudBook.file_path || (cloudBook.file_type === "pdf" ? `books/${cloudBook.id}.pdf` : `${cloudBook.id}/${cloudBook.file_name}`);
-            if (!storagePath) {
-              const ext = cloudBook.file_type === "pdf" ? "pdf" : "epub";
-              storagePath = `books/${cloudBook.id}.${ext}`;
-            }
+          // Kniha je v cloudu, ale ještě ne lokálně -> uložit POUZE lehká metadata (lazy download při kliknutí)
+          const isPdf = cloudBook.file_type === "pdf" ||
+            cloudBook.file_name?.toLowerCase().endsWith(".pdf") ||
+            cloudBook.file_path?.toLowerCase().endsWith(".pdf");
+          const finalFileName = cloudBook.file_name || `${cloudBook.id}.${isPdf ? "pdf" : "epub"}`;
+          const storagePath = cloudBook.file_path || (isPdf ? `books/${cloudBook.id}.pdf` : `${cloudBook.id}/${finalFileName}`);
+          const cloudProg = this.normalizeCloudBookProgress(cloudBook);
+          const extractedHash = this._extractPdfHashFromCloudBook(cloudBook);
+          const author = cloudBook.author || cloudBook.creator || (isPdf ? "PDF Dokument" : "Neznámý autor");
+          const numPages = Number(cloudBook.total_pages) || undefined;
 
-            console.log(`[Supabase Sync] Stahuji knihu z cloudu: "${cloudBook.title}" (${storagePath})...`);
-            let { data: blob, error: dlErr } = await supabase.storage
-              .from(STORAGE_BUCKET)
-              .download(storagePath);
-
-            // Fallback na alternativní prefixy v úložišti
-            if (dlErr && storagePath.startsWith("books/")) {
-              const altPath = storagePath.replace(/^books\//, "");
-              const altRes = await supabase.storage.from(STORAGE_BUCKET).download(altPath);
-              if (!altRes.error && altRes.data) {
-                blob = altRes.data;
-                dlErr = null;
-                storagePath = altPath;
+          const metaBook = {
+            id: cloudBook.id,
+            title: cloudBook.title || (isPdf ? "PDF Dokument" : "Kniha EPUB"),
+            author,
+            creator: author,
+            fileName: finalFileName,
+            file_name: finalFileName,
+            file_path: storagePath,
+            file_type: isPdf ? "pdf" : "epub",
+            format: isPdf ? "pdf" : "epub",
+            isPdf,
+            fileSize: Number(cloudBook.file_size) || null,
+            file_size: Number(cloudBook.file_size) || null,
+            fileHash: extractedHash || null,
+            file_hash: extractedHash || null,
+            cover_path: cloudBook.cover_path || null,
+            cover_hash: cloudBook.cover_hash || null,
+            coverHash: cloudBook.cover_hash || null,
+            language: "cs",
+            description: isPdf && numPages ? `PDF dokument (${numPages} stran)` : "",
+            coverDataUrl: null,
+            hasLocalFile: false,
+            syncedFromCloud: true,
+            addedAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
+            lastReadAt: cloudProg?.lastReadAt || (cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now()),
+            progressUpdatedAt: cloudProg?.progressUpdatedAt || 0,
+            currentChapterIndex: cloudProg?.currentChapterIndex ?? (Number(cloudBook.current_chapter) || 0),
+            currentPageIndex: cloudProg?.currentPageIndex ?? Math.max(0, (Number(cloudBook.current_page) || 1) - 1),
+            currentPage: cloudProg?.currentPage ?? (Number(cloudBook.current_page) || 1),
+            numPages,
+            totalChapters: Number(cloudBook.total_chapters) || (isPdf ? 1 : undefined),
+            totalWords: Number(cloudBook.total_words) || 0,
+            wordsRead: 0,
+            progress: cloudProg?.progress ?? 0,
+            progressPercent: cloudProg?.progressPercent ?? 0,
+            scrollPercent: cloudProg?.scrollPercent ?? (Number(cloudBook.scroll_progress) || 0),
+            pageRatio: cloudProg?.pageRatio ?? (Number(cloudBook.scroll_progress) || 0),
+            readingAnchor: cloudProg?.readingAnchor || null,
+            ...(isPdf ? {
+              pdfRulerConfig: {
+                height: Number(cloudBook.pdf_ruler_height) || 32,
+                stepSize: Number(cloudBook.pdf_ruler_height) || 32
               }
-            } else if (dlErr && !storagePath.startsWith("books/")) {
-              const altPath = `books/${storagePath}`;
-              const altRes = await supabase.storage.from(STORAGE_BUCKET).download(altPath);
-              if (!altRes.error && altRes.data) {
-                blob = altRes.data;
-                dlErr = null;
-                storagePath = altPath;
-              }
-            }
+            } : {})
+          };
 
-            if (dlErr || !blob) {
-              console.warn("[Supabase Sync] Nepodařilo se stáhnout soubor knihy z cloudu (soubor neexistuje v úložišti):", storagePath, dlErr?.message || dlErr);
-              continue;
-            }
-
-            // Převod staženého Blobu na čistý ArrayBuffer
-            const arrayBuffer = await blob.arrayBuffer();
-            const isPdf = cloudBook.file_type === "pdf" || storagePath.toLowerCase().endsWith(".pdf");
-            const finalFileName = cloudBook.file_name || `${cloudBook.id}.${isPdf ? "pdf" : "epub"}`;
-
-            let newBookData = null;
-
-            if (isPdf) {
-              const fileHash = await computeFileHash(arrayBuffer);
-              const canonicalId = `pdf_${fileHash}`;
-              const canonicalStoragePath = `books/${canonicalId}.pdf`;
-
-              // Zkontrolujeme znovu, zda již kniha neexistuje lokálně pod tímto hashem
-              const alreadyLocal = await storage.findBookByIdOrHash(canonicalId, fileHash);
-              if (alreadyLocal) {
-                matchedLocalIds.add(alreadyLocal.id);
-                console.log(`[Supabase Sync] PDF kniha "${cloudBook.title}" již lokálně existuje jako ${alreadyLocal.id}, vynechávám vkládání duplikátu.`);
-                continue;
-              }
-
-              let coverDataUrl = null;
-              let numPages = 1;
-              try {
-                if (window.pdfjsLib) {
-                  const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
-                  const pdfDoc = await loadingTask.promise;
-                  numPages = pdfDoc.numPages || 1;
-                  const page = await pdfDoc.getPage(1);
-                  const viewport = page.getViewport({ scale: 0.5 });
-                  const canvas = document.createElement("canvas");
-                  canvas.width = viewport.width;
-                  canvas.height = viewport.height;
-                  await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-                  coverDataUrl = canvas.toDataURL("image/jpeg", 0.75);
-                }
-              } catch (pe) {
-                console.warn("[Supabase Sync] Varování při náhledu PDF z cloudu:", pe);
-              }
-
-              newBookData = {
-                id: canonicalId,
-                fileHash,
-                file_hash: fileHash,
-                file_path: canonicalStoragePath,
-                title: cloudBook.title || "PDF Dokument",
-                author: "PDF Dokument",
-                creator: "PDF Dokument",
-                fileName: finalFileName,
-                file_name: finalFileName,
-                format: "pdf",
-                isPdf: true,
-                language: "cs",
-                description: `PDF dokument (${numPages} stran)`,
-                coverDataUrl,
-                fileData: arrayBuffer,
-                data: arrayBuffer,
-                addedAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
-                lastReadAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
-                currentChapterIndex: Number(cloudBook.current_chapter) || 0,
-                currentPageIndex: Math.max(0, (Number(cloudBook.current_page) || 1) - 1),
-                totalChapters: 1,
-                totalWords: numPages * 250,
-                wordsRead: 0,
-                progress: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
-                progressPercent: Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
-                currentPage: Number(cloudBook.current_page) || 1,
-                numPages: numPages,
-                scrollPercent: Number(cloudBook.scroll_progress) || 0,
-                pageRatio: Number(cloudBook.scroll_progress) || 0,
-                pdfRulerConfig: {
-                  height: Number(cloudBook.pdf_ruler_height) || 32,
-                  stepSize: Number(cloudBook.pdf_ruler_height) || 32
-                }
-              };
-
-              // Pokud cloud záznam měl staré nestabilní ID, migrujeme jej v Supabase na deterministické ID
-              if (cloudBook.id !== canonicalId) {
-                try {
-                  const cloudPatch = {
-                    id: canonicalId,
-                    title: newBookData.title,
-                    file_name: newBookData.fileName,
-                    file_type: "pdf",
-                    file_path: canonicalStoragePath,
-                    current_chapter: Number(cloudBook.current_chapter) || 0,
-                    current_page: Number(cloudBook.current_page) || 1,
-                    scroll_progress: Number(cloudBook.scroll_progress) || 0,
-                    pdf_ruler_height: Number(cloudBook.pdf_ruler_height) || 32,
-                    updated_at: cloudBook.updated_at || new Date().toISOString()
-                  };
-                  await supabase.from("books").upsert(cloudPatch, { onConflict: "id" });
-                  await supabase.from("books").delete().eq("id", cloudBook.id);
-                  console.log(`[Supabase Sync] Migrován cloud záznam PDF: ${cloudBook.id} -> ${canonicalId}`);
-                } catch (migErr) {
-                  console.warn("[Supabase Sync] Varování při migraci cloud ID:", migErr);
-                }
-              }
-            } else {
-              // EPUB
-              let coverDataUrl = null;
-              let parsedTitle = "";
-              let parsedAuthor = "";
-              let totalChapters = 1;
-              let totalWords = 0;
-
-              try {
-                const parser = await EpubParser.parse(arrayBuffer.slice(0));
-                parsedTitle = parser.metadata?.title || "";
-                parsedAuthor = parser.metadata?.creator || "";
-                totalChapters = parser.spine?.length || 1;
-                const wordStats = await parser.calculateTotalWords().catch(() => ({ totalWords: 0 }));
-                totalWords = wordStats.totalWords || 0;
-
-                if (parser.coverBlobUrl) {
-                  try {
-                    const res = await fetch(parser.coverBlobUrl);
-                    const b = await res.blob();
-                    coverDataUrl = await new Promise((res) => {
-                      const r = new FileReader();
-                      r.onloadend = () => res(r.result);
-                      r.readAsDataURL(b);
-                    });
-                  } catch (e) {}
-                }
-              } catch (parseErr) {
-                console.warn("[Supabase Sync] Varování při parsování staženého EPUB:", parseErr);
-              }
-
-              const author = cloudBook.author || cloudBook.creator || parsedAuthor || "Neznámý autor";
-              const title = cloudBook.title || parsedTitle || "Kniha EPUB";
-              const cloudProg = this.normalizeCloudBookProgress(cloudBook);
-
-              newBookData = {
-                id: cloudBook.id,
-                title: title,
-                author: author,
-                creator: author,
-                fileName: finalFileName,
-                file_name: finalFileName,
-                format: "epub",
-                isPdf: false,
-                language: "cs",
-                description: "",
-                coverDataUrl,
-                fileData: arrayBuffer,
-                data: arrayBuffer,
-                addedAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
-                lastReadAt: cloudProg?.lastReadAt || (cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now()),
-                progressUpdatedAt: cloudProg?.progressUpdatedAt || 0,
-                currentChapterIndex: cloudProg?.currentChapterIndex ?? (Number(cloudBook.current_chapter) || 0),
-                currentPageIndex: cloudProg?.currentPageIndex ?? Math.max(0, (Number(cloudBook.current_page) || 1) - 1),
-                totalChapters: totalChapters,
-                totalWords: totalWords,
-                wordsRead: 0,
-                progress: cloudProg?.progress ?? Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
-                progressPercent: cloudProg?.progressPercent ?? Math.round((Number(cloudBook.scroll_progress) || 0) * 100),
-                currentPage: cloudProg?.currentPage ?? (Number(cloudBook.current_page) || 1),
-                scrollPercent: cloudProg?.scrollPercent ?? (Number(cloudBook.scroll_progress) || 0),
-                pageRatio: cloudProg?.pageRatio ?? (Number(cloudBook.scroll_progress) || 0),
-                readingAnchor: cloudProg?.readingAnchor || null
-              };
-            }
-
-            if (newBookData) {
-              await storage.saveBook(newBookData);
-              matchedLocalIds.add(newBookData.id);
-              stats.downloaded++;
-              console.log(`[Supabase Sync] Kniha "${newBookData.title}" stažena a uložena do IndexedDB.`);
-            }
-          } catch (dlErr) {
-            console.error(`[Supabase Sync] Nepodařilo se stáhnout a zpracovat knihu ${cloudBook.id}:`, dlErr);
+          await storage.saveBook(metaBook);
+          if (cloudBook.cover_path) {
+            const coverFetched = await this.ensureBookCoverCached(metaBook.id, cloudBook);
+            if (coverFetched) stats.coversDownloaded++;
           }
+          matchedLocalIds.add(metaBook.id);
+          stats.metadataSynced++;
+          console.log(`[Supabase Sync] Synchronizována metadata knihy "${metaBook.title}" (bez stahování souboru).`);
         } else {
-          // Kniha existuje v obou úložištích -> Synchronizace postupu čtení s kontrolou nejnovějšího časového razítka
+          // Kniha existuje v obou úložištích -> Synchronizace postupu čtení a doplnění chybějících metadat/obálky
           matchedLocalIds.add(localBook.id);
 
-          // Opětovné načtení nejčerstvějšího lokálního stavu (chrání před souběhem, pokud uživatel během stahování otočil stránku)
           const freshLocalBook = (await storage.getBook(localBook.id)) || localBook;
           const cachedLocal = storage.getCachedBookProgress(localBook.id);
 
@@ -1005,7 +1398,7 @@ export class SupabaseSync {
               console.log(`[SupabaseSync] Postup knihy "${freshLocalBook.title}" aktualizován z cloudu (ts: ${cloudTime} > ${localTime}).`);
             }
           } else if (localTime > cloudTime + 50) {
-            // Lokální stav je novější -> odeslat do cloudu
+            // Lokální stav je novější -> odeslat pouze lehkou aktualizaci postupu do DB
             const isPdfLocal = !!(effectiveLocal.isPdf || effectiveLocal.format === "pdf");
             const localAnchor = !isPdfLocal ? (effectiveLocal.readingAnchor || null) : null;
             const localScrollProg = isPdfLocal
@@ -1026,12 +1419,62 @@ export class SupabaseSync {
               patch.reading_anchor = localAnchor;
               patch.progress_updated_at = isoLocal;
             }
-            let { error: upErr } = await supabase.from("books").update(patch).eq("id", cloudBook.id);
-            if (upErr && this._isMissingAnchorColumnError(upErr)) {
-              this._booksSchemaHasAnchorCols = false;
-              await supabase.from("books").update(this._stripAnchorCols(patch)).eq("id", cloudBook.id);
-            }
+            await this._updateBooksRow(cloudBook.id, patch);
             stats.uploadedToCloud++;
+          }
+
+          // Doplnit lehká metadata z cloudu pokud lokálně chybí
+          let metaChanged = false;
+          if (cloudBook.file_path && !freshLocalBook.file_path) {
+            freshLocalBook.file_path = cloudBook.file_path;
+            metaChanged = true;
+          }
+          if (cloudBook.author && (!freshLocalBook.author || freshLocalBook.author === "Neznámý autor" || freshLocalBook.author === "PDF Dokument")) {
+            freshLocalBook.author = cloudBook.author;
+            freshLocalBook.creator = cloudBook.author;
+            metaChanged = true;
+          }
+          if (cloudBook.file_size && !freshLocalBook.fileSize) {
+            freshLocalBook.fileSize = Number(cloudBook.file_size);
+            freshLocalBook.file_size = Number(cloudBook.file_size);
+            metaChanged = true;
+          }
+          if (cloudBook.file_hash && !freshLocalBook.fileHash) {
+            freshLocalBook.fileHash = cloudBook.file_hash;
+            freshLocalBook.file_hash = cloudBook.file_hash;
+            metaChanged = true;
+          }
+          if (cloudBook.cover_path && freshLocalBook.cover_path !== cloudBook.cover_path) {
+            freshLocalBook.cover_path = cloudBook.cover_path;
+            metaChanged = true;
+          }
+          if (cloudBook.cover_hash && freshLocalBook.cover_hash !== cloudBook.cover_hash) {
+            freshLocalBook.cover_hash = cloudBook.cover_hash;
+            freshLocalBook.coverHash = cloudBook.cover_hash;
+            metaChanged = true;
+          }
+          if (cloudBook.total_pages && !freshLocalBook.numPages) {
+            freshLocalBook.numPages = Number(cloudBook.total_pages);
+            metaChanged = true;
+          }
+          if (cloudBook.total_chapters && !freshLocalBook.totalChapters) {
+            freshLocalBook.totalChapters = Number(cloudBook.total_chapters);
+            metaChanged = true;
+          }
+          if (cloudBook.total_words && !freshLocalBook.totalWords) {
+            freshLocalBook.totalWords = Number(cloudBook.total_words);
+            metaChanged = true;
+          }
+          if (metaChanged) {
+            await storage.saveBook(freshLocalBook);
+          }
+
+          // Cachování obálky z cloudu (stáhne se max 1x na zařízení) nebo doplnění lokální obálky do cloudu
+          if (cloudBook.cover_path) {
+            const coverFetched = await this.ensureBookCoverCached(localBook.id, cloudBook);
+            if (coverFetched) stats.coversDownloaded++;
+          } else if (this._booksSchemaHasExtendedCols && freshLocalBook.coverDataUrl) {
+            this._backfillCloudMetadataAndCover(freshLocalBook, freshLocalBook.coverDataUrl).catch(() => {});
           }
 
           // Pokud má lokální kniha deterministické ID, ale cloudBook má ještě staré ID, sjednotíme záznam v cloudu
@@ -1040,17 +1483,25 @@ export class SupabaseSync {
               const cloudPatch = {
                 id: localBook.id,
                 title: freshLocalBook.title,
+                author: freshLocalBook.author || null,
                 file_name: freshLocalBook.fileName,
                 file_type: "pdf",
                 file_path: `books/${localBook.id}.pdf`,
+                file_size: freshLocalBook.fileSize || null,
+                file_hash: freshLocalBook.fileHash || null,
+                cover_path: freshLocalBook.cover_path || null,
+                cover_hash: freshLocalBook.cover_hash || null,
+                total_pages: freshLocalBook.numPages || null,
                 current_chapter: effectiveLocal.currentChapterIndex || 0,
                 current_page: Math.max(1, (effectiveLocal.currentPageIndex || 0) + 1),
                 scroll_progress: Number(effectiveLocal.scrollPercent ?? effectiveLocal.pageRatio ?? 0) || 0,
                 pdf_ruler_height: effectiveLocal.pdfRulerConfig?.height || 32,
                 updated_at: new Date(localTime || Date.now()).toISOString()
               };
-              await supabase.from("books").upsert(cloudPatch, { onConflict: "id" });
-              await supabase.from("books").delete().eq("id", cloudBook.id);
+              const upErr = await this._upsertBooksRow(cloudPatch);
+              if (!upErr) {
+                await supabase.from("books").delete().eq("id", cloudBook.id);
+              }
               console.log(`[SupabaseSync] Sjednoceno ID v cloudu s lokálním: ${cloudBook.id} -> ${localBook.id}`);
             } catch (syncMigErr) {
               console.warn("[SupabaseSync] Varování při sjednocování ID v cloudu:", syncMigErr);
@@ -1059,13 +1510,19 @@ export class SupabaseSync {
         }
       }
 
-      // 4. Lokální knihy, které ještě nejsou v cloudu -> ZÁLOHOVAT
+      // 4. Lokální knihy, které ještě nejsou v cloudu -> ZÁLOHOVAT (pouze pokud mají lokální binární soubor)
       for (const localBook of localBooks) {
         if (!matchedLocalIds.has(localBook.id)) {
-          console.log(`[SupabaseSync] Zálohuji lokální knihu "${localBook.title}" do cloudu...`);
-          const res = await this.uploadBook(localBook);
-          if (res?.success) {
-            stats.uploaded++;
+          const hasLocalFile = localBook.hasLocalFile || await storage.hasBookFile(localBook.id);
+          if (hasLocalFile) {
+            console.log(`[SupabaseSync] Zálohuji lokální knihu "${localBook.title}" do cloudu...`);
+            const res = await this.uploadBook(localBook);
+            if (res?.success) {
+              stats.uploaded++;
+            }
+          } else if (localBook.syncedFromCloud) {
+            // Metadata-only záznam smazaný na jiném zařízení z cloudu
+            await storage.deleteBook(localBook.id);
           }
         }
       }
@@ -1377,7 +1834,7 @@ export class SupabaseSync {
     if (!this.isOnline() || !supabase) return null;
 
     try {
-      const { ReadingTracker } = await import("./tracker.js?v=2.6.1");
+      const { ReadingTracker } = await import("./tracker.js?v=2.9.9");
       const localStats = await ReadingTracker.computeGlobalStats();
       const hasDeletedTombstones = (typeof storage.getDeletedSessionIds === "function" && storage.getDeletedSessionIds().length > 0);
 

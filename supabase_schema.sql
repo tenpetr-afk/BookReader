@@ -6,9 +6,17 @@
 CREATE TABLE IF NOT EXISTS public.books (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL DEFAULT 'Bez názvu',
+    author TEXT DEFAULT NULL,
     file_name TEXT,
     file_type TEXT NOT NULL DEFAULT 'epub' CHECK (file_type IN ('epub', 'pdf')),
     file_path TEXT,
+    file_size BIGINT DEFAULT NULL,
+    file_hash TEXT DEFAULT NULL,
+    cover_path TEXT DEFAULT NULL,
+    cover_hash TEXT DEFAULT NULL,
+    total_pages INTEGER DEFAULT NULL,
+    total_chapters INTEGER DEFAULT NULL,
+    total_words INTEGER DEFAULT NULL,
     current_chapter INTEGER NOT NULL DEFAULT 0,
     current_page INTEGER NOT NULL DEFAULT 1,
     scroll_progress DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -18,9 +26,17 @@ CREATE TABLE IF NOT EXISTS public.books (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- Migrace pro stávající databáze: přidání sloupců pro obsahovou kotvu EPUB a časové razítko pozice
+-- Migrace pro stávající databáze: přidání sloupců pro obsahovou kotvu EPUB, metadata a obálky
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS reading_anchor JSONB DEFAULT NULL;
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS progress_updated_at TIMESTAMPTZ DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS author TEXT DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS file_size BIGINT DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS file_hash TEXT DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS cover_path TEXT DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS cover_hash TEXT DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS total_pages INTEGER DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS total_chapters INTEGER DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS total_words INTEGER DEFAULT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_books_updated_at ON public.books (updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_books_progress_updated_at ON public.books (progress_updated_at DESC);

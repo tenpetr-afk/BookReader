@@ -5,7 +5,7 @@
  */
 
 const DB_NAME = "LuminaReaderDB";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 /**
  * Zjistí, zda zařízení podporuje dotykový vstup (iPad, tablet, mobilní telefon).
@@ -71,11 +71,22 @@ export class StorageManager {
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
 
-        // Úložiště pro knihy
+        // Úložiště pro metadata knih (zachováno napříč aktualizacemi verze)
         if (!db.objectStoreNames.contains("books")) {
           const bookStore = db.createObjectStore("books", { keyPath: "id" });
           bookStore.createIndex("addedAt", "addedAt", { unique: false });
           bookStore.createIndex("lastReadAt", "lastReadAt", { unique: false });
+        }
+
+        // Vyhrazené úložiště pro binární soubory knih (EPUB/PDF) – zachováno napříč aktualizacemi
+        if (!db.objectStoreNames.contains("book_files")) {
+          db.createObjectStore("book_files", { keyPath: "bookId" });
+        }
+
+        // Vyhrazené úložiště pro lokálně cachované obálky knih (podle bookId a coverHash)
+        if (!db.objectStoreNames.contains("covers")) {
+          const coverStore = db.createObjectStore("covers", { keyPath: "bookId" });
+          coverStore.createIndex("coverHash", "coverHash", { unique: false });
         }
 
         // Úložiště pro čtecí relace (historie čtení a rychlosti - legacy)
@@ -97,6 +108,12 @@ export class StorageManager {
 
       request.onsuccess = (event) => {
         this.db = event.target.result;
+        this.db.onversionchange = () => {
+          try {
+            this.db.close();
+          } catch (_) {}
+          this.db = null;
+        };
         resolve(this.db);
       };
 
@@ -118,7 +135,341 @@ export class StorageManager {
     }
   }
 
-  // --- KNIHY (BOOKS) ---
+  // --- KNIHY (BOOKS), BINÁRNÍ SOUBORY (BOOK_FILES) A OBÁLKY (COVERS) ---
+
+  async normalizeBinaryToArrayBuffer(rawBinary) {
+    if (!rawBinary) return null;
+    if (rawBinary instanceof ArrayBuffer) {
+      return rawBinary;
+    }
+    if (typeof Blob !== "undefined" && rawBinary instanceof Blob) {
+      return await rawBinary.arrayBuffer();
+    }
+    if (ArrayBuffer.isView(rawBinary)) {
+      return rawBinary.buffer.slice(rawBinary.byteOffset, rawBinary.byteOffset + rawBinary.byteLength);
+    }
+    return null;
+  }
+
+  async _getBookRecordRaw(id) {
+    if (!id) return null;
+    const db = await this.getDB();
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("books", "readonly");
+        const req = tx.objectStore("books").get(id);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  async _saveBookFileRaw(bookId, rawBinary, meta = {}) {
+    if (!bookId || !rawBinary) return false;
+    const db = await this.getDB();
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("book_files")) return false;
+    const buffer = await this.normalizeBinaryToArrayBuffer(rawBinary);
+    if (!buffer) return false;
+
+    const record = {
+      bookId,
+      data: buffer,
+      fileSize: Number(meta.fileSize ?? buffer.byteLength) || buffer.byteLength,
+      fileHash: meta.fileHash || meta.file_hash || null,
+      updatedAt: Date.now()
+    };
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("book_files", "readwrite");
+        tx.objectStore("book_files").put(record);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
+  async saveBookFile(bookId, rawBinary, meta = {}) {
+    if (!bookId || !rawBinary) return null;
+    const buffer = await this.normalizeBinaryToArrayBuffer(rawBinary);
+    if (!buffer) return null;
+
+    let fileHash = meta.fileHash || meta.file_hash || null;
+    if (!fileHash) {
+      try {
+        fileHash = await computeFileHash(buffer);
+      } catch (_) {}
+    }
+    const fileSize = buffer.byteLength;
+    const saved = await this._saveBookFileRaw(bookId, buffer, { fileHash, fileSize });
+    if (!saved) return null;
+
+    const existing = await this._getBookRecordRaw(bookId);
+    if (existing) {
+      const updated = {
+        ...existing,
+        hasLocalFile: true,
+        fileSize,
+        file_size: fileSize,
+        fileHash: fileHash || existing.fileHash || existing.file_hash || null,
+        file_hash: fileHash || existing.file_hash || existing.fileHash || null
+      };
+      delete updated.data;
+      delete updated.fileData;
+      await this.saveBookRaw(updated);
+    }
+
+    return { bookId, fileSize, fileHash };
+  }
+
+  async getCachedBookFileIds() {
+    const db = await this.getDB();
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("book_files")) {
+      return new Set();
+    }
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("book_files", "readonly");
+        const store = tx.objectStore("book_files");
+        const req = typeof store.getAllKeys === "function" ? store.getAllKeys() : null;
+        if (req) {
+          req.onsuccess = () => resolve(new Set(req.result || []));
+          req.onerror = () => resolve(new Set());
+        } else {
+          const keys = [];
+          const cursorReq = store.openKeyCursor();
+          cursorReq.onsuccess = (e) => {
+            const cursor = e.target.result;
+            if (cursor) {
+              keys.push(cursor.key);
+              cursor.continue();
+            } else {
+              resolve(new Set(keys));
+            }
+          };
+          cursorReq.onerror = () => resolve(new Set());
+        }
+      } catch (_) {
+        resolve(new Set());
+      }
+    });
+  }
+
+  async hasBookFile(bookId) {
+    if (!bookId) return false;
+    const db = await this.getDB();
+    if (!db || !db.objectStoreNames) return false;
+
+    if (db.objectStoreNames.contains("book_files")) {
+      const inFilesStore = await new Promise((resolve) => {
+        try {
+          const tx = db.transaction("book_files", "readonly");
+          const req = tx.objectStore("book_files").count(bookId);
+          req.onsuccess = () => resolve((req.result || 0) > 0);
+          req.onerror = () => resolve(false);
+        } catch (_) {
+          resolve(false);
+        }
+      });
+      if (inFilesStore) return true;
+    }
+
+    const legacy = await this._getBookRecordRaw(bookId);
+    return Boolean(legacy && (legacy.fileData || legacy.data));
+  }
+
+  async getBookFile(bookId) {
+    if (!bookId) return null;
+    const db = await this.getDB();
+    if (!db || !db.objectStoreNames) return null;
+
+    if (db.objectStoreNames.contains("book_files")) {
+      const fileRecord = await new Promise((resolve) => {
+        try {
+          const tx = db.transaction("book_files", "readonly");
+          const req = tx.objectStore("book_files").get(bookId);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        } catch (_) {
+          resolve(null);
+        }
+      });
+      if (fileRecord?.data) {
+        return await this.normalizeBinaryToArrayBuffer(fileRecord.data);
+      }
+    }
+
+    // Zpětná kompatibilita pro starší knihy uložené přímo ve store "books" (DB v2)
+    const legacyBook = await this._getBookRecordRaw(bookId);
+    const legacyBinary = legacyBook && (legacyBook.fileData || legacyBook.data);
+    if (legacyBinary) {
+      const buffer = await this.normalizeBinaryToArrayBuffer(legacyBinary);
+      if (buffer) {
+        // Líná migrace do vyhrazeného store "book_files" bez blokování otevření knihy
+        this._saveBookFileRaw(bookId, buffer, {
+          fileSize: buffer.byteLength,
+          fileHash: legacyBook.fileHash || legacyBook.file_hash || null
+        }).then(async (migrated) => {
+          if (migrated) {
+            const cleanMeta = {
+              ...legacyBook,
+              hasLocalFile: true,
+              fileSize: legacyBook.fileSize || buffer.byteLength,
+              file_size: legacyBook.file_size || buffer.byteLength
+            };
+            delete cleanMeta.data;
+            delete cleanMeta.fileData;
+            await this.saveBookRaw(cleanMeta);
+          }
+        }).catch(() => {});
+        return buffer;
+      }
+    }
+
+    return null;
+  }
+
+  async saveBookCover(bookId, coverInfo) {
+    if (!bookId || !coverInfo) return false;
+    const dataUrl = typeof coverInfo === "string" ? coverInfo : coverInfo.dataUrl;
+    if (!dataUrl) return false;
+
+    const db = await this.getDB();
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("covers")) return false;
+
+    const record = {
+      bookId,
+      dataUrl,
+      coverHash: (typeof coverInfo === "object" ? (coverInfo.coverHash || coverInfo.cover_hash || null) : null),
+      coverPath: (typeof coverInfo === "object" ? (coverInfo.coverPath || coverInfo.cover_path || null) : null),
+      updatedAt: Date.now()
+    };
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("covers", "readwrite");
+        tx.objectStore("covers").put(record);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (_) {
+        resolve(false);
+      }
+    });
+  }
+
+  async getBookCover(bookId) {
+    if (!bookId) return null;
+    const db = await this.getDB();
+    if (!db || !db.objectStoreNames) return null;
+
+    if (db.objectStoreNames.contains("covers")) {
+      const cover = await new Promise((resolve) => {
+        try {
+          const tx = db.transaction("covers", "readonly");
+          const req = tx.objectStore("covers").get(bookId);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        } catch (_) {
+          resolve(null);
+        }
+      });
+      if (cover?.dataUrl) return cover;
+    }
+
+    const legacyBook = await this._getBookRecordRaw(bookId);
+    if (legacyBook?.coverDataUrl) {
+      return {
+        bookId,
+        dataUrl: legacyBook.coverDataUrl,
+        coverHash: legacyBook.coverHash || legacyBook.cover_hash || null,
+        coverPath: legacyBook.cover_path || null
+      };
+    }
+    return null;
+  }
+
+  async getBookCoverByHash(coverHash) {
+    if (!coverHash) return null;
+    const db = await this.getDB();
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("covers")) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("covers", "readonly");
+        const store = tx.objectStore("covers");
+        if (!store.indexNames.contains("coverHash")) return resolve(null);
+        const req = store.index("coverHash").get(coverHash);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  async getAllBookCoversMap() {
+    const map = new Map();
+    const db = await this.getDB();
+    if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("covers")) return map;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction("covers", "readonly");
+        const req = tx.objectStore("covers").getAll();
+        req.onsuccess = () => {
+          for (const rec of (req.result || [])) {
+            if (rec?.bookId && rec?.dataUrl) {
+              map.set(rec.bookId, rec);
+            }
+          }
+          resolve(map);
+        };
+        req.onerror = () => resolve(map);
+      } catch (_) {
+        resolve(map);
+      }
+    });
+  }
+
+  async _migrateBookAssets(oldBookId, newBookId) {
+    if (!oldBookId || !newBookId || oldBookId === newBookId) return;
+    try {
+      const db = await this.getDB();
+      if (!db || !db.objectStoreNames) return;
+
+      if (db.objectStoreNames.contains("book_files")) {
+        const hasNewFile = await new Promise((resolve) => {
+          try {
+            const tx = db.transaction("book_files", "readonly");
+            const req = tx.objectStore("book_files").count(newBookId);
+            req.onsuccess = () => resolve((req.result || 0) > 0);
+            req.onerror = () => resolve(false);
+          } catch (_) { resolve(false); }
+        });
+        if (!hasNewFile) {
+          const oldFile = await this.getBookFile(oldBookId);
+          if (oldFile) {
+            await this._saveBookFileRaw(newBookId, oldFile);
+          }
+        }
+      }
+
+      if (db.objectStoreNames.contains("covers")) {
+        const newCover = await this.getBookCover(newBookId);
+        if (!newCover?.dataUrl) {
+          const oldCover = await this.getBookCover(oldBookId);
+          if (oldCover?.dataUrl) {
+            await this.saveBookCover(newBookId, oldCover);
+          }
+        }
+      }
+    } catch (_) {}
+  }
 
   async saveBook(bookData) {
     if (!bookData) return null;
@@ -146,6 +497,20 @@ export class StorageManager {
     if (rawBinary) {
       bookData.data = rawBinary;
       bookData.fileData = rawBinary;
+      const byteSize = rawBinary.byteLength ?? rawBinary.size ?? null;
+      if (byteSize && !bookData.fileSize) {
+        bookData.fileSize = byteSize;
+        bookData.file_size = byteSize;
+      }
+      if (!bookData.fileHash && !bookData.file_hash) {
+        try {
+          const h = await computeFileHash(rawBinary);
+          if (h) {
+            bookData.fileHash = h;
+            bookData.file_hash = h;
+          }
+        } catch (_) {}
+      }
     }
 
     // Normalizace autora a tvůrce
@@ -166,16 +531,7 @@ export class StorageManager {
         };
       }
 
-      // Výpočet a normalizace hashe pro PDF
-      if (!bookData.fileHash && !bookData.file_hash && rawBinary) {
-        try {
-          const h = await computeFileHash(rawBinary);
-          if (h) {
-            bookData.fileHash = h;
-            bookData.file_hash = h;
-          }
-        } catch (_) {}
-      } else if (bookData.fileHash && !bookData.file_hash) {
+      if (bookData.fileHash && !bookData.file_hash) {
         bookData.file_hash = bookData.fileHash;
       } else if (bookData.file_hash && !bookData.fileHash) {
         bookData.fileHash = bookData.file_hash;
@@ -208,18 +564,67 @@ export class StorageManager {
           bookData.lastReadAt = existing.lastReadAt;
         }
         bookData.addedAt = Math.min(existing.addedAt || Date.now(), bookData.addedAt || Date.now());
+        await this._migrateBookAssets(existing.id, bookData.id);
         await this.deleteBookRaw(existing.id);
         await this.migrateSessionsBookId(existing.id, bookData.id);
         this.migrateLocalStorageProgress(existing.id, bookData.id);
       }
     }
+
+    // Oddělené uložení binárního souboru do "book_files" a obálky do "covers"
+    let savedToFileStore = false;
+    if (rawBinary) {
+      savedToFileStore = await this._saveBookFileRaw(bookData.id, rawBinary, {
+        fileSize: bookData.fileSize || bookData.file_size,
+        fileHash: bookData.fileHash || bookData.file_hash
+      });
+      bookData.hasLocalFile = true;
+    } else {
+      // Pokud jde o starší DB v2 knihu s daty v "books", migrujeme je do "book_files" před přepisem metadat
+      const existingRaw = await this._getBookRecordRaw(bookData.id);
+      const legacyBinary = existingRaw && (existingRaw.fileData || existingRaw.data);
+      if (legacyBinary) {
+        const migrated = await this._saveBookFileRaw(bookData.id, legacyBinary, {
+          fileSize: existingRaw.fileSize || existingRaw.file_size,
+          fileHash: existingRaw.fileHash || existingRaw.file_hash || bookData.fileHash
+        });
+        if (migrated) {
+          savedToFileStore = true;
+          bookData.hasLocalFile = true;
+        }
+      } else {
+        const alreadyInFileStore = await this.hasBookFile(bookData.id);
+        bookData.hasLocalFile = alreadyInFileStore;
+        savedToFileStore = alreadyInFileStore;
+      }
+    }
+
+    let savedCoverToStore = false;
+    if (bookData.coverDataUrl) {
+      savedCoverToStore = await this.saveBookCover(bookData.id, {
+        dataUrl: bookData.coverDataUrl,
+        coverHash: bookData.coverHash || bookData.cover_hash || null,
+        coverPath: bookData.cover_path || null
+      });
+    }
+
+    // Store "books" ukládá pouze lehká metadata (pokud jsou binárky a obálky bezpečně uloženy ve vyhrazených stores)
+    const recordToStore = { ...bookData };
+    if (savedToFileStore) {
+      delete recordToStore.data;
+      delete recordToStore.fileData;
+    }
+    if (savedCoverToStore) {
+      delete recordToStore.coverDataUrl;
+    }
+
     const db = await this.getDB();
     if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return null;
     return new Promise((resolve) => {
       try {
         const tx = db.transaction("books", "readwrite");
         const store = tx.objectStore("books");
-        const request = store.put(bookData);
+        const request = store.put(recordToStore);
 
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => resolve(null);
@@ -248,9 +653,11 @@ export class StorageManager {
       if (byHash) return byHash;
 
       for (const b of books) {
-        if (b.isPdf && (b.data || b.fileData) && !b.fileHash) {
+        if (b.isPdf && b.hasLocalFile && !b.fileHash) {
           try {
-            const h = await computeFileHash(b.data || b.fileData);
+            const bin = b.data || b.fileData || await this.getBookFile(b.id);
+            if (!bin) continue;
+            const h = await computeFileHash(bin);
             if (h) {
               b.fileHash = h;
               b.file_hash = h;
@@ -268,13 +675,13 @@ export class StorageManager {
   }
 
   async uploadBook(book) {
-    const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
+    const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
     return await supabaseSync.uploadBook(book);
   }
 
   async syncWithCloud(options) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
       return await supabaseSync.syncAll(options);
     } catch (err) {
       console.warn("[StorageManager] syncWithCloud selhal:", err);
@@ -284,7 +691,7 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
       return await supabaseSync.pushSessionAndStats(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
@@ -294,7 +701,7 @@ export class StorageManager {
 
   async pushReadingSessionsToCloud(sessions) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
       return await supabaseSync.pushMultipleSessions(sessions);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
@@ -391,26 +798,27 @@ export class StorageManager {
   async getBook(id) {
     if (!id) return null;
     try {
-      const db = await this.getDB();
-      if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return null;
-      return await new Promise((resolve) => {
-        try {
-          const tx = db.transaction("books", "readonly");
-          const store = tx.objectStore("books");
-          const request = store.get(id);
+      const book = await this._getBookRecordRaw(id);
+      if (!book) return null;
 
-          request.onsuccess = () => {
-            const book = request.result;
-            if (book) {
-              this.normalizeBookProgress(book);
-            }
-            resolve(book || null);
-          };
-          request.onerror = () => resolve(null);
-        } catch (_) {
-          resolve(null);
+      this.normalizeBookProgress(book);
+      book.hasLocalFile = await this.hasBookFile(id);
+
+      if (!book.coverDataUrl) {
+        const cover = await this.getBookCover(id);
+        if (cover?.dataUrl) {
+          book.coverDataUrl = cover.dataUrl;
+          if (cover.coverHash && !book.coverHash) {
+            book.coverHash = cover.coverHash;
+            book.cover_hash = cover.coverHash;
+          }
+          if (cover.coverPath && !book.cover_path) {
+            book.cover_path = cover.coverPath;
+          }
         }
-      });
+      }
+
+      return book;
     } catch (_) {
       return null;
     }
@@ -420,29 +828,44 @@ export class StorageManager {
     try {
       const db = await this.getDB();
       if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return [];
-      return await new Promise((resolve) => {
-        try {
-          const tx = db.transaction("books", "readonly");
-          const store = tx.objectStore("books");
-          const request = store.getAll();
 
-          request.onsuccess = () => {
-            const books = request.result || [];
-            for (const book of books) {
-              if (book) {
-                this.normalizeBookProgress(book);
-              }
-            }
-            // Seřadit podle naposledy čtených
-            books.sort((a, b) => (b.lastReadAt || b.addedAt || 0) - (a.lastReadAt || a.addedAt || 0));
-            resolve(books);
-          };
-          request.onerror = () => resolve([]);
-        } catch (txErr) {
-          console.warn("[storage] getAllBooks tx error:", txErr);
-          resolve([]);
+      const [books, cachedFileIds, coversMap] = await Promise.all([
+        new Promise((resolve) => {
+          try {
+            const tx = db.transaction("books", "readonly");
+            const store = tx.objectStore("books");
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => resolve([]);
+          } catch (txErr) {
+            console.warn("[storage] getAllBooks tx error:", txErr);
+            resolve([]);
+          }
+        }),
+        this.getCachedBookFileIds(),
+        this.getAllBookCoversMap()
+      ]);
+
+      for (const book of books) {
+        if (!book) continue;
+        this.normalizeBookProgress(book);
+        book.hasLocalFile = cachedFileIds.has(book.id) || Boolean(book.fileData || book.data);
+        const coverRec = coversMap.get(book.id);
+        if (coverRec?.dataUrl && !book.coverDataUrl) {
+          book.coverDataUrl = coverRec.dataUrl;
         }
-      });
+        if (coverRec?.coverHash && !book.coverHash) {
+          book.coverHash = coverRec.coverHash;
+          book.cover_hash = coverRec.coverHash;
+        }
+        if (coverRec?.coverPath && !book.cover_path) {
+          book.cover_path = coverRec.coverPath;
+        }
+      }
+
+      // Seřadit podle naposledy čtených
+      books.sort((a, b) => (b.lastReadAt || b.addedAt || 0) - (a.lastReadAt || a.addedAt || 0));
+      return books;
     } catch (err) {
       console.warn("[storage] getAllBooks error:", err);
       return [];
@@ -455,12 +878,19 @@ export class StorageManager {
     return new Promise((resolve) => {
       try {
         const storeNames = ["books"];
+        if (db.objectStoreNames.contains("book_files")) storeNames.push("book_files");
+        if (db.objectStoreNames.contains("covers")) storeNames.push("covers");
         if (db.objectStoreNames.contains("sessions")) storeNames.push("sessions");
         if (db.objectStoreNames.contains("reading_sessions")) storeNames.push("reading_sessions");
 
         const tx = db.transaction(storeNames, "readwrite");
-        const bookStore = tx.objectStore("books");
-        try { bookStore.delete(id); } catch (_) {}
+        try { tx.objectStore("books").delete(id); } catch (_) {}
+        if (db.objectStoreNames.contains("book_files")) {
+          try { tx.objectStore("book_files").delete(id); } catch (_) {}
+        }
+        if (db.objectStoreNames.contains("covers")) {
+          try { tx.objectStore("covers").delete(id); } catch (_) {}
+        }
 
         // Smazat i přidružené relace ze sessions
         if (db.objectStoreNames.contains("sessions")) {
@@ -514,7 +944,7 @@ export class StorageManager {
   }
 
   async updateBookProgress(bookId, updates) {
-    const book = await this.getBook(bookId);
+    const book = await this._getBookRecordRaw(bookId);
     if (!book || !updates) return;
 
     const anchorTs = updates.readingAnchor?.updatedAt ?? updates.reading_anchor?.updatedAt;
@@ -552,6 +982,10 @@ export class StorageManager {
       this.normalizeBookProgress(book);
     }
 
+    // Lehká aktualizace metadat postupu bez zbytečného přepisování binárních dat nebo obálek
+    if (!book.data && !book.fileData && !book.coverDataUrl) {
+      return await this.saveBookRaw(book);
+    }
     return await this.saveBook(book);
   }
 
@@ -918,7 +1352,7 @@ export class StorageManager {
    */
   async reconcileSessionsWithCloud() {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.6.5");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
       if (!supabaseSync || !supabaseSync.isOnline()) {
         return { success: false, reason: "offline", purged: 0, saved: 0 };
       }
@@ -1991,9 +2425,17 @@ export class StorageManager {
     if (!db || !db.objectStoreNames || !db.objectStoreNames.contains("books")) return false;
     return new Promise((resolve) => {
       try {
-        const tx = db.transaction("books", "readwrite");
-        const store = tx.objectStore("books");
-        store.delete(id);
+        const storeNames = ["books"];
+        if (db.objectStoreNames.contains("book_files")) storeNames.push("book_files");
+        if (db.objectStoreNames.contains("covers")) storeNames.push("covers");
+        const tx = db.transaction(storeNames, "readwrite");
+        tx.objectStore("books").delete(id);
+        if (db.objectStoreNames.contains("book_files")) {
+          try { tx.objectStore("book_files").delete(id); } catch (_) {}
+        }
+        if (db.objectStoreNames.contains("covers")) {
+          try { tx.objectStore("covers").delete(id); } catch (_) {}
+        }
         tx.oncomplete = () => resolve(true);
         tx.onerror = () => resolve(false);
         tx.onabort = () => resolve(false);
@@ -2078,12 +2520,23 @@ export class StorageManager {
       if (!b.isPdf && b.format !== "pdf") continue;
 
       let hash = b.fileHash || b.file_hash;
-      if (!hash && (b.data || b.fileData)) {
+      if (!hash && b.id?.startsWith("pdf_")) {
+        const m = b.id.match(/^pdf_([a-f0-9]{64}_\d+)$/);
+        if (m) {
+          hash = m[1];
+          b.fileHash = hash;
+          b.file_hash = hash;
+        }
+      }
+      if (!hash && (b.data || b.fileData || b.hasLocalFile)) {
         try {
-          hash = await computeFileHash(b.data || b.fileData);
-          if (hash) {
-            b.fileHash = hash;
-            b.file_hash = hash;
+          const bin = b.data || b.fileData || await this.getBookFile(b.id);
+          if (bin) {
+            hash = await computeFileHash(bin);
+            if (hash) {
+              b.fileHash = hash;
+              b.file_hash = hash;
+            }
           }
         } catch (_) {}
       }
@@ -2108,10 +2561,11 @@ export class StorageManager {
           const oldId = book.id;
           const canonicalId = `pdf_${hash}`;
           console.log(`[StorageManager] Normalizuji ID PDF knihy "${book.title}": ${oldId} -> ${canonicalId}`);
+          await this._migrateBookAssets(oldId, canonicalId);
           await this.deleteBookRaw(oldId);
           book.id = canonicalId;
           book.file_path = `books/${canonicalId}.pdf`;
-          await this.saveBookRaw(book);
+          await this.saveBook(book);
           await this.migrateSessionsBookId(oldId, canonicalId);
           this.migrateLocalStorageProgress(oldId, canonicalId);
           if (this.getLastActiveBookId() === oldId) {
@@ -2141,6 +2595,7 @@ export class StorageManager {
 
       for (const loser of losers) {
         console.log(`[StorageManager] Mazání duplikátu PDF: ${loser.id} (strana ${loser.currentPage || 1})`);
+        await this._migrateBookAssets(loser.id, canonicalId);
         await this.deleteBookRaw(loser.id);
         await this.migrateSessionsBookId(loser.id, canonicalId);
         this.migrateLocalStorageProgress(loser.id, canonicalId);
@@ -2148,6 +2603,7 @@ export class StorageManager {
 
       if (winner.id !== canonicalId) {
         const oldWinnerId = winner.id;
+        await this._migrateBookAssets(oldWinnerId, canonicalId);
         await this.deleteBookRaw(oldWinnerId);
         winner.id = canonicalId;
         await this.migrateSessionsBookId(oldWinnerId, canonicalId);
@@ -2155,7 +2611,7 @@ export class StorageManager {
       }
 
       winner.file_path = `books/${canonicalId}.pdf`;
-      await this.saveBookRaw(winner);
+      await this.saveBook(winner);
 
       const lastActive = this.getLastActiveBookId();
       if (losers.some(l => l.id === lastActive) || lastActive === winner.id) {
