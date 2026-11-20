@@ -332,6 +332,7 @@ export class LuminaApp {
       
       // Navigace ve čtečce a spodní lišta (nové rozložení)
       footerRemainingChapter: document.getElementById("footer-remaining-chapter"),
+      footerScrubberSlot: document.getElementById("footer-scrubber-slot"),
       footerBookPages: document.getElementById("footer-book-pages"),
       footerActionsGroup: document.getElementById("footer-actions-group"),
       rulerToggleBtn: document.getElementById("ruler-toggle-btn") || document.getElementById("ruler-split-pill"),
@@ -2269,6 +2270,8 @@ export class LuminaApp {
       document.getElementById("btn-reader-menu-fab"),
       document.getElementById("reader-floating-dock"),
       document.getElementById("footer-actions-group"),
+      document.getElementById("footer-scrubber-slot"),
+      document.getElementById("pill-scrubber-container"),
       document.getElementById("ruler-quick-popover")
     ].filter(Boolean);
 
@@ -9987,15 +9990,45 @@ export class LuminaApp {
 
     let isPointerDown = false;
     let pendingTargetPage = null;
+    let startClientX = 0;
     let startClientY = 0;
     let lastClientX = 0;
     let currentRatio = 0;
     let hasUsedFineGear = false;
+    let openedOnThisPress = false;
+    let didDragDuringPress = false;
     let wheelTimer = null;
     let wheelHideTooltipTimer = null;
     let pendingWheelPage = null;
     let stepperTimer = null;
     let pendingStepperPage = null;
+
+    const expandScrubber = () => {
+      capsule.classList.add("is-expanded");
+      if (this.dom.footerScrubberSlot) {
+        this.dom.footerScrubberSlot.classList.add("is-expanded");
+      }
+    };
+
+    const collapseScrubber = () => {
+      if (isPointerDown) return;
+      capsule.classList.remove("is-expanded");
+      if (this.dom.footerScrubberSlot) {
+        this.dom.footerScrubberSlot.classList.remove("is-expanded");
+      }
+    };
+
+    document.addEventListener("pointerdown", (e) => {
+      if (!capsule.classList.contains("is-expanded")) return;
+      if (e.target && capsule.contains(e.target)) return;
+      collapseScrubber();
+    }, { capture: true, passive: true });
+
+    capsule.addEventListener("pointerleave", (e) => {
+      if (e.pointerType === "mouse" && !isPointerDown) {
+        collapseScrubber();
+      }
+    });
 
     const formatTooltipForPage = (targetPage, totalPages) => {
       const resolved = this.resolveBookPage(targetPage);
@@ -10086,38 +10119,49 @@ export class LuminaApp {
 
     capsule.addEventListener("pointerdown", (e) => {
       if (e.button !== undefined && e.button !== 0) return;
-      if (e.target && e.target.closest("#btn-menu-toc")) return;
 
       tracker.cancelCurrentPageDwell();
       isPointerDown = true;
       this.isPillScrubbing = true;
       pendingTargetPage = null;
 
-      const rect = capsule.getBoundingClientRect();
-      const w = rect.width > 0 ? rect.width : 300;
       const { clientX, clientY } = getEventClientCoords(e);
-
+      startClientX = clientX;
       startClientY = clientY;
       lastClientX = clientX;
       hasUsedFineGear = false;
+
+      const isNonMouse = e.pointerType && e.pointerType !== "mouse";
+      const wasExpanded = capsule.classList.contains("is-expanded");
+      openedOnThisPress = isNonMouse && !wasExpanded;
+      didDragDuringPress = !openedOnThisPress;
+
+      expandScrubber();
+
+      try {
+        capsule.setPointerCapture(e.pointerId);
+      } catch (err) {}
+
+      if (openedOnThisPress) {
+        return;
+      }
+
+      const rect = capsule.getBoundingClientRect();
+      const w = rect.width > 0 ? rect.width : 300;
       currentRatio = Math.max(0, Math.min(1, (clientX - rect.left) / w));
 
       const gear = getFineGear(0, e);
       if (gear < 1) hasUsedFineGear = true;
 
       capsule.classList.add("is-scrubbing");
-      if (this.dom.readerFloatingDock) {
-        this.dom.readerFloatingDock.classList.add("is-scrubbing");
+      if (this.dom.footerScrubberSlot) {
+        this.dom.footerScrubberSlot.classList.add("is-scrubbing");
       }
       if (this.dom.pillScrubberTooltip) {
         this.dom.pillScrubberTooltip.classList.remove("is-hidden");
       }
 
       applyRatioFeedback(currentRatio, gear, rect);
-
-      try {
-        capsule.setPointerCapture(e.pointerId);
-      } catch (err) {}
     });
 
     capsule.addEventListener("pointermove", (e) => {
@@ -10128,6 +10172,21 @@ export class LuminaApp {
       const rect = capsule.getBoundingClientRect();
       const w = rect.width > 0 ? rect.width : 300;
       const { clientX, clientY } = getEventClientCoords(e);
+
+      if (openedOnThisPress && !didDragDuringPress) {
+        if (Math.abs(clientX - startClientX) <= 6) {
+          return;
+        }
+        didDragDuringPress = true;
+        currentRatio = Math.max(0, Math.min(1, (clientX - rect.left) / w));
+        capsule.classList.add("is-scrubbing");
+        if (this.dom.footerScrubberSlot) {
+          this.dom.footerScrubberSlot.classList.add("is-scrubbing");
+        }
+        if (this.dom.pillScrubberTooltip) {
+          this.dom.pillScrubberTooltip.classList.remove("is-hidden");
+        }
+      }
 
       const dy = Math.abs(clientY - startClientY);
       const gear = getFineGear(dy, e);
@@ -10156,11 +10215,18 @@ export class LuminaApp {
       } catch (err) {}
 
       capsule.classList.remove("is-scrubbing");
-      if (this.dom.readerFloatingDock) {
-        this.dom.readerFloatingDock.classList.remove("is-scrubbing");
+      if (this.dom.footerScrubberSlot) {
+        this.dom.footerScrubberSlot.classList.remove("is-scrubbing");
       }
       if (this.dom.pillScrubberTooltip) {
         this.dom.pillScrubberTooltip.classList.add("is-hidden");
+      }
+
+      if (e.pointerType === "mouse") {
+        collapseScrubber();
+        if (document.activeElement === capsule) {
+          capsule.blur();
+        }
       }
 
       this.wasPillScrubbing = true;
@@ -10168,13 +10234,17 @@ export class LuminaApp {
         this.wasPillScrubbing = false;
       }, 200);
 
-      if (pendingTargetPage !== null) {
+      if (didDragDuringPress && pendingTargetPage !== null) {
         const pageToNav = pendingTargetPage;
         pendingTargetPage = null;
         tracker.cancelCurrentPageDwell();
         await this.goToBookPage(pageToNav);
+      } else {
+        pendingTargetPage = null;
       }
 
+      openedOnThisPress = false;
+      didDragDuringPress = false;
       this.updatePillScrubberUI();
     };
 

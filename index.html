@@ -174,8 +174,39 @@
         <span class="footer-chapter-mobile">konec kap.: 0 st.</span>
       </div>
 
-      <div class="footer-center-item footer-book-pages" id="footer-book-pages">
-        1 z 1
+      <div class="footer-center-item footer-scrubber-slot" id="footer-scrubber-slot">
+        <div id="pill-scrubber-container" class="footer-scrubber pill-scrubber-capsule apple-books-capsule" role="slider" aria-label="Posuvník stránek knihy" aria-valuemin="1" aria-valuemax="1" aria-valuenow="1" tabindex="0">
+
+          <!-- Plovoucí liquid-glass tooltip přímo nad pozicí posuvníku -->
+          <div id="pill-scrubber-tooltip" class="pill-scrubber-tooltip is-hidden" aria-hidden="true">
+            <span id="pill-scrubber-tooltip-text" class="pill-scrubber-tooltip-text">Strana 1 z 1 • Úvod</span>
+            <span id="pill-scrubber-tooltip-hint" class="pill-scrubber-tooltip-hint">Táhněte výš pro jemné ladění</span>
+          </div>
+
+          <!-- Sbalený stav: dvě čáry po stranách a číslo strany uprostřed -->
+          <div class="footer-scrubber-collapsed" aria-hidden="true">
+            <span class="footer-scrubber-line footer-scrubber-line-left"></span>
+            <span class="footer-book-pages" id="footer-book-pages">1 z 1</span>
+            <span class="footer-scrubber-line footer-scrubber-line-right"></span>
+          </div>
+
+          <!-- Rozšířený stav: plnohodnotná výplň průběhu čtení + značky kapitol + indikátor pozice -->
+          <div class="pill-scrubber-track">
+            <div class="pill-scrubber-progress-fill" id="pill-scrubber-fill"></div>
+            <div class="pill-scrubber-chapter-ticks" id="pill-scrubber-chapter-ticks" aria-hidden="true"></div>
+            <div class="pill-scrubber-thumb" id="pill-scrubber-thumb" aria-hidden="true"></div>
+          </div>
+
+          <!-- Fixní obsah nad výplní (z-index: 2) -->
+          <div class="pill-scrubber-content">
+            <span id="pill-scrubber-label" class="pill-scrubber-label">
+              <span id="pill-scrubber-prefix" class="pill-scrubber-label-prefix">Strana 1 z 1</span>
+              <span id="pill-scrubber-separator" class="pill-scrubber-label-separator"> • </span>
+              <span id="pill-scrubber-percent" class="pill-scrubber-label-percent">0 %</span>
+            </span>
+          </div>
+
+        </div>
       </div>
 
       <div class="footer-actions-group" id="footer-actions-group">
@@ -303,7 +334,7 @@
 
           <!-- Plovoucí cluster rychlých akcí -->
           <div id="reader-floating-dock" class="reader-floating-dock is-hidden" role="menu" aria-label="Rychlé akce čtečky">
-            <!-- Horní řada: Přesný krokový ovladač stránek vlevo + 3 kruhová tlačítka vpravo -->
+            <!-- Přesný krokový ovladač stránek vlevo + kruhová akční tlačítka vpravo -->
             <div class="action-cluster-top-row">
               <div id="pill-page-stepper" class="pill-page-stepper" role="group" aria-label="Přesný výběr strany">
                 <button type="button" id="btn-scrubber-prev-page" class="pill-stepper-btn" title="Předchozí strana" aria-label="Předchozí strana">
@@ -327,47 +358,17 @@
                 <button id="btn-menu-settings" class="dock-action-btn" title="Nastavení písma a vzhledu" aria-label="Nastavení">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
                 </button>
+                <button type="button" id="btn-menu-toc" class="dock-action-btn" title="Obsah knihy (klávesa T)" aria-label="Obsah knihy">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none" />
+                    <line x1="8" y1="6" x2="20" y2="6" stroke-width="2.2" />
+                    <circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none" />
+                    <line x1="8" y1="12" x2="20" y2="12" stroke-width="2.2" />
+                    <circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none" />
+                    <line x1="8" y1="18" x2="20" y2="18" stroke-width="2.2" />
+                  </svg>
+                </button>
               </div>
-            </div>
-            <!-- Dolní řada: Široký přesný posuvník knihy + samostatné tlačítko obsahu vpravo -->
-            <div class="action-cluster-bottom-row">
-              <div id="pill-scrubber-container" class="dock-action-btn dock-action-btn-wide pill-scrubber-capsule apple-books-capsule" role="slider" aria-label="Posuvník stránek knihy" aria-valuemin="1" aria-valuemax="1" aria-valuenow="1" tabindex="0">
-
-                <!-- Plovoucí liquid-glass tooltip přímo nad pozicí posuvníku -->
-                <div id="pill-scrubber-tooltip" class="pill-scrubber-tooltip is-hidden" aria-hidden="true">
-                  <span id="pill-scrubber-tooltip-text" class="pill-scrubber-tooltip-text">Strana 1 z 1 • Úvod</span>
-                  <span id="pill-scrubber-tooltip-hint" class="pill-scrubber-tooltip-hint">Táhněte výš pro jemné ladění</span>
-                </div>
-
-                <!-- Plnohodnotná výplň průběhu čtení + značky kapitol + indikátor pozice -->
-                <div class="pill-scrubber-track">
-                  <div class="pill-scrubber-progress-fill" id="pill-scrubber-fill"></div>
-                  <div class="pill-scrubber-chapter-ticks" id="pill-scrubber-chapter-ticks" aria-hidden="true"></div>
-                  <div class="pill-scrubber-thumb" id="pill-scrubber-thumb" aria-hidden="true"></div>
-                </div>
-
-                <!-- Fixní obsah nad výplní (z-index: 2) -->
-                <div class="pill-scrubber-content">
-                  <span id="pill-scrubber-label" class="pill-scrubber-label">
-                    <span id="pill-scrubber-prefix" class="pill-scrubber-label-prefix">Strana 1 z 1</span>
-                    <span id="pill-scrubber-separator" class="pill-scrubber-label-separator"> • </span>
-                    <span id="pill-scrubber-percent" class="pill-scrubber-label-percent">0 %</span>
-                  </span>
-                </div>
-
-              </div>
-
-              <!-- Samostatné tlačítko obsahu vpravo mimo dráhu posuvníku -->
-              <button type="button" id="btn-menu-toc" class="dock-action-btn pill-scrubber-menu-btn" title="Obsah knihy (klávesa T)" aria-label="Obsah knihy">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                  <circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none" />
-                  <line x1="8" y1="6" x2="20" y2="6" stroke-width="2.2" />
-                  <circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none" />
-                  <line x1="8" y1="12" x2="20" y2="12" stroke-width="2.2" />
-                  <circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none" />
-                  <line x1="8" y1="18" x2="20" y2="18" stroke-width="2.2" />
-                </svg>
-              </button>
             </div>
           </div>
         </div>

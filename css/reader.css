@@ -698,7 +698,8 @@ html.mode-vertical .footer-actions-group .ruler-split-pill.is-active .pill-actio
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
-  width: min(500px, calc(100vw - max(3rem, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))));
+  width: max-content;
+  max-width: min(460px, calc(100vw - max(3rem, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))));
   min-width: 240px;
   padding: 0;
   margin: 0;
@@ -3810,13 +3811,6 @@ html[data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover,
 [data-theme="dark"] body.ui-liquid-glass #ruler-quick-popover,
 [data-theme="dark"] body.ui-liquid-glass .ruler-quick-popover,
 [data-theme="dark"] #ruler-quick-popover,
-[data-theme="espresso"] .ruler-quick-popover,
-.theme-espresso .ruler-quick-popover {
-  background: #332a1b !important;
-  color: #f3ead8 !important;
-  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(243, 234, 216, 0.10);
-}
-
 [data-theme="dark"] .ruler-quick-popover,
 body.theme-dark.ui-liquid-glass #ruler-quick-popover:hover,
 body.theme-dark.ui-liquid-glass .ruler-quick-popover:hover,
@@ -4416,6 +4410,322 @@ body.ui-liquid-glass .pill-scrubber-tooltip {
     flex-wrap: wrap;
   }
 }
+
+/* ==========================================================================
+   Rozbalovací spodní posuvník stránek (Obr. 2 sbalený -> Obr. 1 rozbalený)
+   ========================================================================== */
+
+#paged-footer-bar .footer-scrubber-slot,
+.paged-footer-bar .footer-scrubber-slot {
+  grid-column: 2 !important;
+  justify-self: center !important;
+  position: relative !important;
+  width: clamp(190px, 26vw, 290px);
+  height: 36px;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: none !important;
+  z-index: 65;
+  pointer-events: auto !important;
+}
+
+#paged-footer-bar .footer-scrubber-slot.is-expanded,
+#paged-footer-bar .footer-scrubber-slot.is-scrubbing,
+#paged-footer-bar .footer-scrubber-slot:has(.footer-scrubber:focus-visible) {
+  z-index: 85;
+}
+
+@media (hover: hover) {
+  #paged-footer-bar .footer-scrubber-slot:has(.footer-scrubber:hover) {
+    z-index: 85;
+  }
+}
+
+/* Výchozí (sbalený) stav: průhledné tělo se dvěma vodorovnými čarami a číslem strany */
+#pill-scrubber-container.footer-scrubber,
+body.ui-liquid-glass #pill-scrubber-container.footer-scrubber,
+body:not(.ui-liquid-glass) #pill-scrubber-container.footer-scrubber {
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: calc(100vw - 24px) !important;
+  height: 36px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  flex: none !important;
+  border-radius: 9999px !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  overflow: visible !important;
+  cursor: pointer;
+  transition: width 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+              height 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+              background 0.18s ease,
+              border-color 0.18s ease,
+              box-shadow 0.18s ease !important;
+}
+
+.footer-scrubber-collapsed {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 4px;
+  pointer-events: none;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.14s ease, visibility 0.14s ease;
+}
+
+.footer-scrubber-line {
+  flex: 1 1 auto;
+  min-width: 14px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--text-main, #334155);
+  opacity: 0.22;
+  transition: background-color 0.2s ease, opacity 0.2s ease;
+}
+
+/* Čísla stránek uvnitř sbaleného posuvníku bez jakéhokoliv rámečku či pilulky */
+#paged-footer-bar #footer-book-pages,
+#paged-footer-bar .footer-book-pages,
+body.ui-liquid-glass #paged-footer-bar #footer-book-pages,
+body.mode-vertical #paged-footer-bar #footer-book-pages,
+body.mode-vertical #paged-footer-bar .footer-book-pages,
+html.mode-vertical #paged-footer-bar #footer-book-pages,
+html.mode-vertical #paged-footer-bar .footer-book-pages,
+[data-reading-mode="vertical"] #paged-footer-bar #footer-book-pages,
+[data-reading-mode="vertical"] #paged-footer-bar .footer-book-pages,
+body.is-pdf-mode #paged-footer-bar #footer-book-pages,
+body.is-pdf-mode #paged-footer-bar .footer-book-pages {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  line-height: 1.2 !important;
+  flex: 0 0 auto !important;
+  font-size: 0.85rem !important;
+  font-weight: 600 !important;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-main, #334155) !important;
+  white-space: nowrap !important;
+  transform: none !important;
+}
+
+#pill-scrubber-container.footer-scrubber .pill-scrubber-track,
+#pill-scrubber-container.footer-scrubber .pill-scrubber-content {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.14s ease, visibility 0.14s ease;
+}
+
+/* Rozšířený stav: plnohodnotná kapsle posuvníku jako na obr. 1 */
+#pill-scrubber-container.footer-scrubber.is-expanded,
+#pill-scrubber-container.footer-scrubber.is-scrubbing,
+#pill-scrubber-container.footer-scrubber:focus-visible {
+  width: min(460px, calc(100vw - 24px)) !important;
+  height: 44px !important;
+  transform: translate(-50%, -56%) !important;
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff)) !important;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.12)) !important;
+  box-shadow: var(--shadow-md, 0 10px 28px rgba(0, 0, 0, 0.16)) !important;
+}
+
+#pill-scrubber-container.footer-scrubber.is-scrubbing {
+  transform: translate(-50%, -56%) scaleY(1.06) !important;
+  border-color: rgba(37, 99, 235, 0.45) !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.22), var(--shadow-md, 0 10px 28px rgba(0, 0, 0, 0.16)) !important;
+  cursor: grabbing;
+}
+
+body.ui-liquid-glass #pill-scrubber-container.footer-scrubber.is-expanded,
+body.ui-liquid-glass #pill-scrubber-container.footer-scrubber.is-scrubbing,
+body.ui-liquid-glass #pill-scrubber-container.footer-scrubber:focus-visible {
+  background: var(--lq-glass-bg) !important;
+  backdrop-filter: var(--lq-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  border-top-color: var(--lq-glass-border-top) !important;
+  box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow-hover, var(--lq-glass-shadow)) !important;
+}
+
+body.ui-liquid-glass #pill-scrubber-container.footer-scrubber.is-scrubbing {
+  border-color: rgba(96, 165, 250, 0.7) !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3), var(--lq-chromatic-rim), var(--lq-glass-shadow-hover) !important;
+}
+
+#pill-scrubber-container.footer-scrubber.is-expanded .footer-scrubber-collapsed,
+#pill-scrubber-container.footer-scrubber.is-scrubbing .footer-scrubber-collapsed,
+#pill-scrubber-container.footer-scrubber:focus-visible .footer-scrubber-collapsed {
+  opacity: 0;
+  visibility: hidden;
+}
+
+#pill-scrubber-container.footer-scrubber.is-expanded .pill-scrubber-track,
+#pill-scrubber-container.footer-scrubber.is-expanded .pill-scrubber-content,
+#pill-scrubber-container.footer-scrubber.is-scrubbing .pill-scrubber-track,
+#pill-scrubber-container.footer-scrubber.is-scrubbing .pill-scrubber-content,
+#pill-scrubber-container.footer-scrubber:focus-visible .pill-scrubber-track,
+#pill-scrubber-container.footer-scrubber:focus-visible .pill-scrubber-content {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.18s ease 0.04s, visibility 0.18s ease;
+}
+
+@media (hover: hover) {
+  #pill-scrubber-container.footer-scrubber:hover {
+    width: min(460px, calc(100vw - 24px)) !important;
+    height: 44px !important;
+    transform: translate(-50%, -56%) !important;
+    background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff)) !important;
+    border: 1px solid var(--border-color, rgba(0, 0, 0, 0.12)) !important;
+    box-shadow: var(--shadow-md, 0 10px 28px rgba(0, 0, 0, 0.16)) !important;
+  }
+
+  body.ui-liquid-glass #pill-scrubber-container.footer-scrubber:hover {
+    background: var(--lq-glass-bg-hover, var(--lq-glass-bg)) !important;
+    backdrop-filter: var(--lq-glass-blur) !important;
+    -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+    border: 1px solid var(--lq-glass-border-hover, var(--lq-glass-border)) !important;
+    border-top-color: var(--lq-glass-border-top) !important;
+    box-shadow: var(--lq-chromatic-rim), var(--lq-glass-shadow-hover, var(--lq-glass-shadow)) !important;
+  }
+
+  #pill-scrubber-container.footer-scrubber:hover .footer-scrubber-collapsed {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  #pill-scrubber-container.footer-scrubber:hover .pill-scrubber-track,
+  #pill-scrubber-container.footer-scrubber:hover .pill-scrubber-content {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.18s ease 0.04s, visibility 0.18s ease;
+  }
+}
+
+/* Ve vertikálním režimu čtení má sbalený posuvník ohraničení a podklad stejně jako ostatní prvky lišty */
+body.mode-vertical #pill-scrubber-container.footer-scrubber:not(.is-expanded):not(.is-scrubbing):not(:focus-visible):not(:hover),
+html.mode-vertical #pill-scrubber-container.footer-scrubber:not(.is-expanded):not(.is-scrubbing):not(:focus-visible):not(:hover),
+[data-reading-mode="vertical"] #pill-scrubber-container.footer-scrubber:not(.is-expanded):not(.is-scrubbing):not(:focus-visible):not(:hover) {
+  height: 38px !important;
+}
+
+body.mode-vertical #pill-scrubber-container.footer-scrubber,
+html.mode-vertical #pill-scrubber-container.footer-scrubber,
+[data-reading-mode="vertical"] #pill-scrubber-container.footer-scrubber {
+  background: var(--bg-surface-elevated, var(--bg-secondary, #ffffff)) !important;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1)) !important;
+  box-shadow: var(--shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.08)) !important;
+}
+
+body.mode-vertical .footer-scrubber-collapsed,
+html.mode-vertical .footer-scrubber-collapsed,
+[data-reading-mode="vertical"] .footer-scrubber-collapsed {
+  padding: 0 12px;
+}
+
+body.ui-liquid-glass.mode-vertical #pill-scrubber-container.footer-scrubber,
+body.ui-liquid-glass html.mode-vertical #pill-scrubber-container.footer-scrubber,
+body.ui-liquid-glass [data-reading-mode="vertical"] #pill-scrubber-container.footer-scrubber {
+  background: var(--lq-glass-bg) !important;
+  backdrop-filter: var(--lq-glass-blur) !important;
+  -webkit-backdrop-filter: var(--lq-glass-blur) !important;
+  border: 1px solid var(--lq-glass-border) !important;
+  border-top-color: var(--lq-glass-border-top) !important;
+  box-shadow: var(--lq-glass-rim), var(--lq-glass-shadow) !important;
+}
+
+/* Skrytí ve vertikálním režimu při schovaných lištách */
+body.mode-vertical.reader-chrome-hidden .footer-scrubber-slot,
+html.mode-vertical.reader-chrome-hidden .footer-scrubber-slot,
+[data-reading-mode="vertical"].reader-chrome-hidden .footer-scrubber-slot {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+@media (max-width: 680px) {
+  .paged-footer-bar,
+  #paged-footer-bar,
+  body.in-reader-view .paged-footer-bar,
+  body.is-pdf-mode #paged-footer-bar,
+  body.is-pdf-mode .paged-footer-bar,
+  body.mode-vertical .paged-footer-bar,
+  body.mode-vertical #paged-footer-bar,
+  html.mode-vertical .paged-footer-bar,
+  html.mode-vertical #paged-footer-bar,
+  [data-reading-mode="vertical"] .paged-footer-bar,
+  [data-reading-mode="vertical"] #paged-footer-bar {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) !important;
+    gap: 0.35rem !important;
+  }
+
+  #paged-footer-bar #footer-remaining-chapter,
+  #paged-footer-bar .footer-remaining-chapter {
+    grid-column: 1 !important;
+    justify-self: start !important;
+    max-width: 100% !important;
+  }
+
+  #paged-footer-bar #footer-actions-group,
+  #paged-footer-bar .footer-actions-group {
+    grid-column: 3 !important;
+    justify-self: end !important;
+  }
+
+  #paged-footer-bar .footer-scrubber-slot,
+  .paged-footer-bar .footer-scrubber-slot {
+    grid-column: 2 !important;
+    justify-self: center !important;
+    width: clamp(104px, 30vw, 180px);
+    height: 32px;
+  }
+
+  #pill-scrubber-container.footer-scrubber:not(.is-expanded):not(.is-scrubbing):not(:focus-visible):not(:hover),
+  body.mode-vertical #pill-scrubber-container.footer-scrubber:not(.is-expanded):not(.is-scrubbing):not(:focus-visible):not(:hover),
+  html.mode-vertical #pill-scrubber-container.footer-scrubber:not(.is-expanded):not(.is-scrubbing):not(:focus-visible):not(:hover),
+  [data-reading-mode="vertical"] #pill-scrubber-container.footer-scrubber:not(.is-expanded):not(.is-scrubbing):not(:focus-visible):not(:hover) {
+    height: 32px !important;
+  }
+
+  .footer-scrubber-collapsed {
+    gap: 6px;
+  }
+
+  .footer-scrubber-line {
+    height: 5px;
+  }
+
+  #paged-footer-bar #footer-book-pages,
+  #paged-footer-bar .footer-book-pages {
+    font-size: 0.75rem !important;
+  }
+
+  .reader-floating-dock {
+    width: max-content !important;
+    max-width: calc(100vw - max(1rem, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))) !important;
+  }
+}
+
 
 
 
