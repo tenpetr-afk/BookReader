@@ -22,12 +22,14 @@ CREATE TABLE IF NOT EXISTS public.books (
     scroll_progress DOUBLE PRECISION NOT NULL DEFAULT 0,
     pdf_ruler_height INTEGER NOT NULL DEFAULT 32,
     reading_anchor JSONB DEFAULT NULL,
+    bookmarks JSONB DEFAULT '[]'::jsonb,
     progress_updated_at TIMESTAMPTZ DEFAULT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- Migrace pro stávající databáze: přidání sloupců pro obsahovou kotvu EPUB, metadata a obálky
+-- Migrace pro stávající databáze: přidání sloupců pro obsahovou kotvu EPUB, záložky, metadata a obálky
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS reading_anchor JSONB DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS bookmarks JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS progress_updated_at TIMESTAMPTZ DEFAULT NULL;
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS author TEXT DEFAULT NULL;
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS file_size BIGINT DEFAULT NULL;

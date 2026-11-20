@@ -16,8 +16,11 @@ export class SupabaseSync {
     this.pendingProgress = new Map();
     this.progressDebounceTimer = null;
     this._inFlightProgress = new Set();
+    this.pendingBookmarks = new Set();
+    this._inFlightBookmarks = new Set();
     this._booksSchemaHasAnchorCols = true;
     this._booksSchemaHasExtendedCols = true;
+    this._booksSchemaHasBookmarksCol = true;
     this._inFlightDownloads = new Map();
     this._inFlightCoverDownloads = new Map();
     this._failedCoverPaths = new Set();
@@ -244,6 +247,10 @@ export class SupabaseSync {
         row.progress_updated_at = progTs > 0 ? new Date(progTs).toISOString() : null;
       }
 
+      if (this._booksSchemaHasBookmarksCol) {
+        row.bookmarks = this._buildCloudBookmarksPayload(book.id);
+      }
+
       if (this._booksSchemaHasExtendedCols) {
         row.author = book.author || book.creator || null;
         row.file_size = uploadBlob.size;
@@ -340,6 +347,12 @@ export class SupabaseSync {
       msg.includes("progress_updated_at");
   }
 
+  _isMissingBookmarksColumnError(error) {
+    if (!error) return false;
+    const msg = String(error.message || "");
+    return msg.includes("bookmarks");
+  }
+
   _isMissingExtendedColumnError(error) {
     if (!error) return false;
     const msg = String(error.message || "");
@@ -352,7 +365,9 @@ export class SupabaseSync {
       msg.includes("total_pages") ||
       msg.includes("total_chapters") ||
       msg.includes("total_words") ||
-      ((error.code === "PGRST204" || error.code === "42703") && !this._isMissingAnchorColumnError(error))
+      ((error.code === "PGRST204" || error.code === "42703") &&
+        !this._isMissingAnchorColumnError(error) &&
+        !this._isMissingBookmarksColumnError(error))
     );
   }
 
@@ -361,6 +376,13 @@ export class SupabaseSync {
     const copy = { ...payload };
     delete copy.reading_anchor;
     delete copy.progress_updated_at;
+    return copy;
+  }
+
+  _stripBookmarksCol(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+    const copy = { ...payload };
+    delete copy.bookmarks;
     return copy;
   }
 
@@ -381,14 +403,20 @@ export class SupabaseSync {
   async _upsertBooksRow(row) {
     let payload = { ...row };
     if (!this._booksSchemaHasAnchorCols) payload = this._stripAnchorCols(payload);
+    if (!this._booksSchemaHasBookmarksCol) payload = this._stripBookmarksCol(payload);
     if (!this._booksSchemaHasExtendedCols) payload = this._stripExtendedCols(payload);
 
     let { error } = await supabase.from("books").upsert(payload, { onConflict: "id" });
-    for (let attempt = 0; attempt < 2 && error; attempt++) {
+    for (let attempt = 0; attempt < 3 && error; attempt++) {
       let changed = false;
       if (this._isMissingAnchorColumnError(error) && this._booksSchemaHasAnchorCols) {
         this._booksSchemaHasAnchorCols = false;
         payload = this._stripAnchorCols(payload);
+        changed = true;
+      }
+      if (this._isMissingBookmarksColumnError(error) && this._booksSchemaHasBookmarksCol) {
+        this._booksSchemaHasBookmarksCol = false;
+        payload = this._stripBookmarksCol(payload);
         changed = true;
       }
       if (this._isMissingExtendedColumnError(error) && this._booksSchemaHasExtendedCols) {
@@ -406,14 +434,20 @@ export class SupabaseSync {
   async _updateBooksRow(bookId, patch) {
     let payload = { ...patch };
     if (!this._booksSchemaHasAnchorCols) payload = this._stripAnchorCols(payload);
+    if (!this._booksSchemaHasBookmarksCol) payload = this._stripBookmarksCol(payload);
     if (!this._booksSchemaHasExtendedCols) payload = this._stripExtendedCols(payload);
 
     let { error } = await supabase.from("books").update(payload).eq("id", bookId);
-    for (let attempt = 0; attempt < 2 && error; attempt++) {
+    for (let attempt = 0; attempt < 3 && error; attempt++) {
       let changed = false;
       if (this._isMissingAnchorColumnError(error) && this._booksSchemaHasAnchorCols) {
         this._booksSchemaHasAnchorCols = false;
         payload = this._stripAnchorCols(payload);
+        changed = true;
+      }
+      if (this._isMissingBookmarksColumnError(error) && this._booksSchemaHasBookmarksCol) {
+        this._booksSchemaHasBookmarksCol = false;
+        payload = this._stripBookmarksCol(payload);
         changed = true;
       }
       if (this._isMissingExtendedColumnError(error) && this._booksSchemaHasExtendedCols) {
@@ -782,18 +816,21 @@ export class SupabaseSync {
    */
   async flushPendingProgress({ bookId = null, keepalive = false } = {}) {
     if (!this.isOnline() || !supabase) return;
-    if (!this.pendingProgress || this.pendingProgress.size === 0) return;
 
-    const targetIds = bookId
-      ? (this.pendingProgress.has(bookId) ? [bookId] : [])
-      : Array.from(this.pendingProgress.keys());
+    if (this.pendingProgress && this.pendingProgress.size > 0) {
+      const targetIds = bookId
+        ? (this.pendingProgress.has(bookId) ? [bookId] : [])
+        : Array.from(this.pendingProgress.keys());
 
-    for (const targetBookId of targetIds) {
-      if (!keepalive && this._inFlightProgress.has(targetBookId)) {
-        continue;
+      for (const targetBookId of targetIds) {
+        if (!keepalive && this._inFlightProgress.has(targetBookId)) {
+          continue;
+        }
+        await this._flushBookProgressQueue(targetBookId, { keepalive });
       }
-      await this._flushBookProgressQueue(targetBookId, { keepalive });
     }
+
+    await this.flushPendingBookmarks({ bookId, keepalive });
   }
 
   async _flushBookProgressQueue(targetBookId, { keepalive = false } = {}) {
@@ -861,6 +898,235 @@ export class SupabaseSync {
       }
     } catch (err) {
       console.warn("[SupabaseSync] Chyba při odesílání postupu čtení:", err);
+    }
+  }
+
+  // --- SYNCHRONIZACE ZÁLOŽEK (BOOKMARKS) ---
+
+  getLocalBookmarks(bookId) {
+    if (!bookId || typeof localStorage === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(`lumina_bookmarks_${bookId}`);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.filter(bm => bm && typeof bm === "object" && bm.id && !bm.deleted)
+        : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  getLocalDeletedBookmarks(bookId) {
+    if (!bookId || typeof localStorage === "undefined") return {};
+    try {
+      const raw = localStorage.getItem(`lumina_bookmarks_deleted_${bookId}`);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+      const cleaned = {};
+      for (const [id, ts] of Object.entries(parsed)) {
+        const numTs = Number(ts) || 0;
+        if (id && numTs > cutoff) {
+          cleaned[id] = numTs;
+        }
+      }
+      return cleaned;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  saveLocalBookmarksState(bookId, activeBookmarks, deletedMap = null) {
+    if (!bookId || typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(`lumina_bookmarks_${bookId}`, JSON.stringify(activeBookmarks || []));
+      if (deletedMap !== null) {
+        const entries = Object.entries(deletedMap || {});
+        if (entries.length > 0) {
+          localStorage.setItem(`lumina_bookmarks_deleted_${bookId}`, JSON.stringify(deletedMap));
+        } else {
+          localStorage.removeItem(`lumina_bookmarks_deleted_${bookId}`);
+        }
+      }
+    } catch (_) {}
+  }
+
+  recordBookmarkDeleted(bookId, bookmarkId, deletedAt = Date.now()) {
+    if (!bookId || !bookmarkId || typeof localStorage === "undefined") return;
+    const deletedMap = this.getLocalDeletedBookmarks(bookId);
+    deletedMap[bookmarkId] = Math.max(Number(deletedMap[bookmarkId]) || 0, Number(deletedAt) || Date.now());
+    try {
+      localStorage.setItem(`lumina_bookmarks_deleted_${bookId}`, JSON.stringify(deletedMap));
+    } catch (_) {}
+  }
+
+  _buildCloudBookmarksPayload(bookId) {
+    const active = this.getLocalBookmarks(bookId);
+    const deletedMap = this.getLocalDeletedBookmarks(bookId);
+    const tombstones = Object.entries(deletedMap).map(([id, deletedAt]) => ({
+      id,
+      deleted: true,
+      deletedAt
+    }));
+    return [...active, ...tombstones];
+  }
+
+  _sortBookmarksList(bookmarks) {
+    return [...bookmarks].sort(
+      (a, b) =>
+        ((Number(a.bookPage) || 0) - (Number(b.bookPage) || 0)) ||
+        ((Number(a.chapterIndex) || 0) - (Number(b.chapterIndex) || 0)) ||
+        ((Number(a.pageRatio) || 0) - (Number(b.pageRatio) || 0))
+    );
+  }
+
+  mergeBookmarks(localActive, localDeletedMap, cloudRaw) {
+    const safeLocalActive = Array.isArray(localActive) ? localActive.filter(b => b && b.id && !b.deleted) : [];
+    const safeLocalDeleted = (localDeletedMap && typeof localDeletedMap === "object") ? { ...localDeletedMap } : {};
+    const safeCloud = Array.isArray(cloudRaw) ? cloudRaw.filter(b => b && b.id) : [];
+
+    const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    const mergedDeleted = {};
+    for (const [id, ts] of Object.entries(safeLocalDeleted)) {
+      const numTs = Number(ts) || 0;
+      if (id && numTs > cutoff) mergedDeleted[id] = numTs;
+    }
+    for (const item of safeCloud) {
+      if (item.deleted) {
+        const numTs = Number(item.deletedAt) || Date.now();
+        if (numTs > cutoff) {
+          mergedDeleted[item.id] = Math.max(mergedDeleted[item.id] || 0, numTs);
+        }
+      }
+    }
+
+    const activeById = new Map();
+    const considerActive = (item) => {
+      if (!item || !item.id || item.deleted) return;
+      const itemTs = Number(item.updatedAt || item.createdAt || 0);
+      const delTs = mergedDeleted[item.id] || 0;
+      if (delTs && delTs >= itemTs) return;
+      const existing = activeById.get(item.id);
+      if (!existing || itemTs > Number(existing.updatedAt || existing.createdAt || 0)) {
+        activeById.set(item.id, item);
+      }
+    };
+
+    safeLocalActive.forEach(considerActive);
+    safeCloud.forEach(considerActive);
+
+    const active = this._sortBookmarksList(Array.from(activeById.values()));
+    const tombstones = Object.entries(mergedDeleted)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, deletedAt]) => ({ id, deleted: true, deletedAt }));
+    const cloudPayload = [...active, ...tombstones];
+
+    const sig = (list) => JSON.stringify(
+      (Array.isArray(list) ? list : [])
+        .filter(x => x && x.id)
+        .map(x => (x.deleted ? `D:${x.id}:${x.deletedAt || 0}` : `A:${x.id}:${x.updatedAt || x.createdAt || 0}`))
+        .sort()
+    );
+
+    const localSig = sig([
+      ...safeLocalActive,
+      ...Object.entries(safeLocalDeleted).map(([id, deletedAt]) => ({ id, deleted: true, deletedAt }))
+    ]);
+    const cloudSig = sig(safeCloud);
+    const mergedSig = sig(cloudPayload);
+
+    return {
+      active,
+      deletedMap: mergedDeleted,
+      cloudPayload,
+      localChanged: localSig !== mergedSig,
+      cloudChanged: cloudSig !== mergedSig
+    };
+  }
+
+  async reconcileBookBookmarks(bookId, cloudBookmarksRaw, { pushIfChanged = true } = {}) {
+    if (!bookId) return { active: [], localChanged: false, cloudChanged: false };
+    const localActive = this.getLocalBookmarks(bookId);
+    const localDeleted = this.getLocalDeletedBookmarks(bookId);
+    const merged = this.mergeBookmarks(localActive, localDeleted, cloudBookmarksRaw);
+
+    if (merged.localChanged) {
+      this.saveLocalBookmarksState(bookId, merged.active, merged.deletedMap);
+    }
+
+    if (pushIfChanged && merged.cloudChanged && this.isOnline() && this._booksSchemaHasBookmarksCol) {
+      this.pushBookBookmarks(bookId, merged.cloudPayload).catch(err => {
+        console.warn("[SupabaseSync] Chyba při odesílání sloučených záložek:", err);
+      });
+    }
+
+    return merged;
+  }
+
+  async pushBookBookmarks(bookId, cloudPayload = null, { keepalive = false } = {}) {
+    if (!bookId || !this.isOnline() || !supabase || !this._booksSchemaHasBookmarksCol) return;
+    const payload = Array.isArray(cloudPayload) ? cloudPayload : this._buildCloudBookmarksPayload(bookId);
+
+    try {
+      if (keepalive && typeof fetch === "function" && SUPABASE_URL && SUPABASE_ANON_KEY) {
+        const endpoint = `${SUPABASE_URL}/rest/v1/books?id=eq.${encodeURIComponent(bookId)}`;
+        await fetch(endpoint, {
+          method: "PATCH",
+          keepalive: true,
+          headers: {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal"
+          },
+          body: JSON.stringify({ bookmarks: payload })
+        }).catch(() => {});
+        return;
+      }
+
+      const error = await this._updateBooksRow(bookId, { bookmarks: payload });
+      if (error && !this._isMissingBookmarksColumnError(error)) {
+        console.warn("[SupabaseSync] Chyba při ukládání záložek do cloudu:", error);
+      }
+    } catch (err) {
+      console.warn("[SupabaseSync] Chyba při ukládání záložek do cloudu:", err);
+    }
+  }
+
+  syncBookBookmarks(bookId) {
+    if (!bookId) return;
+    this.pendingBookmarks.add(bookId);
+    if (!this.isOnline() || !supabase || !this._booksSchemaHasBookmarksCol) return;
+
+    this.flushPendingBookmarks({ bookId }).catch(() => {});
+  }
+
+  async flushPendingBookmarks({ bookId = null, keepalive = false } = {}) {
+    if (!this.isOnline() || !supabase || !this._booksSchemaHasBookmarksCol) return;
+    if (!this.pendingBookmarks || this.pendingBookmarks.size === 0) return;
+
+    const targetIds = bookId
+      ? (this.pendingBookmarks.has(bookId) ? [bookId] : [])
+      : Array.from(this.pendingBookmarks);
+
+    for (const targetBookId of targetIds) {
+      if (keepalive) {
+        this.pendingBookmarks.delete(targetBookId);
+        await this.pushBookBookmarks(targetBookId, null, { keepalive: true });
+        continue;
+      }
+      if (this._inFlightBookmarks.has(targetBookId)) continue;
+      this._inFlightBookmarks.add(targetBookId);
+      try {
+        while (this.pendingBookmarks.has(targetBookId)) {
+          this.pendingBookmarks.delete(targetBookId);
+          await this.pushBookBookmarks(targetBookId, null, { keepalive: false });
+        }
+      } finally {
+        this._inFlightBookmarks.delete(targetBookId);
+      }
     }
   }
 
@@ -1223,6 +1489,8 @@ export class SupabaseSync {
       uploaded: 0,
       updatedFromCloud: 0,
       uploadedToCloud: 0,
+      bookmarksSynced: 0,
+      bookmarksUpdatedBookIds: [],
       sessionsDownloaded: 0,
       sessionsUploaded: 0,
       sessionsMerged: 0,
@@ -1246,6 +1514,7 @@ export class SupabaseSync {
       if (Array.isArray(rawCloudBooks) && rawCloudBooks.length > 0) {
         this._booksSchemaHasExtendedCols = Object.prototype.hasOwnProperty.call(rawCloudBooks[0], "cover_path");
         this._booksSchemaHasAnchorCols = Object.prototype.hasOwnProperty.call(rawCloudBooks[0], "reading_anchor");
+        this._booksSchemaHasBookmarksCol = Object.prototype.hasOwnProperty.call(rawCloudBooks[0], "bookmarks");
       }
 
       const cloudList = await this.normalizeAndMergeCloudBooks(rawCloudBooks || []);
@@ -1363,6 +1632,13 @@ export class SupabaseSync {
           };
 
           await storage.saveBook(metaBook);
+          if (this._booksSchemaHasBookmarksCol) {
+            const bmRes = await this.reconcileBookBookmarks(metaBook.id, cloudBook.bookmarks, { pushIfChanged: true });
+            if (bmRes.localChanged) {
+              stats.bookmarksSynced++;
+              stats.bookmarksUpdatedBookIds.push(metaBook.id);
+            }
+          }
           if (cloudBook.cover_path) {
             const coverFetched = await this.ensureBookCoverCached(metaBook.id, cloudBook);
             if (coverFetched) stats.coversDownloaded++;
@@ -1373,6 +1649,16 @@ export class SupabaseSync {
         } else {
           // Kniha existuje v obou úložištích -> Synchronizace postupu čtení a doplnění chybějících metadat/obálky
           matchedLocalIds.add(localBook.id);
+
+          if (this._booksSchemaHasBookmarksCol) {
+            const bmRes = await this.reconcileBookBookmarks(localBook.id, cloudBook.bookmarks, {
+              pushIfChanged: localBook.id === cloudBook.id
+            });
+            if (bmRes.localChanged) {
+              stats.bookmarksSynced++;
+              stats.bookmarksUpdatedBookIds.push(localBook.id);
+            }
+          }
 
           const freshLocalBook = (await storage.getBook(localBook.id)) || localBook;
           const cachedLocal = storage.getCachedBookProgress(localBook.id);

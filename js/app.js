@@ -4879,6 +4879,7 @@ export class LuminaApp {
         await storage.deleteBook(book.id);
         try {
           localStorage.removeItem(`lumina_bookmarks_${book.id}`);
+          localStorage.removeItem(`lumina_bookmarks_deleted_${book.id}`);
         } catch (_) {}
         supabaseSync.deleteBook(book.id).catch(err => {
           console.warn("[SupabaseSync] Smazání knihy z cloudu selhalo:", err);
@@ -4965,6 +4966,12 @@ export class LuminaApp {
     supabaseSync.onSyncCompleted(async (stats) => {
       const isReaderActive = this.dom.viewReader && !this.dom.viewReader.classList.contains("is-hidden");
       const isStatsModalOpen = this.dom.statsModal && this.dom.statsModal.classList.contains("open");
+      if (isReaderActive && this.currentBook && stats?.bookmarksUpdatedBookIds?.includes(this.currentBook.id)) {
+        this.updateBookmarkButtonUI();
+        if (this._activeTocTab === "bookmarks") {
+          this.renderBookmarks();
+        }
+      }
       if (isReaderActive && !isStatsModalOpen) {
         this._libraryNeedsRefresh = true;
         this._statsNeedRefresh = true;
@@ -5226,6 +5233,10 @@ export class LuminaApp {
             supabaseSync.fetchBookProgress(book.id, book),
             new Promise((resolve) => setTimeout(() => resolve(null), 2500))
           ]);
+          if (remoteResult && remoteResult.cloudRow && Object.prototype.hasOwnProperty.call(remoteResult.cloudRow, "bookmarks")) {
+            supabaseSync._booksSchemaHasBookmarksCol = true;
+            await supabaseSync.reconcileBookBookmarks(book.id, remoteResult.cloudRow.bookmarks, { pushIfChanged: true });
+          }
           if (remoteResult && remoteResult.progressUpdates) {
             const cloudTime = remoteResult.timestamp || 0;
             if (cloudTime > localTimeBeforeRemote + 50) {
@@ -8227,8 +8238,14 @@ export class LuminaApp {
     const existingIdx = bookmarks.findIndex(bm => this.isSameBookmarkLocation(bm, snap));
 
     if (existingIdx !== -1) {
-      bookmarks.splice(existingIdx, 1);
+      const [removed] = bookmarks.splice(existingIdx, 1);
+      if (removed?.id && supabaseSync && typeof supabaseSync.recordBookmarkDeleted === "function") {
+        supabaseSync.recordBookmarkDeleted(this.currentBook.id, removed.id);
+      }
       this.saveBookmarks(bookmarks, this.currentBook.id);
+      if (supabaseSync && typeof supabaseSync.syncBookBookmarks === "function") {
+        supabaseSync.syncBookBookmarks(this.currentBook.id);
+      }
       this.updateBookmarkButtonUI();
       this.renderBookmarks();
       this.showToast(`Záložka na straně ${snap.bookPage} byla odebrána`, "info");
@@ -8243,6 +8260,9 @@ export class LuminaApp {
     bookmarks.push(newBookmark);
     bookmarks.sort((a, b) => (a.bookPage - b.bookPage) || (a.chapterIndex - b.chapterIndex) || (a.pageRatio - b.pageRatio));
     this.saveBookmarks(bookmarks, this.currentBook.id);
+    if (supabaseSync && typeof supabaseSync.syncBookBookmarks === "function") {
+      supabaseSync.syncBookBookmarks(this.currentBook.id);
+    }
     this.updateBookmarkButtonUI();
     this.renderBookmarks();
     this.showToast(`Záložka přidána (strana ${snap.bookPage})`, "success");
@@ -8250,8 +8270,14 @@ export class LuminaApp {
 
   removeBookmarkById(bookmarkId) {
     if (!this.currentBook || !bookmarkId) return;
+    if (supabaseSync && typeof supabaseSync.recordBookmarkDeleted === "function") {
+      supabaseSync.recordBookmarkDeleted(this.currentBook.id, bookmarkId);
+    }
     const bookmarks = this.getBookmarks(this.currentBook.id).filter(bm => bm.id !== bookmarkId);
     this.saveBookmarks(bookmarks, this.currentBook.id);
+    if (supabaseSync && typeof supabaseSync.syncBookBookmarks === "function") {
+      supabaseSync.syncBookBookmarks(this.currentBook.id);
+    }
     this.updateBookmarkButtonUI();
     this.renderBookmarks();
   }

@@ -5807,9 +5807,9 @@ body.ui-liquid-glass #footer-book-pages {
   transform: translateZ(0);
 }
 
-/* Prevent nested backdrop filters from degrading iPad ProMotion 120Hz */
-body.ui-liquid-glass .drawer-panel *,
-body.ui-liquid-glass #settings-drawer *,
+/* Prevent nested backdrop filters from degrading iPad ProMotion 120Hz (except font dropdown menu) */
+body.ui-liquid-glass .drawer-panel *:not(.font-dropdown-menu),
+body.ui-liquid-glass #settings-drawer *:not(.font-dropdown-menu),
 body.ui-liquid-glass #stats-modal .modal-content *,
 body.ui-liquid-glass .ruler-quick-popover * {
   backdrop-filter: none !important;
@@ -7007,8 +7007,8 @@ body.ui-liquid-glass .font-dropdown-trigger:active {
 
 body.ui-liquid-glass .font-dropdown-menu {
   background: var(--lq-glass-bg) !important;
-  backdrop-filter: blur(28px) saturate(190%) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
+  backdrop-filter: blur(96px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(96px) saturate(180%) !important;
   border: 1px solid var(--lq-glass-border) !important;
   border-top-color: var(--lq-glass-border-top) !important;
   box-shadow: var(--lq-chromatic-rim), 0 20px 48px rgba(0, 0, 0, 0.35) !important;
