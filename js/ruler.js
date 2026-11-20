@@ -3788,6 +3788,9 @@ export class ReadingRuler {
     const tp = this._trackpad;
     if (!tp || !this.cachedLines || this.cachedLines.length === 0) return;
 
+    // Zesílení vodorovného posunu pravítka v režimu slov při ovládání trackpadem (1,3×)
+    dx *= 1.3;
+
     let curIdx = (this.activeLineIndex >= 0 && this.activeLineIndex < this.cachedLines.length)
       ? this.activeLineIndex
       : 0;
