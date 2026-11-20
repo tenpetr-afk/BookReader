@@ -1397,12 +1397,15 @@ export class ReadingRuler {
       this.maskBottomEl.classList.add("is-hidden");
     }
 
-    // 3. Postranní masky: pro režim "both"
+    // 3. Postranní masky: pro režim "both" (omezené na aktivní sloupec/stránku, aby nedocházelo ke dvojímu ztmavení protilehlého sloupce)
     const needSideMasks = this.focusMode === "both" && (isTwoCol || this.isPdfMode);
     if (needSideMasks) {
-      const slitLeft = Math.max(0, Math.round(colLeft));
-      const slitRight = Math.min(window.innerWidth, Math.round(colLeft + colWidth));
-      if (this.maskLeftEl) {
+      const sideBoundsLeft = useFullWidth ? 0 : Math.max(0, Math.round(coverLeft));
+      const sideBoundsRight = useFullWidth ? window.innerWidth : Math.min(window.innerWidth, Math.round(coverLeft + coverWidth));
+      const slitLeft = Math.max(sideBoundsLeft, Math.round(colLeft));
+      const slitRight = Math.min(sideBoundsRight, Math.round(colLeft + colWidth));
+      const leftWidth = Math.max(0, slitLeft - sideBoundsLeft);
+      if (leftWidth > 0 && this.maskLeftEl) {
         this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
         this.maskLeftEl.style.setProperty("display", "block", "important");
         this.maskLeftEl.style.setProperty("visibility", "visible", "important");
@@ -1412,12 +1415,16 @@ export class ReadingRuler {
         this.maskLeftEl.style.setProperty("z-index", "15", "important");
         this.maskLeftEl.style.top = "0px";
         this.maskLeftEl.style.left = "0px";
-        this.maskLeftEl.style.width = `${slitLeft}px`;
+        this.maskLeftEl.style.width = `${leftWidth}px`;
         this.maskLeftEl.style.height = `${lineH}px`;
-        this.maskLeftEl.style.transform = `translate3d(0, ${lineScreenTop}px, 0)`;
+        this.maskLeftEl.style.transform = `translate3d(${sideBoundsLeft}px, ${lineScreenTop}px, 0)`;
+      } else if (this.maskLeftEl) {
+        this.maskLeftEl.style.display = "none";
+        this.maskLeftEl.classList.remove("is-visible");
+        this.maskLeftEl.classList.add("is-hidden");
       }
-      if (this.maskRightEl) {
-        const rightWidth = Math.max(0, window.innerWidth - slitRight);
+      const rightWidth = Math.max(0, sideBoundsRight - slitRight);
+      if (rightWidth > 0 && this.maskRightEl) {
         this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
         this.maskRightEl.style.setProperty("display", "block", "important");
         this.maskRightEl.style.setProperty("visibility", "visible", "important");
@@ -1430,6 +1437,10 @@ export class ReadingRuler {
         this.maskRightEl.style.width = `${rightWidth}px`;
         this.maskRightEl.style.height = `${lineH}px`;
         this.maskRightEl.style.transform = `translate3d(${slitRight}px, ${lineScreenTop}px, 0)`;
+      } else if (this.maskRightEl) {
+        this.maskRightEl.style.display = "none";
+        this.maskRightEl.classList.remove("is-visible");
+        this.maskRightEl.classList.add("is-hidden");
       }
     } else {
       if (this.maskLeftEl) { this.maskLeftEl.style.display = "none"; this.maskLeftEl.classList.remove("is-visible"); this.maskLeftEl.classList.add("is-hidden"); }
@@ -6403,9 +6414,11 @@ export class ReadingRuler {
       let colGapEarly = 0;
       if (isTwoColEarly) {
         try {
-          colGapEarly = parseFloat(getComputedStyle(content).columnGap) || 0;
-        } catch (e) {}
-        if (!colGapEarly) colGapEarly = viewW * 0.05;
+          const parsedGapEarly = parseFloat(getComputedStyle(content).columnGap);
+          colGapEarly = Number.isFinite(parsedGapEarly) ? Math.max(0, parsedGapEarly) : (viewW * 0.05);
+        } catch (e) {
+          colGapEarly = viewW * 0.05;
+        }
       }
       const col0RightEarly = isTwoColEarly ? (stageCenterX - colGapEarly / 2) : stageRight;
 
@@ -6760,9 +6773,9 @@ export class ReadingRuler {
       let colGap = 0;
       if (isTwoCol) {
         try {
-          colGap = parseFloat(getComputedStyle(content).columnGap) || 0;
-        } catch (e) {}
-        if (!colGap) {
+          const parsedGap = parseFloat(getComputedStyle(content).columnGap);
+          colGap = Number.isFinite(parsedGap) ? Math.max(0, parsedGap) : (window.innerWidth * 0.05);
+        } catch (e) {
           colGap = window.innerWidth * 0.05;
         }
       }
@@ -6774,6 +6787,7 @@ export class ReadingRuler {
       const col1StageLeft = isTwoCol ? col0StageRight + colGap : col0StageLeft;
       const col1StageRight = isTwoCol ? Math.round(col1StageLeft + singleColWidth) : col0StageRight;
       const colDividerX = isTwoCol ? (col0StageRight + col1StageLeft) / 2 : stageCenterX;
+      const col1EarlyEdge = col1StageLeft - Math.min(10, Math.floor(colGap / 2));
 
       const isSpread = !isVertical && this.isSpreadActive();
       const spreadInfo = isSpread ? this.getActiveSpreadInfo(null) : null;
@@ -6797,7 +6811,7 @@ export class ReadingRuler {
           }
         } else {
           const midX = (r.left + r.right) / 2;
-          r.columnIndex = (midX >= colDividerX || r.left >= col0StageRight - 10) ? 1 : 0;
+          r.columnIndex = (midX >= colDividerX || r.left >= col1EarlyEdge) ? 1 : 0;
         }
       }
 
@@ -7008,10 +7022,11 @@ export class ReadingRuler {
 
         const horizontalPadding = 12; // px - jednotný offset pro odsazení zvýrazňovače přesahující okraje textu
 
-        let gapMiddle = stageCenterX;
+        let gapMiddle = isTwoCol ? colDividerX : stageCenterX;
         if (isTwoCol && !isVertical) {
           if (minLeft1 < Infinity && maxRight0 > -Infinity && minLeft1 > maxRight0) {
-            gapMiddle = Math.round((maxRight0 + minLeft1) / 2);
+            const rawMid = Math.round((maxRight0 + minLeft1) / 2);
+            gapMiddle = Math.max(Math.round(col0StageRight), Math.min(Math.round(col1StageLeft), rawMid));
           }
         }
         this.gapMiddle = gapMiddle;
@@ -7073,9 +7088,10 @@ export class ReadingRuler {
           c1Right = c0Right;
           c1Width = c0Width;
         } else if (isTwoCol) {
-          const col0MaxRight = gapMiddle - 4;
+          const halfGapSep = Math.min(4, Math.floor(colGap / 2));
+          const col0MaxRight = gapMiddle - halfGapSep;
           c0Left = minLeft0 < Infinity ? (minLeft0 - horizontalPadding) : (col0StageLeft - horizontalPadding);
-          c0Right = maxRight0 > -Infinity ? Math.max(maxRight0 + horizontalPadding, col0StageRight) : (gapMiddle - 4);
+          c0Right = maxRight0 > -Infinity ? Math.max(maxRight0 + horizontalPadding, col0StageRight) : col0MaxRight;
           const col0MinLeft = Math.max(0, Math.round(col0StageLeft - horizontalPadding));
           c0Left = Math.max(col0MinLeft, Math.round(c0Left));
           c0Right = Math.min(col0MaxRight, Math.round(c0Right));
@@ -7088,7 +7104,7 @@ export class ReadingRuler {
           const computedColWidth = Math.max(80, Math.round((textContainerWidth - colGap) / 2));
           const columnWidth = (c0Width >= 80 && Math.abs(c0Width - computedColWidth) <= 60) ? c0Width : computedColWidth;
 
-          const col1MinLeft = gapMiddle + 4;
+          const col1MinLeft = gapMiddle + halfGapSep;
           let col1TargetLeft = (minLeft1 < Infinity)
             ? Math.round(minLeft1 - horizontalPadding)
             : Math.round(c0Left + columnWidth + colGap);
@@ -7096,7 +7112,10 @@ export class ReadingRuler {
             col1TargetLeft = Math.round(c0Left + columnWidth + colGap);
           }
           c1Left = Math.max(col1MinLeft, col1TargetLeft);
-          c1Width = columnWidth;
+          const col1TargetRight = maxRight1 > -Infinity
+            ? Math.min(Math.round(stageRect.right), Math.max(c1Left + columnWidth, Math.round(maxRight1 + horizontalPadding), Math.round(col1StageRight)))
+            : Math.min(Math.round(stageRect.right), Math.max(c1Left + columnWidth, Math.round(col1StageRight)));
+          c1Width = Math.max(80, col1TargetRight - c1Left);
           c1Right = c1Left + c1Width;
         } else {
           // Single-column mode: enforce colLeft and colWidth to align with the actual text column
@@ -11410,6 +11429,9 @@ export class ReadingRuler {
         this._slitLeft = slitLeft;
         this._slitRight = slitRight;
 
+        const pdfMaskLeft = spreadInfo ? slitLeft : 0;
+        const pdfMaskWidth = spreadInfo ? `${Math.max(0, slitRight - slitLeft)}px` : "100%";
+
         // Horní maska: pro "up" a "both"
         if (this.focusMode === "up" || this.focusMode === "both") {
           if (this.maskTopEl) {
@@ -11424,9 +11446,9 @@ export class ReadingRuler {
             this.maskTopEl.style.left = "0px";
             this.maskTopEl.style.right = "auto";
             this.maskTopEl.style.maxWidth = "none";
-            this.maskTopEl.style.width = "100%";
+            this.maskTopEl.style.width = pdfMaskWidth;
             this.maskTopEl.style.height = `${vh}px`;
-            this.maskTopEl.style.transform = `translate3d(0, ${Math.round(topBandBottom - vh)}px, 0)`;
+            this.maskTopEl.style.transform = `translate3d(${pdfMaskLeft}px, ${Math.round(topBandBottom - vh)}px, 0)`;
           }
         } else if (this.maskTopEl) {
           this.maskTopEl.style.display = "none";
@@ -11448,9 +11470,9 @@ export class ReadingRuler {
             this.maskBottomEl.style.left = "0px";
             this.maskBottomEl.style.right = "auto";
             this.maskBottomEl.style.maxWidth = "none";
-            this.maskBottomEl.style.width = "100%";
+            this.maskBottomEl.style.width = pdfMaskWidth;
             this.maskBottomEl.style.height = `${vh}px`;
-            this.maskBottomEl.style.transform = `translate3d(0, ${bottomBandTop}px, 0)`;
+            this.maskBottomEl.style.transform = `translate3d(${pdfMaskLeft}px, ${bottomBandTop}px, 0)`;
           }
         } else if (this.maskBottomEl) {
           this.maskBottomEl.style.display = "none";
@@ -11458,8 +11480,8 @@ export class ReadingRuler {
           this.maskBottomEl.classList.add("is-hidden");
         }
 
-        // Postranní masky: aktivní pouze v režimu "both"
-        if (this.focusMode === "both") {
+        // Postranní masky: aktivní pouze v režimu "both" (při dvoustraně nezasahují do neaktivní stránky)
+        if (this.focusMode === "both" && !spreadInfo) {
           const leftBandWidth = Math.max(0, slitLeft);
           if (leftBandWidth > 0 && this.maskLeftEl) {
             this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
@@ -11795,8 +11817,10 @@ export class ReadingRuler {
             colLeft = colIdx === 1 ? this.column1Left : this.column0Left;
             colWidth = colIdx === 1 ? this.column1Width : this.column0Width;
             if (colLeft == null || colWidth == null || colWidth < 80) {
-              const singleColW = Math.max(80, Math.floor(((this.stageWidth || window.innerWidth) - (this.colGap || 40)) / 2));
-              colLeft = colIdx === 1 ? Math.round((this.stageLeft || 0) + singleColW + (this.colGap || 40)) : Math.max(0, Math.round(this.stageLeft || 20));
+              const effGap = Number.isFinite(this.colGap) ? this.colGap : 40;
+              const effStageLeft = Number.isFinite(this.stageLeft) ? this.stageLeft : 20;
+              const singleColW = Math.max(80, Math.floor(((this.stageWidth || window.innerWidth) - effGap) / 2));
+              colLeft = colIdx === 1 ? Math.round((this.stageLeft ?? 0) + singleColW + effGap) : Math.max(0, Math.round(effStageLeft));
               colWidth = singleColW;
             }
           } else {
@@ -12181,10 +12205,11 @@ export class ReadingRuler {
           ? this._cachedStageRect
           : (stage || this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.();
         if (sRect && sRect.width > 50) {
-          const singleColW = Math.max(80, Math.floor(((this.stageWidth || sRect.width || window.innerWidth) - (this.colGap || 40)) / 2));
+          const effGap = Number.isFinite(this.colGap) ? this.colGap : 40;
+          const singleColW = Math.max(80, Math.floor(((this.stageWidth || sRect.width || window.innerWidth) - effGap) / 2));
           const c0Left = this.column0Left ?? Math.max(0, Math.round(sRect.left));
           const c0Width = this.column0Width ?? singleColW;
-          const c1Left = this.column1Left ?? Math.round(c0Left + singleColW + (this.colGap || 40));
+          const c1Left = this.column1Left ?? Math.round(c0Left + singleColW + effGap);
           const c1Width = this.column1Width ?? singleColW;
           const activeCol = (currentLine && currentLine.columnIndex === 1) ? 1 : 0;
           coverLeft = activeCol === 1 ? c1Left : c0Left;
@@ -12342,9 +12367,13 @@ export class ReadingRuler {
       }
 
       // 3. Postranní masky: pouze v režimu "both" (při sledování slov, 2-sloupcích nebo PDF)
+      // Omezení na [sideBoundsLeft, sideBoundsRight] brání překryvu s maskInactiveSpreadEl na protilehlém sloupci/stránce
       const needSideMasks = this.focusMode === "both" && ((this.wordTracking && this.activeWordIndex >= 0 && !isCurrentMedia) || isTwoCol || this.isPdfMode);
       if (needSideMasks) {
-        const leftBandWidth = Math.max(0, Math.round(focusSlitLeft));
+        const sideBoundsLeft = useFullWidth ? 0 : Math.max(0, Math.round(coverLeft));
+        const sideBoundsRight = useFullWidth ? window.innerWidth : Math.min(window.innerWidth, Math.round(coverLeft + coverWidth));
+        const leftBandLeft = sideBoundsLeft;
+        const leftBandWidth = Math.max(0, Math.min(sideBoundsRight, Math.round(focusSlitLeft)) - leftBandLeft);
         if (leftBandWidth > 0 && this.maskLeftEl) {
           this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
           this.maskLeftEl.style.setProperty("display", "block", "important");
@@ -12358,15 +12387,15 @@ export class ReadingRuler {
           this.maskLeftEl.style.maxWidth = "none";
           this.maskLeftEl.style.width = `${leftBandWidth}px`;
           this.maskLeftEl.style.height = `${focusLineH}px`;
-          this.maskLeftEl.style.transform = `translate3d(0, ${focusScreenTop}px, 0)`;
+          this.maskLeftEl.style.transform = `translate3d(${leftBandLeft}px, ${focusScreenTop}px, 0)`;
         } else if (this.maskLeftEl) {
           this.maskLeftEl.style.display = "none";
           this.maskLeftEl.classList.remove("is-visible");
           this.maskLeftEl.classList.add("is-hidden");
         }
 
-        const rightBandLeft = Math.round(focusSlitRight);
-        const rightBandWidth = Math.max(0, window.innerWidth - rightBandLeft);
+        const rightBandLeft = Math.max(sideBoundsLeft, Math.round(focusSlitRight));
+        const rightBandWidth = Math.max(0, sideBoundsRight - rightBandLeft);
         if (rightBandWidth > 0 && this.maskRightEl) {
           this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
           this.maskRightEl.style.setProperty("display", "block", "important");
@@ -12410,10 +12439,11 @@ export class ReadingRuler {
             ? this._cachedStageRect
             : (stage || this.getStageElement() || document.getElementById("paged-stage") || this.container || document.body)?.getBoundingClientRect?.();
           if (sRect && sRect.width > 50) {
-            const singleColW = Math.max(80, Math.floor(((this.stageWidth || sRect.width || window.innerWidth) - (this.colGap || 40)) / 2));
+            const effGap = Number.isFinite(this.colGap) ? this.colGap : 40;
+            const singleColW = Math.max(80, Math.floor(((this.stageWidth || sRect.width || window.innerWidth) - effGap) / 2));
             const c0Left = this.column0Left ?? Math.max(0, Math.round(sRect.left));
             const c0Width = this.column0Width ?? singleColW;
-            const c1Left = this.column1Left ?? Math.round(c0Left + singleColW + (this.colGap || 40));
+            const c1Left = this.column1Left ?? Math.round(c0Left + singleColW + effGap);
             const c1Width = this.column1Width ?? singleColW;
             inactiveRect = {
               left: activeCol === 1 ? c0Left : c1Left,

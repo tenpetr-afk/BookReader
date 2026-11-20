@@ -1385,7 +1385,8 @@ export class StorageManager {
           ...parsed,
           ruler: { ...defaults.ruler, ...(parsed.ruler || {}) }
         };
-        merged.marginPercent = parsed.marginPercent ?? 8;
+        const rawMargin = parsed.marginPercent ?? 8;
+        merged.marginPercent = Number.isFinite(Number(rawMargin)) ? Math.max(2, Number(rawMargin)) : 8;
         merged.columnsMode = parsed.columnsMode ?? "auto";
         merged.lineHeight = parsed.lineHeight !== undefined ? Number(parsed.lineHeight) : 1.6;
         merged.letterSpacing = parsed.letterSpacing !== undefined ? Number(parsed.letterSpacing) : 0.75;
