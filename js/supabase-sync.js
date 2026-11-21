@@ -4,9 +4,9 @@
  * obousměrnou synchronizaci mezi zařízeními a offline-first fungování.
  */
 
-import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.9.10';
-import { storage, computeFileHash, getBookProgressTimestamp } from './storage.js?v=2.9.10';
-import { EpubParser } from './epub-parser.js?v=2.9.10';
+import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.9.11';
+import { storage, computeFileHash, getBookProgressTimestamp } from './storage.js?v=2.9.11';
+import { EpubParser } from './epub-parser.js?v=2.9.11';
 
 export class SupabaseSync {
   constructor() {
@@ -382,6 +382,7 @@ export class SupabaseSync {
           filePath: bookMeta?.file_path || null,
           coverPath: bookMeta?.cover_path || null,
           fileHash: bookMeta?.fileHash || bookMeta?.file_hash || null,
+          fileName: bookMeta?.fileName || bookMeta?.file_name || null,
           isPdf: Boolean(bookMeta?.isPdf || bookMeta?.format === "pdf" || bookId.startsWith("pdf_")),
           deletedAt: Date.now()
         };
@@ -425,12 +426,15 @@ export class SupabaseSync {
       }
     };
 
-    const selectCols = this._booksSchemaHasExtendedCols ? "id, file_path, cover_path" : "id, file_path";
+    const selectCols = this._booksSchemaHasExtendedCols
+      ? "id, file_name, file_path, cover_path"
+      : "id, file_name, file_path";
     const runLookup = async (col, val) => {
+      if (!val) return;
       let res = await supabase.from("books").select(selectCols).eq(col, val);
       if (res.error && this._isMissingExtendedColumnError(res.error)) {
         this._booksSchemaHasExtendedCols = false;
-        res = await supabase.from("books").select("id, file_path").eq(col, val);
+        res = await supabase.from("books").select("id, file_name, file_path").eq(col, val);
       }
       if (res.error) throw res.error;
       collectRows(res.data);
@@ -443,6 +447,21 @@ export class SupabaseSync {
     if (entry.fileHash && this._booksSchemaHasExtendedCols) {
       await runLookup("file_hash", entry.fileHash);
     }
+    const entryFileName = String(entry.fileName || entry.file_name || "").trim();
+    if (entryFileName) {
+      await runLookup("file_name", entryFileName);
+    }
+
+    const candidateFileNames = new Set();
+    if (entryFileName) candidateFileNames.add(entryFileName);
+    for (const r of matchedRows) {
+      if (r.file_name) candidateFileNames.add(String(r.file_name).trim());
+    }
+    if (!entryFileName && candidateFileNames.size > 0) {
+      for (const fn of Array.from(candidateFileNames)) {
+        await runLookup("file_name", fn);
+      }
+    }
 
     const targetIds = Array.from(new Set([bookId, ...matchedRows.map(r => r.id).filter(Boolean)]));
     const pathsToRemove = new Set();
@@ -452,21 +471,57 @@ export class SupabaseSync {
     }
     if (entry.filePath) pathsToRemove.add(entry.filePath);
     if (entry.coverPath) pathsToRemove.add(entry.coverPath);
-    if (entry.isPdf || bookId.startsWith("pdf_")) {
-      pathsToRemove.add(`books/${bookId}.pdf`);
+
+    for (const tid of targetIds) {
+      pathsToRemove.add(`books/${tid}.pdf`);
+      pathsToRemove.add(`covers/${tid}.jpg`);
+      pathsToRemove.add(`covers/${tid}.png`);
+      pathsToRemove.add(`covers/${tid}.webp`);
+    }
+
+    // Vyhledání legacy složek v kořeni bucketu (např. <old_id>/<file_name>)
+    try {
+      const rootItems = await this._listStorageFolder("");
+      const targetIdSet = new Set(targetIds);
+      for (const item of rootItems) {
+        if (!item || !item.name) continue;
+        const isFolder = item.id === null || !item.metadata;
+        if (!isFolder) {
+          if (targetIdSet.has(item.name) || candidateFileNames.has(item.name)) {
+            pathsToRemove.add(item.name);
+          }
+          continue;
+        }
+        if (item.name === "books" || item.name === "covers") continue;
+
+        const folderMatchesId = targetIdSet.has(item.name);
+        if (!folderMatchesId && candidateFileNames.size === 0) continue;
+
+        const folderFiles = await this._listStorageFolder(item.name);
+        const folderMatchesFileName = candidateFileNames.size > 0 && folderFiles.some(
+          f => f && f.name && f.id !== null && candidateFileNames.has(f.name)
+        );
+        if (folderMatchesId || folderMatchesFileName) {
+          for (const f of folderFiles) {
+            if (f && f.name && f.id !== null) {
+              pathsToRemove.add(`${item.name}/${f.name}`);
+            }
+          }
+        }
+      }
+    } catch (listEx) {
+      console.warn("[SupabaseSync] Varování při prohledávání legacy složek ve Storage:", listEx);
     }
 
     if (pathsToRemove.size > 0) {
       const pathsArray = Array.from(pathsToRemove);
-      const { data: storageData, error: storageErr } = await supabase.storage
-        .from(STORAGE_BUCKET)
-        .remove(pathsArray);
+      const { removedCount, error: storageErr } = await this._removeStoragePaths(pathsArray);
       if (storageErr) {
         console.warn("[SupabaseSync] Varování při mazání souborů ze Storage:", storageErr);
       } else if (
         pathsArray.length > 0 &&
         matchedRows.some(r => r.file_path || r.cover_path) &&
-        (!Array.isArray(storageData) || storageData.length === 0)
+        removedCount === 0
       ) {
         console.warn(
           `[SupabaseSync] Storage remove() nevrátil žádné smazané soubory (0/${pathsArray.length}) pro knihu ${bookId} – pravděpodobně chybí DELETE RLS politika na storage.objects pro bucket '${STORAGE_BUCKET}'.`
@@ -474,72 +529,38 @@ export class SupabaseSync {
       }
     }
 
-    // Soft-delete relací přiřazených k mazané knize (a aktualizace souhrnných statistik)
+    // Hard-delete relací přiřazených k mazané knize (a aktualizace souhrnných statistik)
     let sessionsUpdated = false;
     try {
-      const nowIso = new Date().toISOString();
-      let { error: sessDelErr } = await supabase
+      const { error: sessDelErr } = await supabase
         .from("reading_sessions")
-        .update({
-          is_deleted: true,
-          updated_at: nowIso
-        })
+        .delete()
         .in("book_id", targetIds);
 
-      if (sessDelErr && (sessDelErr.code === "PGRST204" || sessDelErr.code === "42703" || sessDelErr.message?.includes("is_deleted"))) {
-        const hardSessRes = await supabase.from("reading_sessions").delete().in("book_id", targetIds);
-        sessDelErr = hardSessRes.error;
-      }
       if (!sessDelErr) {
         sessionsUpdated = true;
       } else {
         console.warn("[SupabaseSync] Varování při mazání relací knihy:", sessDelErr);
       }
     } catch (sessErr) {
-      console.warn("[SupabaseSync] Varování při soft-delete relací smazané knihy:", sessErr);
+      console.warn("[SupabaseSync] Varování při mazání relací smazané knihy:", sessErr);
     }
 
-    // Smazání / soft-delete záznamu v tabulce books
-    const nowIso = new Date().toISOString();
-    let bookErr = null;
-    let affectedRows = null;
-    if (this._booksSchemaHasIsDeletedCol) {
-      const softRes = await supabase
-        .from("books")
-        .update({
-          is_deleted: true,
-          updated_at: nowIso
-        })
-        .in("id", targetIds)
-        .select("id");
-      bookErr = softRes.error;
-      affectedRows = softRes.data;
-
-      if (bookErr && this._isMissingIsDeletedColumnError(bookErr)) {
-        this._booksSchemaHasIsDeletedCol = false;
-        bookErr = null;
-        affectedRows = null;
-      }
-    }
-
-    if (!this._booksSchemaHasIsDeletedCol) {
-      const hardRes = await supabase
-        .from("books")
-        .delete()
-        .in("id", targetIds)
-        .select("id");
-      bookErr = hardRes.error;
-      affectedRows = hardRes.data;
-    }
+    // Hard-delete záznamu v tabulce books
+    const { data: deletedRows, error: bookErr } = await supabase
+      .from("books")
+      .delete()
+      .in("id", targetIds)
+      .select("id");
 
     if (bookErr) {
       console.error("[SupabaseSync] Chyba při odstraňování knihy z tabulky books:", bookErr);
       return { success: false, error: bookErr };
     }
 
-    if (matchedRows.length > 0 && (!Array.isArray(affectedRows) || affectedRows.length === 0)) {
+    if (matchedRows.length > 0 && (!Array.isArray(deletedRows) || deletedRows.length === 0)) {
       console.error(
-        `[SupabaseSync] Smazání knihy ${bookId} na Supabase nezměnilo žádný řádek (0 z ${matchedRows.length} nalezených) – zkontrolujte RLS politiky pro UPDATE/DELETE v tabulce books.`
+        `[SupabaseSync] Smazání knihy ${bookId} na Supabase neodstranilo žádný řádek (0 z ${matchedRows.length} nalezených) – zkontrolujte RLS politiku pro DELETE v tabulce books.`
       );
       return {
         success: false,
@@ -583,24 +604,8 @@ export class SupabaseSync {
           "Content-Type": "application/json",
           "Prefer": "return=minimal"
         };
-        const method = this._booksSchemaHasIsDeletedCol ? "PATCH" : "DELETE";
-        const fetchOpts = {
-          method,
-          keepalive: true,
-          headers
-        };
-        if (method === "PATCH") {
-          fetchOpts.body = JSON.stringify({
-            is_deleted: true,
-            updated_at: new Date(entry.deletedAt || Date.now()).toISOString()
-          });
-        }
         try {
-          const res = await fetch(endpoint, fetchOpts);
-          if (!res.ok && method === "PATCH" && res.status === 400) {
-            this._booksSchemaHasIsDeletedCol = false;
-            await fetch(endpoint, { method: "DELETE", keepalive: true, headers }).catch(() => {});
-          }
+          await fetch(endpoint, { method: "DELETE", keepalive: true, headers });
         } catch (_) {}
         continue;
       }
@@ -610,6 +615,228 @@ export class SupabaseSync {
       } catch (err) {
         console.warn(`[SupabaseSync] Nepodařilo se dokončit odložené smazání knihy ${entry.id}:`, err);
       }
+    }
+  }
+
+  async _listStorageFolder(prefix = "") {
+    if (!supabase) return [];
+    const results = [];
+    let offset = 0;
+    const limit = 1000;
+    while (true) {
+      const { data, error } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .list(prefix, { limit, offset });
+      if (error) {
+        console.warn(`[SupabaseSync] Chyba při listování Storage složky "${prefix}":`, error);
+        break;
+      }
+      if (!Array.isArray(data) || data.length === 0) break;
+      results.push(...data);
+      if (data.length < limit) break;
+      offset += data.length;
+    }
+    return results;
+  }
+
+  async _removeStoragePaths(paths) {
+    if (!supabase || !Array.isArray(paths) || paths.length === 0) {
+      return { removedCount: 0, error: null };
+    }
+    let removedCount = 0;
+    let lastErr = null;
+    const uniquePaths = Array.from(new Set(paths.map(p => String(p || "").replace(/^\/+/, "")).filter(Boolean)));
+    for (let i = 0; i < uniquePaths.length; i += 100) {
+      const batch = uniquePaths.slice(i, i + 100);
+      const { data, error } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .remove(batch);
+      if (error) {
+        lastErr = error;
+      } else if (Array.isArray(data)) {
+        removedCount += data.length;
+      }
+    }
+    return { removedCount, error: lastErr };
+  }
+
+  /**
+   * Odstraní soft-deleted řádky z tabulky books a osiřelé soubory z bucketu book-files (včetně legacy složek).
+   */
+  async cleanupOrphanedCloudFiles() {
+    if (!this.isOnline() || !supabase) {
+      return { deletedRows: 0, deletedFiles: 0 };
+    }
+
+    let deletedRowsCount = 0;
+    let deletedFilesCount = 0;
+
+    try {
+      let res = await supabase
+        .from("books")
+        .select("id, file_name, file_path, cover_path, is_deleted");
+
+      if (res.error && (this._isMissingIsDeletedColumnError(res.error) || this._isMissingExtendedColumnError(res.error))) {
+        res = await supabase
+          .from("books")
+          .select("id, file_name, file_path");
+      }
+
+      if (res.error) {
+        console.warn("[SupabaseSync] cleanupOrphanedCloudFiles přerušen – nepodařilo se načíst tabulku books:", res.error);
+        return { deletedRows: 0, deletedFiles: 0 };
+      }
+
+      const allRows = Array.isArray(res.data) ? res.data : [];
+      const softDeletedRows = [];
+      const activeRows = [];
+
+      for (const row of allRows) {
+        if (!row || !row.id) continue;
+        if (row.is_deleted === true || row.is_deleted === "true") {
+          softDeletedRows.push(row);
+        } else {
+          activeRows.push(row);
+        }
+      }
+
+      if (softDeletedRows.length > 0) {
+        const softDeletedIds = softDeletedRows.map(r => r.id);
+        const softDeletedPaths = [];
+        for (const r of softDeletedRows) {
+          if (r.file_path) softDeletedPaths.push(r.file_path);
+          if (r.cover_path) softDeletedPaths.push(r.cover_path);
+          softDeletedPaths.push(`books/${r.id}.pdf`);
+          softDeletedPaths.push(`covers/${r.id}.jpg`);
+          softDeletedPaths.push(`covers/${r.id}.png`);
+          softDeletedPaths.push(`covers/${r.id}.webp`);
+        }
+
+        if (softDeletedPaths.length > 0) {
+          const { removedCount } = await this._removeStoragePaths(softDeletedPaths);
+          deletedFilesCount += removedCount;
+        }
+
+        try {
+          await supabase
+            .from("reading_sessions")
+            .delete()
+            .in("book_id", softDeletedIds);
+        } catch (_) {}
+
+        const { data: purgedRows, error: purgeErr } = await supabase
+          .from("books")
+          .delete()
+          .in("id", softDeletedIds)
+          .select("id");
+
+        if (purgeErr) {
+          console.warn("[SupabaseSync] Varování při tvrdém mazání soft-deleted knih:", purgeErr);
+        } else if (Array.isArray(purgedRows)) {
+          deletedRowsCount += purgedRows.length;
+        }
+      }
+
+      const activePaths = new Set();
+      const activeIds = new Set();
+      const activeFileNames = new Set();
+
+      for (const b of activeRows) {
+        const bid = String(b.id).trim();
+        if (!bid) continue;
+        activeIds.add(bid);
+
+        if (b.file_name) {
+          const fn = String(b.file_name).trim();
+          if (fn) {
+            activeFileNames.add(fn);
+            activePaths.add(`${bid}/${fn}`);
+          }
+        }
+        if (b.file_path) {
+          activePaths.add(String(b.file_path).replace(/^\/+/, ""));
+        }
+        if (b.cover_path) {
+          activePaths.add(String(b.cover_path).replace(/^\/+/, ""));
+        }
+        activePaths.add(`books/${bid}.pdf`);
+        activePaths.add(`books/${bid}.epub`);
+        activePaths.add(`covers/${bid}.jpg`);
+        activePaths.add(`covers/${bid}.png`);
+        activePaths.add(`covers/${bid}.webp`);
+      }
+
+      const isActiveFile = (fullPath, parentFolder, fileName) => {
+        if (activePaths.has(fullPath)) return true;
+        const baseName = fileName.replace(/\.[^.]+$/, "");
+        if (parentFolder === "covers") {
+          return activeIds.has(baseName);
+        }
+        if (parentFolder === "books") {
+          return activeIds.has(baseName) || activeFileNames.has(fileName);
+        }
+        if (parentFolder) {
+          return activeIds.has(parentFolder) || activeFileNames.has(fileName);
+        }
+        return activeIds.has(baseName) || activeFileNames.has(fileName);
+      };
+
+      const orphanedPaths = [];
+      const rootItems = await this._listStorageFolder("");
+      const legacyFolders = [];
+
+      for (const item of rootItems) {
+        if (!item || !item.name) continue;
+        const isFolder = item.id === null || !item.metadata;
+        if (isFolder) {
+          if (item.name !== "books" && item.name !== "covers") {
+            legacyFolders.push(item.name);
+          }
+        } else if (item.name !== ".emptyFolderPlaceholder") {
+          if (!isActiveFile(item.name, "", item.name)) {
+            orphanedPaths.push(item.name);
+          }
+        }
+      }
+
+      const scanSubfolder = async (folderName, skipPlaceholder = true) => {
+        const items = await this._listStorageFolder(folderName);
+        for (const f of items) {
+          if (!f || !f.name) continue;
+          const isFolder = f.id === null || !f.metadata;
+          if (isFolder) continue;
+          if (skipPlaceholder && f.name === ".emptyFolderPlaceholder") continue;
+          const fullPath = `${folderName}/${f.name}`;
+          if (!isActiveFile(fullPath, folderName, f.name)) {
+            orphanedPaths.push(fullPath);
+          }
+        }
+      };
+
+      await scanSubfolder("books", true);
+      await scanSubfolder("covers", true);
+      for (const folder of legacyFolders) {
+        await scanSubfolder(folder, false);
+      }
+
+      if (orphanedPaths.length > 0) {
+        const { removedCount, error: remErr } = await this._removeStoragePaths(orphanedPaths);
+        if (remErr) {
+          console.warn("[SupabaseSync] Varování při mazání osiřelých souborů ze Storage:", remErr);
+        }
+        deletedFilesCount += removedCount;
+      }
+
+      if (deletedRowsCount > 0 || deletedFilesCount > 0) {
+        console.log(
+          `[SupabaseSync] Úklid cloudu dokončen: odstraněno ${deletedRowsCount} osiřelých záznamů v books a ${deletedFilesCount} osiřelých souborů ze Storage.`
+        );
+      }
+
+      return { deletedRows: deletedRowsCount, deletedFiles: deletedFilesCount };
+    } catch (err) {
+      console.warn("[SupabaseSync] Chyba při úklidu osiřelých cloudových souborů:", err);
+      return { deletedRows: deletedRowsCount, deletedFiles: deletedFilesCount };
     }
   }
 
@@ -1844,6 +2071,7 @@ export class SupabaseSync {
             filePath: cb.file_path || null,
             coverPath: cb.cover_path || null,
             fileHash: cb.file_hash || null,
+            fileName: cb.file_name || null,
             isPdf: cb.file_type === "pdf"
           };
           await this._deleteBookInCloud(delEntry).catch(() => {});
@@ -2254,6 +2482,9 @@ export class SupabaseSync {
       }
 
       await this.flushPendingBookDeletions();
+      if (!silent) {
+        await this.cleanupOrphanedCloudFiles();
+      }
 
       this._lastSyncTime = Date.now();
       this.setStatus("synced");
@@ -2517,7 +2748,7 @@ export class SupabaseSync {
     if (!this.isOnline() || !supabase) return null;
 
     try {
-      const { ReadingTracker } = await import("./tracker.js?v=2.9.10");
+      const { ReadingTracker } = await import("./tracker.js?v=2.9.11");
       const localStats = await ReadingTracker.computeGlobalStats();
       const hasDeletedTombstones = (typeof storage.getDeletedSessionIds === "function" && storage.getDeletedSessionIds().length > 0);
 
