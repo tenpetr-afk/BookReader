@@ -1761,8 +1761,8 @@ body.ruler-vertical-mode .ruler-focused-image {
   position: absolute;
   top: 0;
   left: 0;
-  width: var(--ruler-wave-width, 80px);
-  height: var(--ruler-wave-height, 13px);
+  width: var(--ruler-wave-width, 104px);
+  height: var(--ruler-wave-height, 17px);
   display: none;
   pointer-events: none !important;
   color: inherit;

@@ -12,8 +12,8 @@
 import { countWords, isValidWord } from "./text-parser.js?v=2.9.11";
 
 export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i horizontální odsazení v řádkovém režimu
-export const RULER_WAVE_WIDTH = 80; // px - výchozí referenční šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
-export const RULER_WAVE_HEIGHT = 12; // px - výchozí referenční hloubka vlnky indikátoru
+export const RULER_WAVE_WIDTH = 104; // px - výchozí referenční šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)
+export const RULER_WAVE_HEIGHT = 16; // px - výchozí referenční hloubka vlnky indikátoru
 export const COVER_LINE_OFFSET = 2; // px - záložní vertikální vzdálenost vodicí linky pod spodním okrajem řádku v režimu Spodní clona (Bottom Cover)
 export const COVER_LINE_GAP_RATIO = 0.05; // 5 % výšky celého řádku - mezera mezi nejnižším bodem nejnižšího písmena (j, y, p, g, q) a čárou v režimu Spodní clona
 
@@ -3505,7 +3505,7 @@ export class ReadingRuler {
   /**
    * Spočítá proporcionální rozměry vlnky pro indikátor čteného slova podle
    * skutečné vykreslené velikosti písma daného řádku (v CSS px).
-   * Šířka ≈ 4.2× výška písma, hloubka ≈ 0.432× výška písma (+20 % oproti 3.5× / 0.36×).
+   * Šířka ≈ 5.46× výška písma, hloubka ≈ 0.5616× výška písma (+30 % oproti 4.2× / 0.432×).
    */
   _getWaveMetricsForLine(lineOrIdx = this.activeLineIndex) {
     const line = (lineOrIdx && typeof lineOrIdx === "object")
@@ -3546,8 +3546,8 @@ export class ReadingRuler {
     }
 
     fontH = Math.max(6, fontH);
-    const width = Math.max(24, Math.round(fontH * 4.2));
-    const depth = Math.max(3, Math.round(fontH * 0.432));
+    const width = Math.max(31, Math.round(fontH * 5.46));
+    const depth = Math.max(4, Math.round(fontH * 0.5616));
     const height = depth + 1;
     return {
       width,
