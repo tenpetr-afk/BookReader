@@ -4,9 +4,9 @@
  * obousměrnou synchronizaci mezi zařízeními a offline-first fungování.
  */
 
-import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.9.9';
-import { storage, computeFileHash, getBookProgressTimestamp } from './storage.js?v=2.9.9';
-import { EpubParser } from './epub-parser.js?v=2.9.9';
+import { supabase, STORAGE_BUCKET, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-client.js?v=2.9.10';
+import { storage, computeFileHash, getBookProgressTimestamp } from './storage.js?v=2.9.10';
+import { EpubParser } from './epub-parser.js?v=2.9.10';
 
 export class SupabaseSync {
   constructor() {
@@ -21,8 +21,11 @@ export class SupabaseSync {
     this._booksSchemaHasAnchorCols = true;
     this._booksSchemaHasExtendedCols = true;
     this._booksSchemaHasBookmarksCol = true;
+    this._booksSchemaHasIsDeletedCol = true;
     this._inFlightDownloads = new Map();
     this._inFlightCoverDownloads = new Map();
+    this._inFlightDeletes = new Map();
+    this._deletingBookIds = new Set();
     this._failedCoverPaths = new Set();
     this.isSyncing = false;
     this._lastSyncTime = 0;
@@ -115,6 +118,11 @@ export class SupabaseSync {
     if (!book) {
       console.warn("[Supabase Sync] Kniha nebyla zadána.");
       return null;
+    }
+
+    if (this._isBookDeletedLocally(book)) {
+      console.log(`[Supabase Sync] Kniha ${book.id} byla mezitím smazána, nahrávání zrušeno.`);
+      return { success: false, reason: "deleted" };
     }
 
     try {
@@ -251,6 +259,10 @@ export class SupabaseSync {
         row.bookmarks = this._buildCloudBookmarksPayload(book.id);
       }
 
+      if (this._booksSchemaHasIsDeletedCol) {
+        row.is_deleted = false;
+      }
+
       if (this._booksSchemaHasExtendedCols) {
         row.author = book.author || book.creator || null;
         row.file_size = uploadBlob.size;
@@ -262,11 +274,31 @@ export class SupabaseSync {
         row.total_words = Number(book.totalWords || book.total_words) || null;
       }
 
+      if (this._isBookDeletedLocally(book)) {
+        console.log(`[Supabase Sync] Kniha ${book.id} byla smazána během přípravy nahrávání, přerušuji.`);
+        return { success: false, reason: "deleted" };
+      }
+
       const dbError = await this._upsertBooksRow(row);
       if (dbError) {
         console.error(`[Supabase Sync] ${fileType.toUpperCase()} upload failed:`, dbError);
         throw dbError;
       }
+
+      book.syncedToCloud = true;
+      book.isPendingSync = false;
+      await storage.markBookSyncState(book.id, {
+        syncedToCloud: true,
+        isPendingSync: false,
+        file_path: storagePath,
+        cover_path: coverPath,
+        cover_hash: coverHash,
+        coverHash,
+        file_hash: book.file_hash || book.fileHash || null,
+        fileHash: book.fileHash || book.file_hash || null,
+        file_size: uploadBlob.size,
+        fileSize: uploadBlob.size
+      });
 
       console.log(`[Supabase Sync] Kniha "${book.title}" byla úspěšně nahrána do cloudu.`);
       return { success: true, filePath: storagePath, coverPath, coverHash };
@@ -276,67 +308,308 @@ export class SupabaseSync {
     }
   }
 
-  /**
-   * Smaže knihu z cloudu (tabulka books i binární soubor ve Storage)
-   */
-  async deleteBook(bookId) {
-    if (!this.isOnline() || !supabase) return;
+  _isBookDeletedLocally(bookOrId) {
+    if (!bookOrId) return false;
+    const isObj = typeof bookOrId === "object";
+    const id = String(isObj ? (bookOrId.id ?? "") : bookOrId).trim();
+    if (id && this._deletingBookIds.has(id)) return true;
 
-    try {
-      console.log(`[SupabaseSync] Mažu knihu ${bookId} z cloudu...`);
-      // Zjistíme cestu k souboru a obálce
-      let bookRow = null;
-      const selectCols = this._booksSchemaHasExtendedCols ? "file_path, cover_path" : "file_path";
-      const res = await supabase
-        .from("books")
-        .select(selectCols)
-        .eq("id", bookId)
-        .maybeSingle();
+    const entry = typeof storage.findDeletedBookEntry === "function"
+      ? storage.findDeletedBookEntry(bookOrId)
+      : null;
+    if (!entry) return false;
+
+    // Pokud lokální smazání ještě nebylo odesláno do Supabase, vždy blokuje znovuvytvoření
+    if (entry.syncedDeletion !== true) {
+      return true;
+    }
+
+    // Pokud bylo v cloudu explicitně znovu nahráno/obnoveno PO našem dřívějším smazání, uvolníme tombstone
+    if (isObj && bookOrId.is_deleted !== true && bookOrId.is_deleted !== "true") {
+      const cloudTs = bookOrId.updated_at ? new Date(bookOrId.updated_at).getTime() : 0;
+      const localAddedTs = Number(bookOrId.addedAt || 0);
+      if (cloudTs > entry.deletedAt + 2000 || (bookOrId.isPendingSync === true && localAddedTs > entry.deletedAt + 2000)) {
+        if (typeof storage.removeDeletedBookRecord === "function") {
+          storage.removeDeletedBookRecord(bookOrId);
+        }
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Okamžitě zaznamená lokální tombstone pro smazanou knihu a zruší čekající synchronizace jejího postupu/záložek
+   */
+  markBookPendingDeletion(bookOrId) {
+    const isObj = bookOrId && typeof bookOrId === "object";
+    const bookId = String(isObj ? (bookOrId.id ?? "") : (bookOrId ?? "")).trim();
+    if (!bookId) return null;
+
+    this._deletingBookIds.add(bookId);
+    if (this.pendingProgress) this.pendingProgress.delete(bookId);
+    if (this.pendingBookmarks) this.pendingBookmarks.delete(bookId);
+
+    if (typeof storage.recordDeletedBook === "function") {
+      return storage.recordDeletedBook(bookOrId, { syncedDeletion: false });
+    }
+    return null;
+  }
+
+  /**
+   * Smaže knihu z cloudu (tabulka books, související relace i binární soubory ve Storage)
+   */
+  async deleteBook(bookOrId) {
+    const isObj = bookOrId && typeof bookOrId === "object";
+    const bookId = String(isObj ? (bookOrId.id ?? "") : (bookOrId ?? "")).trim();
+    if (!bookId) return { success: false, error: "Missing bookId" };
+
+    if (this._inFlightDeletes.has(bookId)) {
+      return await this._inFlightDeletes.get(bookId);
+    }
+
+    const task = (async () => {
+      try {
+        let bookMeta = isObj ? { ...bookOrId } : null;
+        if (!bookMeta) {
+          const localRec = await storage.getBook(bookId).catch(() => null);
+          if (localRec) bookMeta = localRec;
+        }
+
+        const entry = this.markBookPendingDeletion(bookMeta || bookId) || {
+          id: bookId,
+          filePath: bookMeta?.file_path || null,
+          coverPath: bookMeta?.cover_path || null,
+          fileHash: bookMeta?.fileHash || bookMeta?.file_hash || null,
+          isPdf: Boolean(bookMeta?.isPdf || bookMeta?.format === "pdf" || bookId.startsWith("pdf_")),
+          deletedAt: Date.now()
+        };
+
+        if (!this.isOnline() || !supabase) {
+          console.log(`[SupabaseSync] Zařízení je offline – smazání knihy ${bookId} uloženo do fronty.`);
+          return { success: false, reason: "offline", queued: true };
+        }
+
+        return await this._deleteBookInCloud(entry);
+      } catch (err) {
+        console.error("[SupabaseSync] Chyba při mazání knihy z cloudu:", err);
+        return { success: false, error: err };
+      } finally {
+        this._deletingBookIds.delete(bookId);
+        this._inFlightDeletes.delete(bookId);
+      }
+    })();
+
+    this._inFlightDeletes.set(bookId, task);
+    return await task;
+  }
+
+  async _deleteBookInCloud(entry) {
+    if (!entry || !entry.id || !this.isOnline() || !supabase) {
+      return { success: false, reason: "offline" };
+    }
+
+    const bookId = String(entry.id).trim();
+    console.log(`[SupabaseSync] Mažu knihu ${bookId} z cloudu...`);
+
+    const matchedRows = [];
+    const seenRowIds = new Set();
+    const collectRows = (rows) => {
+      if (!Array.isArray(rows)) return;
+      for (const r of rows) {
+        if (r && r.id && !seenRowIds.has(r.id)) {
+          seenRowIds.add(r.id);
+          matchedRows.push(r);
+        }
+      }
+    };
+
+    const selectCols = this._booksSchemaHasExtendedCols ? "id, file_path, cover_path" : "id, file_path";
+    const runLookup = async (col, val) => {
+      let res = await supabase.from("books").select(selectCols).eq(col, val);
       if (res.error && this._isMissingExtendedColumnError(res.error)) {
         this._booksSchemaHasExtendedCols = false;
-        const retry = await supabase.from("books").select("file_path").eq("id", bookId).maybeSingle();
-        bookRow = retry.data;
+        res = await supabase.from("books").select("id, file_path").eq(col, val);
+      }
+      if (res.error) throw res.error;
+      collectRows(res.data);
+    };
+
+    await runLookup("id", bookId);
+    if (entry.filePath) {
+      await runLookup("file_path", entry.filePath);
+    }
+    if (entry.fileHash && this._booksSchemaHasExtendedCols) {
+      await runLookup("file_hash", entry.fileHash);
+    }
+
+    const targetIds = Array.from(new Set([bookId, ...matchedRows.map(r => r.id).filter(Boolean)]));
+    const pathsToRemove = new Set();
+    for (const r of matchedRows) {
+      if (r.file_path) pathsToRemove.add(r.file_path);
+      if (r.cover_path) pathsToRemove.add(r.cover_path);
+    }
+    if (entry.filePath) pathsToRemove.add(entry.filePath);
+    if (entry.coverPath) pathsToRemove.add(entry.coverPath);
+    if (entry.isPdf || bookId.startsWith("pdf_")) {
+      pathsToRemove.add(`books/${bookId}.pdf`);
+    }
+
+    if (pathsToRemove.size > 0) {
+      const pathsArray = Array.from(pathsToRemove);
+      const { data: storageData, error: storageErr } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .remove(pathsArray);
+      if (storageErr) {
+        console.warn("[SupabaseSync] Varování při mazání souborů ze Storage:", storageErr);
+      } else if (
+        pathsArray.length > 0 &&
+        matchedRows.some(r => r.file_path || r.cover_path) &&
+        (!Array.isArray(storageData) || storageData.length === 0)
+      ) {
+        console.warn(
+          `[SupabaseSync] Storage remove() nevrátil žádné smazané soubory (0/${pathsArray.length}) pro knihu ${bookId} – pravděpodobně chybí DELETE RLS politika na storage.objects pro bucket '${STORAGE_BUCKET}'.`
+        );
+      }
+    }
+
+    // Soft-delete relací přiřazených k mazané knize (a aktualizace souhrnných statistik)
+    let sessionsUpdated = false;
+    try {
+      const nowIso = new Date().toISOString();
+      let { error: sessDelErr } = await supabase
+        .from("reading_sessions")
+        .update({
+          is_deleted: true,
+          updated_at: nowIso
+        })
+        .in("book_id", targetIds);
+
+      if (sessDelErr && (sessDelErr.code === "PGRST204" || sessDelErr.code === "42703" || sessDelErr.message?.includes("is_deleted"))) {
+        const hardSessRes = await supabase.from("reading_sessions").delete().in("book_id", targetIds);
+        sessDelErr = hardSessRes.error;
+      }
+      if (!sessDelErr) {
+        sessionsUpdated = true;
       } else {
-        bookRow = res.data;
+        console.warn("[SupabaseSync] Varování při mazání relací knihy:", sessDelErr);
       }
+    } catch (sessErr) {
+      console.warn("[SupabaseSync] Varování při soft-delete relací smazané knihy:", sessErr);
+    }
 
-      const pathsToRemove = [];
-      if (bookRow?.file_path) {
-        pathsToRemove.push(bookRow.file_path);
-      }
-      if (bookRow?.cover_path) {
-        pathsToRemove.push(bookRow.cover_path);
-      }
-      if (bookId && bookId.startsWith("pdf_")) {
-        pathsToRemove.push(`books/${bookId}.pdf`);
-      }
+    // Smazání / soft-delete záznamu v tabulce books
+    const nowIso = new Date().toISOString();
+    let bookErr = null;
+    let affectedRows = null;
+    if (this._booksSchemaHasIsDeletedCol) {
+      const softRes = await supabase
+        .from("books")
+        .update({
+          is_deleted: true,
+          updated_at: nowIso
+        })
+        .in("id", targetIds)
+        .select("id");
+      bookErr = softRes.error;
+      affectedRows = softRes.data;
 
-      if (pathsToRemove.length > 0) {
-        await supabase.storage.from(STORAGE_BUCKET).remove(Array.from(new Set(pathsToRemove)));
+      if (bookErr && this._isMissingIsDeletedColumnError(bookErr)) {
+        this._booksSchemaHasIsDeletedCol = false;
+        bookErr = null;
+        affectedRows = null;
       }
+    }
 
-      // Soft-delete relací přiřazených k mazané knize
+    if (!this._booksSchemaHasIsDeletedCol) {
+      const hardRes = await supabase
+        .from("books")
+        .delete()
+        .in("id", targetIds)
+        .select("id");
+      bookErr = hardRes.error;
+      affectedRows = hardRes.data;
+    }
+
+    if (bookErr) {
+      console.error("[SupabaseSync] Chyba při odstraňování knihy z tabulky books:", bookErr);
+      return { success: false, error: bookErr };
+    }
+
+    if (matchedRows.length > 0 && (!Array.isArray(affectedRows) || affectedRows.length === 0)) {
+      console.error(
+        `[SupabaseSync] Smazání knihy ${bookId} na Supabase nezměnilo žádný řádek (0 z ${matchedRows.length} nalezených) – zkontrolujte RLS politiky pro UPDATE/DELETE v tabulce books.`
+      );
+      return {
+        success: false,
+        error: new Error("RLS or permission blocked book deletion: 0 rows affected")
+      };
+    }
+
+    if (typeof storage.markBookDeletionSynced === "function") {
+      for (const tid of targetIds) {
+        storage.markBookDeletionSynced(tid);
+      }
+    }
+
+    if (sessionsUpdated) {
       try {
-        const nowIso = new Date().toISOString();
-        let { error: sessDelErr } = await supabase
-          .from("reading_sessions")
-          .update({
-            is_deleted: true,
-            updated_at: nowIso
-          })
-          .eq("book_id", bookId);
-
-        if (sessDelErr && (sessDelErr.code === "PGRST204" || sessDelErr.code === "42703" || sessDelErr.message?.includes("is_deleted"))) {
-          await supabase.from("reading_sessions").delete().eq("book_id", bookId);
+        if (typeof storage.recalculateAndNormalizeStats === "function") {
+          await storage.recalculateAndNormalizeStats();
         }
-      } catch (sessErr) {
-        console.warn("[SupabaseSync] Varování při soft-delete relací smazané knihy:", sessErr);
+        await this.syncStatsSummary({ overwriteCloud: true });
+      } catch (_) {}
+    }
+
+    console.log(`[SupabaseSync] Kniha ${bookId} byla odstraněna z cloudu.`);
+    return { success: true, deletedIds: targetIds };
+  }
+
+  async flushPendingBookDeletions({ keepalive = false } = {}) {
+    if (!this.isOnline() || !supabase) return;
+    if (typeof storage.getUnsyncedDeletedBooks !== "function") return;
+
+    const pending = storage.getUnsyncedDeletedBooks();
+    if (!pending || pending.length === 0) return;
+
+    for (const entry of pending) {
+      if (!entry?.id) continue;
+      if (keepalive && typeof fetch === "function" && SUPABASE_URL && SUPABASE_ANON_KEY) {
+        const endpoint = `${SUPABASE_URL}/rest/v1/books?id=eq.${encodeURIComponent(entry.id)}`;
+        const headers = {
+          "apikey": SUPABASE_ANON_KEY,
+          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal"
+        };
+        const method = this._booksSchemaHasIsDeletedCol ? "PATCH" : "DELETE";
+        const fetchOpts = {
+          method,
+          keepalive: true,
+          headers
+        };
+        if (method === "PATCH") {
+          fetchOpts.body = JSON.stringify({
+            is_deleted: true,
+            updated_at: new Date(entry.deletedAt || Date.now()).toISOString()
+          });
+        }
+        try {
+          const res = await fetch(endpoint, fetchOpts);
+          if (!res.ok && method === "PATCH" && res.status === 400) {
+            this._booksSchemaHasIsDeletedCol = false;
+            await fetch(endpoint, { method: "DELETE", keepalive: true, headers }).catch(() => {});
+          }
+        } catch (_) {}
+        continue;
       }
 
-      await supabase.from("books").delete().eq("id", bookId);
-      console.log(`[SupabaseSync] Kniha ${bookId} byla odstraněna z cloudu.`);
-    } catch (err) {
-      console.warn("[SupabaseSync] Chyba při mazání knihy z cloudu:", err);
+      try {
+        await this._deleteBookInCloud(entry);
+      } catch (err) {
+        console.warn(`[SupabaseSync] Nepodařilo se dokončit odložené smazání knihy ${entry.id}:`, err);
+      }
     }
   }
 
@@ -353,6 +626,12 @@ export class SupabaseSync {
     return msg.includes("bookmarks");
   }
 
+  _isMissingIsDeletedColumnError(error) {
+    if (!error) return false;
+    const msg = String(error.message || "");
+    return msg.includes("is_deleted");
+  }
+
   _isMissingExtendedColumnError(error) {
     if (!error) return false;
     const msg = String(error.message || "");
@@ -367,7 +646,8 @@ export class SupabaseSync {
       msg.includes("total_words") ||
       ((error.code === "PGRST204" || error.code === "42703") &&
         !this._isMissingAnchorColumnError(error) &&
-        !this._isMissingBookmarksColumnError(error))
+        !this._isMissingBookmarksColumnError(error) &&
+        !this._isMissingIsDeletedColumnError(error))
     );
   }
 
@@ -383,6 +663,13 @@ export class SupabaseSync {
     if (!payload || typeof payload !== "object") return payload;
     const copy = { ...payload };
     delete copy.bookmarks;
+    return copy;
+  }
+
+  _stripIsDeletedCol(payload) {
+    if (!payload || typeof payload !== "object") return payload;
+    const copy = { ...payload };
+    delete copy.is_deleted;
     return copy;
   }
 
@@ -404,10 +691,11 @@ export class SupabaseSync {
     let payload = { ...row };
     if (!this._booksSchemaHasAnchorCols) payload = this._stripAnchorCols(payload);
     if (!this._booksSchemaHasBookmarksCol) payload = this._stripBookmarksCol(payload);
+    if (!this._booksSchemaHasIsDeletedCol) payload = this._stripIsDeletedCol(payload);
     if (!this._booksSchemaHasExtendedCols) payload = this._stripExtendedCols(payload);
 
     let { error } = await supabase.from("books").upsert(payload, { onConflict: "id" });
-    for (let attempt = 0; attempt < 3 && error; attempt++) {
+    for (let attempt = 0; attempt < 4 && error; attempt++) {
       let changed = false;
       if (this._isMissingAnchorColumnError(error) && this._booksSchemaHasAnchorCols) {
         this._booksSchemaHasAnchorCols = false;
@@ -417,6 +705,11 @@ export class SupabaseSync {
       if (this._isMissingBookmarksColumnError(error) && this._booksSchemaHasBookmarksCol) {
         this._booksSchemaHasBookmarksCol = false;
         payload = this._stripBookmarksCol(payload);
+        changed = true;
+      }
+      if (this._isMissingIsDeletedColumnError(error) && this._booksSchemaHasIsDeletedCol) {
+        this._booksSchemaHasIsDeletedCol = false;
+        payload = this._stripIsDeletedCol(payload);
         changed = true;
       }
       if (this._isMissingExtendedColumnError(error) && this._booksSchemaHasExtendedCols) {
@@ -435,10 +728,11 @@ export class SupabaseSync {
     let payload = { ...patch };
     if (!this._booksSchemaHasAnchorCols) payload = this._stripAnchorCols(payload);
     if (!this._booksSchemaHasBookmarksCol) payload = this._stripBookmarksCol(payload);
+    if (!this._booksSchemaHasIsDeletedCol) payload = this._stripIsDeletedCol(payload);
     if (!this._booksSchemaHasExtendedCols) payload = this._stripExtendedCols(payload);
 
     let { error } = await supabase.from("books").update(payload).eq("id", bookId);
-    for (let attempt = 0; attempt < 3 && error; attempt++) {
+    for (let attempt = 0; attempt < 4 && error; attempt++) {
       let changed = false;
       if (this._isMissingAnchorColumnError(error) && this._booksSchemaHasAnchorCols) {
         this._booksSchemaHasAnchorCols = false;
@@ -448,6 +742,11 @@ export class SupabaseSync {
       if (this._isMissingBookmarksColumnError(error) && this._booksSchemaHasBookmarksCol) {
         this._booksSchemaHasBookmarksCol = false;
         payload = this._stripBookmarksCol(payload);
+        changed = true;
+      }
+      if (this._isMissingIsDeletedColumnError(error) && this._booksSchemaHasIsDeletedCol) {
+        this._booksSchemaHasIsDeletedCol = false;
+        payload = this._stripIsDeletedCol(payload);
         changed = true;
       }
       if (this._isMissingExtendedColumnError(error) && this._booksSchemaHasExtendedCols) {
@@ -746,6 +1045,7 @@ export class SupabaseSync {
       }
 
       if (error || !data) return null;
+      if (data.is_deleted === true || data.is_deleted === "true") return null;
 
       const timestamp = this.getCloudBookTimestamp(data);
       const progressUpdates = this.normalizeCloudBookProgress(data, bookMeta);
@@ -793,6 +1093,7 @@ export class SupabaseSync {
    */
   syncProgress(bookId, progressData, { immediate = false, keepalive = false } = {}) {
     if (!this.isOnline() || !bookId || !progressData) return;
+    if (this._isBookDeletedLocally(bookId)) return;
 
     if (this.progressDebounceTimer) {
       clearTimeout(this.progressDebounceTimer);
@@ -831,6 +1132,9 @@ export class SupabaseSync {
     }
 
     await this.flushPendingBookmarks({ bookId, keepalive });
+    if (!bookId) {
+      await this.flushPendingBookDeletions({ keepalive });
+    }
   }
 
   async _flushBookProgressQueue(targetBookId, { keepalive = false } = {}) {
@@ -1298,7 +1602,9 @@ export class SupabaseSync {
         fileSize,
         file_size: fileSize,
         file_path: storagePath,
-        hasLocalFile: true
+        hasLocalFile: true,
+        syncedToCloud: true,
+        isPendingSync: false
       };
 
       if (isPdf) {
@@ -1487,6 +1793,7 @@ export class SupabaseSync {
       coversDownloaded: 0,
       downloaded: 0,
       uploaded: 0,
+      deletedFromCloud: 0,
       updatedFromCloud: 0,
       uploadedToCloud: 0,
       bookmarksSynced: 0,
@@ -1499,6 +1806,12 @@ export class SupabaseSync {
     };
 
     try {
+      // 0. Dokončit rozpracovaná / offline smazání knih PŘED načtením knih ze Supabase
+      if (this._inFlightDeletes.size > 0) {
+        await Promise.allSettled(Array.from(this._inFlightDeletes.values()));
+      }
+      await this.flushPendingBookDeletions();
+
       // 1. Získat a deduplikovat lokální knihy z IndexedDB (bez načítání binárek)
       const localBooks = await storage.deduplicateBooks();
 
@@ -1515,10 +1828,33 @@ export class SupabaseSync {
         this._booksSchemaHasExtendedCols = Object.prototype.hasOwnProperty.call(rawCloudBooks[0], "cover_path");
         this._booksSchemaHasAnchorCols = Object.prototype.hasOwnProperty.call(rawCloudBooks[0], "reading_anchor");
         this._booksSchemaHasBookmarksCol = Object.prototype.hasOwnProperty.call(rawCloudBooks[0], "bookmarks");
+        this._booksSchemaHasIsDeletedCol = Object.prototype.hasOwnProperty.call(rawCloudBooks[0], "is_deleted");
       }
 
-      const cloudList = await this.normalizeAndMergeCloudBooks(rawCloudBooks || []);
+      const activeRawCloudBooks = [];
+      const deletedCloudBooks = [];
+      for (const cb of (rawCloudBooks || [])) {
+        if (!cb) continue;
+        if (cb.is_deleted === true || cb.is_deleted === "true") {
+          deletedCloudBooks.push(cb);
+        } else if (this._isBookDeletedLocally(cb)) {
+          // Lokální smazání je stále aktivní -> zajistit odstranění v cloudu a nevracet do knihovny
+          const delEntry = (typeof storage.findDeletedBookEntry === "function" && storage.findDeletedBookEntry(cb)) || {
+            id: cb.id,
+            filePath: cb.file_path || null,
+            coverPath: cb.cover_path || null,
+            fileHash: cb.file_hash || null,
+            isPdf: cb.file_type === "pdf"
+          };
+          await this._deleteBookInCloud(delEntry).catch(() => {});
+        } else {
+          activeRawCloudBooks.push(cb);
+        }
+      }
+
+      const cloudList = await this.normalizeAndMergeCloudBooks(activeRawCloudBooks);
       const matchedLocalIds = new Set();
+      const handledDeletedLocalIds = new Set();
 
       // Pomocná funkce pro vyhledání odpovídající lokální knihy ke cloudové knize
       const findMatchingLocalBook = (cloudBook) => {
@@ -1571,6 +1907,9 @@ export class SupabaseSync {
 
       // 3. Projít cloudové knihy – synchronizovat POUZE metadata, obálky (max 1x) a postup čtení
       for (const cloudBook of cloudList) {
+        if (this._isBookDeletedLocally(cloudBook)) {
+          continue;
+        }
         const localBook = findMatchingLocalBook(cloudBook);
 
         if (!localBook) {
@@ -1608,6 +1947,8 @@ export class SupabaseSync {
             coverDataUrl: null,
             hasLocalFile: false,
             syncedFromCloud: true,
+            syncedToCloud: true,
+            isPendingSync: false,
             addedAt: cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now(),
             lastReadAt: cloudProg?.lastReadAt || (cloudBook.updated_at ? new Date(cloudBook.updated_at).getTime() : Date.now()),
             progressUpdatedAt: cloudProg?.progressUpdatedAt || 0,
@@ -1631,6 +1972,9 @@ export class SupabaseSync {
             } : {})
           };
 
+          if (this._isBookDeletedLocally(metaBook)) {
+            continue;
+          }
           await storage.saveBook(metaBook);
           if (this._booksSchemaHasBookmarksCol) {
             const bmRes = await this.reconcileBookBookmarks(metaBook.id, cloudBook.bookmarks, { pushIfChanged: true });
@@ -1648,6 +1992,9 @@ export class SupabaseSync {
           console.log(`[Supabase Sync] Synchronizována metadata knihy "${metaBook.title}" (bez stahování souboru).`);
         } else {
           // Kniha existuje v obou úložištích -> Synchronizace postupu čtení a doplnění chybějících metadat/obálky
+          if (this._isBookDeletedLocally(localBook) || this._isBookDeletedLocally(cloudBook)) {
+            continue;
+          }
           matchedLocalIds.add(localBook.id);
 
           if (this._booksSchemaHasBookmarksCol) {
@@ -1751,7 +2098,12 @@ export class SupabaseSync {
             freshLocalBook.totalWords = Number(cloudBook.total_words);
             metaChanged = true;
           }
-          if (metaChanged) {
+          if (freshLocalBook.syncedToCloud !== true || freshLocalBook.isPendingSync) {
+            freshLocalBook.syncedToCloud = true;
+            freshLocalBook.isPendingSync = false;
+            metaChanged = true;
+          }
+          if (metaChanged && !this._isBookDeletedLocally(freshLocalBook)) {
             await storage.saveBook(freshLocalBook);
           }
 
@@ -1782,6 +2134,7 @@ export class SupabaseSync {
                 current_page: Math.max(1, (effectiveLocal.currentPageIndex || 0) + 1),
                 scroll_progress: Number(effectiveLocal.scrollPercent ?? effectiveLocal.pageRatio ?? 0) || 0,
                 pdf_ruler_height: effectiveLocal.pdfRulerConfig?.height || 32,
+                is_deleted: false,
                 updated_at: new Date(localTime || Date.now()).toISOString()
               };
               const upErr = await this._upsertBooksRow(cloudPatch);
@@ -1796,9 +2149,50 @@ export class SupabaseSync {
         }
       }
 
-      // 4. Lokální knihy, které ještě nejsou v cloudu -> ZÁLOHOVAT (pouze pokud mají lokální binární soubor)
+      // 3.5 Propis soft-deleted knih ze Supabase na toto zařízení
+      for (const deletedCb of deletedCloudBooks) {
+        const localBook = findMatchingLocalBook(deletedCb);
+        if (!localBook || matchedLocalIds.has(localBook.id)) continue;
+
+        const cloudDeletedAt = deletedCb.updated_at ? new Date(deletedCb.updated_at).getTime() : 0;
+        const localAddedAt = Number(localBook.addedAt || 0);
+        if (localBook.isPendingSync === true && localAddedAt > cloudDeletedAt + 2000) {
+          // Uživatel knihu na tomto zařízení znovu přidal až po smazání v cloudu -> necháme ji nahrát v kroku 4
+          continue;
+        }
+
+        console.log(`[SupabaseSync] Kniha "${localBook.title}" byla smazána na jiném zařízení -> odstraňuji lokálně.`);
+        await storage.deleteBook(localBook.id);
+        if (typeof storage.recordDeletedBook === "function") {
+          storage.recordDeletedBook(localBook, {
+            deletedAt: cloudDeletedAt || Date.now(),
+            syncedDeletion: true
+          });
+        }
+        handledDeletedLocalIds.add(localBook.id);
+        stats.deletedFromCloud++;
+      }
+
+      // 4. Lokální knihy, které ještě nejsou v cloudu -> buď smazané jinde, nebo nové lokální k záloze
       for (const localBook of localBooks) {
-        if (!matchedLocalIds.has(localBook.id)) {
+        if (!matchedLocalIds.has(localBook.id) && !handledDeletedLocalIds.has(localBook.id)) {
+          if (this._isBookDeletedLocally(localBook)) {
+            await storage.deleteBook(localBook.id);
+            continue;
+          }
+
+          const wasPreviouslySynced = Boolean(localBook.syncedToCloud || localBook.syncedFromCloud);
+          if (wasPreviouslySynced && !localBook.isPendingSync) {
+            // Kniha již byla dříve synchronizována s cloudem a nyní v něm chybí -> smazána na jiném zařízení
+            console.log(`[SupabaseSync] Kniha "${localBook.title}" již není v cloudu -> odstraňuji lokálně.`);
+            await storage.deleteBook(localBook.id);
+            if (typeof storage.recordDeletedBook === "function") {
+              storage.recordDeletedBook(localBook, { deletedAt: Date.now(), syncedDeletion: true });
+            }
+            stats.deletedFromCloud++;
+            continue;
+          }
+
           const hasLocalFile = localBook.hasLocalFile || await storage.hasBookFile(localBook.id);
           if (hasLocalFile) {
             console.log(`[SupabaseSync] Zálohuji lokální knihu "${localBook.title}" do cloudu...`);
@@ -1806,9 +2200,10 @@ export class SupabaseSync {
             if (res?.success) {
               stats.uploaded++;
             }
-          } else if (localBook.syncedFromCloud) {
+          } else {
             // Metadata-only záznam smazaný na jiném zařízení z cloudu
             await storage.deleteBook(localBook.id);
+            stats.deletedFromCloud++;
           }
         }
       }
@@ -1857,6 +2252,8 @@ export class SupabaseSync {
       } catch (statsErr) {
         console.warn("[SupabaseSync] Varování při synchronizaci čtecích statistik:", statsErr);
       }
+
+      await this.flushPendingBookDeletions();
 
       this._lastSyncTime = Date.now();
       this.setStatus("synced");
@@ -2120,7 +2517,7 @@ export class SupabaseSync {
     if (!this.isOnline() || !supabase) return null;
 
     try {
-      const { ReadingTracker } = await import("./tracker.js?v=2.9.9");
+      const { ReadingTracker } = await import("./tracker.js?v=2.9.10");
       const localStats = await ReadingTracker.computeGlobalStats();
       const hasDeletedTombstones = (typeof storage.getDeletedSessionIds === "function" && storage.getDeletedSessionIds().length > 0);
 
@@ -2306,9 +2703,17 @@ export class SupabaseSync {
       const localSessions = await storage.getAllReadingSessions();
       const deletedSet = new Set(typeof storage.getDeletedSessionIds === "function" ? storage.getDeletedSessionIds() : []);
 
-      const { data: cloudSessionsRaw, error: sessErr } = await supabase
+      let { data: cloudSessionsRaw, error: sessErr } = await supabase
         .from("reading_sessions")
         .select("id, updated_at, is_deleted");
+
+      if (sessErr && (sessErr.code === "PGRST204" || sessErr.code === "42703" || sessErr.message?.includes("is_deleted"))) {
+        const fallbackRes = await supabase
+          .from("reading_sessions")
+          .select("id, updated_at");
+        cloudSessionsRaw = fallbackRes.data;
+        sessErr = fallbackRes.error;
+      }
 
       if (sessErr) {
         if (sessErr.code !== "PGRST205") {

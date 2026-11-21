@@ -675,13 +675,13 @@ export class StorageManager {
   }
 
   async uploadBook(book) {
-    const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
+    const { supabaseSync } = await import("./supabase-sync.js?v=2.9.10");
     return await supabaseSync.uploadBook(book);
   }
 
   async syncWithCloud(options) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.10");
       return await supabaseSync.syncAll(options);
     } catch (err) {
       console.warn("[StorageManager] syncWithCloud selhal:", err);
@@ -691,7 +691,7 @@ export class StorageManager {
 
   async pushReadingSessionAndStatsToCloud(session) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.10");
       return await supabaseSync.pushSessionAndStats(session);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionAndStatsToCloud selhal:", err);
@@ -701,7 +701,7 @@ export class StorageManager {
 
   async pushReadingSessionsToCloud(sessions) {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.10");
       return await supabaseSync.pushMultipleSessions(sessions);
     } catch (err) {
       console.warn("[StorageManager] pushReadingSessionsToCloud selhal:", err);
@@ -933,7 +933,17 @@ export class StorageManager {
           } catch (_) {}
         }
 
-        tx.oncomplete = () => resolve(true);
+        tx.oncomplete = () => {
+          try {
+            localStorage.removeItem(`lumina_progress_${id}`);
+            localStorage.removeItem(`lumina_bookmarks_${id}`);
+            localStorage.removeItem(`lumina_bookmarks_deleted_${id}`);
+            if (this.getLastActiveBookId() === id) {
+              localStorage.removeItem("luminareader_last_book_id");
+            }
+          } catch (_) {}
+          resolve(true);
+        };
         tx.onerror = () => resolve(false);
         tx.onabort = () => resolve(false);
       } catch (txErr) {
@@ -941,6 +951,156 @@ export class StorageManager {
         resolve(false);
       }
     });
+  }
+
+  /**
+   * Vrátí mapu smazaných knih (tombstones) z localStorage pro synchronizaci smazání mezi zařízeními
+   * @returns {Record<string, Object>}
+   */
+  getDeletedBooksMap() {
+    if (typeof localStorage === "undefined") return {};
+    try {
+      const raw = localStorage.getItem("lumina_deleted_books");
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+      const cleaned = {};
+      for (const [id, entry] of Object.entries(parsed)) {
+        if (!id || !entry || typeof entry !== "object") continue;
+        const deletedAt = Number(entry.deletedAt) || 0;
+        if (entry.syncedDeletion === true && deletedAt > 0 && deletedAt < cutoff) {
+          continue;
+        }
+        cleaned[id] = {
+          id: String(entry.id || id).trim(),
+          deletedAt: deletedAt || Date.now(),
+          filePath: entry.filePath || null,
+          coverPath: entry.coverPath || null,
+          fileHash: entry.fileHash || null,
+          fileName: entry.fileName || null,
+          title: entry.title || null,
+          isPdf: Boolean(entry.isPdf),
+          syncedDeletion: Boolean(entry.syncedDeletion)
+        };
+      }
+      return cleaned;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  _saveDeletedBooksMap(map) {
+    if (typeof localStorage === "undefined") return;
+    try {
+      const entries = Object.entries(map || {});
+      if (entries.length > 0) {
+        localStorage.setItem("lumina_deleted_books", JSON.stringify(map));
+      } else {
+        localStorage.removeItem("lumina_deleted_books");
+      }
+    } catch (_) {}
+  }
+
+  recordDeletedBook(bookOrId, meta = {}) {
+    const isObj = bookOrId && typeof bookOrId === "object";
+    const id = String(isObj ? (bookOrId.id ?? "") : (bookOrId ?? "")).trim();
+    if (!id) return null;
+
+    const map = this.getDeletedBooksMap();
+    const existing = map[id] || {};
+    const bookObj = isObj ? bookOrId : {};
+    const deletedAt = Math.max(Number(meta.deletedAt) || Date.now(), Number(existing.deletedAt) || 0);
+    const syncedDeletion = meta.syncedDeletion === true
+      ? true
+      : (meta.syncedDeletion === false ? false : Boolean(existing.syncedDeletion));
+
+    map[id] = {
+      id,
+      deletedAt,
+      filePath: meta.filePath ?? meta.file_path ?? bookObj.file_path ?? existing.filePath ?? null,
+      coverPath: meta.coverPath ?? meta.cover_path ?? bookObj.cover_path ?? existing.coverPath ?? null,
+      fileHash: meta.fileHash ?? meta.file_hash ?? bookObj.fileHash ?? bookObj.file_hash ?? existing.fileHash ?? null,
+      fileName: meta.fileName ?? meta.file_name ?? bookObj.fileName ?? bookObj.file_name ?? existing.fileName ?? null,
+      title: meta.title ?? bookObj.title ?? existing.title ?? null,
+      isPdf: Boolean(meta.isPdf ?? bookObj.isPdf ?? (bookObj.format === "pdf" || bookObj.file_type === "pdf") ?? existing.isPdf),
+      syncedDeletion
+    };
+    this._saveDeletedBooksMap(map);
+    return map[id];
+  }
+
+  getUnsyncedDeletedBooks() {
+    return Object.values(this.getDeletedBooksMap()).filter(
+      entry => entry && entry.id && entry.syncedDeletion !== true
+    );
+  }
+
+  markBookDeletionSynced(bookId) {
+    const cleanId = String(bookId ?? "").trim();
+    if (!cleanId) return;
+    const map = this.getDeletedBooksMap();
+    if (map[cleanId]) {
+      map[cleanId].syncedDeletion = true;
+      this._saveDeletedBooksMap(map);
+    }
+  }
+
+  findDeletedBookEntry(bookOrId) {
+    const map = this.getDeletedBooksMap();
+    const isObj = bookOrId && typeof bookOrId === "object";
+    const id = String(isObj ? (bookOrId.id ?? "") : (bookOrId ?? "")).trim();
+    if (id && map[id]) return map[id];
+    if (!isObj) return null;
+
+    const filePath = bookOrId.file_path || bookOrId.filePath || null;
+    const fileHash = bookOrId.fileHash || bookOrId.file_hash || null;
+    for (const entry of Object.values(map)) {
+      if (!entry) continue;
+      if (filePath && entry.filePath && entry.filePath === filePath) return entry;
+      if (fileHash && entry.fileHash && entry.fileHash === fileHash) return entry;
+    }
+    return null;
+  }
+
+  removeDeletedBookRecord(bookOrId, meta = {}) {
+    const map = this.getDeletedBooksMap();
+    const isObj = bookOrId && typeof bookOrId === "object";
+    const id = String(isObj ? (bookOrId.id ?? "") : (bookOrId ?? "")).trim();
+    const filePath = meta.filePath ?? meta.file_path ?? (isObj ? (bookOrId.file_path || bookOrId.filePath) : null);
+    const fileHash = meta.fileHash ?? meta.file_hash ?? (isObj ? (bookOrId.fileHash || bookOrId.file_hash) : null);
+
+    let changed = false;
+    if (id && map[id]) {
+      delete map[id];
+      changed = true;
+    }
+    for (const [k, entry] of Object.entries(map)) {
+      if (!entry) continue;
+      if ((filePath && entry.filePath === filePath) || (fileHash && entry.fileHash === fileHash)) {
+        delete map[k];
+        changed = true;
+      }
+    }
+    if (changed) {
+      this._saveDeletedBooksMap(map);
+    }
+  }
+
+  async markBookSyncState(bookId, updates = {}) {
+    if (!bookId || !updates || typeof updates !== "object") return false;
+    const existing = await this._getBookRecordRaw(bookId);
+    if (!existing) return false;
+    const updated = { ...existing };
+    for (const [key, val] of Object.entries(updates)) {
+      if (val !== undefined) {
+        updated[key] = val;
+      }
+    }
+    delete updated.data;
+    delete updated.fileData;
+    await this.saveBookRaw(updated);
+    return true;
   }
 
   async updateBookProgress(bookId, updates) {
@@ -1352,7 +1512,7 @@ export class StorageManager {
    */
   async reconcileSessionsWithCloud() {
     try {
-      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.9");
+      const { supabaseSync } = await import("./supabase-sync.js?v=2.9.10");
       if (!supabaseSync || !supabaseSync.isOnline()) {
         return { success: false, reason: "offline", purged: 0, saved: 0 };
       }

@@ -4,23 +4,23 @@
  * pravítko (ruler) a statistické dashboardy do jednoho celku.
  */
 
-import { storage, computeFileHash, isTouchCapableDevice, getBookProgressTimestamp } from "./storage.js?v=2.9.9";
+import { storage, computeFileHash, isTouchCapableDevice, getBookProgressTimestamp } from "./storage.js?v=2.9.10";
 import {
   EpubParser,
   buildChapterTextIndex,
   captureViewportAnchor,
   mapAnchorToPageIndex,
   mapAnchorToVerticalOffset
-} from "./epub-parser.js?v=2.9.9";
-import { PDFLoader } from "./pdf-loader.js?v=2.9.9";
-import { tracker, ReadingTracker } from "./tracker.js?v=2.9.9";
-import { ReadingRuler } from "./ruler.js?v=2.9.9";
-import { StatsCharts } from "./charts.js?v=2.9.9";
-import { supabaseSync } from "./supabase-sync.js?v=2.9.9";
-import { supabase } from "./supabase-client.js?v=2.9.9";
-import * as TextParser from "./text-parser.js?v=2.9.9";
+} from "./epub-parser.js?v=2.9.10";
+import { PDFLoader } from "./pdf-loader.js?v=2.9.10";
+import { tracker, ReadingTracker } from "./tracker.js?v=2.9.10";
+import { ReadingRuler } from "./ruler.js?v=2.9.10";
+import { StatsCharts } from "./charts.js?v=2.9.10";
+import { supabaseSync } from "./supabase-sync.js?v=2.9.10";
+import { supabase } from "./supabase-client.js?v=2.9.10";
+import * as TextParser from "./text-parser.js?v=2.9.10";
 
-export const APP_VERSION = "v2.9.9";
+export const APP_VERSION = "v2.9.10";
 
 const HTML_BIONIC_REGEX = /(<(?:script|style|code|pre|svg)\b[^>]*>[\s\S]*?<\/(?:script|style|code|pre|svg)>|<b\b[^>]*class=["'][^"']*bionic-(?:fixation|bold)[^"']*["'][^>]*>[\s\S]*?<\/b>|<!--[\s\S]*?-->|<[^>]+>|&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);)|([\p{L}\p{N}]+)/giu;
 const BIONIC_BLOCK_SELECTOR = "p, li, blockquote, h1, h2, h3, h4, h5, h6, dd, dt";
@@ -223,7 +223,7 @@ export class LuminaApp {
           if (supabaseSync && typeof supabaseSync.isOnline === "function" && supabaseSync.isOnline()) {
             this.syncWithCloud(false).then(async (res) => {
               const s = res?.stats;
-              if (s && ((books.length === 0 && (s.metadataSynced > 0 || s.downloaded > 0)) || s.coversDownloaded > 0)) {
+              if (s && ((books.length === 0 && (s.metadataSynced > 0 || s.downloaded > 0)) || s.coversDownloaded > 0 || s.deletedFromCloud > 0)) {
                 await this.renderLibrary();
               }
             }).catch(err => {
@@ -4585,9 +4585,14 @@ export class LuminaApp {
             totalWords: this.pdfLoader.numPages * 250,
             wordsRead: 0,
             progressPercent: 0,
-            pdfRulerConfig
+            pdfRulerConfig,
+            syncedToCloud: false,
+            isPendingSync: true
           };
 
+          if (typeof storage.removeDeletedBookRecord === "function") {
+            storage.removeDeletedBookRecord(bookId, { fileHash, filePath: bookData.file_path });
+          }
           await storage.saveBook(bookData);
           supabaseSync.uploadBook(bookData).catch(err => {
             console.error("[Supabase Sync] PDF upload failed:", err);
@@ -4679,9 +4684,14 @@ export class LuminaApp {
           totalChapters: parser.spine.length,
           totalWords: wordStats.totalWords,
           wordsRead: 0,
-          progressPercent: 0
+          progressPercent: 0,
+          syncedToCloud: false,
+          isPendingSync: true
         };
 
+        if (typeof storage.removeDeletedBookRecord === "function") {
+          storage.removeDeletedBookRecord(bookId, { fileName: file.name, title: bookData.title });
+        }
         await storage.saveBook(bookData);
         supabaseSync.uploadBook(bookData).catch(err => {
           console.error("[Supabase Sync] EPUB upload failed:", err);
@@ -4876,16 +4886,41 @@ export class LuminaApp {
     btnDelete.addEventListener("click", async (e) => {
       e.stopPropagation();
       if (confirm(`Opravdu chcete odebrat knihu „${book.title}“ z knihovny?`)) {
+        const bookSnapshot = { ...book };
+        if (this.currentBook && this.currentBook.id === book.id) {
+          this.currentBook = null;
+        }
+        if (this._supabaseSyncTimer) {
+          clearTimeout(this._supabaseSyncTimer);
+          this._supabaseSyncTimer = null;
+        }
+        if (this.saveProgressTimer) {
+          clearTimeout(this.saveProgressTimer);
+          this.saveProgressTimer = null;
+        }
+        if (supabaseSync && typeof supabaseSync.markBookPendingDeletion === "function") {
+          supabaseSync.markBookPendingDeletion(bookSnapshot);
+        }
+
         await storage.deleteBook(book.id);
-        try {
-          localStorage.removeItem(`lumina_bookmarks_${book.id}`);
-          localStorage.removeItem(`lumina_bookmarks_deleted_${book.id}`);
-        } catch (_) {}
-        supabaseSync.deleteBook(book.id).catch(err => {
-          console.warn("[SupabaseSync] Smazání knihy z cloudu selhalo:", err);
-        });
-        this.showToast(`Kniha byla odebrána`, "info");
+        if (typeof storage.recalculateAndNormalizeStats === "function") {
+          await storage.recalculateAndNormalizeStats().catch(() => {});
+        }
         await this.renderLibrary();
+        await this.refreshStatsUI();
+
+        const cloudRes = await supabaseSync.deleteBook(bookSnapshot).catch(err => {
+          console.warn("[SupabaseSync] Smazání knihy z cloudu selhalo:", err);
+          return { success: false, error: err };
+        });
+
+        if (cloudRes?.success) {
+          this.showToast(`Kniha byla odebrána`, "info");
+        } else if (cloudRes?.reason === "offline") {
+          this.showToast(`Kniha byla odebrána lokálně (smaže se ze serveru po připojení)`, "info");
+        } else {
+          this.showToast(`Kniha odebrána lokálně; smazání ze serveru se zopakuje při příští synchronizaci`, "warning");
+        }
       }
     });
 
@@ -5067,6 +5102,7 @@ export class LuminaApp {
       const stats = res.stats || {};
       const parts = [];
       if (stats.metadataSynced > 0) parts.push(`nová metadata knih: ${stats.metadataSynced}`);
+      if (stats.deletedFromCloud > 0) parts.push(`odebráno z cloudu: ${stats.deletedFromCloud}`);
       if (stats.coversDownloaded > 0) parts.push(`obálky: ${stats.coversDownloaded}`);
       if (stats.downloaded > 0) parts.push(`staženo knih: ${stats.downloaded}`);
       if (stats.uploaded > 0) parts.push(`nahráno knih: ${stats.uploaded}`);
@@ -5098,7 +5134,7 @@ export class LuminaApp {
     try {
       const res = await supabaseSync.syncAll({ silent: !interactive });
       if (res?.success) {
-        if (res.stats?.metadataSynced > 0 || res.stats?.coversDownloaded > 0 || res.stats?.downloaded > 0 || res.stats?.updatedFromCloud > 0) {
+        if (res.stats?.metadataSynced > 0 || res.stats?.deletedFromCloud > 0 || res.stats?.coversDownloaded > 0 || res.stats?.downloaded > 0 || res.stats?.updatedFromCloud > 0) {
           await this.renderLibrary();
           if (this.currentBook) {
             const refreshed = await storage.getBook(this.currentBook.id);

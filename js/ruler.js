@@ -9,7 +9,7 @@
  * - Plovoucí ovládací panel pro krokování po řádcích/slovech a automatické tempo
  */
 
-import { countWords, isValidWord } from "./text-parser.js?v=2.9.9";
+import { countWords, isValidWord } from "./text-parser.js?v=2.9.10";
 
 export const RULER_PADDING = 6; // px - jednotný offset pro vertikální i horizontální odsazení v řádkovém režimu
 export const RULER_WAVE_WIDTH = 80; // px - výchozí referenční šířka vlnky indikátoru čteného slova pro režim Spodní clona (Bottom Cover)

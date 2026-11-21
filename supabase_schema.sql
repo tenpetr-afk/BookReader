@@ -24,13 +24,15 @@ CREATE TABLE IF NOT EXISTS public.books (
     reading_anchor JSONB DEFAULT NULL,
     bookmarks JSONB DEFAULT '[]'::jsonb,
     progress_updated_at TIMESTAMPTZ DEFAULT NULL,
+    is_deleted BOOLEAN DEFAULT FALSE,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- Migrace pro stávající databáze: přidání sloupců pro obsahovou kotvu EPUB, záložky, metadata a obálky
+-- Migrace pro stávající databáze: přidání sloupců pro obsahovou kotvu EPUB, záložky, soft delete, metadata a obálky
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS reading_anchor JSONB DEFAULT NULL;
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS bookmarks JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS progress_updated_at TIMESTAMPTZ DEFAULT NULL;
+ALTER TABLE public.books ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS author TEXT DEFAULT NULL;
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS file_size BIGINT DEFAULT NULL;
 ALTER TABLE public.books ADD COLUMN IF NOT EXISTS file_hash TEXT DEFAULT NULL;
@@ -42,6 +44,7 @@ ALTER TABLE public.books ADD COLUMN IF NOT EXISTS total_words INTEGER DEFAULT NU
 
 CREATE INDEX IF NOT EXISTS idx_books_updated_at ON public.books (updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_books_progress_updated_at ON public.books (progress_updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_books_is_deleted ON public.books (is_deleted);
 
 ALTER TABLE public.books ENABLE ROW LEVEL SECURITY;
 
@@ -124,5 +127,22 @@ BEGIN
         ON public.reading_stats_summary FOR ALL 
         TO anon, authenticated 
         USING (true) WITH CHECK (true);
+    END IF;
+END $$;
+
+-- 4. Row Level Security (RLS) politika pro Storage bucket 'book-files' (SELECT, INSERT, UPDATE, DELETE)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'storage'
+          AND tablename = 'objects'
+          AND policyname = 'Allow public access on book-files'
+    ) THEN
+        CREATE POLICY "Allow public access on book-files"
+        ON storage.objects FOR ALL
+        TO anon, authenticated
+        USING (bucket_id = 'book-files')
+        WITH CHECK (bucket_id = 'book-files');
     END IF;
 END $$;
