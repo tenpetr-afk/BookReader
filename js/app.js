@@ -546,7 +546,7 @@ export class LuminaApp {
   isInteractiveOrUiElement(target) {
     if (!target || !target.closest) return false;
     return !!target.closest(
-      'header, nav, footer, .paged-footer-bar, .reading-scrubber, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, button, input, select, textarea, [role="button"], [role="dialog"], [role="slider"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group, #ruler-toggle-btn, #ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group'
+      'header, nav, footer, .paged-footer-bar, .reading-scrubber, .modal, .modal-content, .settings-modal, .stats-modal, .dropdown, .font-dropdown-menu, button, input, select, textarea, [role="button"], [role="dialog"], [role="slider"], .drawer-panel, .drawer-backdrop, .modal-overlay, .ruler-quick-popover, .ruler-btn-group, #ruler-toggle-btn, #ruler-split-pill, .split-pill-btn, #btn-toggle-ruler, #btn-ruler-quick-menu, #btn-reader-menu-fab, #reader-floating-dock, .reader-floating-dock, .dock-action-row, .dock-action-btn, #footer-remaining-chapter, #footer-book-pages, .footer-actions-group'
     );
   }
 
@@ -1111,6 +1111,9 @@ export class LuminaApp {
     const isLiquidGlass = !!s.liquidGlassUi;
     document.body.classList.toggle("ui-liquid-glass", isLiquidGlass);
     document.documentElement.classList.toggle("ui-liquid-glass", isLiquidGlass);
+    if (!isLiquidGlass) {
+      this.closeFontDropdown();
+    }
     if (this.dom.settingLiquidGlass) {
       this.setSwitchState(this.dom.settingLiquidGlass, isLiquidGlass);
     }
@@ -2293,7 +2296,8 @@ export class LuminaApp {
       document.getElementById("footer-actions-group"),
       document.getElementById("footer-scrubber-slot"),
       document.getElementById("pill-scrubber-container"),
-      document.getElementById("ruler-quick-popover")
+      document.getElementById("ruler-quick-popover"),
+      document.getElementById("font-dropdown-menu")
     ].filter(Boolean);
 
     uiContainers.forEach((container) => {
@@ -2865,30 +2869,33 @@ export class LuminaApp {
 
     // Dropdown písma (Google Docs style)
     if (this.dom.fontDropdownTrigger && this.dom.fontDropdownWrapper) {
-      const closeFontDropdown = () => {
-        this.dom.fontDropdownWrapper.classList.remove("open");
-        this.dom.fontDropdownTrigger.setAttribute("aria-expanded", "false");
-      };
-
-      const toggleFontDropdown = () => {
-        const isOpen = this.dom.fontDropdownWrapper.classList.toggle("open");
-        this.dom.fontDropdownTrigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
-      };
-
       this.dom.fontDropdownTrigger.addEventListener("click", (e) => {
         e.stopPropagation();
-        toggleFontDropdown();
+        this.toggleFontDropdown();
       });
 
       document.addEventListener("click", (e) => {
-        if (!this.dom.fontDropdownWrapper.contains(e.target)) {
-          closeFontDropdown();
+        if (!this.dom.fontDropdownWrapper.contains(e.target) && !this.dom.fontDropdownMenu?.contains(e.target)) {
+          this.closeFontDropdown();
         }
       });
 
+      if (this.dom.settingsDrawer) {
+        this.dom.settingsDrawer.addEventListener("click", (e) => {
+          if (
+            this.dom.fontDropdownWrapper.classList.contains("open") &&
+            !this.dom.fontDropdownWrapper.contains(e.target) &&
+            !this.dom.fontDropdownMenu?.contains(e.target)
+          ) {
+            this.closeFontDropdown();
+          }
+        });
+      }
+
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && this.dom.fontDropdownWrapper.classList.contains("open")) {
-          closeFontDropdown();
+          e.stopPropagation();
+          this.closeFontDropdown();
           this.dom.fontDropdownTrigger.focus();
         }
       });
@@ -2906,11 +2913,8 @@ export class LuminaApp {
         this.settings.fontFamily = fontKey;
         this.applySettings();
         storage.saveSettings(this.settings);
-        if (this.dom.fontDropdownWrapper) {
-          this.dom.fontDropdownWrapper.classList.remove("open");
-        }
+        this.closeFontDropdown();
         if (this.dom.fontDropdownTrigger) {
-          this.dom.fontDropdownTrigger.setAttribute("aria-expanded", "false");
           this.dom.fontDropdownTrigger.focus();
         }
 
@@ -8663,12 +8667,164 @@ export class LuminaApp {
     }
   }
 
+  isLiquidGlassActive() {
+    return document.body.classList.contains("ui-liquid-glass");
+  }
+
+  positionFontDropdownPortal() {
+    const wrapper = this.dom.fontDropdownWrapper;
+    const trigger = this.dom.fontDropdownTrigger;
+    const menu = this.dom.fontDropdownMenu;
+    if (!wrapper || !trigger || !menu || !wrapper.classList.contains("open")) return;
+    if (!menu.classList.contains("is-liquid-glass-portal")) return;
+
+    const triggerRect = trigger.getBoundingClientRect();
+    if (triggerRect.width <= 0 || triggerRect.height <= 0) {
+      this.closeFontDropdown();
+      return;
+    }
+
+    const drawerBody = this.dom.settingsDrawer?.querySelector(".settings-drawer-body");
+    if (drawerBody) {
+      const bodyRect = drawerBody.getBoundingClientRect();
+      if (triggerRect.bottom <= bodyRect.top + 4 || triggerRect.top >= bodyRect.bottom - 4) {
+        this.closeFontDropdown();
+        return;
+      }
+    }
+
+    const gap = 6;
+    const viewportMargin = 12;
+    const spaceBelow = window.innerHeight - triggerRect.bottom - viewportMargin;
+    const spaceAbove = triggerRect.top - viewportMargin;
+
+    menu.style.position = "fixed";
+    menu.style.left = `${Math.round(triggerRect.left)}px`;
+    menu.style.right = "auto";
+    menu.style.width = `${Math.round(triggerRect.width)}px`;
+    menu.style.zIndex = "1100";
+
+    if (spaceBelow < 160 && spaceAbove > spaceBelow) {
+      menu.style.top = "auto";
+      menu.style.bottom = `${Math.round(window.innerHeight - triggerRect.top + gap)}px`;
+      menu.style.maxHeight = `${Math.min(280, Math.max(120, Math.floor(spaceAbove)))}px`;
+    } else {
+      menu.style.bottom = "auto";
+      menu.style.top = `${Math.round(triggerRect.bottom + gap)}px`;
+      menu.style.maxHeight = `${Math.min(280, Math.max(140, Math.floor(spaceBelow)))}px`;
+    }
+  }
+
+  _attachFontDropdownPortalListeners() {
+    if (this._fontDropdownPortalListenersAttached) return;
+    this._fontDropdownPortalListenersAttached = true;
+
+    this._onFontDropdownReposition = () => {
+      if (this._fontDropdownRepositionRaf) return;
+      this._fontDropdownRepositionRaf = requestAnimationFrame(() => {
+        this._fontDropdownRepositionRaf = null;
+        this.positionFontDropdownPortal();
+      });
+    };
+
+    const drawerBody = this.dom.settingsDrawer?.querySelector(".settings-drawer-body");
+    if (drawerBody) {
+      drawerBody.addEventListener("scroll", this._onFontDropdownReposition, { passive: true });
+    }
+    window.addEventListener("resize", this._onFontDropdownReposition, { passive: true });
+    if (this.dom.settingsDrawer) {
+      this.dom.settingsDrawer.addEventListener("transitionend", this._onFontDropdownReposition);
+    }
+  }
+
+  _detachFontDropdownPortalListeners() {
+    if (!this._fontDropdownPortalListenersAttached) return;
+    this._fontDropdownPortalListenersAttached = false;
+
+    if (this._fontDropdownRepositionRaf) {
+      cancelAnimationFrame(this._fontDropdownRepositionRaf);
+      this._fontDropdownRepositionRaf = null;
+    }
+
+    const drawerBody = this.dom.settingsDrawer?.querySelector(".settings-drawer-body");
+    if (drawerBody && this._onFontDropdownReposition) {
+      drawerBody.removeEventListener("scroll", this._onFontDropdownReposition);
+    }
+    if (this._onFontDropdownReposition) {
+      window.removeEventListener("resize", this._onFontDropdownReposition);
+      if (this.dom.settingsDrawer) {
+        this.dom.settingsDrawer.removeEventListener("transitionend", this._onFontDropdownReposition);
+      }
+    }
+    this._onFontDropdownReposition = null;
+  }
+
+  openFontDropdown() {
+    const wrapper = this.dom.fontDropdownWrapper;
+    const trigger = this.dom.fontDropdownTrigger;
+    const menu = this.dom.fontDropdownMenu;
+    if (!wrapper || !trigger) return;
+
+    wrapper.classList.add("open");
+    trigger.setAttribute("aria-expanded", "true");
+
+    if (menu && this.isLiquidGlassActive()) {
+      // Move out of #settings-drawer (which creates a backdrop-filter/transform Backdrop Root)
+      // so Safari & Chromium genuinely blur sibling controls inside the modal behind the menu.
+      if (menu.parentElement !== document.body) {
+        document.body.appendChild(menu);
+      }
+      menu.classList.add("is-liquid-glass-portal", "open");
+      this.positionFontDropdownPortal();
+      this._attachFontDropdownPortalListeners();
+    }
+  }
+
+  closeFontDropdown() {
+    const wrapper = this.dom.fontDropdownWrapper;
+    const trigger = this.dom.fontDropdownTrigger;
+    const menu = this.dom.fontDropdownMenu;
+
+    this._detachFontDropdownPortalListeners();
+
+    if (wrapper) {
+      wrapper.classList.remove("open");
+    }
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+    }
+    if (menu) {
+      menu.classList.remove("is-liquid-glass-portal", "open");
+      menu.style.position = "";
+      menu.style.top = "";
+      menu.style.bottom = "";
+      menu.style.left = "";
+      menu.style.right = "";
+      menu.style.width = "";
+      menu.style.maxHeight = "";
+      menu.style.zIndex = "";
+      if (wrapper && menu.parentElement !== wrapper) {
+        wrapper.appendChild(menu);
+      }
+    }
+  }
+
+  toggleFontDropdown() {
+    if (!this.dom.fontDropdownWrapper) return;
+    if (this.dom.fontDropdownWrapper.classList.contains("open")) {
+      this.closeFontDropdown();
+    } else {
+      this.openFontDropdown();
+    }
+  }
+
   toggleDrawer(name) {
     this.closeFloatingDock();
     if (name === "toc") {
       const willOpen = !this.dom.tocDrawer?.classList.contains("open");
       this.dom.tocDrawer?.classList.toggle("open", willOpen);
       this.dom.settingsDrawer?.classList.remove("open");
+      this.closeFontDropdown();
       this.dom.searchDrawer?.classList.remove("open");
       document.body.classList.remove("settings-sheet-open");
       if (this.dom.drawerBackdrop) {
@@ -8681,6 +8837,9 @@ export class LuminaApp {
     } else if (name === "settings") {
       const willOpen = !this.dom.settingsDrawer?.classList.contains("open");
       this.dom.settingsDrawer?.classList.toggle("open", willOpen);
+      if (!willOpen) {
+        this.closeFontDropdown();
+      }
       this.dom.tocDrawer?.classList.remove("open");
       this.dom.searchDrawer?.classList.remove("open");
       document.body.classList.toggle("settings-sheet-open", willOpen);
@@ -8709,6 +8868,7 @@ export class LuminaApp {
       this.dom.searchDrawer?.classList.toggle("open", willOpen);
       this.dom.tocDrawer?.classList.remove("open");
       this.dom.settingsDrawer?.classList.remove("open");
+      this.closeFontDropdown();
       document.body.classList.remove("settings-sheet-open");
       if (this.dom.drawerBackdrop) {
         this.dom.drawerBackdrop.classList.remove("backdrop-transparent");
@@ -8726,7 +8886,10 @@ export class LuminaApp {
   closeDrawer(name) {
     this.closeFloatingDock();
     if (name === "toc" && this.dom.tocDrawer) this.dom.tocDrawer.classList.remove("open");
-    if (name === "settings" && this.dom.settingsDrawer) this.dom.settingsDrawer.classList.remove("open");
+    if (name === "settings" && this.dom.settingsDrawer) {
+      this.dom.settingsDrawer.classList.remove("open");
+      this.closeFontDropdown();
+    }
     if (name === "search" && this.dom.searchDrawer) this.dom.searchDrawer.classList.remove("open");
     const isTocOpen = this.dom.tocDrawer && this.dom.tocDrawer.classList.contains("open");
     const isSettingsOpen = this.dom.settingsDrawer && this.dom.settingsDrawer.classList.contains("open");
@@ -8770,6 +8933,9 @@ export class LuminaApp {
 
   switchToSettingsTab(targetPaneId) {
     if (!this.dom.settingsDrawer) return;
+    if (targetPaneId !== "tab-pane-font") {
+      this.closeFontDropdown();
+    }
 
     // V PDF režimu záložka Písmo není dostupná - přesměrovat na Vzhled
     if (this.isPdfMode && targetPaneId === "tab-pane-font") {

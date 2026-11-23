@@ -322,7 +322,7 @@ export class ReadingTracker {
     const onUserAction = (e) => {
       if (!this._isReaderActivelyVisible()) return;
       if (e && e.target && typeof e.target.closest === "function") {
-        if (e.target.closest("#stats-modal, #settings-drawer, #toc-drawer, #search-drawer")) {
+        if (e.target.closest("#stats-modal, #settings-drawer, #toc-drawer, #search-drawer, #font-dropdown-menu")) {
           return;
         }
       }

@@ -357,13 +357,16 @@ body:not(.is-pdf-mode) .paged-content:not(.is-pdf-mode) > *:last-child *:last-ch
   border: none !important;
   box-shadow: none !important;
   color: var(--text-main, currentColor) !important;
-  padding: 6px !important;
+  padding: 0 !important;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px !important;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  min-height: auto !important;
+  border-radius: 50% !important;
   transition: transform var(--transition-fast, 0.15s), background-color var(--transition-fast, 0.15s);
 }
 
@@ -377,16 +380,16 @@ body:not(.is-pdf-mode) .paged-content:not(.is-pdf-mode) > *:last-child *:last-ch
   border: none !important;
   box-shadow: none !important;
   color: var(--text-main, currentColor) !important;
-  padding: 6px !important;
+  padding: 0 !important;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  min-width: 34px;
-  min-height: 34px !important;
-  width: auto;
-  height: auto;
+  border-radius: 50% !important;
+  min-width: 38px;
+  min-height: 38px !important;
+  width: 38px;
+  height: 38px;
   transition: transform var(--transition-fast, 0.15s), background-color var(--transition-fast, 0.15s), color var(--transition-fast, 0.15s);
 }
 
@@ -4852,8 +4855,9 @@ body.parchment-texture.theme-light::before {
 
 [data-theme="espresso"] body.parchment-texture::before,
 body.parchment-texture.theme-espresso::before {
-  mix-blend-mode: soft-light;
-  opacity: 0.28;
+  mix-blend-mode: overlay;
+  filter: brightness(0.57) contrast(5.2) sepia(0.35);
+  opacity: 0.45;
 }
 
 [data-theme="espresso"] body.parchment-texture .drawer-panel::before,
@@ -4870,17 +4874,23 @@ body.parchment-texture.theme-espresso::before {
 [data-theme="espresso"] body.parchment-texture .dock-action-btn::before,
 [data-theme="espresso"] body.parchment-texture .pill-scrubber-tooltip::before,
 [data-theme="espresso"] body.parchment-texture #pill-scrubber-container.footer-scrubber .pill-scrubber-track::before {
-  mix-blend-mode: soft-light;
-  opacity: 0.24;
+  mix-blend-mode: overlay;
+  filter: brightness(0.57) contrast(5.2) sepia(0.35);
+  opacity: 0.36;
 }
 
 [data-theme="dark"] body.parchment-texture::before,
-body.parchment-texture.theme-dark::before,
+body.parchment-texture.theme-dark::before {
+  mix-blend-mode: screen;
+  filter: grayscale(1) brightness(0.53) contrast(6);
+  opacity: 0.24;
+}
+
 [data-theme="oled"] body.parchment-texture::before,
 body.parchment-texture.theme-oled::before {
-  mix-blend-mode: soft-light;
-  filter: saturate(0.25);
-  opacity: 0.16;
+  mix-blend-mode: screen;
+  filter: grayscale(1) brightness(0.52) contrast(6.5);
+  opacity: 0.22;
 }
 
 [data-theme="dark"] body.parchment-texture .drawer-panel::before,
@@ -4896,7 +4906,12 @@ body.parchment-texture.theme-oled::before {
 [data-theme="dark"] body.parchment-texture .btn-reader-menu-fab:not([aria-expanded="true"]):not(.active)::before,
 [data-theme="dark"] body.parchment-texture .dock-action-btn::before,
 [data-theme="dark"] body.parchment-texture .pill-scrubber-tooltip::before,
-[data-theme="dark"] body.parchment-texture #pill-scrubber-container.footer-scrubber .pill-scrubber-track::before,
+[data-theme="dark"] body.parchment-texture #pill-scrubber-container.footer-scrubber .pill-scrubber-track::before {
+  mix-blend-mode: screen;
+  filter: grayscale(1) brightness(0.53) contrast(6);
+  opacity: 0.18;
+}
+
 [data-theme="oled"] body.parchment-texture .drawer-panel::before,
 [data-theme="oled"] body.parchment-texture #stats-modal .modal-content::before,
 [data-theme="oled"] body.parchment-texture #ruler-quick-popover::before,
@@ -4911,9 +4926,16 @@ body.parchment-texture.theme-oled::before {
 [data-theme="oled"] body.parchment-texture .dock-action-btn::before,
 [data-theme="oled"] body.parchment-texture .pill-scrubber-tooltip::before,
 [data-theme="oled"] body.parchment-texture #pill-scrubber-container.footer-scrubber .pill-scrubber-track::before {
-  mix-blend-mode: soft-light;
-  filter: saturate(0.25);
-  opacity: 0.14;
+  mix-blend-mode: screen;
+  filter: grayscale(1) brightness(0.52) contrast(6.5);
+  opacity: 0.16;
+}
+
+/* V normálním UI vodorovného EPUB režimu jsou tlačítka zpět a záložky průhledná — bez duplicitní vrstvy pergamenu */
+body.parchment-texture:not(.ui-liquid-glass):not(.mode-vertical):not(.is-pdf-mode) .btn-back-library::before,
+body.parchment-texture:not(.ui-liquid-glass):not(.mode-vertical):not(.is-pdf-mode) .btn-bookmark-toggle::before {
+  content: none !important;
+  display: none !important;
 }
 
 
