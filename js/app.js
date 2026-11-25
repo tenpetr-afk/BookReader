@@ -248,6 +248,7 @@ export class LuminaApp {
   setupEventListeners() {
     this.bindEvents();
     this.initSegmentedBubbles();
+    this.initLiquidGlassSliders();
     this.updateRulerFollowModeUI();
     try {
       const handleTouchCapChange = () => {
@@ -264,29 +265,41 @@ export class LuminaApp {
         }
       });
     } catch (_) {}
-    // Automatická synchronizace grafické výplně tekutého skla pro všechny posuvníky
+    // Automatická synchronizace grafické výplně tekutého skla pro všechny posuvníky (capture zachytí i prvky se stopPropagation)
     document.addEventListener("input", (e) => {
       if (e.target && e.target.type === "range") {
         this.updateRangeFill(e.target);
       }
-    }, { passive: true });
+    }, { capture: true, passive: true });
 
-    // Interakční stavy Liquid Glass posuvníků (aktivní elastické roztažení na dotek / kliknutí)
-    document.addEventListener("pointerdown", (e) => {
-      const slider = e.target && e.target.closest && e.target.closest('input[type="range"]');
-      if (slider) {
-        slider.classList.add("is-active");
-      }
-    }, { passive: true });
+    // Interakční stavy Liquid Glass posuvníků (aktivní elastické roztažení + skleněná lupa na dotek / kliknutí)
+    const activateSlider = (slider) => {
+      if (!slider) return;
+      slider.classList.add("is-active");
+      const wrap = slider.closest(".lq-slider-wrap");
+      if (wrap) wrap.classList.add("is-active");
+      this.updateRangeFill(slider);
+    };
 
     const clearActiveSliders = () => {
       document.querySelectorAll('input[type="range"].is-active').forEach(sl => {
         sl.classList.remove("is-active");
       });
+      document.querySelectorAll('.lq-slider-wrap.is-active').forEach(wrap => {
+        wrap.classList.remove("is-active");
+      });
     };
 
-    document.addEventListener("pointerup", clearActiveSliders, { passive: true });
-    document.addEventListener("pointercancel", clearActiveSliders, { passive: true });
+    document.addEventListener("pointerdown", (e) => {
+      const slider = e.target && e.target.closest && e.target.closest('input[type="range"]');
+      if (slider) {
+        activateSlider(slider);
+      }
+    }, { capture: true, passive: true });
+
+    document.addEventListener("pointerup", clearActiveSliders, { capture: true, passive: true });
+    document.addEventListener("pointercancel", clearActiveSliders, { capture: true, passive: true });
+    window.addEventListener("blur", clearActiveSliders);
     this.syncAllRangeFills();
   }
 
@@ -758,7 +771,7 @@ export class LuminaApp {
       clearTimeout(el._morphTimer);
       el._morphTimer = setTimeout(() => {
         el.classList.remove("is-morphing", "morph-to-on", "morph-to-off");
-      }, 300);
+      }, 380);
     }
   }
 
@@ -849,6 +862,111 @@ export class LuminaApp {
     }
   }
 
+  initLiquidGlassSliders() {
+    const valueIdMap = {
+      "slider-font-size": "val-font-size",
+      "slider-line-height": "val-line-height",
+      "slider-letter-spacing": "val-letter-spacing",
+      "slider-word-spacing": "val-word-spacing",
+      "slider-page-margin": "val-page-margin",
+      "slider-ruler-opacity": "val-ruler-opacity",
+      "slider-pdf-ruler-height": "val-pdf-ruler-height",
+      "popover-slider-ruler-opacity": "popover-val-ruler-opacity",
+      "popover-slider-pdf-height": "popover-val-pdf-height"
+    };
+
+    document.querySelectorAll('input[type="range"].slider-input').forEach((input) => {
+      if (!input.closest(".lq-slider-wrap")) {
+        const wrap = document.createElement("div");
+        wrap.className = "lq-slider-wrap";
+
+        const track = document.createElement("div");
+        track.className = "lq-slider-track";
+        track.setAttribute("aria-hidden", "true");
+
+        const fill = document.createElement("div");
+        fill.className = "lq-slider-fill";
+        track.appendChild(fill);
+
+        const lens = document.createElement("span");
+        lens.className = "lq-slider-lens";
+        lens.setAttribute("aria-hidden", "true");
+
+        const badge = document.createElement("span");
+        badge.className = "lq-slider-value-badge";
+        badge.setAttribute("aria-hidden", "true");
+
+        input.parentNode.insertBefore(wrap, input);
+        wrap.appendChild(track);
+        wrap.appendChild(lens);
+        wrap.appendChild(badge);
+        wrap.appendChild(input);
+      }
+
+      if (!input.dataset.lqValueTarget && valueIdMap[input.id]) {
+        input.dataset.lqValueTarget = valueIdMap[input.id];
+      }
+
+      if (!input.dataset.lqSliderBound) {
+        input.dataset.lqSliderBound = "1";
+        let keyTimer = null;
+        input.addEventListener("keydown", (e) => {
+          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(e.key)) {
+            const wrap = input.closest(".lq-slider-wrap");
+            input.classList.add("is-active");
+            if (wrap) wrap.classList.add("is-active");
+            clearTimeout(keyTimer);
+            keyTimer = setTimeout(() => {
+              input.classList.remove("is-active");
+              if (wrap) wrap.classList.remove("is-active");
+            }, 700);
+          }
+        });
+        input.addEventListener("input", () => {
+          this.updateRangeFill(input);
+        }, { passive: true });
+        input.addEventListener("blur", () => {
+          const wrap = input.closest(".lq-slider-wrap");
+          input.classList.remove("is-active");
+          if (wrap) wrap.classList.remove("is-active");
+        });
+      }
+    });
+  }
+
+  getSliderDisplayValue(input) {
+    if (!input) return "";
+    const num = parseFloat(input.value);
+    if (!Number.isNaN(num)) {
+      switch (input.id) {
+        case "slider-font-size":
+        case "slider-letter-spacing":
+        case "slider-word-spacing":
+          return `${num}px`;
+        case "slider-line-height":
+          return num.toFixed(1);
+        case "slider-page-margin":
+        case "slider-ruler-opacity":
+        case "popover-slider-ruler-opacity":
+          return `${Math.round(num)}%`;
+        case "slider-pdf-ruler-height":
+        case "popover-slider-pdf-height":
+          return `${Math.round(num)} px`;
+      }
+    }
+    const targetId = input.dataset?.lqValueTarget;
+    if (targetId) {
+      const targetEl = document.getElementById(targetId);
+      if (targetEl && targetEl.textContent) return targetEl.textContent.trim();
+    }
+    const container = input.closest(".slider-setting, .popover-section");
+    if (container) {
+      const valEl = container.querySelector('.popover-val-badge, .slider-label span:last-child');
+      if (valEl && valEl.textContent) return valEl.textContent.trim();
+    }
+    return String(input.value ?? "");
+  }
+
   updateRangeFill(input) {
     if (!input || input.type !== "range") return;
     const min = parseFloat(input.min !== "" ? input.min : "0");
@@ -859,6 +977,16 @@ export class LuminaApp {
     const pct = ratio * 100;
     input.style.setProperty("--slider-fill-pct", `${pct.toFixed(2)}%`);
     input.style.setProperty("--slider-ratio", `${ratio.toFixed(4)}`);
+
+    const wrap = input.closest(".lq-slider-wrap");
+    if (wrap) {
+      wrap.style.setProperty("--slider-fill-pct", `${pct.toFixed(2)}%`);
+      wrap.style.setProperty("--slider-ratio", `${ratio.toFixed(4)}`);
+      const badge = wrap.querySelector(".lq-slider-value-badge");
+      if (badge) {
+        badge.textContent = this.getSliderDisplayValue(input);
+      }
+    }
   }
 
   syncAllRangeFills() {
@@ -3423,9 +3551,14 @@ export class LuminaApp {
     // Přepočítání a normalizace statistik
     if (this.dom.btnRecalcStats) {
       this.dom.btnRecalcStats.addEventListener("click", async () => {
+        const labelEl = this.dom.btnRecalcStats.querySelector(".btn-recalc-label");
         try {
           this.dom.btnRecalcStats.disabled = true;
-          this.dom.btnRecalcStats.textContent = "⏳ Přepočítávám...";
+          if (labelEl) {
+            labelEl.textContent = "Přepočítávám…";
+          } else {
+            this.dom.btnRecalcStats.textContent = "Přepočítávám…";
+          }
           this._dailyChartWeekOffset = 0;
           this._wpmChartBatchOffset = 0;
           const res = await storage.recalculateAndNormalizeStats();
@@ -3445,7 +3578,11 @@ export class LuminaApp {
           this.showToast("Chyba při normalizaci statistik.", "error");
         } finally {
           this.dom.btnRecalcStats.disabled = false;
-          this.dom.btnRecalcStats.textContent = "🔄 Přepočítat / Normalizovat data";
+          if (labelEl) {
+            labelEl.textContent = "Přepočítat / Normalizovat data";
+          } else {
+            this.dom.btnRecalcStats.textContent = "Přepočítat / Normalizovat data";
+          }
         }
       });
     }
@@ -4806,14 +4943,19 @@ export class LuminaApp {
     const coverHtml = book.coverDataUrl
       ? `<img src="${book.coverDataUrl}" alt="${book.title}" class="book-cover-img" />`
       : `<div class="book-cover-placeholder">
-           <span class="cover-icon">📖</span>
+           <span class="cover-icon" aria-hidden="true">
+             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+               <path d="M2 6.5A2.5 2.5 0 0 1 4.5 4H10a2 2 0 0 1 2 2v13.5a1.5 1.5 0 0 0-1.5-1.5H4.5A2.5 2.5 0 0 1 2 15.5v-9Z"/>
+               <path d="M22 6.5A2.5 2.5 0 0 0 19.5 4H14a2 2 0 0 0-2 2v13.5a1.5 1.5 0 0 1 1.5-1.5h6A2.5 2.5 0 0 0 22 15.5v-9Z"/>
+             </svg>
+           </span>
            <span class="cover-title">${book.title}</span>
          </div>`;
 
     const cloudBadgeHtml = !isCachedLocally
       ? `<span class="book-cloud-badge" title="Kniha je v cloudu – soubor se stáhne při prvním otevření" aria-label="Uloženo v cloudu">
-           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-             <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+             <path d="M17.5 19H9a6.5 6.5 0 1 1 1.3-12.87A5.5 5.5 0 0 1 20.9 8.9 4.5 4.5 0 0 1 17.5 19Z"></path>
            </svg>
          </span>`
       : "";
@@ -8401,7 +8543,7 @@ export class LuminaApp {
 
       const pageSpan = document.createElement("span");
       pageSpan.className = "bookmark-item-page";
-      pageSpan.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>`;
+      pageSpan.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 4.75A1.75 1.75 0 0 1 8.25 3h7.5A1.75 1.75 0 0 1 17.5 4.75v15.5a.5.5 0 0 1-.82.38L12 16.75l-4.68 3.88a.5.5 0 0 1-.82-.38V4.75Z"/></svg>`;
       const pageText = document.createElement("span");
       pageText.textContent = `Strana ${bm.bookPage}${bm.totalBookPages ? ` z ${bm.totalBookPages}` : ""}`;
       pageSpan.appendChild(pageText);

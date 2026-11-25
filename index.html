@@ -44,7 +44,12 @@
   <!-- Overlay pro přetahování souborů (Drag & Drop) -->
   <div id="drop-zone" class="drop-zone-overlay">
     <div class="drop-zone-content">
-      <div class="drop-icon">📚</div>
+      <div class="drop-icon" aria-hidden="true">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/>
+          <path d="M12 11V5m-2.5 2.5L12 5l2.5 2.5"/>
+        </svg>
+      </div>
       <h2>Pusťte EPUB nebo PDF soubor zde</h2>
       <p>Kniha nebo dokument budou okamžitě přidány do vaší osobní knihovny</p>
     </div>
@@ -61,7 +66,12 @@
       
       <header class="library-header">
         <div class="brand-section">
-          <div class="brand-icon">📖</div>
+          <div class="brand-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 6.5A2.5 2.5 0 0 1 4.5 4H10a2 2 0 0 1 2 2v13.5a1.5 1.5 0 0 0-1.5-1.5H4.5A2.5 2.5 0 0 1 2 15.5v-9Z"/>
+              <path d="M22 6.5A2.5 2.5 0 0 0 19.5 4H14a2 2 0 0 0-2 2v13.5a1.5 1.5 0 0 1 1.5-1.5h6A2.5 2.5 0 0 0 22 15.5v-9Z"/>
+            </svg>
+          </div>
           <div>
             <div class="brand-title-wrap">
               <h1 class="brand-title">LuminaReader</h1>
@@ -74,35 +84,36 @@
         <div class="library-actions">
           <button id="btn-cloud-sync" class="btn btn-secondary btn-cloud-sync" title="Synchronizovat knihy a postup čtení s cloudem" aria-label="Synchronizovat s cloudem">
             <span class="sync-icon-wrap" id="sync-icon-wrap">
-              <svg class="icon-sync-idle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+              <svg class="icon-sync-idle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17.5 19H9a6.5 6.5 0 1 1 1.3-12.87A5.5 5.5 0 0 1 20.9 8.9 4.5 4.5 0 0 1 17.5 19Z"></path>
               </svg>
-              <svg class="icon-sync-spin is-hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+              <svg class="icon-sync-spin is-hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 4v5h-5M3 20v-5h5"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L21 9M20.49 15a9 9 0 0 1-14.85 3.36L3 15"/>
               </svg>
-              <svg class="icon-sync-done is-hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
-                <polyline points="9 13 12 16 16 11"></polyline>
+              <svg class="icon-sync-done is-hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17.5 19H9a6.5 6.5 0 1 1 1.3-12.87A5.5 5.5 0 0 1 20.9 8.9 4.5 4.5 0 0 1 17.5 19Z"></path>
+                <path d="m9.5 13.5 2 2 4-4"/>
               </svg>
-              <svg class="icon-sync-offline is-hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="1" y1="1" x2="23" y2="23"></line>
-                <path d="M17.5 19H9a7 7 0 0 1-6.73-5.07M4.62 4.62A8 8 0 0 0 1.27 12"></path>
-                <path d="M18.83 18.83A5 5 0 0 0 18 10h-1.26a8 8 0 0 0-7.07-5.93"></path>
+              <svg class="icon-sync-offline is-hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m3 3 18 18"/>
+                <path d="M17.5 19H9a6.5 6.5 0 0 1-4.88-10.8"/>
+                <path d="M9.6 5.9A5.5 5.5 0 0 1 20.9 8.9a4.5 4.5 0 0 1-.82 7.64"/>
               </svg>
             </span>
             <span id="sync-status-text" class="sync-status-text btn-text">Cloud Sync</span>
             <span id="sync-status-dot" class="sync-status-dot" aria-hidden="true"></span>
           </button>
           <button id="btn-toggle-stats-lib" class="btn btn-secondary" title="Statistiky" aria-label="Statistiky">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="13" width="3.5" height="7" rx="1"/><rect x="10.25" y="4" width="3.5" height="16" rx="1"/><rect x="16.5" y="9" width="3.5" height="11" rx="1"/></svg>
             <span class="btn-text">Statistiky</span>
           </button>
           <button id="btn-toggle-settings-lib" class="btn btn-secondary" title="Nastavení vzhledu" aria-label="Nastavení">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
             <span class="btn-text">Nastavení</span>
           </button>
           <button id="btn-upload" class="btn btn-primary" title="Nahrát knihu (EPUB, PDF)" aria-label="Nahrát knihu (EPUB, PDF)">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4m0 0-4 4m4-4 4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
             <span class="btn-text"><span class="btn-text-short">Nahrát</span><span class="btn-text-long"> knihu</span><span class="btn-text-extra"> (EPUB, PDF)</span></span>
           </button>
         </div>
@@ -113,7 +124,12 @@
 
       <!-- Prázdná knihovna (Empty State) -->
       <section id="empty-library" class="empty-state">
-        <div class="empty-icon">📖</div>
+        <div class="empty-icon" aria-hidden="true">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 6.5A2.5 2.5 0 0 1 4.5 4H10a2 2 0 0 1 2 2v13.5a1.5 1.5 0 0 0-1.5-1.5H4.5A2.5 2.5 0 0 1 2 15.5v-9Z"/>
+            <path d="M22 6.5A2.5 2.5 0 0 0 19.5 4H14a2 2 0 0 0-2 2v13.5a1.5 1.5 0 0 1 1.5-1.5h6A2.5 2.5 0 0 0 22 15.5v-9Z"/>
+          </svg>
+        </div>
         <h3>Vaše knihovna je prázdná</h3>
         <p>Nahrajte svou oblíbenou elektronickou knihu ve formátu EPUB nebo PDF přetažením sem.</p>
         <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
@@ -135,7 +151,7 @@
     <header id="reader-header" class="reader-header">
       <div class="reader-header-left">
         <button id="btn-back-library" class="btn-icon btn-back-library" title="Zpět do knihovny (klávesa Esc)" aria-label="Zpět do knihovny">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>
         </button>
       </div>
 
@@ -148,7 +164,7 @@
 
       <div class="reader-header-right">
         <button type="button" id="btn-toggle-bookmark" class="btn-icon btn-bookmark-toggle" title="Přidat / odebrat záložku (klávesa B)" aria-label="Přidat záložku" aria-pressed="false">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4.75A1.75 1.75 0 0 1 8.25 3h7.5A1.75 1.75 0 0 1 17.5 4.75v15.5a.5.5 0 0 1-.82.38L12 16.75l-4.68 3.88a.5.5 0 0 1-.82-.38V4.75Z"/></svg>
         </button>
       </div>
     </header>
@@ -213,11 +229,11 @@
         <!-- Spojené tlačítko pravítka (Split-pill) -->
         <div class="ruler-split-pill" id="ruler-toggle-btn">
           <button id="btn-toggle-ruler" class="split-pill-btn pill-action" title="Zapnout/vypnout čtecí pravítko (klávesa R)" aria-label="Zapnout/vypnout pravítko">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 8.7 8.7 21.3c-.4.4-1 .4-1.4 0l-4.6-4.6c-.4-.4-.4-1 0-1.4L15.3 2.7c.4-.4 1-.4 1.4 0l4.6 4.6c.4.4.4 1 0 1.4z"/><path d="m14.5 3.5 2 2"/><path d="m11.5 6.5 2 2"/><path d="m8.5 9.5 2 2"/><path d="m5.5 12.5 2 2"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8.5 8.5 21a1.4 1.4 0 0 1-2 0L3 17.5a1.4 1.4 0 0 1 0-2L15.5 3a1.4 1.4 0 0 1 2 0L21 6.5a1.4 1.4 0 0 1 0 2Z"/><path d="m14.5 4 2 2"/><path d="m11.5 7 1.5 1.5"/><path d="m8.5 10 2 2"/><path d="m5.5 13 1.5 1.5"/></svg>
           </button>
           <div class="pill-divider" aria-hidden="true"></div>
           <button id="btn-ruler-quick-menu" class="split-pill-btn pill-dropdown" title="Rychlé nastavení pravítka a tempa (WPM)" aria-haspopup="true" aria-expanded="false" aria-label="Nastavení pravítka">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
           </button>
 
           <!-- Rychlý konfigurační popover pravítka -->
@@ -249,11 +265,17 @@
               <div class="popover-segmented-control columns-2" id="popover-mode-segmented">
                 <span class="segmented-bubble" aria-hidden="true"></span>
                 <button type="button" class="segment-btn active" id="popover-mode-line" data-ruler-mode-type="line">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+                    <rect x="2" y="9" width="20" height="6" rx="2.5" fill="currentColor" fill-opacity="0.22" stroke="none"/>
+                    <path d="M4 6h16M4 12h16M4 18h11"/>
+                  </svg>
                   <span>Řádky</span>
                 </button>
                 <button type="button" class="segment-btn" id="popover-mode-word" data-ruler-mode-type="word">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="10" rx="3"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <rect x="7.5" y="7.5" width="9" height="9" rx="2.5" fill="currentColor" fill-opacity="0.22"/>
+                    <path d="M3 12h2M19 12h2"/>
+                  </svg>
                   <span>Slova</span>
                 </button>
               </div>
@@ -326,10 +348,14 @@
           </div>
         </div>
 
-        <!-- Tlačítko pro rozbalení modrých tlačítek (hlavní menu FAB) -->
+        <!-- Tlačítko pro rozbalení rychlých akcí čtečky (hlavní menu FAB) -->
         <div class="menu-fab-wrapper" id="menu-fab-wrapper">
           <button id="btn-reader-menu-fab" class="btn-reader-menu-fab" title="Menu nástrojů čtečky" aria-haspopup="true" aria-expanded="false" aria-label="Menu čtečky">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="5" x2="6" y2="19"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="18" y1="5" x2="18" y2="19"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+              <circle cx="5.5" cy="12" r="1.75"/>
+              <circle cx="12" cy="12" r="1.75"/>
+              <circle cx="18.5" cy="12" r="1.75"/>
+            </svg>
           </button>
 
           <!-- Plovoucí cluster rychlých akcí -->
@@ -337,23 +363,23 @@
             <div class="action-cluster-top-row">
               <div class="action-cluster-top-actions">
                 <button id="btn-menu-stats" class="dock-action-btn" title="Statistiky čtení (klávesa S)" aria-label="Statistika">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="13" width="3.5" height="7" rx="1"/><rect x="10.25" y="4" width="3.5" height="16" rx="1"/><rect x="16.5" y="9" width="3.5" height="11" rx="1"/></svg>
                 </button>
                 <button id="btn-menu-search" class="dock-action-btn" title="Hledat v knize (klávesa F)" aria-label="Hledat v knize">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.75" cy="10.75" r="6.75"/><path d="m15.75 15.75 4.25 4.25"/></svg>
                 </button>
                 <button type="button" id="btn-menu-toc" class="dock-action-btn" title="Obsah knihy (klávesa T)" aria-label="Obsah knihy">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                    <circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none" />
-                    <line x1="8" y1="6" x2="20" y2="6" stroke-width="2.2" />
-                    <circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none" />
-                    <line x1="8" y1="12" x2="20" y2="12" stroke-width="2.2" />
-                    <circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none" />
-                    <line x1="8" y1="18" x2="20" y2="18" stroke-width="2.2" />
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round">
+                    <circle cx="4.5" cy="6.5" r="1.25" fill="currentColor" stroke="none" />
+                    <path d="M9 6.5h10.5" />
+                    <circle cx="4.5" cy="12" r="1.25" fill="currentColor" stroke="none" />
+                    <path d="M9 12h10.5" />
+                    <circle cx="4.5" cy="17.5" r="1.25" fill="currentColor" stroke="none" />
+                    <path d="M9 17.5h10.5" />
                   </svg>
                 </button>
                 <button id="btn-menu-settings" class="dock-action-btn" title="Nastavení písma a vzhledu" aria-label="Nastavení">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
                 </button>
               </div>
             </div>
@@ -379,14 +405,16 @@
           <span id="bookmarks-count-badge" class="bookmarks-count-badge is-hidden">0</span>
         </button>
       </div>
-      <button id="btn-close-toc" class="btn-close-drawer" aria-label="Zavřít panel">✕</button>
+      <button id="btn-close-toc" class="btn-close-drawer" aria-label="Zavřít panel">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
     </div>
     <div class="drawer-body">
       <ul id="toc-list" class="toc-list" role="tabpanel" aria-labelledby="btn-drawer-tab-toc"></ul>
       <div id="bookmarks-panel" class="bookmarks-panel is-hidden" role="tabpanel" aria-labelledby="btn-drawer-tab-bookmarks">
         <div class="bookmarks-panel-actions">
           <button type="button" id="btn-add-bookmark-drawer" class="btn btn-secondary btn-add-bookmark-drawer">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4.75A1.75 1.75 0 0 1 8.25 3h7.5A1.75 1.75 0 0 1 17.5 4.75v15.5a.5.5 0 0 1-.82.38L12 16.75l-4.68 3.88a.5.5 0 0 1-.82-.38V4.75Z"/></svg>
             <span id="btn-add-bookmark-drawer-text">Přidat záložku na tuto stranu</span>
           </button>
         </div>
@@ -407,7 +435,9 @@
         <button type="button" class="settings-tab-btn" role="tab" data-tab="tab-pane-appearance" id="tab-btn-appearance" aria-selected="false" aria-controls="tab-pane-appearance">Vzhled</button>
         <button type="button" class="settings-tab-btn" role="tab" data-tab="tab-pane-reading" id="tab-btn-reading" aria-selected="false" aria-controls="tab-pane-reading">Čtení &amp; Pravítko</button>
       </div>
-      <button id="btn-close-settings" class="btn-close-drawer" aria-label="Zavřít nastavení">✕</button>
+      <button id="btn-close-settings" class="btn-close-drawer" aria-label="Zavřít nastavení">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
     </div>
     <div class="drawer-body settings-drawer-body">
       
@@ -759,20 +789,28 @@
   <aside id="search-drawer" class="drawer-panel" aria-label="Hledání v knize">
     <div class="drawer-header">
       <h2 class="drawer-title">Hledat v knize</h2>
-      <button id="btn-close-search" class="btn-close-drawer" aria-label="Zavřít hledání">✕</button>
+      <button id="btn-close-search" class="btn-close-drawer" aria-label="Zavřít hledání">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
     </div>
     <div class="drawer-body search-drawer-body">
       <div class="search-input-wrapper">
-        <svg class="search-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        <svg class="search-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="10.75" cy="10.75" r="6.75"/><path d="m15.75 15.75 4.25 4.25"/>
         </svg>
         <input type="text" id="input-book-search" class="search-input" placeholder="Hledat text v knize..." autocomplete="off" spellcheck="false" />
-        <button id="btn-clear-search" class="btn-clear-search is-hidden" aria-label="Vymazat hledání">✕</button>
+        <button id="btn-clear-search" class="btn-clear-search is-hidden" aria-label="Vymazat hledání">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
       </div>
       <div id="search-results-info" class="search-results-info is-hidden"></div>
       <div id="search-results-list" class="search-results-list">
         <div class="search-empty-state">
-          <div class="search-empty-icon">🔍</div>
+          <div class="search-empty-icon" aria-hidden="true">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="10.75" cy="10.75" r="6.75"/><path d="m15.75 15.75 4.25 4.25"/>
+            </svg>
+          </div>
           <p>Zadejte hledaný výraz...</p>
         </div>
       </div>
@@ -785,8 +823,13 @@
   <div id="stats-modal" class="modal-overlay stats-modal" role="dialog" aria-modal="true" aria-labelledby="stats-modal-title">
     <div class="modal-content">
       <div class="modal-header">
-        <h2 id="stats-modal-title" class="drawer-title">📊 Statistiky a rychlost čtení</h2>
-        <button id="btn-close-stats" class="btn-close-drawer" aria-label="Zavřít statistiky">✕</button>
+        <h2 id="stats-modal-title" class="drawer-title ui-heading-with-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="13" width="3.5" height="7" rx="1"/><rect x="10.25" y="4" width="3.5" height="16" rx="1"/><rect x="16.5" y="9" width="3.5" height="11" rx="1"/></svg>
+          <span>Statistiky a rychlost čtení</span>
+        </h2>
+        <button id="btn-close-stats" class="btn-close-drawer" aria-label="Zavřít statistiky">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
       </div>
 
       <div class="modal-body">
@@ -832,7 +875,10 @@
         <div class="chart-section session-analytics-section" id="session-analytics-section">
           <div class="session-section-header">
             <div>
-              <div class="chart-title" style="margin-bottom: 0.25rem;">⏱️ Průběh rychlosti čtecí relace (Intra-session WPM)</div>
+              <div class="chart-title ui-heading-with-icon" style="margin-bottom: 0.25rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9.5 2h5"/></svg>
+                <span>Průběh rychlosti čtecí relace (Intra-session WPM)</span>
+              </div>
               <p class="section-subtitle">Detailní časová osa zrychlení a tempa čtení v průběhu vybrané relace</p>
             </div>
             
@@ -871,8 +917,13 @@
           <!-- Rozbalovací seznam všech zaznamenaných relací -->
           <details class="session-history-details" id="session-history-details">
             <summary class="session-history-summary">
-              <span>📋 Historie čtecích relací (<span id="session-count-badge">0</span>)</span>
-              <span class="details-chevron">▼</span>
+              <span class="ui-heading-with-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4.5" cy="6.5" r="1.2" fill="currentColor" stroke="none"/><path d="M9 6.5h10.5"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><path d="M9 12h10.5"/><circle cx="4.5" cy="17.5" r="1.2" fill="currentColor" stroke="none"/><path d="M9 17.5h10.5"/></svg>
+                <span>Historie čtecích relací (<span id="session-count-badge">0</span>)</span>
+              </span>
+              <span class="details-chevron" aria-hidden="true">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </span>
             </summary>
             <div id="session-history-list" class="session-history-list" role="listbox" aria-label="Seznam čtecích relací"></div>
           </details>
@@ -899,15 +950,17 @@
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem;">
           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
             <button id="btn-recalc-stats" class="btn btn-secondary" title="Opraví a normalizuje případně poškozená data rychlosti a počtu slov z minulosti">
-              🔄 Přepočítat / Normalizovat data
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 4v5h-5M3 20v-5h5"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L21 9M20.49 15a9 9 0 0 1-14.85 3.36L3 15"/></svg>
+              <span class="btn-recalc-label">Přepočítat / Normalizovat data</span>
             </button>
             <button id="btn-reset-stats" class="btn btn-secondary btn-sm" style="color: #ef4444; font-size: 0.85rem;" title="Vymaže celou historii čtecích relací a data čtení bez smazání knih a nastavení">
-              🗑️ Resetovat data čtení
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              <span>Resetovat data čtení</span>
             </button>
           </div>
           <button id="btn-export-data" class="btn btn-secondary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-            Exportovat data (JSON)
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11m0 0-4-4m4 4 4-4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+            <span>Exportovat data (JSON)</span>
           </button>
         </div>
 
