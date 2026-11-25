@@ -360,7 +360,13 @@ body {
 
 .library-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 0.75rem;
+}
+
+.library-actions .btn {
+  white-space: nowrap;
 }
 
 /* Tlačítka */
@@ -565,6 +571,7 @@ body {
 
   .library-actions {
     display: flex;
+    flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
