@@ -2049,9 +2049,6 @@ export class StorageManager {
         if (!["mouse", "keyboard", "trackpad"].includes(merged.ruler.followMode)) {
           merged.ruler.followMode = "mouse";
         }
-        if (merged.ruler.followMode === "trackpad" && !isTouchCapableDevice()) {
-          merged.ruler.followMode = "mouse";
-        }
         const savedSnap = localStorage.getItem("rulerSnapToLines");
         if (savedSnap !== null) {
           merged.ruler.snapToLines = savedSnap === "true";
@@ -2148,9 +2145,6 @@ export class StorageManager {
         settings.ruler.snapToLines = settings.ruler.snapToLines !== false;
         settings.ruler.autoHeight = true;
         if (!["mouse", "keyboard", "trackpad"].includes(settings.ruler.followMode)) {
-          settings.ruler.followMode = "mouse";
-        }
-        if (settings.ruler.followMode === "trackpad" && !isTouchCapableDevice()) {
           settings.ruler.followMode = "mouse";
         }
         localStorage.setItem("rulerSnapToLines", String(settings.ruler.snapToLines));

@@ -1591,6 +1591,16 @@ body.ruler-trackpad-active .page-touch-zone {
   -webkit-user-select: none !important;
   user-select: none !important;
   -webkit-touch-callout: none !important;
+  cursor: grab;
+}
+
+body.ruler-trackpad-active #paged-viewport:active,
+body.ruler-trackpad-active .paged-viewport:active,
+body.ruler-trackpad-active #paged-stage:active,
+body.ruler-trackpad-active .paged-stage:active,
+body.ruler-trackpad-active #reader-content:active,
+body.ruler-trackpad-active .page-touch-zone:active {
+  cursor: grabbing;
 }
 
 /* Ve vertikálním režimu čtení zakázat veškeré CSS transition animace pro okamžitý 1:1 snap bez zpoždění */
@@ -1868,7 +1878,8 @@ canvas.active-focus,
 }
 
 /* Persistentní kontejner pro čtecí pravítko a zaostřovací masku (Focus Overlay Layer) */
-.ruler-overlay-container {
+.ruler-overlay-container,
+.ruler-active-layer {
   position: fixed;
   top: 0;
   left: 0;
@@ -1881,6 +1892,10 @@ canvas.active-focus,
   transform: translate3d(0, 0, 0);
   -webkit-transform: translate3d(0, 0, 0);
   will-change: transform;
+}
+
+.ruler-active-layer {
+  z-index: 20;
 }
 
 /* Masky ztmavující okolní text v režimu Zaostření (Focus Mode) - tématicky sladěné s pozadím */
@@ -4751,6 +4766,12 @@ body.parchment-texture::before {
   background-repeat: no-repeat;
   mix-blend-mode: multiply;
   opacity: 0.78;
+}
+
+/* V EPUB čtečce vykreslit pergamen nad clonami zaostření (z-index 15) a pod aktivním pravítkem (z-index 20),
+   aby clony a aktivní řádek měly jednotnou, nepřerušenou texturu pergamenu bez světlých/tmavých pruhů. */
+body.parchment-texture.in-reader-view:not(.is-pdf-mode)::before {
+  z-index: 16;
 }
 
 body.parchment-texture .paged-viewport,

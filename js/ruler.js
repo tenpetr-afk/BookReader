@@ -43,6 +43,7 @@ export class ReadingRuler {
     this.container = containerElement;
     this.app = app;
     this.overlayContainer = null;
+    this.activeLayerContainer = null;
     this.rulerEl = null;
     this.wordWaveEl = null;
     this.secondaryRulerEl = null;
@@ -51,6 +52,9 @@ export class ReadingRuler {
     this.maskBottomEl = null;
     this.maskLeftEl = null;
     this.maskRightEl = null;
+    this.maskWrapUpperRightEl = null;
+    this.maskWrapGapEl = null;
+    this.maskWrapLowerLeftEl = null;
     this.maskInactiveSpreadEl = null; // Auxiliární celostránková maska pro neaktivní stranu v režimu dvoustrany (Two-Page Spread)
     this.onBoundary = null; // Callback vyvolaný při překročení hranice strany (direction: 1 | -1)
 
@@ -263,6 +267,8 @@ export class ReadingRuler {
       scrollDetectAccum: 0,
       wordFloatLeft: null,
       waveCenterX: null,
+      preferredWordLeft: null,
+      preferredWaveCenterX: null,
       wordWrapOverflow: 0,
       wordWrap: null
     };
@@ -564,6 +570,7 @@ export class ReadingRuler {
       if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
       if (this.maskRightEl) this.maskRightEl.style.display = "none";
       if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
+      this._hideWrapMasks();
       this.clearFocusTextMask();
       return;
     }
@@ -762,7 +769,7 @@ export class ReadingRuler {
       this.uniformLineHeight = this.height;
       this.wordTracking = false;
       this.wordTrackingExplicitlyEnabledInPdf = false;
-      this.followMode = (this.followMode === "trackpad" && this.isTouchCapableDevice()) ? "trackpad" : "mouse";
+      this.followMode = (this.followMode === "trackpad") ? "trackpad" : "mouse";
       this.stationaryScreenY = null;
       this.cachedLines = [];
       this.cachedWords = [];
@@ -783,15 +790,11 @@ export class ReadingRuler {
         this.snapToLines = this._savedNonImageOnlyState.snapToLines;
         this.pdfAutoHeight = this._savedNonImageOnlyState.pdfAutoHeight;
         this.wordTracking = this._savedNonImageOnlyState.wordTracking;
-        const savedFollow = this._savedNonImageOnlyState.followMode;
-        this.followMode = (savedFollow === "trackpad" && !this.isTouchCapableDevice()) ? "mouse" : savedFollow;
+        this.followMode = this._savedNonImageOnlyState.followMode;
         this._savedNonImageOnlyState = null;
       } else {
         this.snapToLines = true;
         this.pdfAutoHeight = true;
-        if (this.followMode === "trackpad" && !this.isTouchCapableDevice()) {
-          this.followMode = "mouse";
-        }
         this.wordTracking = false;
       }
       if (this.isPdfMode) {
@@ -832,7 +835,7 @@ export class ReadingRuler {
         this.uniformLineHeight = this.height;
         this.wordTracking = false;
         this.wordTrackingExplicitlyEnabledInPdf = false;
-        this.followMode = (this.followMode === "trackpad" && this.isTouchCapableDevice()) ? "trackpad" : "mouse";
+        this.followMode = (this.followMode === "trackpad") ? "trackpad" : "mouse";
       } else {
         // 1. V PDF režimu vynutit výchozí plnošířkový řádkový režim (wordTracking = false),
         // pokud uživatel explicitně nezapnul sledování slov v PDF.
@@ -912,6 +915,7 @@ export class ReadingRuler {
       if (this.maskTopEl) this.maskTopEl.classList.remove("pdf-overlay-mask");
       if (this.maskBottomEl) this.maskBottomEl.classList.remove("pdf-overlay-mask");
       if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
+      this._hideWrapMasks();
       if (this.enabled) {
         this.refreshLines();
         this.applyPosition();
@@ -1210,10 +1214,87 @@ export class ReadingRuler {
     if (this.maskBottomEl && !this.overlayContainer.contains(this.maskBottomEl)) this.overlayContainer.appendChild(this.maskBottomEl);
     if (this.maskLeftEl && !this.overlayContainer.contains(this.maskLeftEl)) this.overlayContainer.appendChild(this.maskLeftEl);
     if (this.maskRightEl && !this.overlayContainer.contains(this.maskRightEl)) this.overlayContainer.appendChild(this.maskRightEl);
+    if (this.maskWrapUpperRightEl && !this.overlayContainer.contains(this.maskWrapUpperRightEl)) this.overlayContainer.appendChild(this.maskWrapUpperRightEl);
+    if (this.maskWrapGapEl && !this.overlayContainer.contains(this.maskWrapGapEl)) this.overlayContainer.appendChild(this.maskWrapGapEl);
+    if (this.maskWrapLowerLeftEl && !this.overlayContainer.contains(this.maskWrapLowerLeftEl)) this.overlayContainer.appendChild(this.maskWrapLowerLeftEl);
     if (this.maskInactiveSpreadEl && !this.overlayContainer.contains(this.maskInactiveSpreadEl)) this.overlayContainer.appendChild(this.maskInactiveSpreadEl);
-    if (this.rulerEl && !this.overlayContainer.contains(this.rulerEl)) this.overlayContainer.appendChild(this.rulerEl);
-    if (this.secondaryRulerEl && !this.overlayContainer.contains(this.secondaryRulerEl)) this.overlayContainer.appendChild(this.secondaryRulerEl);
+
+    if (!this.activeLayerContainer || !document.body.contains(this.activeLayerContainer)) {
+      let activeEl = document.getElementById("ruler-active-layer");
+      if (!activeEl) {
+        activeEl = document.createElement("div");
+        activeEl.id = "ruler-active-layer";
+        activeEl.className = "ruler-active-layer";
+        activeEl.setAttribute("aria-hidden", "true");
+        document.body.appendChild(activeEl);
+      }
+      this.activeLayerContainer = activeEl;
+    }
+    if (this.rulerEl && !this.activeLayerContainer.contains(this.rulerEl)) this.activeLayerContainer.appendChild(this.rulerEl);
+    if (this.secondaryRulerEl && !this.activeLayerContainer.contains(this.secondaryRulerEl)) this.activeLayerContainer.appendChild(this.secondaryRulerEl);
     return this.overlayContainer;
+  }
+
+  _ensureWrapMask(propName, extraClass) {
+    if (!this[propName]) {
+      const el = document.createElement("div");
+      el.className = `ruler-mask ${extraClass} is-hidden`;
+      el.style.willChange = "transform";
+      el.style.contain = "paint";
+      el.style.pointerEvents = "none";
+      this[propName] = el;
+    }
+    const container = this.ensureOverlayContainer();
+    if (container && !container.contains(this[propName])) {
+      container.appendChild(this[propName]);
+    }
+    return this[propName];
+  }
+
+  _hideWrapMasks() {
+    for (const el of [this.maskWrapUpperRightEl, this.maskWrapGapEl, this.maskWrapLowerLeftEl]) {
+      if (!el) continue;
+      el.style.removeProperty("-webkit-mask-image");
+      el.style.removeProperty("mask-image");
+      el.style.display = "none";
+      el.classList.remove("is-visible");
+      el.classList.add("is-hidden");
+    }
+  }
+
+  _applySideMaskRect(el, baseClass, themeBg, dimOpacity, left, top, width, height, fadeSpanPx = 0) {
+    if (!el) return;
+    if (width > 0 && height > 0) {
+      el.className = `ruler-mask ${baseClass} is-visible`;
+      el.style.setProperty("display", "block", "important");
+      el.style.setProperty("background-color", themeBg, "important");
+      el.style.setProperty("opacity", String(dimOpacity), "important");
+      el.style.setProperty("z-index", "15", "important");
+      el.style.setProperty("pointer-events", "none", "important");
+      el.style.setProperty("transition", "none", "important");
+      if (fadeSpanPx > 1) {
+        const midFadePx = Math.round(fadeSpanPx * 0.5);
+        const maskGrad = `linear-gradient(to right, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0.5) ${midFadePx}px, rgba(0, 0, 0, 1) ${fadeSpanPx}px)`;
+        el.style.setProperty("-webkit-mask-image", maskGrad, "important");
+        el.style.setProperty("mask-image", maskGrad, "important");
+      } else {
+        el.style.removeProperty("-webkit-mask-image");
+        el.style.removeProperty("mask-image");
+      }
+      el.style.top = "0px";
+      el.style.left = "0px";
+      el.style.right = "auto";
+      el.style.maxWidth = "none";
+      el.style.width = `${width}px`;
+      el.style.height = `${height}px`;
+      el.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+    } else {
+      el.style.removeProperty("-webkit-mask-image");
+      el.style.removeProperty("mask-image");
+      el.style.display = "none";
+      el.classList.remove("is-visible");
+      el.classList.add("is-hidden");
+    }
   }
 
   /**
@@ -2547,9 +2628,13 @@ export class ReadingRuler {
         const cw = syncedWords[syncedWordIdx];
         this._trackpad.wordFloatLeft = cw.left - 3;
         this._trackpad.waveCenterX = cw.centerX;
+        this._trackpad.preferredWordLeft = cw.left - 3;
+        this._trackpad.preferredWaveCenterX = cw.centerX;
       } else {
         this._trackpad.wordFloatLeft = null;
         this._trackpad.waveCenterX = null;
+        this._trackpad.preferredWordLeft = null;
+        this._trackpad.preferredWaveCenterX = null;
       }
     }
 
@@ -2713,9 +2798,13 @@ export class ReadingRuler {
         const cw = syncedWords[syncedWordIdx];
         this._trackpad.wordFloatLeft = cw.left - 3;
         this._trackpad.waveCenterX = cw.centerX;
+        this._trackpad.preferredWordLeft = cw.left - 3;
+        this._trackpad.preferredWaveCenterX = cw.centerX;
       } else {
         this._trackpad.wordFloatLeft = null;
         this._trackpad.waveCenterX = null;
+        this._trackpad.preferredWordLeft = null;
+        this._trackpad.preferredWaveCenterX = null;
       }
     }
 
@@ -2809,6 +2898,8 @@ export class ReadingRuler {
       tp.activeColumn = 0;
       tp.wordFloatLeft = null;
       tp.waveCenterX = null;
+      tp.preferredWordLeft = null;
+      tp.preferredWaveCenterX = null;
       this._clearTrackpadWordWrap();
     }
   }
@@ -3111,7 +3202,7 @@ export class ReadingRuler {
     return true;
   }
 
-  _startTrackpadTouch(source, id, clientX, clientY, target) {
+  _startTrackpadTouch(source, id, clientX, clientY, target, pointerType = "touch") {
     if (!this.enabled || this.followMode !== "trackpad") return false;
     if (this.isPopoverOrDrawerOpen() || this._trackingSuspendedByOverlay) return false;
     if (typeof this.isAnyDrawerOpen === "function" && this.isAnyDrawerOpen()) return false;
@@ -3138,6 +3229,7 @@ export class ReadingRuler {
     }
     tp.active = true;
     tp.source = source;
+    tp.pointerType = pointerType;
     tp.pointerId = source === "pointer" ? id : null;
     tp.touchId = source === "touch" ? id : null;
     tp.startX = clientX;
@@ -3174,7 +3266,7 @@ export class ReadingRuler {
         }
       }
     }
-    this.activePointerType = "touch";
+    this.activePointerType = pointerType;
 
     if (!this.isImageOnlyPdf && (!this.cachedLines || this.cachedLines.length === 0)) {
       this.detectLines();
@@ -3281,7 +3373,7 @@ export class ReadingRuler {
 
   _processTrackpadDelta(dx, dy) {
     if (!this.enabled || this.followMode !== "trackpad") return;
-    this.activePointerType = "touch";
+    this.activePointerType = this._trackpad?.pointerType || "touch";
     if (!this.isImageOnlyPdf && (!this.cachedLines || this.cachedLines.length === 0)) {
       this.detectLines();
     }
@@ -3362,7 +3454,7 @@ export class ReadingRuler {
     };
   }
 
-  _applyContinuousWordGeometryAtLeft(lineWords, rawLeft, activeLine = null, isMovingLeft = false, geom = null) {
+  _applyContinuousWordGeometryAtLeft(lineWords, rawLeft, activeLine = null, isMovingLeft = false, geom = null, { preservePreferredX = false } = {}) {
     const padX = 3;
     const colBounds = this._getTrackpadWordColumnBounds(activeLine, lineWords, geom);
     const fullMinX = Math.round(colBounds.colLeft - padX);
@@ -3429,6 +3521,10 @@ export class ReadingRuler {
     if (this._trackpad) {
       this._trackpad.wordFloatLeft = clampedLeft;
       this._trackpad.waveCenterX = clampedLeft + continuousWidth / 2;
+      if (!preservePreferredX) {
+        this._trackpad.preferredWordLeft = clampedLeft;
+        this._trackpad.preferredWaveCenterX = clampedLeft + continuousWidth / 2;
+      }
     }
 
     this.activeWordWidth = Math.round(continuousWidth);
@@ -3625,10 +3721,12 @@ export class ReadingRuler {
       this._trackpad.wordWrapOverflow = 0;
       this._trackpad.wordFloatLeft = words[0].left - 3;
       this._trackpad.waveCenterX = initWaveX;
+      this._trackpad.preferredWordLeft = this._trackpad.wordFloatLeft;
+      this._trackpad.preferredWaveCenterX = initWaveX;
     }
   }
 
-  _applyContinuousBottomCoverWaveAtX(lineWords, rawCenterX, activeLine = null, isMovingLeft = false, geom = null) {
+  _applyContinuousBottomCoverWaveAtX(lineWords, rawCenterX, activeLine = null, isMovingLeft = false, geom = null, { preservePreferredX = false } = {}) {
     const colBounds = this._getTrackpadWordColumnBounds(activeLine, lineWords, geom);
     const wordBounds = (activeLine && this.activeLineIndex >= 0)
       ? this._getLineWordBounds(this.activeLineIndex, lineWords)
@@ -3662,6 +3760,10 @@ export class ReadingRuler {
     if (this._trackpad) {
       this._trackpad.waveCenterX = clampedCenterX;
       this._trackpad.wordFloatLeft = clampedCenterX - (this.activeWordWidth || 40) / 2;
+      if (!preservePreferredX) {
+        this._trackpad.preferredWaveCenterX = clampedCenterX;
+        this._trackpad.preferredWordLeft = this._trackpad.wordFloatLeft;
+      }
     }
 
     const vp = this.isVerticalMode() ? (document.getElementById("paged-viewport") || document.querySelector(".paged-viewport")) : null;
@@ -4363,11 +4465,27 @@ export class ReadingRuler {
     if (words && words.length > 0) {
       const isBottomCover = (this.style === "bottom-cover" || this.mode === "bottom-cover");
       if (isBottomCover) {
-        const startX = this._getInitialBottomCoverWaveCenterX(nextIdx, words);
-        this._applyContinuousBottomCoverWaveAtX(words, startX, nextLine, dir < 0, geom);
+        const preservedX = Number.isFinite(tp?.preferredWaveCenterX)
+          ? tp.preferredWaveCenterX
+          : (Number.isFinite(tp?.waveCenterX)
+            ? tp.waveCenterX
+            : (Number.isFinite(this.lastPointerX)
+              ? this.lastPointerX
+              : this._getInitialBottomCoverWaveCenterX(nextIdx, words)));
+        if (tp && !Number.isFinite(tp.preferredWaveCenterX)) {
+          tp.preferredWaveCenterX = preservedX;
+        }
+        this._applyContinuousBottomCoverWaveAtX(words, preservedX, nextLine, dir < 0, geom, { preservePreferredX: true });
       } else {
-        // Position flush at the exact outward-padded starting edge of the new line's text (matching mouse mode)
-        this._applyContinuousWordGeometryAtLeft(words, words[0].left - 3, nextLine, dir < 0, geom);
+        const preservedLeft = Number.isFinite(tp?.preferredWordLeft)
+          ? tp.preferredWordLeft
+          : (Number.isFinite(tp?.wordFloatLeft)
+            ? tp.wordFloatLeft
+            : (Number.isFinite(this.wordLeft) ? this.wordLeft : (words[0].left - 3)));
+        if (tp && !Number.isFinite(tp.preferredWordLeft)) {
+          tp.preferredWordLeft = preservedLeft;
+        }
+        this._applyContinuousWordGeometryAtLeft(words, preservedLeft, nextLine, dir < 0, geom, { preservePreferredX: true });
       }
       this.rulerEl?.classList.add("word-tracking-mode");
     } else {
@@ -4671,7 +4789,16 @@ export class ReadingRuler {
             (Date.now() < this.navigatingPageLockoutEndTime);
           if (!this.enabled || this.isTouchSwiping || this.isSwipePageTransition || this.isLineLocked || this.isPageTransitioning || this.isNavigating || this.isNavigatingPage || Date.now() < this.navigatingPageLockoutEndTime || isDocTurning || isRecentSwipe) return;
           if (!this.isPointerInStage(e.clientX, e.clientY) || (e.target?.closest && e.target.closest("hr"))) return;
-          this.startHold(e.clientX, e.clientY, "mouse");
+          if (this._trackpad?.active) {
+            if (this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId) {
+              return;
+            }
+            this._cancelTrackpadTouch();
+          }
+          const started = this._startTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY, e.target, "mouse");
+          if (started) {
+            this.startHold(e.clientX, e.clientY, "mouse");
+          }
         }
         return;
       }
@@ -4803,6 +4930,28 @@ export class ReadingRuler {
           }
         } else if (e.pointerType === "mouse") {
           if (this.isSyntheticMouseEvent(e)) return;
+          if (!this.enabled) return;
+          if (!this._trackpad?.active && this.isUiControl(e.target)) {
+            this._trackingSuspendedByOverlay = true;
+            if (this.isHoldActive) this.cancelHold(false);
+            return;
+          }
+          if (this._trackpad?.active && this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId) {
+            if ((e.buttons & 1) === 0) {
+              this.isDraggingRuler = false;
+              this._endTrackpadTouch("pointer", e.pointerId);
+              return;
+            }
+            if (this.isHoldActive && this.holdPointerType === "mouse") {
+              const dx = Math.abs(e.clientX - this.holdStartX);
+              const dy = Math.abs(e.clientY - this.holdStartY);
+              if (Math.hypot(dx, dy) > 8 || dx > 8 || dy > 8) {
+                this.cancelHold(false);
+              }
+            }
+            this._moveTrackpadTouch("pointer", e.pointerId, e.clientX, e.clientY);
+            return;
+          }
           if (this.isHoldActive && this.holdPointerType === "mouse") {
             const dx = Math.abs(e.clientX - this.holdStartX);
             const dy = Math.abs(e.clientY - this.holdStartY);
@@ -4989,6 +5138,9 @@ export class ReadingRuler {
           this.penHistory = [];
           this.penStrokeStartTime = 0;
           this.flickHandledInStroke = false;
+        } else if (e.pointerType === "mouse" && !this.isSyntheticMouseEvent(e)) {
+          this.isDraggingRuler = false;
+          this._endTrackpadTouch("pointer", e.pointerId);
         }
         return;
       }
@@ -5182,7 +5334,7 @@ export class ReadingRuler {
 
     const onPointerCancel = (e) => {
       if (this.followMode === "trackpad") {
-        if (e && (e.pointerType === "touch" || e.pointerType === "pen")) {
+        if (e && (e.pointerType === "touch" || e.pointerType === "pen" || e.pointerType === "mouse")) {
           const isMatchingPointer = !this._trackpad?.active || (this._trackpad.source === "pointer" && this._trackpad.pointerId === e.pointerId);
           if (!isMatchingPointer && e.isPrimary === false) {
             return;
@@ -7916,13 +8068,77 @@ export class ReadingRuler {
 
     try { range.detach(); } catch (e) {}
 
+    const isOpeningPunct = (t) => /^[\p{Ps}\p{Pi}"'„‚“‘]+$/u.test(t);
     const mergedWords = [];
+    let pendingPrefix = null;
     for (let i = 0; i < words.length; i++) {
       const w = words[i];
-      if (mergedWords.length === 0) {
-        if (isValidWord(w.text)) {
-          mergedWords.push(w);
+
+      if (!isValidWord(w.text)) {
+        if (isOpeningPunct(w.text)) {
+          if (pendingPrefix) {
+            const sameLinePrefix = Math.abs(w.centerY - pendingPrefix.centerY) <= 8 || Math.abs(w.top - pendingPrefix.top) <= 6;
+            const prefixGap = w.left - pendingPrefix.right;
+            if (sameLinePrefix && w.left >= pendingPrefix.left - 2 && prefixGap <= 5) {
+              pendingPrefix.right = Math.max(pendingPrefix.right, w.right);
+              pendingPrefix.left = Math.min(pendingPrefix.left, w.left);
+              pendingPrefix.top = Math.min(pendingPrefix.top, w.top);
+              pendingPrefix.bottom = Math.max(pendingPrefix.bottom, w.bottom);
+              pendingPrefix.width = pendingPrefix.right - pendingPrefix.left;
+              pendingPrefix.height = pendingPrefix.bottom - pendingPrefix.top;
+              pendingPrefix.centerX = pendingPrefix.left + pendingPrefix.width / 2;
+              pendingPrefix.centerY = pendingPrefix.top + pendingPrefix.height / 2;
+              pendingPrefix.text = pendingPrefix.text + w.text;
+            } else {
+              pendingPrefix = { ...w };
+            }
+          } else {
+            pendingPrefix = { ...w };
+          }
+          continue;
         }
+
+        if (mergedWords.length > 0) {
+          const prev = mergedWords[mergedWords.length - 1];
+          const sameLine = Math.abs(w.centerY - prev.centerY) <= 8 || Math.abs(w.top - prev.top) <= 6;
+          const gap = w.left - prev.right;
+          const isHorizontallyAdjacent = w.left >= prev.left - 2;
+          // Punctuation, symbol or pure number: merge if adjacent to previous valid word on same line
+          if (sameLine && isHorizontallyAdjacent && gap <= 5) {
+            prev.right = Math.max(prev.right, w.right);
+            prev.left = Math.min(prev.left, w.left);
+            prev.top = Math.min(prev.top, w.top);
+            prev.bottom = Math.max(prev.bottom, w.bottom);
+            prev.width = prev.right - prev.left;
+            prev.height = prev.bottom - prev.top;
+            prev.centerX = prev.left + prev.width / 2;
+            prev.centerY = prev.top + prev.height / 2;
+            prev.text = prev.text + w.text;
+            if (w.isContinuation) prev.isContinuation = true;
+          }
+        }
+        continue;
+      }
+
+      if (pendingPrefix) {
+        const sameLinePrefix = Math.abs(w.centerY - pendingPrefix.centerY) <= 8 || Math.abs(w.top - pendingPrefix.top) <= 6;
+        const prefixGap = w.left - pendingPrefix.right;
+        if (sameLinePrefix && w.left >= pendingPrefix.left - 2 && prefixGap <= 5) {
+          w.left = Math.min(pendingPrefix.left, w.left);
+          w.right = Math.max(pendingPrefix.right, w.right);
+          w.top = Math.min(pendingPrefix.top, w.top);
+          w.bottom = Math.max(pendingPrefix.bottom, w.bottom);
+          w.width = w.right - w.left;
+          w.height = w.bottom - w.top;
+          w.centerX = w.left + w.width / 2;
+          w.centerY = w.top + w.height / 2;
+          w.text = pendingPrefix.text + w.text;
+        }
+        pendingPrefix = null;
+      }
+
+      if (mergedWords.length === 0) {
+        mergedWords.push(w);
         continue;
       }
 
@@ -7930,23 +8146,6 @@ export class ReadingRuler {
       const sameLine = Math.abs(w.centerY - prev.centerY) <= 8 || Math.abs(w.top - prev.top) <= 6;
       const gap = w.left - prev.right;
       const isHorizontallyAdjacent = w.left >= prev.left - 2;
-
-      if (!isValidWord(w.text)) {
-        // Punctuation, symbol or pure number: merge if adjacent to previous valid word on same line
-        if (sameLine && isHorizontallyAdjacent && gap <= 5) {
-          prev.right = Math.max(prev.right, w.right);
-          prev.left = Math.min(prev.left, w.left);
-          prev.top = Math.min(prev.top, w.top);
-          prev.bottom = Math.max(prev.bottom, w.bottom);
-          prev.width = prev.right - prev.left;
-          prev.height = prev.bottom - prev.top;
-          prev.centerX = prev.left + prev.width / 2;
-          prev.centerY = prev.top + prev.height / 2;
-          prev.text = prev.text + w.text;
-          if (w.isContinuation) prev.isContinuation = true;
-        }
-        continue;
-      }
 
       // w is a valid word token (contains \p{L})
       // Any two adjacent tokens on the same line with no whitespace between them
@@ -10982,7 +11181,16 @@ export class ReadingRuler {
     const allLines = document.querySelectorAll(".reading-line, .line-focused, .line-dimmed");
     allLines.forEach(l => l.classList.remove("line-focused", "line-dimmed", "active-focus"));
 
-    const masks = [this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl, this.maskInactiveSpreadEl];
+    const masks = [
+      this.maskTopEl,
+      this.maskBottomEl,
+      this.maskLeftEl,
+      this.maskRightEl,
+      this.maskWrapUpperRightEl,
+      this.maskWrapGapEl,
+      this.maskWrapLowerLeftEl,
+      this.maskInactiveSpreadEl
+    ];
     for (const m of masks) {
       if (m) {
         m.style.display = "none";
@@ -12295,6 +12503,7 @@ export class ReadingRuler {
           this.maskInactiveSpreadEl.classList.remove("is-visible");
           this.maskInactiveSpreadEl.classList.add("is-hidden");
         }
+        this._hideWrapMasks();
       } else {
       let focusScreenTop = lineScreenTop;
       let focusScreenBottom = lineScreenBottom;
@@ -12372,50 +12581,115 @@ export class ReadingRuler {
       if (needSideMasks) {
         const sideBoundsLeft = useFullWidth ? 0 : Math.max(0, Math.round(coverLeft));
         const sideBoundsRight = useFullWidth ? window.innerWidth : Math.min(window.innerWidth, Math.round(coverLeft + coverWidth));
-        const leftBandLeft = sideBoundsLeft;
-        const leftBandWidth = Math.max(0, Math.min(sideBoundsRight, Math.round(focusSlitLeft)) - leftBandLeft);
-        if (leftBandWidth > 0 && this.maskLeftEl) {
-          this.maskLeftEl.className = "ruler-mask ruler-mask-left is-visible";
-          this.maskLeftEl.style.setProperty("display", "block", "important");
-          this.maskLeftEl.style.setProperty("background-color", themeBg, "important");
-          this.maskLeftEl.style.setProperty("opacity", String(dimOpacity), "important");
-          this.maskLeftEl.style.setProperty("z-index", "15", "important");
-          this.maskLeftEl.style.setProperty("pointer-events", "none", "important");
-          this.maskLeftEl.style.top = "0px";
-          this.maskLeftEl.style.left = "0px";
-          this.maskLeftEl.style.right = "auto";
-          this.maskLeftEl.style.maxWidth = "none";
-          this.maskLeftEl.style.width = `${leftBandWidth}px`;
-          this.maskLeftEl.style.height = `${focusLineH}px`;
-          this.maskLeftEl.style.transform = `translate3d(${leftBandLeft}px, ${focusScreenTop}px, 0)`;
-        } else if (this.maskLeftEl) {
-          this.maskLeftEl.style.display = "none";
-          this.maskLeftEl.classList.remove("is-visible");
-          this.maskLeftEl.classList.add("is-hidden");
-        }
 
-        const rightBandLeft = Math.max(sideBoundsLeft, Math.round(focusSlitRight));
-        const rightBandWidth = Math.max(0, sideBoundsRight - rightBandLeft);
-        if (rightBandWidth > 0 && this.maskRightEl) {
-          this.maskRightEl.className = "ruler-mask ruler-mask-right is-visible";
-          this.maskRightEl.style.setProperty("display", "block", "important");
-          this.maskRightEl.style.setProperty("background-color", themeBg, "important");
-          this.maskRightEl.style.setProperty("opacity", String(dimOpacity), "important");
-          this.maskRightEl.style.setProperty("z-index", "15", "important");
-          this.maskRightEl.style.setProperty("pointer-events", "none", "important");
-          this.maskRightEl.style.top = "0px";
-          this.maskRightEl.style.left = "0px";
-          this.maskRightEl.style.right = "auto";
-          this.maskRightEl.style.maxWidth = "none";
-          this.maskRightEl.style.width = `${rightBandWidth}px`;
-          this.maskRightEl.style.height = `${focusLineH}px`;
-          this.maskRightEl.style.transform = `translate3d(${rightBandLeft}px, ${focusScreenTop}px, 0)`;
-        } else if (this.maskRightEl) {
-          this.maskRightEl.style.display = "none";
-          this.maskRightEl.classList.remove("is-visible");
-          this.maskRightEl.classList.add("is-hidden");
+        if (activeWordWrap && (activeStyle === "highlight" || activeStyle === "bottom-cover")) {
+          const fromScreenTop = isVertical ? Math.round(activeWordWrap.fromDocTop - vScrollTop) : Math.round(activeWordWrap.fromDocTop);
+          const toScreenTop = isVertical ? Math.round(activeWordWrap.toDocTop - vScrollTop) : Math.round(activeWordWrap.toDocTop);
+          const fromIsUpper = fromScreenTop <= toScreenTop;
+          const isHighlightWrap = activeStyle === "highlight";
+
+          const upperLeft = fromIsUpper
+            ? (isHighlightWrap ? activeWordWrap.fromLeft : activeWordWrap.fromBarLeft)
+            : (isHighlightWrap ? activeWordWrap.toLeft : activeWordWrap.toBarLeft);
+          const upperWidth = fromIsUpper
+            ? (isHighlightWrap ? activeWordWrap.fromWidth : activeWordWrap.fromBarWidth)
+            : (isHighlightWrap ? activeWordWrap.toWidth : activeWordWrap.toBarWidth);
+          const upperTop = fromIsUpper ? fromScreenTop : toScreenTop;
+          const upperH = Math.max(1, Math.round(fromIsUpper ? activeWordWrap.fromLineH : activeWordWrap.toLineH));
+          const upperBottom = upperTop + upperH;
+          const upperSolidRatio = isHighlightWrap
+            ? (fromIsUpper ? activeWordWrap.fromSolidRatio : activeWordWrap.toSolidRatio)
+            : 100;
+          const upperNoPreview = isHighlightWrap
+            ? (fromIsUpper ? activeWordWrap.fromNoPreview : activeWordWrap.toNoPreview)
+            : true;
+
+          const lowerLeft = fromIsUpper
+            ? (isHighlightWrap ? activeWordWrap.toLeft : activeWordWrap.toBarLeft)
+            : (isHighlightWrap ? activeWordWrap.fromLeft : activeWordWrap.fromBarLeft);
+          const lowerWidth = fromIsUpper
+            ? (isHighlightWrap ? activeWordWrap.toWidth : activeWordWrap.toBarWidth)
+            : (isHighlightWrap ? activeWordWrap.fromWidth : activeWordWrap.fromBarWidth);
+          const rawLowerTop = fromIsUpper ? toScreenTop : fromScreenTop;
+          const rawLowerH = Math.max(1, Math.round(fromIsUpper ? activeWordWrap.toLineH : activeWordWrap.fromLineH));
+          const lowerSolidRatio = isHighlightWrap
+            ? (fromIsUpper ? activeWordWrap.toSolidRatio : activeWordWrap.fromSolidRatio)
+            : 100;
+          const lowerNoPreview = isHighlightWrap
+            ? (fromIsUpper ? activeWordWrap.toNoPreview : activeWordWrap.fromNoPreview)
+            : true;
+
+          const lowerBottom = rawLowerTop + rawLowerH;
+          const lowerTop = Math.max(upperBottom, rawLowerTop);
+          const lowerH = Math.max(0, lowerBottom - lowerTop);
+          const gapH = Math.max(0, lowerTop - upperBottom);
+
+          // 1. Horní levá maska (před zalomeným slovem/řádkem nahoře)
+          const uLeftW = Math.max(0, Math.min(sideBoundsRight, Math.round(upperLeft)) - sideBoundsLeft);
+          this._applySideMaskRect(this.maskLeftEl, "ruler-mask-left", themeBg, dimOpacity, sideBoundsLeft, upperTop, uLeftW, upperH, 0);
+
+          // 2. Horní pravá maska (za koncem horního slova/řádku)
+          let uRightStart = Math.round(upperLeft + upperWidth);
+          let uFadeSpanPx = 0;
+          if (!upperNoPreview && Number.isFinite(upperSolidRatio) && upperSolidRatio < 99.5) {
+            const uFadeStart = Math.round(upperLeft + upperWidth * (Math.max(0, upperSolidRatio) / 100));
+            const uFadeEnd = uRightStart;
+            uRightStart = uFadeStart;
+            uFadeSpanPx = Math.max(0, uFadeEnd - Math.max(sideBoundsLeft, uFadeStart));
+          }
+          const uRightLeft = Math.max(sideBoundsLeft, uRightStart);
+          const uRightW = Math.max(0, sideBoundsRight - uRightLeft);
+          const upperRightEl = this._ensureWrapMask("maskWrapUpperRightEl", "ruler-mask-right");
+          this._applySideMaskRect(upperRightEl, "ruler-mask-right", themeBg, dimOpacity, uRightLeft, upperTop, uRightW, upperH, uFadeSpanPx);
+
+          // 3. Mezera mezi oběma řádky přes celou šířku sloupce
+          const gapEl = this._ensureWrapMask("maskWrapGapEl", "ruler-mask-top");
+          const gapW = Math.max(0, sideBoundsRight - sideBoundsLeft);
+          this._applySideMaskRect(gapEl, "ruler-mask-top", themeBg, dimOpacity, sideBoundsLeft, upperBottom, gapW, gapH, 0);
+
+          // 4. Dolní levá maska (před začátkem dolního slova/řádku)
+          const lLeftW = Math.max(0, Math.min(sideBoundsRight, Math.round(lowerLeft)) - sideBoundsLeft);
+          const lowerLeftEl = this._ensureWrapMask("maskWrapLowerLeftEl", "ruler-mask-left");
+          this._applySideMaskRect(lowerLeftEl, "ruler-mask-left", themeBg, dimOpacity, sideBoundsLeft, lowerTop, lLeftW, lowerH, 0);
+
+          // 5. Dolní pravá maska (za dolním slovem/řádkem včetně přechodu zeslabení)
+          let lRightStart = Math.round(lowerLeft + lowerWidth);
+          let lFadeSpanPx = 0;
+          if (!lowerNoPreview && Number.isFinite(lowerSolidRatio) && lowerSolidRatio < 99.5) {
+            const lFadeStart = Math.round(lowerLeft + lowerWidth * (Math.max(0, lowerSolidRatio) / 100));
+            const lFadeEnd = lRightStart;
+            lRightStart = lFadeStart;
+            lFadeSpanPx = Math.max(0, lFadeEnd - Math.max(sideBoundsLeft, lFadeStart));
+          }
+          const lRightLeft = Math.max(sideBoundsLeft, lRightStart);
+          const lRightW = Math.max(0, sideBoundsRight - lRightLeft);
+          this._applySideMaskRect(this.maskRightEl, "ruler-mask-right", themeBg, dimOpacity, lRightLeft, lowerTop, lRightW, lowerH, lFadeSpanPx);
+        } else {
+          this._hideWrapMasks();
+          const leftBandRightEdge = Math.round(focusSlitLeft);
+          let rightBandLeftEdge = Math.round(focusSlitRight);
+          let rightFadeSpanPx = 0;
+
+          if (activeStyle === "highlight" && this.wordTracking && !isCurrentMedia && !this.rulerEl?.classList.contains("no-preview")) {
+            const solidRatioPct = parseFloat(this.rulerEl?.style.getPropertyValue("--word-solid-ratio"));
+            if (Number.isFinite(solidRatioPct) && solidRatioPct < 99.5) {
+              const fadeStartX = Math.round(focusSlitLeft + (focusSlitRight - focusSlitLeft) * (Math.max(0, solidRatioPct) / 100));
+              const fadeEndX = Math.round(focusSlitRight);
+              rightBandLeftEdge = fadeStartX;
+              rightFadeSpanPx = Math.max(0, fadeEndX - Math.max(sideBoundsLeft, fadeStartX));
+            }
+          }
+
+          const leftBandLeft = sideBoundsLeft;
+          const leftBandWidth = Math.max(0, Math.min(sideBoundsRight, leftBandRightEdge) - leftBandLeft);
+          this._applySideMaskRect(this.maskLeftEl, "ruler-mask-left", themeBg, dimOpacity, leftBandLeft, focusScreenTop, leftBandWidth, focusLineH, 0);
+
+          const rightBandLeft = Math.max(sideBoundsLeft, rightBandLeftEdge);
+          const rightBandWidth = Math.max(0, sideBoundsRight - rightBandLeft);
+          this._applySideMaskRect(this.maskRightEl, "ruler-mask-right", themeBg, dimOpacity, rightBandLeft, focusScreenTop, rightBandWidth, focusLineH, rightFadeSpanPx);
         }
       } else {
+        this._hideWrapMasks();
         if (this.maskLeftEl) { this.maskLeftEl.style.display = "none"; this.maskLeftEl.classList.remove("is-visible"); this.maskLeftEl.classList.add("is-hidden"); }
         if (this.maskRightEl) { this.maskRightEl.style.display = "none"; this.maskRightEl.classList.remove("is-visible"); this.maskRightEl.classList.add("is-hidden"); }
       }
@@ -12488,6 +12762,7 @@ export class ReadingRuler {
       if (this.maskLeftEl) { this.maskLeftEl.style.display = "none"; this.maskLeftEl.classList.remove("is-visible"); this.maskLeftEl.classList.add("is-hidden"); }
       if (this.maskRightEl) { this.maskRightEl.style.display = "none"; this.maskRightEl.classList.remove("is-visible"); this.maskRightEl.classList.add("is-hidden"); }
       if (this.maskInactiveSpreadEl) { this.maskInactiveSpreadEl.style.display = "none"; this.maskInactiveSpreadEl.classList.remove("is-visible"); this.maskInactiveSpreadEl.classList.add("is-hidden"); }
+      this._hideWrapMasks();
       if (this._focusMaskDirty) {
         this.clearFocusTextMask(stage);
         this._focusMaskDirty = false;
@@ -12703,6 +12978,7 @@ export class ReadingRuler {
     if (!showSideMasks) {
       if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
       if (this.maskRightEl) this.maskRightEl.style.display = "none";
+      this._hideWrapMasks();
     }
     if (!isFocus) {
       if (this.maskInactiveSpreadEl) {
@@ -12898,15 +13174,11 @@ export class ReadingRuler {
       if (this.maskLeftEl) this.maskLeftEl.style.display = "none";
       if (this.maskRightEl) this.maskRightEl.style.display = "none";
       if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.style.display = "none";
+      this._hideWrapMasks();
       this.clearFocusTextMask();
     } else {
       if (this.rulerEl && !document.body.contains(this.rulerEl)) {
-        document.body.appendChild(this.maskTopEl);
-        document.body.appendChild(this.maskBottomEl);
-        document.body.appendChild(this.maskLeftEl);
-        document.body.appendChild(this.maskRightEl);
-        if (this.maskInactiveSpreadEl) document.body.appendChild(this.maskInactiveSpreadEl);
-        document.body.appendChild(this.rulerEl);
+        this.ensureOverlayContainer();
       }
       if (this.rulerEl) {
         this.rulerEl.classList.remove("is-page-transitioning");
@@ -13166,18 +13438,17 @@ export class ReadingRuler {
     }
     if (drawerWord) drawerWord.classList.toggle("is-hidden", isImageOnly);
 
-    const touchCapable = this.isTouchCapableDevice();
     const popoverFollow = document.getElementById("popover-follow-section");
     const settingsFollow = document.getElementById("settings-follow-section");
     if (popoverFollow) {
       popoverFollow.classList.toggle("is-image-only", isImageOnly);
-      popoverFollow.classList.toggle("is-touch-capable", touchCapable);
-      popoverFollow.classList.toggle("is-single-follow", (isImageOnly && !touchCapable));
+      popoverFollow.classList.add("is-touch-capable");
+      popoverFollow.classList.remove("is-single-follow");
     }
     if (settingsFollow) {
       settingsFollow.classList.toggle("is-image-only", isImageOnly);
-      settingsFollow.classList.toggle("is-touch-capable", touchCapable);
-      settingsFollow.classList.toggle("is-single-follow", (isImageOnly && !touchCapable));
+      settingsFollow.classList.add("is-touch-capable");
+      settingsFollow.classList.remove("is-single-follow");
     }
 
     document.querySelectorAll("[data-ruler-follow='keyboard']").forEach(btn => {
@@ -13187,12 +13458,12 @@ export class ReadingRuler {
     });
 
     document.querySelectorAll("[data-ruler-follow='trackpad']").forEach(btn => {
-      btn.classList.toggle("is-hidden", !touchCapable);
-      btn.disabled = !touchCapable;
-      btn.setAttribute("aria-hidden", touchCapable ? "false" : "true");
+      btn.classList.remove("is-hidden");
+      btn.disabled = false;
+      btn.setAttribute("aria-hidden", "false");
     });
 
-    const columnCount = (isImageOnly ? 1 : 2) + (touchCapable ? 1 : 0);
+    const columnCount = isImageOnly ? 2 : 3;
     const applyGridCols = (gridEl) => {
       if (!gridEl) return;
       gridEl.classList.remove("columns-1", "columns-2", "columns-3", "is-single-follow");
@@ -13414,7 +13685,16 @@ export class ReadingRuler {
   setDimOpacity(opacity) {
     this.dimOpacity = Math.max(0.1, Math.min(0.95, parseFloat(opacity) || 0.70));
     document.documentElement.style.setProperty("--focus-dim-opacity", String(this.dimOpacity));
-    const masks = [this.maskTopEl, this.maskBottomEl, this.maskLeftEl, this.maskRightEl, this.maskInactiveSpreadEl];
+    const masks = [
+      this.maskTopEl,
+      this.maskBottomEl,
+      this.maskLeftEl,
+      this.maskRightEl,
+      this.maskWrapUpperRightEl,
+      this.maskWrapGapEl,
+      this.maskWrapLowerLeftEl,
+      this.maskInactiveSpreadEl
+    ];
     const themeBg = "var(--bg-theme, var(--color-bg, #fbf0d9))";
     for (const m of masks) {
       if (m) {
@@ -13428,15 +13708,14 @@ export class ReadingRuler {
   }
 
   setFollowMode(mode) {
-    const touchCapable = this.isTouchCapableDevice();
-    let normalizedMode = (mode === "trackpad" && !touchCapable) ? "mouse" : mode;
+    let normalizedMode = mode;
     if (normalizedMode !== "mouse" && normalizedMode !== "keyboard" && normalizedMode !== "trackpad") {
       normalizedMode = "mouse";
     }
     this._resetTrackpadState({ keepColumn: false });
 
     if (this.isImageOnlyPdf || (this.isPdfMode && (!this.cachedLines || this.cachedLines.length === 0))) {
-      this.followMode = (normalizedMode === "trackpad" && touchCapable) ? "trackpad" : "mouse";
+      this.followMode = (normalizedMode === "trackpad") ? "trackpad" : "mouse";
       this.stationaryScreenY = null;
       this.updateBodyClasses();
       this.setCursorHidden(false);
@@ -13684,7 +13963,14 @@ export class ReadingRuler {
     if (this.maskBottomEl) this.maskBottomEl.remove();
     if (this.maskLeftEl) this.maskLeftEl.remove();
     if (this.maskRightEl) this.maskRightEl.remove();
+    if (this.maskWrapUpperRightEl) this.maskWrapUpperRightEl.remove();
+    if (this.maskWrapGapEl) this.maskWrapGapEl.remove();
+    if (this.maskWrapLowerLeftEl) this.maskWrapLowerLeftEl.remove();
     if (this.maskInactiveSpreadEl) this.maskInactiveSpreadEl.remove();
+    if (this.activeLayerContainer) {
+      this.activeLayerContainer.remove();
+      this.activeLayerContainer = null;
+    }
     if (this.overlayContainer) {
       this.overlayContainer.remove();
       this.overlayContainer = null;

@@ -944,7 +944,14 @@ export class LuminaApp {
     const colGapVw = `${(margin * 0.25).toFixed(2)}vw`;
     document.documentElement.style.setProperty("--col-gap", colGapVw);
     document.documentElement.style.setProperty("--reader-max-width", `${s.contentWidth || 720}px`);
-    document.documentElement.style.setProperty("--reader-text-align", s.textAlign || "justify");
+    const textAlign = s.textAlign === "left" ? "left" : "justify";
+    document.documentElement.style.setProperty("--reader-text-align", textAlign);
+    if (this.dom.btnAlignLeft) {
+      this.dom.btnAlignLeft.classList.toggle("active", textAlign === "left");
+    }
+    if (this.dom.btnAlignJustify) {
+      this.dom.btnAlignJustify.classList.toggle("active", textAlign === "justify");
+    }
 
     // Rozvržení sloupců
     const effectiveCols = this.resolveEffectiveColumnCount();
@@ -1018,12 +1025,6 @@ export class LuminaApp {
     if (!s.ruler) s.ruler = {};
     if (!["mouse", "keyboard", "trackpad"].includes(s.ruler.followMode)) {
       s.ruler.followMode = "mouse";
-    }
-    if (s.ruler.followMode === "trackpad" && !this.isTouchCapableDevice()) {
-      s.ruler.followMode = "mouse";
-      if (this.ruler && this.ruler.followMode === "trackpad") {
-        this.ruler.setFollowMode("mouse");
-      }
     }
     if (this.dom.rulerFollowSelect) {
       this.dom.rulerFollowSelect.value = s.ruler.followMode;
@@ -2040,7 +2041,7 @@ export class LuminaApp {
           }
 
           const isTrackpadDragBlock = !!(this.ruler?.enabled && this.ruler.followMode === "trackpad" && this.ruler.wasRecentlyTrackpadDragging?.());
-          if (isTrackpadDragBlock && (e.type === "click" || e.pointerType === "mouse" || !e.pointerType)) {
+          if (isTrackpadDragBlock && (e.type === "click" || this.ruler.isSyntheticMouseEvent?.(e))) {
             e.stopPropagation();
             e.stopImmediatePropagation();
             if (e.cancelable && (e.type === "click" || e.type === "pointerdown" || e.type === "mousedown")) {
@@ -2827,7 +2828,6 @@ export class LuminaApp {
       this.dom.popoverRulerFollowSelect.addEventListener("change", (e) => {
         e.stopPropagation();
         let val = e.target.value;
-        if (val === "trackpad" && !this.isTouchCapableDevice()) val = "mouse";
         if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") val = "mouse";
         this.settings.ruler.followMode = val;
         this.ruler.setFollowMode(val);
@@ -3268,7 +3268,6 @@ export class LuminaApp {
     if (this.dom.rulerFollowSelect) {
       this.dom.rulerFollowSelect.addEventListener("change", (e) => {
         let val = e.target.value;
-        if (val === "trackpad" && !this.isTouchCapableDevice()) val = "mouse";
         if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") val = "mouse";
         this.settings.ruler.followMode = val;
         this.ruler.setFollowMode(val);
@@ -3290,7 +3289,6 @@ export class LuminaApp {
           const val = btn.dataset.rulerFollow;
           if (!val) return;
           if (this.isPdfMode && this.isImageOnlyPdf && val === "keyboard") return;
-          if (val === "trackpad" && !this.isTouchCapableDevice()) return;
           this.settings.ruler.followMode = val;
           this.ruler.setFollowMode(val);
           this.updateRulerFollowModeUI();
@@ -4186,7 +4184,6 @@ export class LuminaApp {
       this.ruler.setImageOnlyPdf(flag);
     }
 
-    const isTouch = this.isTouchCapableDevice();
     if (flag) {
       if (!this._savedRulerSettings) {
         this._savedRulerSettings = {
@@ -4200,7 +4197,7 @@ export class LuminaApp {
       this.settings.ruler.snapToLines = false;
       this.settings.ruler.pdfAutoHeight = false;
       this.settings.ruler.wordTracking = false;
-      if (this.settings.ruler.followMode === "keyboard" || (this.settings.ruler.followMode === "trackpad" && !isTouch)) {
+      if (this.settings.ruler.followMode === "keyboard") {
         this.settings.ruler.followMode = "mouse";
       }
     } else {
@@ -4216,9 +4213,6 @@ export class LuminaApp {
         this.settings.ruler.wordTracking = false;
       }
       if (!["mouse", "keyboard", "trackpad"].includes(this.settings.ruler.followMode)) {
-        this.settings.ruler.followMode = "mouse";
-      }
-      if (this.settings.ruler.followMode === "trackpad" && !isTouch) {
         this.settings.ruler.followMode = "mouse";
       }
     }
@@ -4438,15 +4432,9 @@ export class LuminaApp {
     if (!["mouse", "keyboard", "trackpad"].includes(this.settings.ruler.followMode)) {
       this.settings.ruler.followMode = "mouse";
     }
-    if (this.settings.ruler.followMode === "trackpad" && !isTouch) {
-      this.settings.ruler.followMode = "mouse";
-      if (this.ruler && this.ruler.followMode === "trackpad") {
-        this.ruler.setFollowMode("mouse");
-      }
-    }
 
     const showKeyboard = !activeImageOnly;
-    const showTrackpad = isTouch;
+    const showTrackpad = true;
     const visibleCount = 1 + (showKeyboard ? 1 : 0) + (showTrackpad ? 1 : 0);
     const effectiveMode = (activeImageOnly && this.settings.ruler.followMode === "keyboard")
       ? "mouse"
